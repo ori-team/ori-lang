@@ -135,7 +135,7 @@ files, including cycle detection and namespace validation.
 
 ### Visibility
 
-Functions in `.orl` stdlib modules must be declared `public` to be callable
+Functions in `.orl` stdlib modules must be declared `pub` to be callable
 from other namespaces — same rule as user code. Private functions are only
 visible within the same namespace (useful for internal helpers in a stdlib
 module).
@@ -144,7 +144,7 @@ module).
 
 - [ ] Create or extend `stdlib/<module path>.orl` matching the namespace.
 - [ ] `import ori.<layer1_module> as <alias>` to access Layer 1 primitives.
-- [ ] Declare functions with `public func ...`.
+- [ ] Declare functions with `pub func ...`.
 - [ ] Avoid Ori keywords as identifiers (`string`, `repeat`, `result`, etc.
   are reserved — use `str`, `replicate`, `acc` or similar alternatives).
 - [ ] Avoid local variable names that collide with runtime internal symbols.
@@ -185,14 +185,14 @@ Implemented parent modules:
 - `stdlib/fs.orl` -> `ori.fs`
 
 Instead of importing many helper modules:
-```ori
+```lua
 import ori.string as str
 import ori.string as su
 import ori.string as sa
 ```
 Users can import only the helper names needed from the unified root namespace:
 
-```ori
+```lua
 import ori.string only (is_empty, truncate as cut)
 ```
 

@@ -11,7 +11,7 @@ Em C, a passagem de configurações é frequentemente feita por múltiplos parâ
 - **Agrupamento por Tipos Estritos:** Agruparemos configurações em Structs imutáveis nativas do Ori.
 - **Gerenciamento de Memória Transparente:** Usaremos construtores explícitos e alavancaremos o suporte nativo do Ori (caso habilitado via RAII/disposes) para limpar texturas e buffers sem exigir `UnloadTexture` a todo momento.
 - **Exemplo de Ergonomia Desejada:**
-  ```ori
+  ```lua
   import "raylib" as rl
 
   fn main() {
@@ -40,7 +40,7 @@ SQLite é o padrão ouro para armazenamento local, mas a API de C dele (`sqlite3
 - **Iteradores Assíncronos Seguros:** Em vez de *loops* manuais com `sqlite3_step`, a abstração do Ori retornará uma Lista geradora ou um Stream Assíncrono para os dados.
 - **Tratamento de Erro Elegante:** Abandono dos códigos de retorno `int` do C. Transformação automática em `Result<Value, Error>`.
 - **Exemplo de Ergonomia Desejada:**
-  ```ori
+  ```lua
   import "sqlite" as db
 
   fn main() ! {
@@ -64,7 +64,7 @@ A biblioteca *Dear ImGui* é revolucionária, mas a FFI para ela (via *cimgui*) 
 ### O Refinamento no Ori:
 - **Closures para Contexto:** Ao invés de forçar o usuário a sempre chamar `EndWindow()` manualmente (o que causa pânico se esquecido), podemos tirar proveito de callbacks/lambdas no Ori.
 - **Exemplo de Ergonomia Desejada:**
-  ```ori
+  ```lua
   import "imgui" as ui
 
   fn main() {

@@ -202,7 +202,7 @@ após `x.` (struct)         → campos da struct
 após `x.` (trait object)   → métodos da trait
 após `func`                → sem completions
 dentro de bloco            → variáveis locais + globais
-dentro de `implement T for`→ métodos exigidos pela trait
+dentro de `apply T to`→ métodos exigidos pela trait
 após `case` em `match`     → variantes do enum
 ```
 
@@ -233,7 +233,7 @@ Templates:
 - `struct` → declaração de struct
 - `enum` → declaração de enum
 - `trait` → declaração de trait
-- `implement` → bloco de implementação
+- `apply` → bloco de trait attachment
 - `match` → match expression com cases
 - `if` → if/then/else
 - `while` → while loop
@@ -249,7 +249,7 @@ Templates:
 1. **Local:** Usar AST parser para localizar definição exata
 2. **Import:** Resolver `import x.y as z` e navegar para o arquivo importado
 3. **Stdlib:** Navegar para declarações built-in (virtual file ou documentação)
-4. **Método:** Navegar para `func` dentro de `implement Trait for Type`
+4. **Método:** Navegar para `func` dentro de `apply Trait to Type`
 5. **Campo:** Navegar para declaração do campo na struct
 
 ```rust
@@ -380,7 +380,7 @@ async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActio
 
 Mostrar tipos inferidos e nomes de parâmetros:
 
-```ori
+```lua
 const x := 42           // → const x: int = 42
 func main()
     calculate(42, true) // → calculate(count: 42, active: true)
@@ -416,7 +416,7 @@ Estrutura hierárquica do arquivo:
 app.main
   ├── struct User { id, name }
   ├── trait Displayable
-  ├── implement Displayable for User
+  ├── apply Displayable to User
   │   └── func display() -> string
   └── func main() -> void
 ```
@@ -503,7 +503,7 @@ Hover com documentação rica:
 ```rust
 fn format_hover(symbol: &FunctionSymbol) -> String {
     format!(
-        "```ori\n{}\n```\n\n---\n{}\n\n**Parameters:**\n{}\n\n**Returns:** {}",
+        "```lua\n{}\n```\n\n---\n{}\n\n**Parameters:**\n{}\n\n**Returns:** {}",
         symbol.signature,
         symbol.doc_comment.unwrap_or_default(),
         format_params(&symbol.params),

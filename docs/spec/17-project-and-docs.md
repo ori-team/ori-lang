@@ -58,7 +58,7 @@ Dependencias locais declaradas em `[dependencies]` participam da resolucao de
 imports. O compilador procura primeiro os arquivos do projeto atual. Se nao
 encontrar o import, procura nas dependencias por `path`.
 
-```ori
+```lua
 import demo.math only (double)
 ```
 

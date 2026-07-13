@@ -76,7 +76,50 @@ xcode-select --install
 
 ## Download e instalação
 
-### Via release package (recomendado)
+### Ubuntu / Debian — pacote `.deb` (recomendado neste SO)
+
+1. Instale o pré-requisito de AOT (linker do sistema):
+
+```bash
+sudo apt update
+sudo apt install build-essential
+```
+
+2. Instale o `.deb` (arquivo gerado localmente ou baixado):
+
+```bash
+sudo apt install ./ori_0.2.0_amd64.deb
+# se o apt recusar o caminho local:
+sudo dpkg -i ./ori_0.2.0_amd64.deb
+sudo apt-get install -f
+```
+
+3. Verifique:
+
+```bash
+ori --version
+ori doctor
+```
+
+**Layout instalado:**
+
+| Caminho | Conteúdo |
+|---------|----------|
+| `/usr/bin/ori` | CLI (symlink) |
+| `/usr/bin/ori-lsp` | Language server (symlink) |
+| `/usr/lib/ori/` | Binários reais + `stdlib/` + `runtime/` |
+
+**Gerar o `.deb` a partir do repositório (mantenedores):**
+
+```bash
+# requer Rust toolchain + build-essential
+./tools/package_deb.sh --force
+# artefato: target/dist/ori_<versão>_amd64.deb
+```
+
+---
+
+### Via release package (`.tar.gz` / `.zip`)
 
 1. Acesse a página de releases do projeto no GitHub.
 2. Baixe o arquivo correspondente ao seu sistema operacional:
@@ -132,7 +175,7 @@ Se `ori doctor` reportar problemas, consulte a seção **Troubleshooting** abaix
 
 Crie um arquivo `hello.orl`:
 
-```ori
+```lua
 import ori.io as io
 
 func main()

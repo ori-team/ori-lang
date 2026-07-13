@@ -1,0 +1,76 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ori",
+  "scopeName": "source.ori",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#functions" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.ori",
+          "begin": "--\\|",
+          "end": "\\|--"
+        },
+        {
+          "name": "comment.line.double-dash.ori",
+          "match": "--.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.ori",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.ori", "match": "\\\\." }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.ori",
+          "match": "\\b(async|await|try|func|return|end|if|else|while|for|in|repeat|loop|break|continue|match|case|using|check|with|then|do|and|or|not|import|imports|as|only|of|by|to|pub|public|namespace|struct|trait|apply|implement|enum|where|is|alias|mut|self|extern|lazy|tuple|void|true|false|none|success|error|some)\\b"
+        },
+        {
+          "name": "storage.type.ori",
+          "match": "\\b(const|var|any|optional|result|list|map|set|range|int|float|bool|string|bytes|never|future)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.ori",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.ori",
+          "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.ori",
+          "match": "(?<=\\bfunc\\s+)[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    }
+  }
+}

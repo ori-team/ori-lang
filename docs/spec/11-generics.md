@@ -15,7 +15,7 @@ distinct type argument (monomorphization).
 
 ## Generic Functions
 
-```ori
+```lua
 func identity<T>(value: T) -> T
     return value
 end
@@ -35,7 +35,7 @@ Multiple parameters: `<T, U>`, `<Key, Value>`.
 
 ## Generic Structs
 
-```ori
+```lua
 struct Pair<A, B>
     first: A
     second: B
@@ -48,7 +48,7 @@ const p: Pair<int, string> = Pair(first: 1, second: "one")
 
 ## Generic Enums
 
-```ori
+```lua
 enum Either<Left, Right>
     Left(value: Left)
     Right(value: Right)
@@ -59,7 +59,7 @@ end
 
 ## Generic Traits
 
-```ori
+```lua
 trait Container<Item>
     mut func add(item: Item)
     func get(index: int) -> optional<Item>
@@ -73,7 +73,7 @@ end
 
 Type parameters may be constrained to require specific trait implementations:
 
-```ori
+```lua
 func max<T>(a: T, b: T) -> T
     where T is Comparable
     if a.compare(b) > 0
@@ -85,7 +85,7 @@ end
 
 ### Multiple Constraints
 
-```ori
+```lua
 func sorted_keys<K, V>(m: map<K, V>) -> list<K>
     where (
         K is Hashable
@@ -100,7 +100,7 @@ end
 Value contracts on individual parameters use `if` after the type or after a
 default value:
 
-```ori
+```lua
 func sqrt(value: float if it >= 0.0) -> float
 ```
 
@@ -108,7 +108,7 @@ This is a value contract (checked at runtime), not a type constraint.
 
 ### Negative Constraints
 
-```ori
+```lua
 func raw_copy<T>(src: T, dst: T) where T is not Disposable
 ```
 
@@ -121,7 +121,7 @@ Prevents the function from being called with managed/resource types.
 Ori infers type arguments at call sites when they can be determined from the
 argument types:
 
-```ori
+```lua
 -- Type argument T inferred as int from the argument 42:
 const result: int = identity(42)
 
@@ -131,7 +131,7 @@ const name: optional<string> = first(["Ada", "Bo"])
 
 When inference is ambiguous or impossible, the type argument must be explicit:
 
-```ori
+```lua
 const empty: optional<int> = first<int>([])
 ```
 
@@ -145,7 +145,7 @@ of type arguments used in the program.
 Think of a generic declaration as a mold. Each concrete type used with that mold
 gets its own generated implementation.
 
-```ori
+```lua
 identity(42)          -- may generate identity_int
 identity("hello")     -- may generate identity_string
 first([1, 2, 3])      -- may generate first_list_int
@@ -161,7 +161,7 @@ This means:
 
 Example:
 
-```ori
+```lua
 func wrap<T>(value: T) -> optional<T>
     return some(value)
 end
@@ -207,22 +207,22 @@ error[generic.constraint_not_satisfied]: T does not satisfy constraint
    |                          ^^^^^^^^^^^^^^^^
    |
    = why: K = User, but User does not implement Comparable
-   = action: add 'implement Comparable for User' with func compare(other: User) -> int
+   = action: add 'apply Comparable to User' with func compare(other: User) -> int
 ```
 
 ---
 
 ## `Self` in Generic Contexts
 
-`Self` inside a `trait` or `implement` block refers to the implementing type.
+`Self` inside a `trait` or `apply` block refers to the implementing type.
 It may be used as a type argument:
 
-```ori
+```lua
 trait Cloneable
     func clone() -> Self
 end
 
-implement Cloneable for Config
+apply Cloneable to Config
     func clone() -> Config
         return Config(
             timeout: self.timeout,
@@ -236,7 +236,7 @@ end
 
 ## Generic Type Aliases
 
-```ori
+```lua
 alias IntMap<V>   = map<int, V>
 alias Callback<T> = func(T) -> bool
 ```
@@ -252,7 +252,7 @@ The following generic features are **supported** in the current compiler.
 A trait may declare an associated `type` member that is resolved at
 monomorphization time:
 
-```ori
+```lua
 trait Container
     type Item
     func get(self) -> Item
@@ -263,7 +263,7 @@ end
 
 A struct may take a compile-time integer constant as a type parameter:
 
-```ori
+```lua
 struct Matrix<const N: int>
     value: int
 end
@@ -273,7 +273,7 @@ end
 
 Type constructors may appear as type parameters in constrained forms:
 
-```ori
+```lua
 trait Functor<F<_>>
     func fmap<A, B>(fa: F<A>, f: func(A) -> B) -> F<B>
 end

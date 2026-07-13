@@ -7,12 +7,12 @@
 
 ## Function Declarations
 
-```ori
+```lua
 func add(a: int, b: int) -> int
     return a + b
 end
 
-public func greet(name: string) -> string
+pub func greet(name: string) -> string
     return f"hello {name}"
 end
 ```
@@ -20,7 +20,7 @@ end
 Rules:
 - `func` declares a named function.
 - Parameter types and return type are explicit.
-- `public` makes the function visible outside its namespace.
+- `pub` makes the function visible outside its namespace.
 - Private (default) functions are visible only within their namespace.
 - Functions close with `end`.
 - A function that returns `void` may omit the `-> void` annotation.
@@ -29,7 +29,7 @@ Rules:
 
 ## Async Functions
 
-```ori
+```lua
 import ori.task as task
 
 async func load_count() -> int
@@ -77,13 +77,13 @@ Implementation status:
 
 ### Required Parameters
 
-```ori
+```lua
 func connect(host: string, port: int) -> result<void, string>
 ```
 
 ### Default Values
 
-```ori
+```lua
 func connect(host: string, port: int = 80) -> result<void, string>
 ```
 
@@ -94,18 +94,18 @@ func connect(host: string, port: int = 80) -> result<void, string>
 
 At the call site, arguments may be named:
 
-```ori
+```lua
 connect(host: "localhost", port: 8080)
 ```
 
 Rules:
 - Once a named argument is used, all subsequent arguments must also be named.
 - Named arguments may be given in any order.
-- For public functions, parameter names are part of the public API.
+- For `pub` functions, parameter names are part of the external API.
 
 ### Value Contracts (`if` on parameters)
 
-```ori
+```lua
 func sqrt(value: float if it >= 0.0) -> float
 func clamp(v: int, lo: int, hi: int if it >= lo) -> int
 ```
@@ -118,21 +118,21 @@ The contract is evaluated at every call site. A violation is a runtime panic
 
 The last parameter may accept zero or more values of its type:
 
-```ori
-public func log(prefix: string, values: any<Displayable>...)
+```lua
+pub func log(prefix: string, values: any<Displayable>...)
 ```
 
 - `values` is typed as `list<any<Displayable>>` inside the function body.
 - Only the last parameter may be variadic.
 - At the call site, pass values directly:
 
-```ori
+```lua
 log("info", count, name, active)
 ```
 
 - To spread a list into a variadic: use `..`:
 
-```ori
+```lua
 const parts: list<string> = ["a", "b", "c"]
 concat(..parts)
 ```
@@ -143,7 +143,7 @@ concat(..parts)
 
 ### Explicit Return
 
-```ori
+```lua
 func area(w: int, h: int) -> int
     return w * h
 end
@@ -151,7 +151,7 @@ end
 
 ### Void Return
 
-```ori
+```lua
 func print_all(items: list<string>)
     for item in items
         io.print(item)
@@ -165,7 +165,7 @@ When a function returns `void`, `return` with no value exits early.
 
 Most functions that can fail return `result<T, E>`:
 
-```ori
+```lua
 func read_file(path: string) -> result<string, string>
     const file: ori.fs.File = try ori.fs.open_read(path)
     return ori.fs.read_all(file)
@@ -180,7 +180,7 @@ See Chapter 09 — Errors and Propagation for full semantics.
 
 When a function modifies the state of `self`, it must be declared `mut func`:
 
-```ori
+```lua
 struct Counter
     value: int
 
@@ -199,7 +199,7 @@ Rules:
 - A non-`mut` function may not modify `self`.
 - Calling a `mut func` on a `const` binding is a compile error:
 
-```ori
+```lua
 const c: Counter = Counter(value: 0)
 c.increment()    -- Error: cannot call mut func on const binding
 
@@ -214,7 +214,7 @@ c.increment()    -- OK
 Functions declared inside a `struct` block are methods. They receive an
 implicit `self` parameter of the struct type.
 
-```ori
+```lua
 struct Rectangle
     width: float
     height: float
@@ -232,7 +232,7 @@ struct Rectangle
 end
 ```
 
-Methods declared in a `struct` block are not required to be in an `implement`
+Methods declared in a `struct` block are not required to be in an `apply`
 block (they are "inherent methods").
 
 ---
@@ -243,7 +243,7 @@ Closures are anonymous functions. They use `do` instead of `func`.
 
 ### Inline Closure (expression body)
 
-```ori
+```lua
 const double: func(int) -> int = do(x: int) => x * 2
 const is_even: func(int) -> bool = do(n: int) => n % 2 == 0
 ```
@@ -253,13 +253,13 @@ Syntax: `do(params) => expression`
 The return type is inferred from the expression type. An explicit return type
 may be provided:
 
-```ori
+```lua
 do(x: int) -> int => x * 2
 ```
 
 ### Block Closure (statement body)
 
-```ori
+```lua
 const process: func(string) -> bool = do(input: string)
     const trimmed: string = input.trim()
     return len(trimmed) > 0
@@ -272,7 +272,7 @@ Syntax: `do(params) [ -> return_type ] block`
 
 The most common use is passing closures to higher-order functions:
 
-```ori
+```lua
 const doubled: list<int> = iter.map(numbers, do(x: int) => x * 2)
 const valid: list<string> = iter.filter(names, do(n: string) => len(n) > 0)
 ```
@@ -280,7 +280,7 @@ const valid: list<string> = iter.filter(names, do(n: string) => len(n) > 0)
 When the closure type can be inferred from the function signature, the
 return type annotation may be omitted:
 
-```ori
+```lua
 iter.map(numbers, do(x: int) => x * 2)
 -- The return type of `do(x: int) => x * 2` is inferred as int
 -- from the expected type `func(int) -> int`
@@ -290,7 +290,7 @@ iter.map(numbers, do(x: int) => x * 2)
 
 Closures capture values from their enclosing scope by **value** (copy):
 
-```ori
+```lua
 const prefix: string = "Dr. "
 const greet: func(string) -> string = do(name: string) => f"{prefix}{name}"
 -- prefix is captured by copy at the time do(...) is evaluated
@@ -301,7 +301,7 @@ Capture rules:
 - `var` bindings: **compile error** — closures may not capture mutable bindings.
   Extract the current value first:
 
-```ori
+```lua
 var counter: int = 0
 -- Error: cannot capture var binding in closure
 -- const snapshot: func() -> int = do() => counter
@@ -315,7 +315,7 @@ const snapshot: func() -> int = do() => current
 
 For complex logic, prefer a named function:
 
-```ori
+```lua
 func is_valid_name(name: string) -> bool
     if len(name) == 0
         return false
@@ -334,7 +334,7 @@ Named functions can be passed directly where a `func(T) -> R` is expected.
 
 Functions may accept and return callable values:
 
-```ori
+```lua
 func apply_twice(value: int, f: func(int) -> int) -> int
     return f(f(value))
 end
@@ -348,7 +348,7 @@ const result: int = apply_twice(5, do(x: int) => x * 2)  -- 20
 
 See Chapter 11 — Generics and Constraints for full specification.
 
-```ori
+```lua
 func identity<T>(value: T) -> T
     return value
 end
@@ -365,7 +365,7 @@ end
 
 ## `self` Parameter
 
-`self` refers to the receiver in method and `implement` block functions.
+`self` refers to the receiver in method and `apply` block functions.
 It is always the implicit first parameter and is never written in the
 parameter list.
 
@@ -377,7 +377,7 @@ parameter list.
 
 These are special contextual forms, not regular functions:
 
-```ori
+```lua
 check condition               -- assert condition; panic if false
 check condition, "message"    -- with custom panic message
 

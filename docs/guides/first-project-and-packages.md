@@ -41,7 +41,7 @@ ori summary .
 
 Para testes, crie uma funcao com `@test`:
 
-```ori
+```lua
 namespace demo.main
 
 import ori.test as test
@@ -85,10 +85,10 @@ ori_version = "0.2.0"
 
 `math/src/lib.orl`:
 
-```ori
+```lua
 namespace demo.math
 
-public func double(value: int) -> int
+pub func double(value: int) -> int
     return value * 2
 end
 ```
@@ -125,7 +125,7 @@ demo.math = { path = "../math", version = "0.1.0" }
 
 `app/src/main.orl`:
 
-```ori
+```lua
 namespace demo.app
 
 import demo.math only (double)

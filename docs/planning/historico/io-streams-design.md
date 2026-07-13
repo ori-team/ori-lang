@@ -11,7 +11,7 @@ contrato. Streams precisam nascer com ownership claro.
 
 Adicionar leitura e escrita incremental sem esconder falhas:
 
-```ori
+```lua
 alias ReadResult = result<bytes, string>
 alias WriteResult = result<int, string>
 
@@ -32,7 +32,7 @@ io.Output
 
 ## API inicial proposta
 
-```ori
+```lua
 io.stdin() -> io.Input
 io.stdout() -> io.Output
 io.stderr() -> io.Output

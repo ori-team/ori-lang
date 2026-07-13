@@ -15,7 +15,7 @@ Ori **não tem null**. Use `none` dentro de `optional<T>` ou `error(...)` dentro
 
 ## `void`
 
-```ori
+```lua
 func greet() -> void
     io.println("hello")
 end
@@ -26,7 +26,7 @@ end
 
 ## `optional<T>`
 
-```ori
+```lua
 func find_user(id: int) -> optional<string>
     if id == 0
         return none
@@ -42,7 +42,7 @@ end
 
 ## `result<T, E>`
 
-```ori
+```lua
 func read_config(path: string) -> result<string, string>
     return fs.read_text(path)
 end
@@ -54,7 +54,7 @@ end
 
 ## `check`
 
-```ori
+```lua
 func divide(a: int, b: int) -> int
     check b != 0, "division by zero"
     return a / b

@@ -21,7 +21,7 @@ The memory model has two layers:
 
 All types in Ori have value semantics by default.
 
-```ori
+```lua
 const a: Point = Point(x: 1, y: 2)
 const b: Point = a          -- b is a copy of a
 ```
@@ -44,7 +44,7 @@ are **managed types**. They are heap-allocated and reference-counted.
 
 Assigning a managed type copies the **reference**, not the heap data:
 
-```ori
+```lua
 const a: list<int> = [1, 2, 3]
 const b: list<int> = a          -- b holds the same reference as a
 ```
@@ -175,7 +175,7 @@ bridge.
 For resources that need explicit cleanup (file handles, network connections,
 database connections), use `using`:
 
-```ori
+```lua
 func read_file(path: string) -> result<string, string>
     using file: ori.fs.File = try ori.fs.open_read(path)
     const content: string = try ori.fs.read_all(file)
@@ -199,7 +199,7 @@ When `file` goes out of scope, `file.dispose()` is called automatically.
 
 Multiple `using` bindings are disposed in **reverse declaration order**:
 
-```ori
+```lua
 using a: ResourceA = try open_a()
 using b: ResourceB = try open_b()
 using c: ResourceC = try open_c()
@@ -210,7 +210,7 @@ using c: ResourceC = try open_c()
 
 A type participates in `using` by implementing `Disposable`:
 
-```ori
+```lua
 trait Disposable
     mut func dispose()
 end
@@ -221,7 +221,7 @@ is a compile error.
 
 ### Interaction with `try` and `?`
 
-```ori
+```lua
 using conn: Connection = try get_connection()
 -- If get_connection() returns error: conn is never bound, nothing to dispose.
 
@@ -273,7 +273,7 @@ See the FFI documentation for detailed ABI shapes.
 
 `ori.mem` provides explicit memory inspection utilities:
 
-```ori
+```lua
 import ori.mem as mem
 
 mem.size_of(value)         -- size in bytes of value's static type

@@ -92,7 +92,7 @@ adicione o detalhe no plano de uso real e mantenha aqui apenas o resumo.
 
 ### 6. API de JSON Estruturado
 - [x] Substituir o mapeamento atual de `json.Value = string` por um tipo de dado real e recursivo na stdlib:
-  ```ori
+  ```lua
   enum Value
       Null
       Bool(value: bool)

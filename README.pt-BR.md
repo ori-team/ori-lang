@@ -124,7 +124,7 @@ sh tools/smoke_native_release.sh
 
 ## Primeiro programa
 
-```ori
+```lua
 namespace app.hello
 
 import ori.io as io
@@ -189,7 +189,7 @@ O modelo central de Ori é pequeno:
 
 - todo arquivo começa com `namespace`;
 - imports criam aliases locais;
-- declarações top-level são privadas, exceto quando marcadas como `public`;
+- declarações top-level são privadas, exceto quando marcadas como `pub`;
 - `struct` e `enum` definem dados;
 - `trait` e `implement` definem comportamento;
 - `optional<T>` modela ausência;
@@ -201,7 +201,7 @@ O modelo central de Ori é pequeno:
 
 Exemplo com `result`:
 
-```ori
+```lua
 namespace app.errors
 
 import ori.io as io

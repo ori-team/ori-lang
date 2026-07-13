@@ -52,7 +52,7 @@ Assigning a `string` copies the reference, not the content.
 
 A product type. All fields must be named.
 
-```ori
+```lua
 struct Point
     x: int
     y: int
@@ -67,7 +67,7 @@ references.
 
 **Field contracts** constrain the valid range of a field value:
 
-```ori
+```lua
 struct Rectangle
     width: int  if it > 0
     height: int if it > 0
@@ -82,7 +82,7 @@ runtime panic (`contract.field_violation`).
 
 A sum type. Each variant is a named case.
 
-```ori
+```lua
 enum Direction
     North
     South
@@ -111,13 +111,13 @@ Enums are value types.
 
 An ordered product of named positional values.
 
-```ori
+```lua
 const pair: tuple<int, string> = tuple(1, "one")
 ```
 
 Access by index:
 
-```ori
+```lua
 const n: int    = pair.0
 const s: string = pair.1
 ```
@@ -145,7 +145,7 @@ These types are built into the language and require no import.
 
 `optional<T>` represents a value that may be absent. There is no `null`.
 
-```ori
+```lua
 const name: optional<string> = some("Ada")
 const empty: optional<string> = none
 ```
@@ -154,7 +154,7 @@ Constructors: `some(value)` and `none`.
 
 Supported operations:
 
-```ori
+```lua
 value.or(fallback)         -- unwrap or use fallback
 value.or_return()          -- unwrap or propagate from enclosing function
 try value                  -- unwrap or propagate from enclosing function
@@ -169,7 +169,7 @@ not implemented.
 
 Pattern matching over `optional<T>`:
 
-```ori
+```lua
 match maybe_name
 case some(name):
     io.print(name)
@@ -180,7 +180,7 @@ end
 
 Binding shorthand:
 
-```ori
+```lua
 if some(name) = maybe_name
     io.print(name)
 end
@@ -192,7 +192,7 @@ end
 
 `result<T, E>` represents an operation that may succeed or fail.
 
-```ori
+```lua
 const ok: result<int, string>  = success(42)
 const bad: result<int, string> = error("something went wrong")
 ```
@@ -201,7 +201,7 @@ Constructors: `success(value)` and `error(value)`.
 
 Supported operations:
 
-```ori
+```lua
 value.or(fallback)                   -- unwrap success or use fallback
 value.or_return()                    -- unwrap success or propagate error
 value.or_wrap("context message")    -- keep success, add context to error
@@ -217,7 +217,7 @@ is clearer.
 
 Pattern matching:
 
-```ori
+```lua
 match load_config(path)
 case success(config):
     use_config(config)
@@ -232,31 +232,52 @@ end
 
 `range<int>` is an inclusive integer range with a start and end value.
 
-```ori
+```lua
 const r: range<int> = 0..9
+const even: range<int> = 0..10 by 2
 ```
 
 The range `a..b` includes both `a` and `b`.
-- If `a <= b`: ascending (0, 1, 2, ..., 9)
-- If `a > b`: descending (9, 8, 7, ..., 0)
+- If `a <= b`: ascending (0, 1, 2, ..., 9) by default
+- If `a > b`: descending (9, 8, 7, ..., 0) by default
 - If `a == b`: single element
+
+Optional step: `start..end by step` where `step` is a non-zero `int`.
+- Positive step iterates while the cursor is `<= end`
+- Negative step iterates while the cursor is `>= end`
+- When `by` is omitted, the step is `+1` or `-1` from the endpoint order
 
 Current v1 contract:
 
-```ori
+```lua
 r.start       -- int: first value
 r.end         -- int: last value
+r.step        -- int: step used for iteration (+1 / -1 when `by` is omitted)
 ```
 
 `length()` and `contains(...)` are not range methods in v1. Use `for` to
 iterate a range, or compute membership with integer comparisons when needed.
 Float ranges are not accepted by the current checker.
 
+## Readable type sugar (`of` / `to`)
+
+Single-argument built-ins accept a readable form:
+
+```lua
+list of string          -- same as list<string>
+optional of int         -- same as optional<int>
+set of int              -- same as set<int>
+map of string to int    -- same as map<string, int>
+```
+
+The angle-bracket form remains the primary syntax. `result` has no `of`
+sugar (always write `result<T, E>`).
+
 ---
 
 ## Lazy
 
-```ori
+```lua
 const expensive: lazy<int> = lazy.once(do() => compute_heavy_value())
 const value: int = lazy.force(expensive)
 ```
@@ -279,7 +300,7 @@ computed only if another path needs it.
 
 `any<Trait>` holds a value of any type that implements `Trait`, selected at runtime.
 
-```ori
+```lua
 const shape: any<Drawable> = Circle(radius: 10.0)
 shape.draw()
 ```
@@ -296,7 +317,7 @@ Rules:
 
 A function type describes the signature of a callable value:
 
-```ori
+```lua
 const double: func(int) -> int = do(x: int) => x * 2
 var handler: func(string) -> bool
 ```
@@ -311,7 +332,7 @@ A callable with no return value: `func(string)` (void return implied).
 
 `alias` gives a name to an existing type. It does not create a new type.
 
-```ori
+```lua
 alias UserId   = int
 alias UserMap  = map<int, User>
 alias Callback = func(string) -> bool
@@ -325,7 +346,7 @@ Aliases are transparent: `UserId` and `int` are interchangeable everywhere.
 
 When a function returns `result<void, E>`, `success()` with no arguments is valid:
 
-```ori
+```lua
 func ping() -> result<void, string>
     try send_packet()
     return success()
@@ -383,10 +404,10 @@ Structural equality rules:
 - Sets compare elements independent of insertion order.
 - Tuples and structs compare fields in declaration order.
 
-**`Equatable` override:** implement `Equatable for T` to provide custom equality:
+**`Equatable` override:** `apply Equatable to T` to provide custom equality:
 
-```ori
-implement Equatable for User
+```lua
+apply Equatable to User
     func equals(other: User) -> bool
         return self.id == other.id
     end
@@ -408,7 +429,7 @@ Ori does not have implicit type coercion. All conversions are explicit.
 
 **Integer widening** is not implicit. Use the conversion functions:
 
-```ori
+```lua
 const n: int  = 42
 const b: u8   = u8(n)         -- explicit narrowing (runtime check)
 const w: int64 = int64(n)     -- explicit widening
@@ -418,7 +439,7 @@ const w: int64 = int64(n)     -- explicit widening
 e valores concretos definidos pelo usuario que implementam
 `ori.core.Displayable`.
 
-```ori
+```lua
 const s: string = string(42)
 const t: string = string(3.14)
 const b: string = string(true)
@@ -428,7 +449,7 @@ struct Resource
     id: int
 end
 
-implement ori.core.Displayable for Resource
+apply ori.core.Displayable to Resource
     func display(self) -> string
         return "Resource#" + string(self.id)
     end
@@ -441,7 +462,7 @@ const line: string = f"value={r}"
 
 **Type checking at runtime** (for `any<Trait>`):
 
-```ori
+```lua
 if shape is Circle
     -- shape is accessible as Circle in this block
 end

@@ -25,7 +25,7 @@ handles them.
 
 `optional<T>` represents a value that may or may not be present.
 
-```ori
+```lua
 func find_user(id: int) -> optional<User>
     if id <= 0
         return none
@@ -42,7 +42,7 @@ Constructors:
 
 **Pattern match** (explicit, always safe):
 
-```ori
+```lua
 match find_user(42)
 case some(user):
     greet(user)
@@ -53,7 +53,7 @@ end
 
 **`if some` binding** (concise single-branch handling):
 
-```ori
+```lua
 if some(user) = find_user(42)
     greet(user)
 end
@@ -61,7 +61,7 @@ end
 
 **`.or(fallback)`** — unwrap or use a default:
 
-```ori
+```lua
 const name: string = find_name(id).or("Anonymous")
 ```
 
@@ -71,7 +71,7 @@ evaluated only when the receiver is `none` or `error(_)`.
 
 **`.or_return()`** — unwrap or propagate from the enclosing function:
 
-```ori
+```lua
 const user: User = find_user(id).or_return()
 -- If find_user returns none, the enclosing function returns none immediately.
 -- The enclosing function must return optional<_>.
@@ -83,7 +83,7 @@ older `.or_return(value)` form is not implemented. Use `try`, `?`,
 
 **`try` propagation** — unwrap or propagate absence:
 
-```ori
+```lua
 func get_user_name(id: int) -> optional<string>
     const user: User = try find_user(id)
     -- If none: return none from get_user_name
@@ -101,7 +101,7 @@ end
 `result<T, E>` represents an operation that either succeeds with value `T` or
 fails with error `E`.
 
-```ori
+```lua
 func read_config(path: string) -> result<Config, string>
     if path == ""
         return error("empty path")
@@ -117,7 +117,7 @@ Constructors:
 
 ### `try` Propagation on `result<T, E>`
 
-```ori
+```lua
 func start(path: string) -> result<void, string>
     const config: Config = try read_config(path)
     -- If error(e): return error(e) from start
@@ -139,7 +139,7 @@ Rules for `try` on `result<T, E>`:
 
 Adds a context string to an existing error without losing the original:
 
-```ori
+```lua
 const config: Config = try read_config(path).or_wrap("loading configuration")
 ```
 
@@ -154,7 +154,7 @@ error with `match`.
 
 ### Pattern Match on `result<T, E>`
 
-```ori
+```lua
 match load_data(path)
 case success(data):
     process(data)
@@ -209,7 +209,7 @@ Current implementation: `ori.core.Error` exists as a marker trait. The richer
 `message()`/`cause()` trait-method contract below is planned and documents the
 intended stable shape for future stdlib APIs:
 
-```ori
+```lua
 trait Error
     func message() -> string
 
@@ -226,15 +226,15 @@ use `string` errors or `optional<T>` where documented.
 
 ### Defining Error Types
 
-Use `struct` + `implement Error for`:
+Use `struct` + `apply Error to`:
 
-```ori
+```lua
 struct ValidationError
     field: string
     reason: string
 end
 
-implement Error for ValidationError
+apply Error to ValidationError
     func message() -> string
         return f"validation failed on '{self.field}': {self.reason}"
     end
@@ -245,14 +245,14 @@ end
 
 When a function may fail with multiple distinct error types, use an enum:
 
-```ori
+```lua
 enum AppError
     Network(error: NetworkError)
     Validation(error: ValidationError)
     Parse(error: ParseError)
 end
 
-implement Error for AppError
+apply Error to AppError
     func message() -> string
         match self
         case .Network(error):
@@ -309,7 +309,7 @@ says so in its return type.
 
 ### Chaining fallible operations
 
-```ori
+```lua
 func process(path: string) -> result<Output, string>
     const raw: string = try ori.fs.read_text(path)
     const parsed: Input = try parse(raw)
@@ -320,7 +320,7 @@ end
 
 ### Converting error types
 
-```ori
+```lua
 func run(path: string) -> result<void, AppError>
     -- result<Config, string> is not result<void, AppError>.
     -- Explicit conversion is needed today.
@@ -336,7 +336,7 @@ end
 
 ### Early return from nested optional
 
-```ori
+```lua
 func find_display_name(id: int) -> optional<string>
     const user: User = try find_user(id)
     const profile: Profile = try find_profile(user.profile_id)

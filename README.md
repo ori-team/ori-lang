@@ -136,7 +136,7 @@ sh tools/package_native_release.sh
 
 ## A first program
 
-```ori
+```lua
 namespace app.hello
 
 import ori.io as io
@@ -245,7 +245,7 @@ Ori's core model is small:
 
 - every file starts with `namespace`;
 - imports create local aliases or explicit selective names with `only (...)`;
-- top-level declarations are private unless marked `public`;
+- top-level declarations are private unless marked `pub`;
 - `struct` and `enum` define data;
 - `trait` and `implement` define behavior;
 - `optional<T>` models absence;
@@ -257,7 +257,7 @@ Ori's core model is small:
 
 Example with `result`:
 
-```ori
+```lua
 namespace app.errors
 
 import ori.io as io

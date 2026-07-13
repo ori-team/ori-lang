@@ -18,7 +18,7 @@ A block is a sequence of statements closed by `end`.
 
 Declares an immutable binding.
 
-```ori
+```lua
 const name: string = "Ada"
 const max: int = 100
 ```
@@ -31,7 +31,7 @@ const max: int = 100
 
 Declares a mutable binding.
 
-```ori
+```lua
 var count: int = 0
 count = count + 1
 ```
@@ -44,7 +44,7 @@ count = count + 1
 
 ## Assignment
 
-```ori
+```lua
 count = 42
 user.name = "Bo"
 items[0] = 99
@@ -57,7 +57,7 @@ Assigning to a `const` binding is a compile error.
 
 ## Return
 
-```ori
+```lua
 return value
 return          -- implicit void
 ```
@@ -72,7 +72,7 @@ the return type is not `void`.
 
 ## `if` / `else`
 
-```ori
+```lua
 if count > 0
     process()
 end
@@ -98,7 +98,7 @@ The condition must be `bool`. There is no truthy/falsy coercion.
 
 ## `if some` — Optional Binding
 
-```ori
+```lua
 if some(user) = get_user(id)
     greet(user)
 end
@@ -119,7 +119,7 @@ end
 
 ## `while`
 
-```ori
+```lua
 while count < 10
     count += 1
 end
@@ -131,7 +131,7 @@ The condition must be `bool`. Evaluated before each iteration.
 
 ## `while some` — Optional Loop
 
-```ori
+```lua
 while some(line) = reader.next_line()
     process(line)
 end
@@ -144,7 +144,7 @@ Continues as long as `next_line()` returns `some(v)`. Stops on `none`.
 
 ## `loop` — Infinite Loop
 
-```ori
+```lua
 loop
     const input: string = try console.read_line()
     if input == "quit"
@@ -161,7 +161,7 @@ Use `break` to exit. Use `continue` to skip to the next iteration.
 
 ## `for` — Iteration
 
-```ori
+```lua
 for item in items
     process(item)
 end
@@ -175,14 +175,14 @@ and `range<int>`.
 Custom iterable contract:
 
 - import the core trait namespace, usually `import ori.core as core`;
-- implement `core.Iterable` for the concrete type;
+- `apply core.Iterable to` the concrete type;
 - provide `mut func next() -> optional<T>`;
 - the `for` binding has type `T`;
 - the second binding is the zero-based `int` index.
 
 **With index:**
 
-```ori
+```lua
 for item, index in items
     io.print(f"{index}: {item}")
 end
@@ -194,7 +194,7 @@ For `map<K, V>`: second binding is the value `V` (first is the key `K`).
 
 **Range iteration:**
 
-```ori
+```lua
 for i in 0..9
     io.print(string(i))
 end
@@ -208,7 +208,7 @@ end
 
 ## `repeat` — Fixed Count
 
-```ori
+```lua
 repeat 3
     attempt()
 end
@@ -227,7 +227,7 @@ otherwise it is a valid identifier.
 
 ## `match` — Pattern Matching
 
-```ori
+```lua
 match shape
 case Circle(radius):
     draw_circle(radius)
@@ -247,7 +247,7 @@ Rules:
 - Unreachable cases produce a compile warning.
 
 **Exhaustiveness requirement:**
-```ori
+```lua
 -- Error: non-exhaustive match (missing case for 'Point')
 match shape
 case Circle(r):
@@ -265,7 +265,7 @@ end
 
 **Guard:**
 
-```ori
+```lua
 match score
 case n if n >= 90:
     io.print("A")
@@ -278,7 +278,7 @@ end
 
 **Shorthand enum variant** (when enum type is known):
 
-```ori
+```lua
 match direction
 case .North:
     move_north()
@@ -295,7 +295,7 @@ end
 
 ## `using` — Resource Cleanup
 
-```ori
+```lua
 using file: ori.fs.File = try ori.fs.open_read(path)
 const content: string = try ori.fs.read_all(file)
 return success(content)
@@ -312,11 +312,18 @@ the binding goes out of scope, regardless of how the scope exits:
 
 Multiple `using` bindings are cleaned up in **reverse declaration order** (LIFO).
 
-The cleanup function for a type is defined by implementing `Disposable`:
+The cleanup function for a type is defined by applying `Disposable` with
+`apply Disposable to Type`:
 
-```ori
+```lua
 trait Disposable
     mut func dispose()
+end
+
+apply Disposable to File
+    mut func dispose()
+        self.close()
+    end
 end
 ```
 
@@ -324,7 +331,7 @@ end
 
 ## `check` — Programmer Assertion
 
-```ori
+```lua
 check count >= 0
 check index < len(items), "index out of expected range"
 ```
@@ -346,7 +353,7 @@ they are checked automatically at construction or call time.
 
 ## `break` and `continue`
 
-```ori
+```lua
 loop
     if done
         break           -- exit the loop
@@ -368,7 +375,7 @@ They are not valid outside of a loop body.
 Any expression may appear as a statement. The value is discarded.
 The most common use is a function call with side effects:
 
-```ori
+```lua
 io.print("hello")
 counter.increment()
 list.push(item)
@@ -384,7 +391,7 @@ propagation or handling, the compiler emits a warning: `unused result`.
 A block is a sequence of statements terminated by `end`.
 Blocks do not produce values (they are not expressions).
 
-```ori
+```lua
 -- Inside a function:
 const x: int = 1
 const y: int = 2

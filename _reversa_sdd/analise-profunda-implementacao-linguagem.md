@@ -67,7 +67,7 @@ Essa duplicacao e uma causa recorrente de divergencia.
 
 Programa:
 
-```ori
+```lua
 namespace app.main
 
 func main()
@@ -87,7 +87,7 @@ int64_t b = INT64_C(0);
 
 Programa:
 
-```ori
+```lua
 namespace app.main
 import ori.io as io
 
@@ -119,7 +119,7 @@ com `no errors`. Pela spec, funcao nao e comparavel.
 
 Programa:
 
-```ori
+```lua
 namespace app.main
 
 func main()
@@ -161,7 +161,7 @@ ori: missing function reference `iter.map` in native codegen
 
 Programa:
 
-```ori
+```lua
 namespace app.main
 import ori.math as math
 

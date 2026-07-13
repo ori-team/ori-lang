@@ -31,13 +31,13 @@ Mas `try expr` combina melhor com a filosofia da Ori:
 
 Regra de escrita recomendada:
 
-```ori
+```lua
 const config: Config = try read_config(path)
 ```
 
 Forma compacta permitida:
 
-```ori
+```lua
 const config: Config = read_config(path)?
 ```
 
@@ -278,7 +278,7 @@ outra versao para `string`.
 
 Exemplo:
 
-```ori
+```lua
 func identity<T>(value: T) -> T
     return value
 end

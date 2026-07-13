@@ -120,7 +120,7 @@ sh tools/smoke_native_release.sh
 
 ## 最初のプログラム
 
-```ori
+```lua
 namespace app.hello
 
 import ori.io as io
@@ -185,7 +185,7 @@ Ori の中心モデルは小さく保たれています。
 
 - すべてのファイルは `namespace` で始まります。
 - import はローカル alias を作ります。
-- top-level declaration は、`public` がない限り private です。
+- top-level declaration は、`pub` がない限り private です。
 - `struct` と `enum` はデータを定義します。
 - `trait` と `implement` は振る舞いを定義します。
 - `optional<T>` は値の不在を表します。
@@ -197,7 +197,7 @@ Ori の中心モデルは小さく保たれています。
 
 `result` の例:
 
-```ori
+```lua
 namespace app.errors
 
 import ori.io as io

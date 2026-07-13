@@ -12,7 +12,7 @@ It is available in every Ori program without explicit installation.
 
 Stdlib modules are imported explicitly:
 
-```ori
+```lua
 import ori.io as io
 import ori.fs as fs
 ```
@@ -169,14 +169,14 @@ Current collection limit:
 
 `lazy<T>` is available through `lazy.once` and `lazy.force`.
 
-```ori
+```lua
 const delayed: lazy<int> = lazy.once(do() => compute())
 const value: int = lazy.force(delayed)
 ```
 
 ### Built-in Functions
 
-```ori
+```lua
 len(text: string)            -- int: byte length of a string
 string(value: int)           -- string: convert an integer to text
 string(value: float)         -- string: convert a float to text
@@ -215,7 +215,7 @@ interpolated strings for user-defined concrete values that provide
 
 ## `ori.io` — Basic Input/Output
 
-```ori
+```lua
 import ori.io as io
 
 io.print(value: string)                              -> void
@@ -249,7 +249,7 @@ return errors.
 
 ### Layer 2 helpers (`ori.io.utils`)
 
-```ori
+```lua
 import ori.io.utils as iu
 
 iu.read_text(input: io.Input, max_chars: int)       -> result<optional<string>, string>
@@ -260,7 +260,7 @@ iu.write_text(output: io.Output, text: string)        -> result<int, string>
 
 ## `ori.fs` — File System
 
-```ori
+```lua
 import ori.fs as fs
 
 fs.read_text(path: string)             -> result<string, string>
@@ -287,7 +287,7 @@ compatibility alias for the same functions.
 
 Additional `.orl` helpers are available directly under `ori.fs`:
 
-```ori
+```lua
 import ori.fs only (read_text_or, remove_file)
 
 read_text_or(path: string, fallback: string) -> string
@@ -312,7 +312,7 @@ file-handle APIs are missing — see **Dedicated file handle** below.
 
 Status: **implemented** in the native runtime.
 
-```ori
+```lua
 import ori.fs as fs
 
 fs.open_read(path: string)  -> result<fs.File, string>
@@ -328,7 +328,7 @@ fs.close(file: fs.File)                  -> void
 
 ## `ori.string` — String Operations
 
-```ori
+```lua
 import ori.string as string
 
 string.len(s: string)                         -> int
@@ -353,7 +353,7 @@ string.from_bytes(b: bytes)                   -> result<string, string>
 
 Additional `.orl` helpers are available directly under `ori.string`:
 
-```ori
+```lua
 import ori.string only (is_empty, truncate as cut)
 
 is_empty(s: string)                           -> bool
@@ -369,7 +369,7 @@ kept for optional-style parsing where invalid input should become `none`.
 
 ## `ori.convert` - Type Conversion
 
-```ori
+```lua
 import ori.convert as conv
 
 conv.float_to_string(n: float)        -> string
@@ -386,7 +386,7 @@ today (`float_to_string`, `bool_to_string`, `string_to_int`,
 
 ## `ori.bytes` — Byte Operations
 
-```ori
+```lua
 import ori.bytes as bytes
 
 bytes.len(b: bytes)                          -> int
@@ -409,7 +409,7 @@ user-defined values that satisfy the checker rules for `Hashable` and
 
 `ori.list` also exposes small `.orl` helpers directly:
 
-```ori
+```lua
 import ori.list only (singleton, sum_int)
 
 get_or<T>(items: list<T>, index: int, fallback: T) -> T
@@ -421,7 +421,7 @@ binary_search_int(items: list<int>, target: int) -> int
 all_equal_int(items: list<int>, expected: int) -> bool
 ```
 
-```ori
+```lua
 import ori.deque as deque
 import ori.doubly_linked_list as dll
 import ori.graph as graph
@@ -705,7 +705,7 @@ The C backend keeps the original `list<int>` coverage for the full iterator
 surface, with additional string-specialized `sort`, `unique`, and `group_by`
 helpers.
 
-```ori
+```lua
 import ori.iter as iter
 
 iter.map<T, R>(values: list<T>, mapper: func(T) -> R) -> list<R>
@@ -765,7 +765,7 @@ Current implementation status:
 
 ## `ori.math` — Mathematics
 
-```ori
+```lua
 import ori.math as math
 
 math.abs(x: int) -> int
@@ -798,7 +798,7 @@ call should use the float overload.
 
 ## `ori.mem` - Memory Inspection
 
-```ori
+```lua
 import ori.mem as mem
 
 mem.size_of(value) -> int
@@ -811,7 +811,7 @@ The current parser does not support type-argument call syntax such as
 
 ## `ori.time` - Time
 
-```ori
+```lua
 import ori.time as time
 import ori.time only (Instant, Duration, instant_now, duration_seconds)
 
@@ -844,7 +844,7 @@ runtime ABI.
 
 ## `ori.format` - Presentation Formatting
 
-```ori
+```lua
 import ori.format as format
 
 format.number(value: float, decimals: int) -> string
@@ -874,7 +874,7 @@ blocked.
 
 ## `ori.random` — Random Numbers
 
-```ori
+```lua
 import ori.random as random
 
 random.int(min: int, max: int) -> int       -- inclusive range
@@ -906,7 +906,7 @@ Current implementation status:
 Status: implemented. `lazy<T>` stores a zero-argument thunk and caches the
 computed value after the first force.
 
-```ori
+```lua
 import ori.lazy as lz
 
 const delayed: lazy<int> = lz.once(do() => compute())
@@ -915,7 +915,7 @@ const value: int = lz.force(delayed)
 
 Functions:
 
-```ori
+```lua
 lazy.once<T>(thunk: func() -> T) -> lazy<T>
 lazy.force<T>(value: lazy<T>) -> T
 ```
@@ -970,7 +970,7 @@ Async bodies outside the current subset fail with `backend.native_unsupported`
 before Cranelift. `task.block_on` stays available only as an explicit sync
 bridge.
 
-```ori
+```lua
 import ori.task as task
 
 task.spawn<T>(work: func() -> T) -> task.Job<T>
@@ -1021,7 +1021,7 @@ generated async frame reaches its terminal state.
 
 Status: implemented in the native runtime with real synchronization.
 
-```ori
+```lua
 import ori.channel as channel
 
 channel.create<T>() -> channel.Channel<T>
@@ -1048,7 +1048,7 @@ The error values are opaque handles: `channel.SendError` and
 
 Status: implemented in the native runtime.
 
-```ori
+```lua
 import ori.atomic as atomic
 
 atomic.new(value: int) -> atomic.AtomicInt
@@ -1066,7 +1066,7 @@ intentionally deferred until there is a concrete need.
 
 Status: **implemented** in the native runtime with a structured recursive value type.
 
-```ori
+```lua
 import ori.json as json
 
 enum Value
@@ -1104,7 +1104,7 @@ were discovered and how many matched the filter.
 
 The `ori.test` module is importable today for basic assertion helpers.
 
-```ori
+```lua
 import ori.test as test
 import ori.task as task
 
@@ -1141,7 +1141,7 @@ standard-library features when generated C would not preserve Ori semantics.
 
 ## `ori.net` — Networking (TCP/TLS/UDP)
 
-```ori
+```lua
 import ori.net as net
 
 net.connect(host, port, timeout_ms) -> result<net.Connection, string>
@@ -1178,7 +1178,7 @@ Current implementation notes:
 
 ## `ori.os` — Operating System
 
-```ori
+```lua
 import ori.os as os
 
 os.args() -> list<string>        -- command-line arguments
@@ -1204,7 +1204,7 @@ Current implementation notes:
 
 ## `ori.args` - CLI Arguments
 
-```ori
+```lua
 import ori.args as args
 
 args.all() -> list<string>
@@ -1219,7 +1219,7 @@ args.program_name_or(fallback: string) -> string
 
 ## `ori.log` - Minimal Logging
 
-```ori
+```lua
 import ori.log as log
 
 log.info(message: string)
@@ -1235,7 +1235,7 @@ The first version is intentionally simple and CLI-oriented. `info`, `warn`, and
 
 ## `ori.config` - Local Config Helpers
 
-```ori
+```lua
 import ori.config as config
 
 config.read_text(path: string) -> result<string, string>
@@ -1256,7 +1256,7 @@ Status: implemented base value type. `import ori.Error` is accepted. Prefer an
 alias when constructing the value, because `error(...)`/`Error(...)` are also
 result wrapper forms.
 
-```ori
+```lua
 struct ori.Error
     code: string
     message: string

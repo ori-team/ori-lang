@@ -7,7 +7,7 @@ o codigo do compilador.
 
 ## CLI que le argumentos
 
-```ori
+```lua
 namespace app.main
 
 import ori.args as args
@@ -27,7 +27,7 @@ ori run src/main.orl
 
 ## Ler configuracao local
 
-```ori
+```lua
 namespace app.main
 
 import ori.config as config
@@ -43,7 +43,7 @@ Use `config.read_json(path)` quando o arquivo precisar ser JSON estruturado.
 
 ## Trabalhar com arquivos
 
-```ori
+```lua
 namespace app.main
 
 import ori.fs as fs
@@ -63,7 +63,7 @@ end
 
 ## Medir tempo
 
-```ori
+```lua
 namespace app.main
 
 import ori.io as io
@@ -88,7 +88,7 @@ demo.math = { path = "../math", version = "0.1.0" }
 
 No codigo:
 
-```ori
+```lua
 import demo.math only (double)
 ```
 

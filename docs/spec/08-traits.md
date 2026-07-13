@@ -1,4 +1,4 @@
-# Ori Language Specification — Chapter 08: Traits and Implement
+# Ori Language Specification — Chapter 08: Traits and Apply
 
 > Status: normative
 > Audience: compiler implementers, language designers
@@ -8,7 +8,7 @@
 ## Overview
 
 Traits describe behavior. They declare what a type must be able to do.
-`implement` blocks attach trait behavior to a type.
+**`apply Trait to Type`** blocks attach trait behavior to a type.
 
 Traits are Ori's mechanism for polymorphism. There is no class inheritance.
 
@@ -16,7 +16,7 @@ Traits are Ori's mechanism for polymorphism. There is no class inheritance.
 
 ## Trait Declaration
 
-```ori
+```lua
 trait Drawable
     func draw(canvas: Canvas)
 end
@@ -36,7 +36,7 @@ trait must provide a concrete implementation for every required method.
 
 Traits may provide default implementations:
 
-```ori
+```lua
 trait Displayable
     func display(self) -> string
 
@@ -57,7 +57,7 @@ end
 `Self` inside a trait declaration refers to the concrete type that implements
 the trait:
 
-```ori
+```lua
 trait Cloneable
     func clone() -> Self
 end
@@ -69,10 +69,10 @@ end
 
 ---
 
-## `implement` Blocks
+## `apply` Blocks
 
-```ori
-implement Drawable for Circle
+```lua
+apply Drawable to Circle
     func draw(canvas: Canvas)
         canvas.draw_circle(self.center, self.radius)
     end
@@ -80,25 +80,28 @@ end
 ```
 
 Rules:
-- `implement Trait for Type` — attaches `Trait` to `Type`.
+- `apply Trait to Type` — attaches `Trait` to `Type`.
 - All required methods from the trait must be implemented.
 - Default methods may be omitted (the trait's default is used) or overridden.
-- `implement` blocks are not inside `struct` or `trait` declarations; they stand alone.
-- Multiple traits may be implemented for the same type.
-- A trait may be implemented for a type in any namespace that can see both.
+- `apply` blocks are not inside `struct` or `trait` declarations; they stand alone.
+- Multiple traits may be applied to the same type.
+- A trait may be applied to a type in any namespace that can see both.
+- **Deprecated form (do not use in new code):** `implement Trait for Type`
+  remains accepted and emits `parse.deprecated_implement`. Prefer
+  `apply Trait to Type`.
 
 ---
 
-## `mut func` in Traits and Implement
+## `mut func` in Traits and Apply
 
-```ori
+```lua
 trait Stackable<T>
     mut func push(item: T)
     mut func pop() -> optional<T>
     func peek() -> optional<T>
 end
 
-implement Stackable<int> for IntStack
+apply Stackable<int> to IntStack
     mut func push(item: int)
         self.items.push(item)
     end
@@ -122,7 +125,7 @@ be `mut func`.
 
 Traits may be generic over a type parameter:
 
-```ori
+```lua
 trait Container<Item>
     mut func add(item: Item)
     func get(index: int) -> optional<Item>
@@ -130,10 +133,10 @@ trait Container<Item>
 end
 ```
 
-Implementing a generic trait for a concrete type:
+Applying a generic trait to a concrete type:
 
-```ori
-implement Container<string> for StringBag
+```lua
+apply Container<string> to StringBag
     mut func add(item: string)
         self.items.push(item)
     end
@@ -214,10 +217,10 @@ implementation provides `mut func next() -> optional<T>`.
 
 The item type is inferred from the `optional<T>` returned by `next`.
 
-```ori
+```lua
 import ori.core as core
 
-implement core.Iterable for CountUp
+apply core.Iterable to CountUp
     mut func next() -> optional<int>
         if self.current > self.limit
             return none
@@ -233,16 +236,16 @@ for n in CountUp(current: 1, limit: 5)
 end
 ```
 
-Current limitation: `implement Iterable<int> for Type` syntax is not part of
-the parser yet. Use `implement core.Iterable for Type` and let `next` define
+Current limitation: generic `apply Iterable<int> to Type` syntax is not part of
+the parser yet. Use `apply core.Iterable to Type` and let `next` define
 the item type.
 
 ---
 
 ## `From<T>` — Explicit Conversion
 
-```ori
-implement From<int> for string
+```lua
+apply From<int> to string
     func from(value: int) -> string
         return string(value)
     end
@@ -255,13 +258,13 @@ const s: string = string.from(42)
 
 ## `Error` Trait — Typed Errors
 
-```ori
+```lua
 struct NetworkError
     code: int
     message: string
 end
 
-implement Error for NetworkError
+apply Error to NetworkError
     func message() -> string
         return f"Network error {self.code}: {self.message}"
     end
@@ -281,13 +284,13 @@ may be an error), but stdlib functions expect `Error`-implementing types.
 When a method is called on a value, the compiler resolves the implementation:
 
 1. Check the type's **inherent methods** (defined in `struct` block).
-2. Check all `implement Trait for Type` blocks visible in scope.
+2. Check all `apply Trait to Type` blocks visible in scope.
 3. If the method is unambiguous, call it.
 4. If the method name matches two traits simultaneously: **compile error** (ambiguous).
 
 **Disambiguation:**
 
-```ori
+```lua
 -- If both Printable and Loggable define 'output()', use explicit trait call:
 Printable.output(shape)
 Loggable.output(shape)
@@ -295,9 +298,9 @@ Loggable.output(shape)
 
 ---
 
-## Overlapping Implementations
+## Overlapping Apply Blocks
 
-Two `implement` blocks for the same `Trait`/`Type` pair in the same scope
+Two `apply` blocks for the same `Trait`/`Type` pair in the same scope
 are a **compile error**.
 
 ---
@@ -307,7 +310,7 @@ are a **compile error**.
 `any<Trait>` is a dynamic trait object: a value whose concrete type is not
 known at compile time, but which is guaranteed to implement `Trait`.
 
-```ori
+```lua
 const shape: any<Drawable> = Circle(radius: 10.0)
 shape.draw(canvas)
 ```
@@ -319,7 +322,7 @@ The concrete type is erased; the compiler generates a vtable.
 `Equatable` implementation is invoked when both operands implement the trait
 constraint. Prefer generics for performance-sensitive paths.
 
-```ori
+```lua
 const a: any<core.Equatable> = 1
 const b: any<core.Equatable> = 1
 const same: bool = a == b   -- ok: structural equality via vtable
@@ -335,9 +338,9 @@ const same: bool = a == b   -- ok: structural equality via vtable
 | --- | --- | --- |
 | Trait declaration (required + default methods) | implemented | `ori_spec.rs` — `trait_accepts_required_and_default_methods` |
 | `Self` in trait signatures | implemented | `ori_spec.rs` — `generic_accepts_type_inference` |
-| `implement Trait for Type` blocks | implemented | `method_resolution.rs` — `build_lowers_implement_method_call` |
+| `apply Trait to Type` blocks | implemented | `method_resolution.rs` — `build_lowers_implement_method_call` |
 | Missing required method rejected | implemented | `ori_spec.rs` — `trait_rejects_implement_missing_required_method` |
-| `mut func` in traits/implement (`Disposable`) | implemented | `multifile_imports.rs` — `check_accepts_core_traits_and_using_core_disposable` |
+| `mut func` in traits/`apply` (`Disposable`) | implemented | `multifile_imports.rs` — `check_accepts_core_traits_and_using_core_disposable` |
 | Generic traits (`Container<T>`) | implemented | `ori_spec.rs` — `generic_accepts_generic_struct` |
 | HKT, associated types, const generics | implemented | `ori_spec.rs` — `generic_accepts_hkt`, `generic_accepts_associated_type_in_trait`, `generic_accepts_const_generic_param` |
 | Operator traits (`Comparable`, `Equatable`, `Hashable`) | implemented | `collections.rs` — `check_accepts_hash_table_user_defined_hashable_equatable_key`, `check_rejects_heap_without_comparable_element` |
@@ -345,7 +348,7 @@ const same: bool = a == b   -- ok: structural equality via vtable
 | `==` / `!=` on `any<Trait>` via vtable | implemented | `ori_spec.rs` — `trait_object_equality_works` |
 | `core.Iterable` + `for` loops | implemented | `collections.rs` — `compile_runs_custom_iterable_native`, `check_reports_non_iterable_for_loop` |
 | Disambiguation via `Trait.method(value)` | implemented | `ori_spec.rs` — `trait_rejects_ambiguous_method_call` |
-| Overlapping `implement` blocks | rejected (compile error) | `method_resolution.rs` — `check_reports_duplicate_implement_pair` |
+| Overlapping `apply` blocks | rejected (compile error) | `method_resolution.rs` — `check_reports_duplicate_implement_pair` |
 
 The `any<Trait>` equality example above (lines 320–324) compiles and runs as
 the `trait_object_equality_works` test: two `Circle` values with the same

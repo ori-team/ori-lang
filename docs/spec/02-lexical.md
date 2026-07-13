@@ -27,7 +27,7 @@ Recommended indentation: 4 spaces.
 
 ### Line Comments
 
-```ori
+```lua
 -- this is a line comment
 ```
 
@@ -36,7 +36,7 @@ line is ignored by the compiler.
 
 ### Block Comments
 
-```ori
+```lua
 --|
 This is a block comment.
 It spans multiple lines.
@@ -64,7 +64,7 @@ Current implementation status:
 A block comment placed immediately before a declaration is treated as a
 **documentation comment** for `ori doc`:
 
-```ori
+```lua
 --|
 Calculates the area of a rectangle.
 @param width  Width in pixels (must be positive).
@@ -73,7 +73,7 @@ Calculates the area of a rectangle.
 @example
     const a: int = area(10, 5)  -- 50
 |--
-public func area(width: int, height: int) -> int
+pub func area(width: int, height: int) -> int
     return width * height
 end
 ```
@@ -95,12 +95,12 @@ implemented.
 The following identifiers are reserved and cannot be used as user-defined names:
 
 ```
-namespace  import     as         public
+namespace  import     as         pub        public
 func       return     end        const      var
 if         else       while      for        in
 repeat     break      continue
 match      case       loop
-struct     trait      implement  enum
+struct     trait      apply      implement  enum
 where      is         alias      do
 and        or         not
 true       false      none       success    error    some
@@ -109,6 +109,17 @@ any        optional   result     list       map      set
 range      void
 using      check      with       then       tuple    lazy
 ```
+
+### Canonical keywords (use these)
+
+| Role | Canonical | Deprecated alias (emits warning) |
+|------|-----------|----------------------------------|
+| Visibility | **`pub`** | `public` → `parse.deprecated_public` |
+| Trait attachment | **`apply Trait to Type`** | `implement Trait for Type` → `parse.deprecated_implement` |
+
+New code, examples, and documentation **must** use `pub` and `apply`. The
+deprecated spellings remain in the reserved-word list only so the parser can
+accept and warn on existing sources until they are migrated.
 
 Note: `times` was removed from the reserved list. See Contextual Keywords below.
 
@@ -125,6 +136,10 @@ be used as identifiers elsewhere:
 | `it` | Inside an `if` value contract on a field or parameter — refers to the value being checked |
 | `times` | After `repeat expression` — optional readability word: `repeat 5 times` |
 | `try` | Before an expression — readable propagation form: `try read_config(path)` |
+| `to` | After the trait name in `apply Trait to Type`, or in `map of K to V` |
+| `of` | After a single-arg type constructor: `list of string`; also starts `map of` |
+| `by` | After a range `start..end by step` |
+| `imports` | Starts an `imports … end` import batch block |
 
 ---
 
@@ -155,14 +170,14 @@ Shadowing of an existing binding in the same scope is a compile error.
 
 ### Boolean
 
-```ori
+```lua
 true
 false
 ```
 
 ### Integer
 
-```ori
+```lua
 0
 42
 1_000_000       -- underscores allowed as separators
@@ -174,14 +189,14 @@ false
 The default integer type is `int` (64-bit signed). Explicit suffixes select a
 specific width:
 
-```ori
+```lua
 42i8    42i16    42i32    42i64
 42u8    42u16    42u32    42u64
 ```
 
 ### Float
 
-```ori
+```lua
 3.14
 1.0e10
 1.0e-5
@@ -190,7 +205,7 @@ specific width:
 
 The default float type is `float` (64-bit). Explicit suffix:
 
-```ori
+```lua
 3.14f32    3.14f64
 ```
 
@@ -198,7 +213,7 @@ The default float type is `float` (64-bit). Explicit suffix:
 
 Single-line strings are delimited by double quotes:
 
-```ori
+```lua
 "hello"
 "line one\nline two"
 "tab\there"
@@ -219,7 +234,7 @@ Escape sequences:
 
 ### Multi-line Strings (Triple-quote)
 
-```ori
+```lua
 const sql: string = """
     SELECT *
     FROM users
@@ -237,7 +252,7 @@ Rules:
 
 ### Interpolated Strings
 
-```ori
+```lua
 const name: string = "Ada"
 const greeting: string = f"hello {name}"
 const detail: string = f"score: {score + 1}"
@@ -252,7 +267,7 @@ Rules:
 
 ### Byte Strings
 
-```ori
+```lua
 const raw: bytes = b"hello"
 const hex: bytes = b"\xFF\x00"
 ```
@@ -261,7 +276,7 @@ Prefix `b` produces a `bytes` literal. No Unicode escapes in `b"..."`.
 
 ### Range Literals
 
-```ori
+```lua
 0..9        -- range<int>: 0, 1, 2, ..., 9  (inclusive both ends)
 5..3        -- range<int>: 5, 4, 3          (descending, inclusive)
 ```
@@ -299,7 +314,7 @@ The `--|` / `|--` tokens delimit block and documentation comments.
 
 Fields of a `tuple<...>` are accessed by integer index after `.`:
 
-```ori
+```lua
 const pair: tuple<int, string> = tuple(1, "one")
 const n: int    = pair.0
 const s: string = pair.1
@@ -322,14 +337,14 @@ Current implementation status:
 
 Attributes are reserved for declaration metadata:
 
-```ori
+```lua
 @test
 func test_addition()
     check 1 + 1 == 2
 end
 
 @deprecated("use new_api() instead")
-public func old_api() -> int
+pub func old_api() -> int
 
 @inline
 func hot_path(n: int) -> int
@@ -377,7 +392,7 @@ Use `a < b and b < c` instead.
 
 | Category | Examples |
 |---|---|
-| Keywords | `func`, `struct`, `namespace`, `implement`, `loop`, `do` ... |
+| Keywords | `func`, `struct`, `namespace`, `pub`, `apply`, `loop`, `do` ... |
 | Identifiers | `player`, `User`, `get_name`, `_internal` |
 | Integer literals | `0`, `42`, `0xFF`, `1_000` |
 | Float literals | `3.14`, `1.0e10` |

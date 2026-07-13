@@ -29,7 +29,7 @@ A program is read many more times than it is written. Ori makes each read cheape
 - **Where absence can happen** — `optional<T>` is the only representation of absence.
 - **Where failure can happen** — `result<T, E>` is the only representation of recoverable failure.
 - **When resources are released** — `using` makes cleanup visible and deterministic.
-- **When behavior comes from a trait** — `implement` blocks are explicit and named.
+- **When behavior comes from a trait** — `apply` blocks are explicit and named.
 
 ---
 
@@ -61,29 +61,29 @@ An Ori program is a set of **namespaces**.
 
 Each namespace is a source file. The namespace name is declared first.
 
-```ori
+```lua
 namespace app.inventory
 
 import ori.io as io
 
-public func item_count() -> int
+pub func item_count() -> int
     return 42
 end
 ```
 
 Imports create local namespace aliases. A plain import is local to the file.
 
-`public import` re-exports that alias through the current namespace:
+`pub import` re-exports that alias through the current namespace:
 
-```ori
+```lua
 namespace app.api
 
-public import app.inventory as inventory
+pub import app.inventory as inventory
 ```
 
 A consumer can then write:
 
-```ori
+```lua
 namespace app.main
 
 import app.api as api
@@ -102,7 +102,9 @@ Current compiler behavior:
 - `import app.util as tools` creates the local alias `tools`.
 - `import app.util only (parse, render as draw)` brings only those exported
   members into the local file, preserving the origin in the import line.
-- `public import app.util as tools` re-exports that alias through the current
+- An `imports … end` block groups several import lines without repeating the
+  `import` keyword on each line.
+- `pub import app.util as tools` re-exports that alias through the current
   namespace.
 - Imports are resolved from namespace-like paths to matching `.orl` files near
   the importing file.
@@ -116,12 +118,22 @@ Current compiler behavior:
 Selective imports are intended for files that need only a few names from a
 long module path:
 
-```ori
+```lua
 import ori.string only (is_empty, truncate as cut)
 
 func main()
     const empty: bool = is_empty("")
     const label: string = cut("abcdef", 3)
+end
+```
+
+Batch form:
+
+```lua
+imports
+    ori.io only (print)
+    ori.string only (is_empty)
+    app.util as util
 end
 ```
 
@@ -134,18 +146,21 @@ If two imports introduce the same local name, the compiler emits
 Current visibility rules:
 
 - Top-level declarations are private by default.
-- `public` makes a declaration visible to other namespaces.
+- **`pub`** makes a declaration visible to other namespaces. This is the
+  only form that should appear in new code and documentation examples.
+- The spelling **`public`** is a deprecated alias for `pub` and emits
+  `parse.deprecated_public`. Prefer `pub`.
 - Private declarations remain usable inside the namespace that defines them.
 - Accessing a private imported declaration emits `name.private`.
-- `public import` re-exports a public alias; plain `import` does not.
-- For public functions, parameter names are part of the public API because
+- `pub import` re-exports a public alias; plain `import` does not.
+- For `pub` functions, parameter names are part of the external API because
   named arguments may use them at call sites.
 
 The common path through Ori code:
 
 1. Define data shapes with `struct` and `enum`.
 2. Define behavior contracts with `trait`.
-3. Attach behavior with `implement Trait for Type`.
+3. Attach behavior with `apply Trait to Type`.
 4. Return `optional<T>` when a value may be absent.
 5. Return `result<T, E>` when an operation may fail.
 6. Use `using` to bind resources that need deterministic cleanup.
@@ -155,7 +170,7 @@ The common path through Ori code:
 
 ## Complete Introductory Example
 
-```ori
+```lua
 namespace app.main
 
 import ori.io as io
@@ -166,7 +181,7 @@ struct User
     age: int if it >= 0
 end
 
-implement core.Displayable for User
+apply core.Displayable to User
     func display(self) -> string
         return f"{self.name} ({self.age})"
     end
@@ -198,7 +213,7 @@ Key differences from Zenith:
 | Zenith | Ori |
 |---|---|
 | `text` | `string` |
-| `apply Trait to Type` | `implement Trait for Type` |
+| `apply Trait to Type` | `apply Trait to Type` (canonical form) |
 | `func f(mut self)` | `mut func f()` |
 | `while true` | `loop` |
 | `type Alias = T` | `alias Alias = T` |
@@ -221,7 +236,7 @@ Key differences from Zenith:
 | 05 | Expressions |
 | 06 | Statements and Control Flow |
 | 07 | Functions and Closures |
-| 08 | Traits and Implement |
+| 08 | Traits and Apply |
 | 09 | Errors and Propagation |
 | 10 | Memory and Cleanup |
 | 11 | Generics and Constraints |

@@ -36,7 +36,7 @@ All literal forms are expressions. Their types are:
 
 ## Arithmetic Expressions
 
-```ori
+```lua
 a + b       -- addition (requires Addable)
 a - b       -- subtraction (requires Subtractable)
 a * b       -- multiplication (requires Multiplicable)
@@ -56,7 +56,7 @@ to user-defined types. On primitives, these operators work directly.
 
 ## Comparison Expressions
 
-```ori
+```lua
 a == b      -- equality
 a != b      -- inequality
 a < b       -- less than (requires Comparable)
@@ -74,7 +74,7 @@ For user-defined types:
 
 **Comparison chaining is a compile error:**
 
-```ori
+```lua
 -- Error: comparison chaining not allowed
 a < b < c
 
@@ -86,7 +86,7 @@ a < b and b < c
 
 ## Boolean Expressions
 
-```ori
+```lua
 a and b     -- logical and (short-circuit)
 a or b      -- logical or (short-circuit)
 not a       -- logical not
@@ -99,7 +99,7 @@ not a       -- logical not
 
 ## Field Access
 
-```ori
+```lua
 user.name
 config.timeout
 point.x
@@ -112,7 +112,7 @@ Field access on an enum variant's payload uses the variant's field names.
 
 ## Index and Slice
 
-```ori
+```lua
 items[0]          -- index: returns element type T
 items[2..5]       -- slice: returns list<T>, elements at 2, 3, 4
 items[2..]        -- slice from index 2 to end
@@ -129,7 +129,7 @@ Slice bounds are checked at runtime and use an exclusive end:
 
 ## Function Calls
 
-```ori
+```lua
 add(1, 2)
 io.print("hello")
 user.display()
@@ -137,7 +137,7 @@ user.display()
 
 **Named arguments:**
 
-```ori
+```lua
 connect(host: "localhost", port: 8080)
 format.date(millis, style: "iso")
 ```
@@ -147,7 +147,7 @@ be named.
 
 **Spread into variadic:**
 
-```ori
+```lua
 const parts: list<string> = ["a", "b", "c"]
 concat(..parts)
 ```
@@ -156,7 +156,7 @@ concat(..parts)
 
 ## Await Expression
 
-```ori
+```lua
 const value: int = await compute()
 await task.sleep(1)
 ```
@@ -193,7 +193,7 @@ with the same semantics.
 
 On `result<T, E>`:
 
-```ori
+```lua
 const value: T = try fallible_operation()
 -- If error(e): returns error(e) from the enclosing function
 -- If success(v): unwraps to v
@@ -201,7 +201,7 @@ const value: T = try fallible_operation()
 
 On `optional<T>`:
 
-```ori
+```lua
 const value: T = try maybe_value
 -- If none: returns none from the enclosing function
 -- If some(v): unwraps to v
@@ -220,7 +220,7 @@ Rules:
 The pipe operator passes the left-hand value as the first argument to the
 right-hand function call.
 
-```ori
+```lua
 const result: list<string> =
     users
     |> iter.filter(do(u: User) => u.active)
@@ -234,7 +234,7 @@ const result: list<string> =
 
 ## If Expression (Inline)
 
-```ori
+```lua
 const label: string = if active then "on" else "off"
 ```
 
@@ -249,7 +249,7 @@ Rules:
 
 See Chapter 07 — Functions and Closures for full specification.
 
-```ori
+```lua
 do(x: int) => x * 2                     -- inline: produces func(int) -> int
 do(x: int) -> int ... end               -- block closure
 ```
@@ -260,16 +260,19 @@ do(x: int) -> int ... end               -- block closure
 
 **Full form** — always valid, type is explicit:
 
-```ori
+```lua
 const p: Point = Point(x: 0, y: 0)
 const u: User  = User(name: "Ada", age: 36)
 ```
 
-**Anonymous form** — `.{field: value}` when the type is known from context:
+**Anonymous / guided forms** — when the type is known from context:
 
-```ori
--- From type annotation
+```lua
+-- Dot form
 const p: Point = .{x: 0, y: 0}
+
+-- Parenthesized guided construction (same meaning)
+const u: User = (name: "Ada", age: 36)
 
 -- From function return type
 func origin() -> Point
@@ -288,12 +291,14 @@ const p: Point = .{}
 ```
 
 The `.{` prefix is unambiguous — it cannot be confused with a map literal
-(`{"key": value}`) or a block.
+(`{"key": value}`) or a block. The parenthesized form `(field: value, …)` is
+only recognized when the first token after `(` is `name:`; otherwise `(…)`
+remains grouping or a tuple.
 
 Rules:
 - All fields must be provided unless the type implements `Default`.
 - Field names are required (positional construction is not allowed).
-- If the expected type cannot be inferred, `.{...}` is a compile error:
+- If the expected type cannot be inferred, anonymous construction is a compile error:
   `error[type.anon_struct_type_unknown]`.
 - If a field name does not exist on the target struct:
   `error[type.anon_struct_field_mismatch]`.
@@ -304,7 +309,7 @@ Rules:
 
 Creates a new struct value with selected fields overridden:
 
-```ori
+```lua
 const updated: Config = original with {
     verbose: true,
     timeout: 60,
@@ -320,7 +325,7 @@ The result is a new value; `original` is not mutated.
 
 **Full form:**
 
-```ori
+```lua
 Direction.North
 Shape.Circle(radius: 10.0)
 Shape.Rectangle(width: 5.0, height: 3.0)
@@ -328,7 +333,7 @@ Shape.Rectangle(width: 5.0, height: 3.0)
 
 **Shorthand** (when the enum type is known from context):
 
-```ori
+```lua
 const d: Direction = .North
 const s: Shape = .Circle(radius: 5.0)
 ```
@@ -336,7 +341,7 @@ const s: Shape = .Circle(radius: 5.0)
 Ori does not use `.Variant{field: value}` for enum construction. Named enum
 variants use call syntax, both in the full form and in the shorthand form:
 
-```ori
+```lua
 const a: Shape = Shape.Rectangle(width: 5.0, height: 3.0)
 const b: Shape = .Rectangle(width: 5.0, height: 3.0)
 ```
@@ -348,7 +353,7 @@ which use `.{field: value}`.
 
 ## Collection Literals
 
-```ori
+```lua
 -- list
 const names: list<string> = ["Ana", "Bo", "Cara"]
 
@@ -364,7 +369,7 @@ const pair: tuple<int, string> = tuple(1, "one")
 
 Empty collections must have their type annotated:
 
-```ori
+```lua
 const empty: list<int> = []
 const empty_map: map<int, int> = {}
 ```
@@ -373,7 +378,7 @@ const empty_map: map<int, int> = {}
 
 ## Range Expression
 
-```ori
+```lua
 0..9        -- range<int>: 0 to 9 inclusive
 5..3        -- range<int>: 5, 4, 3 (descending)
 ```
@@ -390,7 +395,7 @@ iterator helper when a floating-point step is needed.
 
 Tests whether a dynamic value has a specific type:
 
-```ori
+```lua
 if shape is Circle
     -- shape is narrowed to Circle in this block
 end
