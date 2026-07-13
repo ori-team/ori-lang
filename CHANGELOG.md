@@ -13,6 +13,9 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > **Política de versionamento (2026-06-29):** Congelado em `0.2.x`. Os marcos abaixo permanecem em `[Unreleased]` sem atribuir versão — `0.3.0` só quando houver breaking change real que usuários precisem saber. Patch versions (`0.2.1`, `0.2.2`) para correções e small additive features. `1.0` é critério de maturidade (Rust dependency removida, stdlib portada em `.orl`, self-hosting, ABI estável, usuários reais, sem breaking changes por ≥6 meses) — longo prazo, anos não dias. Ver comparação com pares (Zig 0.14 após ~10 anos, Rust 0.12 pre-1.0 após ~6 anos) em `AGENTS.md` "Versioning policy".
 
 ### Adicionado
+- **Runtime/DAP cooperativo (Ori IDE):** agent `debug_agent` no `ori-runtime` (`ori_debug_line` / `ori_debug_init`) ativado por `ORI_DEBUG_PORT`; codegen nativo instrumenta statements quando `ORI_DEBUG_INSTRUMENT=1` + `ORI_DEBUG_SOURCE=<path>`; adapter `ori-dap` (repo ori-ide) faz bind TCP e controla continue/step/breakpoints.
+
+### Adicionado
 - **GitHub syntax highlighting:** `.gitattributes` mapeia `*.orl → Lua` para highlighting aproximado de arquivos `.orl` no GitHub (blocos `end`, comentários `--`, keywords `func`/`if`/`while`). Todos os code fences ` ```ori ` nos 26 markdowns do repo (READMEs, specs, guides, planning — 241 ocorrências) trocados para ` ```lua ` para highlighting imediato no GitHub.
 - **Shiki grammar (ori-website):** `extensions/shiki/ori.tmLanguage.json` + `README.md` — gramática TextMate para integração com Astro Starlight/Shiki, permitindo ` ```ori ` com highlighting perfeito de Ori no site de docs.
 

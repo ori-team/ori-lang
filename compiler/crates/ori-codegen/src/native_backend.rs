@@ -32,6 +32,8 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_arc_update_edge",
     "ori_alloc",
     "ori_bool_to_string_parts",
+    "ori_debug_init",
+    "ori_debug_line",
     "ori_deque_iterator_new",
     "ori_deque_iterator_next",
     "ori_queue_iterator_new",
@@ -523,11 +525,15 @@ impl NativeHirValidator {
                 self.expr(then)?;
                 self.expr(else_)?;
             }
-            HirExprKind::Range { start, end } => {
+            HirExprKind::Range { start, end, step } => {
                 self.expr(start)?;
                 self.expr(end)?;
                 self.expect_integer(&start.ty, "range start", start.span)?;
                 self.expect_integer(&end.ty, "range end", end.span)?;
+                if let Some(step) = step {
+                    self.expr(step)?;
+                    self.expect_integer(&step.ty, "range step", step.span)?;
+                }
             }
             HirExprKind::MapLit {
                 key_ty,
@@ -887,8 +893,10 @@ fn expr_contains_await(expr: &HirExpr) -> bool {
         HirExprKind::IfExpr { cond, then, else_ } => {
             expr_contains_await(cond) || expr_contains_await(then) || expr_contains_await(else_)
         }
-        HirExprKind::Range { start, end, .. } => {
-            expr_contains_await(start) || expr_contains_await(end)
+        HirExprKind::Range { start, end, step, .. } => {
+            expr_contains_await(start)
+                || expr_contains_await(end)
+                || step.as_ref().map(|s| expr_contains_await(s)).unwrap_or(false)
         }
         HirExprKind::Propagate(inner) => expr_contains_await(inner),
         HirExprKind::InterpolatedStr(parts) => parts.iter().any(|part| match part {
@@ -1070,9 +1078,12 @@ fn expr_collect_var_uses(expr: &HirExpr, uses: &mut HashSet<SmolStr>) {
             expr_collect_var_uses(then, uses);
             expr_collect_var_uses(else_, uses);
         }
-        HirExprKind::Range { start, end, .. } => {
+        HirExprKind::Range { start, end, step, .. } => {
             expr_collect_var_uses(start, uses);
             expr_collect_var_uses(end, uses);
+            if let Some(step) = step {
+                expr_collect_var_uses(step, uses);
+            }
         }
         HirExprKind::StructUpdate { base, updates, .. } => {
             expr_collect_var_uses(base, uses);
@@ -1473,10 +1484,18 @@ fn simple_async_lift_expr_awaits(
                 span: expr.span,
             })
         }
-        HirExprKind::Range { start, end } => Some(HirExpr {
+        HirExprKind::Range { start, end, step } => Some(HirExpr {
             kind: HirExprKind::Range {
                 start: Box::new(simple_async_lift_expr_awaits(start, awaits, first_index)?),
                 end: Box::new(simple_async_lift_expr_awaits(end, awaits, first_index)?),
+                step: match step {
+                    Some(step) => Some(Box::new(simple_async_lift_expr_awaits(
+                        step,
+                        awaits,
+                        first_index,
+                    )?)),
+                    None => None,
+                },
             },
             ty: expr.ty.clone(),
             span: expr.span,
@@ -2289,9 +2308,12 @@ impl GeneralAsyncCollector {
                 self.collect_expr(then);
                 self.collect_expr(else_);
             }
-            HirExprKind::Range { start, end } => {
+            HirExprKind::Range { start, end, step } => {
                 self.collect_expr(start);
                 self.collect_expr(end);
+                if let Some(step) = step {
+                    self.collect_expr(step);
+                }
             }
             HirExprKind::StructUpdate { base, updates, .. } => {
                 self.collect_expr(base);
@@ -2508,7 +2530,15 @@ fn compute_enum_layout(variants: &[ori_hir::hir::HirVariant], ptr_ty: types::Typ
     let mut max_payload_align = 1u8;
 
     for (tag_idx, v) in variants.iter().enumerate() {
-        let payload_layout = compute_struct_layout(&v.fields, ptr_ty, false);
+        // Enums use natural (repr(C)-style) alignment for the payload so the
+        // payload offset respects field alignment requirements (e.g. a pointer
+        // field forces 8-byte alignment, placing the payload at offset 8 after
+        // the i32 tag). The runtime constructs enum values assuming this
+        // layout (e.g. `ori_json_value` writes the payload at offset 8).
+        // Using packed layout (repr_c=false) would place the payload at offset
+        // 4, mismatching the runtime and yielding misaligned/garbage pointers
+        // when binding variant fields in `match` arms.
+        let payload_layout = compute_struct_layout(&v.fields, ptr_ty, true);
         if payload_layout.size > max_payload_size {
             max_payload_size = payload_layout.size;
         }
@@ -2711,9 +2741,12 @@ fn collect_tys_from_expr(expr: &HirExpr, tuples: &mut HashSet<Vec<Ty>>) {
             collect_tys_from_expr(then, tuples);
             collect_tys_from_expr(else_, tuples);
         }
-        HirExprKind::Range { start, end } => {
+        HirExprKind::Range { start, end, step } => {
             collect_tys_from_expr(start, tuples);
             collect_tys_from_expr(end, tuples);
+            if let Some(step) = step {
+                collect_tys_from_expr(step, tuples);
+            }
         }
         HirExprKind::MapLit { entries, .. } => {
             for (k, v) in entries {
@@ -2909,6 +2942,10 @@ pub struct NativeBackend<M: Module> {
     /// HIR has an entry `main`. Used by the JIT backend to locate the entry
     /// function pointer after `finalize_definitions`.
     main_func_id: Option<FuncId>,
+    /// Cooperative line debugger (ORI_DEBUG_INSTRUMENT=1 + ORI_DEBUG_SOURCE).
+    debug_source_path: Option<String>,
+    debug_line_starts: Vec<u32>,
+    debug_path_data: Option<DataId>,
 }
 
 impl<M: Module> NativeBackend<M> {
@@ -2933,6 +2970,9 @@ impl<M: Module> NativeBackend<M> {
             struct_dtors: HashMap::new(),
             enum_dtors: HashMap::new(),
             main_func_id: None,
+            debug_source_path: None,
+            debug_line_starts: Vec::new(),
+            debug_path_data: None,
         })
     }
 
@@ -2945,6 +2985,7 @@ impl<M: Module> NativeBackend<M> {
     ///   `finalize_definitions` + `get_address(main_func_id)`.
     pub fn prepare(mut self, hir: &HirModule) -> Result<Self, String> {
         validate_native_hir(hir)?;
+        self.load_debug_instrument_from_env()?;
         // Compute struct layouts before anything else
         for s in &hir.structs {
             let layout = compute_struct_layout(&s.fields, self.ptr_ty, s.repr_c);
@@ -3014,6 +3055,46 @@ impl<M: Module> NativeBackend<M> {
                 .map_err(|e| format!("define string data: {e}"))?;
             self.string_data.insert(s, id);
         }
+        Ok(())
+    }
+
+
+    /// When `ORI_DEBUG_INSTRUMENT=1`, load `ORI_DEBUG_SOURCE` and prepare line-map
+    /// + rodata path for cooperative `ori_debug_line` probes.
+    fn load_debug_instrument_from_env(&mut self) -> Result<(), String> {
+        if std::env::var_os("ORI_DEBUG_INSTRUMENT").is_none() {
+            return Ok(());
+        }
+        let path = match std::env::var("ORI_DEBUG_SOURCE") {
+            Ok(p) if !p.is_empty() => p,
+            _ => return Ok(()),
+        };
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            format!("ORI_DEBUG_INSTRUMENT: cannot read ORI_DEBUG_SOURCE `{path}`: {e}")
+        })?;
+        let line_starts: Vec<u32> = std::iter::once(0u32)
+            .chain(
+                content
+                    .char_indices()
+                    .filter(|&(_, c)| c == '\n')
+                    .map(|(i, _)| (i + 1) as u32),
+            )
+            .collect();
+        // Plain UTF-8 path bytes (no ori string heap header) for ori_debug_line.
+        let mut bytes = path.as_bytes().to_vec();
+        bytes.push(0);
+        let mut desc = DataDescription::new();
+        desc.define(bytes.into_boxed_slice());
+        let id = self
+            .module
+            .declare_anonymous_data(false, false)
+            .map_err(|e| format!("declare debug path data: {e}"))?;
+        self.module
+            .define_data(id, &desc)
+            .map_err(|e| format!("define debug path data: {e}"))?;
+        self.debug_path_data = Some(id);
+        self.debug_line_starts = line_starts;
+        self.debug_source_path = Some(path);
         Ok(())
     }
 
@@ -4075,6 +4156,17 @@ impl<M: Module> NativeBackend<M> {
         self.stdlib_ids
             .insert(SmolStr::new("ori_graph_iterator_next"), id);
 
+        // Cooperative DAP line probes (no-op in runtime unless ORI_DEBUG_PORT is set).
+        let id = decl(
+            "ori_debug_line",
+            &[pt, types::I32, types::I32],
+            vec![],
+            None,
+        )?;
+        self.stdlib_ids.insert(SmolStr::new("ori_debug_line"), id);
+        let id = decl("ori_debug_init", &[], vec![], None)?;
+        self.stdlib_ids.insert(SmolStr::new("ori_debug_init"), id);
+
         Ok(())
     }
 
@@ -4342,6 +4434,28 @@ impl<M: Module> NativeBackend<M> {
                 tuple_dtor_refs.insert(elems.clone(), fref);
             }
 
+            let instrument_debug = self.debug_path_data.is_some()
+                && !f.name.as_str().starts_with("ori.");
+            let debug_file_gv = if instrument_debug {
+                self.debug_path_data
+                    .map(|id| self.module.declare_data_in_func(id, &mut ctx.func))
+            } else {
+                None
+            };
+            let debug_file_len = if instrument_debug {
+                self.debug_source_path
+                    .as_ref()
+                    .map(|s| s.len() as u32)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            let debug_line_starts: &[u32] = if instrument_debug {
+                self.debug_line_starts.as_slice()
+            } else {
+                &[]
+            };
+
             let mut bctx = FunctionBuilderContext::new();
             {
                 let builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
@@ -4375,6 +4489,9 @@ impl<M: Module> NativeBackend<M> {
                     async_loop_index: 0,
                     async_poll_blocks: Vec::new(),
                     func_name: f.name.clone(),
+                    debug_file_gv,
+                    debug_file_len,
+                    debug_line_starts,
                 }
                 .emit_user_func(f)?;
             }
@@ -4455,6 +4572,11 @@ impl<M: Module> NativeBackend<M> {
                 .get("ori_os_set_args")
                 .copied()
                 .map(|id| self.module.declare_func_in_func(id, &mut ctx.func));
+            let debug_init_ref = self
+                .stdlib_ids
+                .get("ori_debug_init")
+                .copied()
+                .map(|id| self.module.declare_func_in_func(id, &mut ctx.func));
             let block_on_ref = if matches!(entry_main.return_ty, Ty::Future(_)) {
                 Some(
                     self.stdlib_ids
@@ -4478,6 +4600,9 @@ impl<M: Module> NativeBackend<M> {
                 b.seal_block(blk);
                 if let Some(init_ref) = init_ref {
                     b.ins().call(init_ref, &[]);
+                }
+                if let Some(debug_init_ref) = debug_init_ref {
+                    b.ins().call(debug_init_ref, &[]);
                 }
                 if let Some(set_args_ref) = set_args_ref {
                     let (argc, argv) = {
@@ -4793,6 +4918,9 @@ impl<M: Module> NativeBackend<M> {
                     async_loop_index: 0,
                     async_poll_blocks: Vec::new(),
                     func_name: SmolStr::new(name.as_str()),
+                    debug_file_gv: None,
+                    debug_file_len: 0,
+                    debug_line_starts: &[],
                 };
 
                 let res = if codegen.struct_supports_equality(s.def_id) {
@@ -4865,6 +4993,28 @@ impl<M: Module> NativeBackend<M> {
             tuple_dtor_refs.insert(elems.clone(), fref);
         }
 
+        let instrument_debug = self.debug_path_data.is_some()
+            && !f.name.as_str().starts_with("ori.");
+        let debug_file_gv = if instrument_debug {
+            self.debug_path_data
+                .map(|id| self.module.declare_data_in_func(id, &mut ctx.func))
+        } else {
+            None
+        };
+        let debug_file_len = if instrument_debug {
+            self.debug_source_path
+                .as_ref()
+                .map(|s| s.len() as u32)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let debug_line_starts: &[u32] = if instrument_debug {
+            self.debug_line_starts.as_slice()
+        } else {
+            &[]
+        };
+
         let mut bctx = FunctionBuilderContext::new();
         {
             let builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
@@ -4898,6 +5048,9 @@ impl<M: Module> NativeBackend<M> {
                 async_loop_index: 0,
                 async_poll_blocks: Vec::new(),
                 func_name: f.name.clone(),
+                debug_file_gv,
+                debug_file_len,
+                debug_line_starts,
             };
             if plan.is_general {
                 codegen.emit_general_async_step(f, plan)?;
@@ -5009,6 +5162,9 @@ impl<M: Module> NativeBackend<M> {
                 async_loop_index: 0,
                 async_poll_blocks: Vec::new(),
                 func_name: SmolStr::new(""),
+                    debug_file_gv: None,
+                    debug_file_len: 0,
+                    debug_line_starts: &[],
             };
             let block = codegen.builder.create_block();
             codegen.builder.switch_to_block(block);
@@ -5072,6 +5228,10 @@ struct FuncCodegen<'a> {
     async_loop_index: usize,
     async_poll_blocks: Vec<ir::Block>,
     func_name: SmolStr,
+    /// When set, emit `ori_debug_line` at statement boundaries.
+    debug_file_gv: Option<ir::GlobalValue>,
+    debug_file_len: u32,
+    debug_line_starts: &'a [u32],
 }
 
 impl<'a> FuncCodegen<'a> {
@@ -7865,7 +8025,61 @@ impl<'a> FuncCodegen<'a> {
         Ok(true)
     }
 
+    fn stmt_span(stmt: &HirStmt) -> Span {
+        match stmt {
+            HirStmt::Let { span, .. }
+            | HirStmt::Assign { span, .. }
+            | HirStmt::If { span, .. }
+            | HirStmt::While { span, .. }
+            | HirStmt::For { span, .. }
+            | HirStmt::Loop { span, .. }
+            | HirStmt::Repeat { span, .. }
+            | HirStmt::Match { span, .. }
+            | HirStmt::IfSome { span, .. }
+            | HirStmt::WhileSome { span, .. }
+            | HirStmt::Using { span, .. }
+            | HirStmt::Check { span, .. } => *span,
+            HirStmt::Return(_, span) | HirStmt::Break(span) | HirStmt::Continue(span) => *span,
+            HirStmt::Expr(e) => e.span,
+        }
+    }
+
+    fn line_from_byte_offset(&self, offset: u32) -> u32 {
+        let starts = self.debug_line_starts;
+        if starts.is_empty() {
+            return 0;
+        }
+        let idx = starts.partition_point(|&s| s <= offset).saturating_sub(1);
+        (idx as u32) + 1
+    }
+
+    fn emit_debug_line_probe(&mut self, span: Span) {
+        let Some(gv) = self.debug_file_gv else {
+            return;
+        };
+        if self.debug_file_len == 0 || self.debug_line_starts.is_empty() {
+            return;
+        }
+        let Some(&fref) = self.func_refs.get("ori_debug_line") else {
+            return;
+        };
+        let line = self.line_from_byte_offset(span.start);
+        if line == 0 {
+            return;
+        }
+        let ptr = self.builder.ins().global_value(self.ptr_ty, gv);
+        let len = self
+            .builder
+            .ins()
+            .iconst(types::I32, i64::from(self.debug_file_len));
+        let line_v = self.builder.ins().iconst(types::I32, i64::from(line));
+        self.builder.ins().call(fref, &[ptr, len, line_v]);
+    }
+
     fn emit_stmt(&mut self, stmt: &HirStmt) -> Result<(), String> {
+        if !self.terminated {
+            self.emit_debug_line_probe(Self::stmt_span(stmt));
+        }
         match stmt {
             HirStmt::Let {
                 name, ty, value, ..
@@ -8391,9 +8605,16 @@ impl<'a> FuncCodegen<'a> {
     ) -> Result<(), String> {
         self.push_scope();
         let res = match &iterable.kind {
-            HirExprKind::Range { start, end } => {
-                self.emit_for_range(binding, index_binding, elem_ty, start, end, body, has_await)
-            }
+            HirExprKind::Range { start, end, step } => self.emit_for_range(
+                binding,
+                index_binding,
+                elem_ty,
+                start,
+                end,
+                step.as_deref(),
+                body,
+                has_await,
+            ),
             _ if matches!(&iterable.ty, Ty::List(_)) => {
                 self.emit_for_list(binding, index_binding, elem_ty, iterable, body, has_await)
             }
@@ -8870,17 +9091,33 @@ impl<'a> FuncCodegen<'a> {
         elem_ty: &Ty,
         start: &HirExpr,
         end: &HirExpr,
+        step: Option<&HirExpr>,
         body: &HirBlock,
         has_await: bool,
     ) -> Result<(), String> {
         let start_v = self.emit_expr(start)?;
         let end_v = self.emit_expr(end)?;
-        let asc =
-            self.builder
-                .ins()
-                .icmp(ir::condcodes::IntCC::SignedLessThanOrEqual, start_v, end_v);
+        // Explicit step, or default +1 / -1 from endpoint order.
+        let step_v = if let Some(step_expr) = step {
+            self.emit_expr(step_expr)?
+        } else {
+            let asc_default = self.builder.ins().icmp(
+                ir::condcodes::IntCC::SignedLessThanOrEqual,
+                start_v,
+                end_v,
+            );
+            let one = self.builder.ins().iconst(types::I64, 1);
+            let neg_one = self.builder.ins().iconst(types::I64, -1);
+            self.builder.ins().select(asc_default, one, neg_one)
+        };
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let asc = self.builder.ins().icmp(
+            ir::condcodes::IntCC::SignedGreaterThan,
+            step_v,
+            zero,
+        );
 
-        let (idx_var, end_var, asc_var, iter_count_var, loop_id) = if has_await {
+        let (idx_var, end_var, asc_var, step_var, iter_count_var, loop_id) = if has_await {
             let loop_id = self.async_loop_index;
             self.async_loop_index += 1;
             let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
@@ -8889,6 +9126,8 @@ impl<'a> FuncCodegen<'a> {
             let (idx_var, _) = self.lookup_var(&idx_name).unwrap();
             let (end_var, _) = self.lookup_var(&end_name).unwrap();
             let (asc_var, _) = self.lookup_var(&asc_name).unwrap();
+            // Step is local to the resumed frame path; not snapshotted in async frame today.
+            let step_var = self.builder.declare_var(types::I64);
 
             let iter_count_var = if index_binding.is_some() {
                 let iter_name = SmolStr::new(format!(".__loop_iter_{}", loop_id));
@@ -8904,11 +9143,19 @@ impl<'a> FuncCodegen<'a> {
             self.builder.def_var(idx_var, start_v);
             self.builder.def_var(end_var, end_v);
             self.builder.def_var(asc_var, asc);
+            self.builder.def_var(step_var, step_v);
             self.store_async_local_if_any(&idx_name, start_v)?;
             self.store_async_local_if_any(&end_name, end_v)?;
             self.store_async_local_if_any(&asc_name, asc)?;
 
-            (idx_var, end_var, asc_var, iter_count_var, Some(loop_id))
+            (
+                idx_var,
+                end_var,
+                asc_var,
+                step_var,
+                iter_count_var,
+                Some(loop_id),
+            )
         } else {
             let idx_var = self.builder.declare_var(types::I64);
             self.builder.def_var(idx_var, start_v);
@@ -8916,6 +9163,8 @@ impl<'a> FuncCodegen<'a> {
             self.builder.def_var(end_var, end_v);
             let asc_var = self.builder.declare_var(types::I8);
             self.builder.def_var(asc_var, asc);
+            let step_var = self.builder.declare_var(types::I64);
+            self.builder.def_var(step_var, step_v);
 
             let iter_count_var = if index_binding.is_some() {
                 let v = self.builder.declare_var(types::I64);
@@ -8925,7 +9174,7 @@ impl<'a> FuncCodegen<'a> {
             } else {
                 None
             };
-            (idx_var, end_var, asc_var, iter_count_var, None)
+            (idx_var, end_var, asc_var, step_var, iter_count_var, None)
         };
 
         if !has_await {
@@ -8991,10 +9240,7 @@ impl<'a> FuncCodegen<'a> {
         self.builder.seal_block(step);
         self.builder.switch_to_block(step);
         let cur2 = self.builder.use_var(idx_var);
-        let asc_flag = self.builder.use_var(asc_var);
-        let one = self.builder.ins().iconst(types::I64, 1);
-        let neg_one = self.builder.ins().iconst(types::I64, -1);
-        let inc = self.builder.ins().select(asc_flag, one, neg_one);
+        let inc = self.builder.use_var(step_var);
         let next = self.builder.ins().iadd(cur2, inc);
         self.builder.def_var(idx_var, next);
         if let Some(loop_id) = loop_id {
@@ -10703,6 +10949,24 @@ impl<'a> FuncCodegen<'a> {
                                 });
                             }
                         }
+                        // `ori_list_push` stores the value pointer into the
+                        // list buffer without retaining it; ownership is
+                        // transferred to the list via an ARC edge registered
+                        // by `emit_list_push_value`. Routing through that
+                        // helper (instead of the generic FFI path, which
+                        // releases owned temporaries after the call) avoids a
+                        // use-after-free: the generic path would drop the
+                        // freshly allocated string before the ARC edge can
+                        // retain it, leaving every list slot pointing at
+                        // reused/freed storage.
+                        if name.as_str() == "ori_list_push" && args.len() == 2 {
+                            if let Ty::List(elem_ty) = &args[0].value.ty {
+                                let list_v = self.emit_expr(&args[0].value)?;
+                                let value = self.emit_expr(&args[1].value)?;
+                                self.emit_list_push_value(list_v, value, elem_ty)?;
+                                return Ok(self.builder.ins().iconst(types::I8, 0));
+                            }
+                        }
                         let param_tys = self.func_param_tys.get(name).cloned();
                         let is_user_func = self.user_func_names.contains(name.as_str());
                         let mut args_v = Vec::new();
@@ -10896,6 +11160,21 @@ impl<'a> FuncCodegen<'a> {
                     } else {
                         return Err(format!("layout is missing field `{field}`"));
                     }
+                } else if matches!(object.ty, Ty::Range(_)) {
+                    // Layout: start@0, end@8, step@16 (0 means derive step at iteration).
+                    let offset = match field.as_str() {
+                        "start" => 0,
+                        "end" => 8,
+                        "step" => 16,
+                        _ => {
+                            return Err(format!(
+                                "range has fields start/end/step, not `{field}`"
+                            ));
+                        }
+                    };
+                    self.builder
+                        .ins()
+                        .load(types::I64, MemFlags::new(), ptr, offset)
                 } else {
                     return Err(format!(
                         "field access `{field}` requires a struct value, got `{}`",
@@ -10961,12 +11240,26 @@ impl<'a> FuncCodegen<'a> {
                 }
                 list_ptr
             }
-            HirExprKind::Range { start, end } => {
+            HirExprKind::Range { start, end, step } => {
                 let sv = self.emit_expr(start)?;
                 let ev = self.emit_expr(end)?;
-                let base = self.malloc_bytes(16)?;
+                let step_v = if let Some(step_expr) = step {
+                    self.emit_expr(step_expr)?
+                } else {
+                    // Derive ±1 so `r.step` is always a real step value.
+                    let asc = self.builder.ins().icmp(
+                        ir::condcodes::IntCC::SignedLessThanOrEqual,
+                        sv,
+                        ev,
+                    );
+                    let one = self.builder.ins().iconst(types::I64, 1);
+                    let neg_one = self.builder.ins().iconst(types::I64, -1);
+                    self.builder.ins().select(asc, one, neg_one)
+                };
+                let base = self.malloc_bytes(24)?;
                 self.builder.ins().store(MemFlags::new(), sv, base, 0);
                 self.builder.ins().store(MemFlags::new(), ev, base, 8);
+                self.builder.ins().store(MemFlags::new(), step_v, base, 16);
                 base
             }
             HirExprKind::EnumVariant {

@@ -8518,5 +8518,7 @@ pub extern "C" fn ori_math_is_finite(x: f64) -> c_uchar {
     u8::from(x.is_finite()) as c_uchar
 }
 
+mod debug_agent;
+
 #[cfg(test)]
 mod tests;
