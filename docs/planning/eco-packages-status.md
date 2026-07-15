@@ -3,7 +3,9 @@
 > **Status:** active (2026-07-15)  
 > **Linux-5 core stack:** **complete** (raylib…harfbuzz).  
 > **W10 maturity-5 (U1–U15):** **done** — all packages **5 (Linux)** at **0.2.0**.  
-> **Plan:** [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) — **PRs 1–19 complete** (W10 + Phase OS note).  
+> **ImGui tools residual (A–D):** **done** — packages **5 (Linux)**; catalog PR14 **done**; Phase OS PR15 **last**.  
+> **Plan (engine):** [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) — **PRs 1–19 complete** (W10).  
+> **Plan (ImGui tools):** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **PRs 1–14 done** (`a68f7529`); **PR15 last**.  
 > **Policy (2026-07-15):** **implement / mature / port libs on Linux first.**  
 > Multi-OS validation (Windows/mac) is **last** — scripts may exist, but execution is deferred.  
 > **Canonical paths:** `/home/raillen/Documentos/Projetos/game-engine-full/ori-*`  
@@ -37,7 +39,7 @@ A package is **5 (Linux)** when plan §3 **G1–G7** hold on Linux:
 |------|---------|------|------|
 | **`ori-raylib`** | `raylib` | **0.1.0** | L0 raylib bindings (`ori_rl_*` shim) |
 | **`ori-game`** | `ori_game` | **0.3.0** | L1 `game.*` + wires (`gltf`/`obj`/`physfs_assets`/`noise`/`compress`/`navmesh`) — PR 17 done |
-| **`ori-imgui`** | `imgui` | **0.4.0** | Dear ImGui + Tier0/1 + optional raylib embed |
+| **`ori-imgui`** | `imgui` | **0.5.1** | Dear ImGui + multi-ctx/image + timeline + `test_harness` (tools B2/B3/C4) |
 | **`ori-raygui`** | `raygui` | **0.2.0** | Immediate UI on raylib |
 | **`ori-box2d`** | `box2d` | **0.3.0** | Box2D 3.x milli-unit physics |
 | **`ori-jolt`** | `jolt` | **0.2.0** | Jolt 3D physics |
@@ -53,7 +55,7 @@ A package is **5 (Linux)** when plan §3 **G1–G7** hold on Linux:
 | **`ori-nfd`** | `nfd` | **0.2.0** | portable file dialogs (U5) |
 | **`ori-implot`** | `implot` | **0.2.0** | ImPlot series + FULL (U6) |
 | **`ori-imnodes`** | `imnodes` | **0.2.0** | node graph + FULL (U7) |
-| **`ori-imguizmo`** | `imguizmo` | **0.2.0** | gizmo TRS + FULL (U8) |
+| **`ori-imguizmo`** | `imguizmo` | **0.3.0** | TRS + CurveEdit/Gradient/ZoomSlider (U8 + tools B1) |
 | **`ori-tracy`** | `tracy` | **0.2.0** | zones/frames/plot/message (U9) |
 | **`ori-enkiTS`** | `enkits` | **0.2.0** | task scheduler (U10) |
 | **`ori-cgltf`** | `cgltf` | **0.2.0** | glTF 2.0 + mesh export (U11) |
@@ -61,6 +63,14 @@ A package is **5 (Linux)** when plan §3 **G1–G7** hold on Linux:
 | **`ori-physfs`** | `physfs` | **0.2.0** | virtual FS write/multi-mount (U13) |
 | **`ori-clay`** | `clay` | **0.2.0** | IM layout + command export (U14) |
 | **`ori-recast`** | `recast` | **0.2.0** | navmesh triangle soup (U15) |
+| **`ori-imguidialog`** | `imguidialog` | **0.1.0** | in-UI open/save dialog (tools A1) |
+| **`ori-imgui-extras`** | `imgui_extras` | **0.1.0** | notify / search / hotkey / palette / metrics (tools B4) |
+| **`ori-imgui-texinspect`** | `texinspect` | **0.1.0** | texture inspect zoom/channels (tools B5) |
+| **`ori-imgui-textedit`** | `imtextedit` | **0.1.0** | code buffer + highlight stub (tools C1) |
+| **`ori-imgui-widgets`** | `widgets` | **0.1.0** | knobs / toggle / spinner / spectrum (tools C2) |
+| **`ori-imgui-memory`** | `immemory` | **0.1.0** | hex memory editor (tools C3) |
+| **`ori-implot3d`** | `implot3d` | **0.1.0** | ImPlot3D series milli (tools D1) |
+| **`ori-imgui-markdown`** | `markdown` | **0.1.0** | pure Ori markdown + IME Linux stubs (tools D2–D3) |
 
 Bugfix-only touch-ups allowed if a dependent PR needs them.
 
@@ -106,7 +116,10 @@ Documentos/Projetos/
     ori-game/                  # L1 hub (path-dep → siblings)
     ori-box2d/  ori-jolt/  ori-recast/
     ori-imgui/  ori-raygui/  ori-clay/
-    ori-implot/ ori-imnodes/ ori-imguizmo/
+    ori-implot/ ori-implot3d/ ori-imnodes/ ori-imguizmo/
+    ori-imguidialog/ ori-imgui-extras/ ori-imgui-texinspect/
+    ori-imgui-textedit/ ori-imgui-widgets/ ori-imgui-memory/
+    ori-imgui-markdown/
     ori-freetype/ ori-harfbuzz/
     ori-rres/ ori-cgltf/ ori-fast-obj/ ori-physfs/
     ori-stb/ ori-noise/ ori-miniz/ ori-lz4/
@@ -119,7 +132,7 @@ Path deps stay sibling-relative (`../ori-raylib`, …) inside `game-engine-full/
 [dependencies]
 raylib   = { path = "../ori-raylib", version = "0.1.0" }
 ori_game = { path = "../ori-game", version = "0.3.0" }
-imgui    = { path = "../ori-imgui", version = "0.4.0" }
+imgui    = { path = "../ori-imgui", version = "0.5.1" }
 box2d    = { path = "../ori-box2d", version = "0.3.0" }
 enet     = { path = "../ori-enet", version = "0.3.0" }
 ```
@@ -140,6 +153,8 @@ Packages listed (each `run_pkg_smoke` under `$proj_root/ori-*`):
 - **Core:** raylib, game, box2d, jolt, imgui, raygui, rres, sqlite, enet  
 - **High / U-ports:** freetype, harfbuzz, stb, noise, miniz, nfd, implot, imnodes, imguizmo, tracy, enkiTS  
 - **Medium / U-ports:** cgltf, fast-obj, physfs, clay, **lz4**, recast  
+- **ImGui tools residual (A–D):** imguidialog, imgui-extras, imgui-texinspect, imgui-textedit, imgui-widgets, imgui-memory, implot3d, imgui-markdown  
+  (imguizmo **0.3** + imgui **0.5.x** covered under core/high)
 
 Missing package dirs or smoke scripts are **auto-SKIP** (count as skip, not fail).
 
@@ -167,10 +182,12 @@ ECO_SMOKE_SKIP_GAME=1 ECO_SMOKE_SKIP_DEMOS=1 \
 |------|---------|--------|
 | Core (game, box2d, jolt, sqlite, rres, imgui, raygui, enet) | real/stub `build_windows.ps1` + smoke | scripts ready — execute on MSVC host |
 | U1–U15 (all **5 Linux** @ 0.2.0) | **deferred** `tools/build_windows.ps1` (echo only) | Linux-complete; multi-OS last |
+| ImGui tools residual packages (A–D) | deferred stubs + PR15 scaffolding | Linux-complete @ 0.1.0/0.3/0.5.x; multi-OS last |
 | (legacy M1–M6 labels) | same as U4/U11–U15 | absorbed into maturity-5 |
 
 Canonical write-up: [`PHASE-OS.md`](PHASE-OS.md). Umbrella: `ori-game/tools/smoke_eco_windows.ps1` (core only).  
-**Maturity-5 plan residual:** **none** — PR 19 Phase OS note refresh **done**.
+**Engine maturity-5 residual:** **none** — PR 19 Phase OS note refresh **done**.  
+**ImGui tools residual:** Linux G1–G7 **done** — only plan **PR15** Phase OS scaffolding remains.
 
 ---
 
@@ -183,16 +200,32 @@ Canonical write-up: [`PHASE-OS.md`](PHASE-OS.md). Umbrella: `ori-game/tools/smok
 Prior ports plan [`pr-plan-eco-ports-e2e.md`](pr-plan-eco-ports-e2e.md): **PRs 1–10 complete** (0.1.0 scaffolds; do not re-scaffold).  
 Catalog: [`eco-library-ports-catalog.md`](eco-library-ports-catalog.md)
 
+### ImGui tools residual plan — **stages A–D + catalog done**
+
+**Plan:** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) (`a68f7529`) — **PRs 1–14 done**; **PR15 Phase OS last**.
+
+| Shipped | Ver. | Maturity |
+|---------|------|----------|
+| `ori-imguidialog` | **0.1.0** | **5 (Linux)** |
+| `ori-imguizmo` | **0.3.0** | **5 (Linux)** |
+| `ori-imgui` (timeline + multi-ctx/image + `test_harness`) | **0.5.1** | **5 (Linux)** |
+| `ori-imgui-extras` | **0.1.0** | **5 (Linux)** |
+| `ori-imgui-texinspect` | **0.1.0** | **5 (Linux)** |
+| `ori-imgui-textedit` | **0.1.0** | **5 (Linux)** |
+| `ori-imgui-widgets` | **0.1.0** | **5 (Linux)** |
+| `ori-imgui-memory` | **0.1.0** | **5 (Linux)** |
+| `ori-implot3d` | **0.1.0** | **5 (Linux)** |
+| `ori-imgui-markdown` | **0.1.0** | **5 (Linux)** |
+
 Residual / roadmap (2026-07-15):
 1. **Maturity U1–U15 → 5 (Linux)** — **done** (W10).  
-2. **ImGui tools residual (P0–P3) → 5** — **executing** (`a68f7529`) · product source  
-   `game-engine-full/ori-game/docs/planning/ROADMAP-GAME-ECO.md` **Next work** · execute-plan  
-   [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) (stages A–E; residual §4).  
-3. **`ori-miniaudio` skipped** — `game.audio` covers gap.  
-4. Studio app = separate product track (`ori-game-studio`)  
-5. Phase OS **execution** on MSVC = **last** (scaffolding done; non-blocking)
+2. **ImGui tools residual (P0–P3) → 5** — **done** (stages A–D + catalog PR14).  
+3. **PR15 Phase OS scaffolding** on new ImGui tools packages — **last** (non-blocking).  
+4. **`ori-miniaudio` skipped** — `game.audio` covers gap.  
+5. Studio app = separate product track (`ori-game-studio`)  
+6. Phase OS **execution** on MSVC = **last** (scaffolding done; non-blocking)
 
-**Do not re-queue W10 engine ports.** Next stage = ImGui tools plan only.
+**Do not re-queue W10 engine ports or ImGui tools A–D packages.**
 
 **ECS:** no flecs/EnTT as default — see catalog §7 / roadmap § ECS.
 

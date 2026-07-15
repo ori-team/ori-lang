@@ -1,6 +1,6 @@
 # Design + PR Plan — ImGui tools residual → maturity **5 (Linux)**
 
-**Status:** **executing** — `/execute-plan` plan id `a68f7529` (PR1 lock-in **done**)  
+**Status:** **stages A–D + catalog done** — `/execute-plan` plan id `a68f7529` (PRs **1–14 done**; **PR15 Phase OS last**)  
 **Date:** 2026-07-15  
 **Source of truth (product backlog):**  
 `game-engine-full/ori-game/docs/planning/ROADMAP-GAME-ECO.md` (ImGui extensions + packaging)  
@@ -135,7 +135,7 @@ ImNodeFlow · imGuIZMO.quat · Hello ImGui · ImRAD · ImTui · netImGui · imgu
 
 ---
 
-### PR 2: ori-imguidialog 0.1.0 → 5 (Linux) — Stage A / P0
+### PR 2: ori-imguidialog 0.1.0 → 5 (Linux) — Stage A / P0 — **done**
 
 **Description:** New package `ori-imguidialog` wrapping ImGuiFileDialog (or equivalent). Path-dep `imgui`. Headless tests for filter/cancel/path result; FULL draw path optional dual artifact. G1–G7. Smoke.
 
@@ -143,9 +143,11 @@ ImNodeFlow · imGuIZMO.quat · Hello ImGui · ImRAD · ImTui · netImGui · imgu
 
 **Dependencies:** None
 
+**Shipped:** pure Ori open/save UI path · **0.1.0** · **5 (Linux)**
+
 ---
 
-### PR 3: ori-imguizmo 0.3.0 — CurveEdit + Gradient + ZoomSlider — Stage B1
+### PR 3: ori-imguizmo 0.3.0 — CurveEdit + Gradient + ZoomSlider — Stage B1 — **done**
 
 **Description:** Extend existing `ori-imguizmo` with ImCurveEdit, ImGradient, ImZoomSlider from same upstream family. Keep TRS. ≥4 new tests + smoke. Version **0.3.0**. G1–G7.
 
@@ -153,9 +155,11 @@ ImNodeFlow · imGuIZMO.quat · Hello ImGui · ImRAD · ImTui · netImGui · imgu
 
 **Dependencies:** None
 
+**Shipped:** **0.3.0** · TRS + CurveEdit + Gradient + ZoomSlider · **5 (Linux)**
+
 ---
 
-### PR 4: ori-imsequencer 0.1.0 → 5 — Stage B2
+### PR 4: ori-imsequencer 0.1.0 → 5 — Stage B2 — **done** (pure Ori timeline in `ori-imgui`)
 
 **Description:** New package **or** if pure Ori is enough, expand `ori-imgui` `imgui.timeline` to G1–G7 product surface and **skip** new repo — **prefer package only if C++ ImSequencer is used**. Document choice in summary. Tracks + playhead milli + key CRUD; smoke.
 
@@ -163,9 +167,11 @@ ImNodeFlow · imGuIZMO.quat · Hello ImGui · ImRAD · ImTui · netImGui · imgu
 
 **Dependencies:** None
 
+**Shipped:** pure Ori `imgui.timeline` in `ori-imgui` (no `ori-imsequencer` repo) · later bumped with package to **0.5.1**
+
 ---
 
-### PR 5: ori-imgui multi-context + image helpers — Stage B3
+### PR 5: ori-imgui multi-context + image helpers — Stage B3 — **done**
 
 **Description:** Close gaps vs Multi-Context Compositor needs: ensure create/set/destroy/current context APIs are complete and tested; `image` / `image_button` from texture id (raylib/GL id as int). Version bump (e.g. 0.4.0 → 0.5.0). Smoke.
 
@@ -173,9 +179,11 @@ ImNodeFlow · imGuIZMO.quat · Hello ImGui · ImRAD · ImTui · netImGui · imgu
 
 **Dependencies:** None
 
+**Shipped:** multi-context + image helpers → **0.5.0** (then **0.5.1** with harness)
+
 ---
 
-### PR 6: ori-imgui-extras 0.1.0 → 5 — Stage B4 (P1 UX)
+### PR 6: ori-imgui-extras 0.1.0 → 5 — Stage B4 (P1 UX) — **done**
 
 **Description:** New package (mostly pure Ori + minimal host):  
 `notify` · `search` · `hotkey` · `command_palette` · `metrics`  
@@ -185,9 +193,11 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 
 **Dependencies:** None
 
+**Shipped:** pure Ori extras · **0.1.0** · **5 (Linux)**
+
 ---
 
-### PR 7: ori-imgui-texinspect 0.1.0 → 5 — Stage B5
+### PR 7: ori-imgui-texinspect 0.1.0 → 5 — Stage B5 — **done**
 
 **Description:** New package for texture inspect MVP (zoom, channels) or implement as modules under `ori-imgui-extras` if smaller — **prefer dedicated package if C++ ImGuiTexInspect**. G1–G7. Smoke.
 
@@ -195,9 +205,11 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 
 **Dependencies:** None
 
+**Shipped:** `ori-imgui-texinspect` **0.1.0** · **5 (Linux)**
+
 ---
 
-### PR 8: ori-imgui-textedit 0.1.0 → 5 — Stage C1 / P2
+### PR 8: ori-imgui-textedit 0.1.0 → 5 — Stage C1 / P2 — **done**
 
 **Description:** ColorTextEdit (pthom fork). Buffer set/get; language stub; dual FULL. G1–G7. Smoke.
 
@@ -205,9 +217,11 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 
 **Dependencies:** None
 
+**Shipped:** **0.1.0** · **5 (Linux)**
+
 ---
 
-### PR 9: ori-imgui-widgets 0.1.0 → 5 — Stage C2 / P2
+### PR 9: ori-imgui-widgets 0.1.0 → 5 — Stage C2 / P2 — **done**
 
 **Description:** Knobs, toggle, spinner, spectrum theme helper (pure Ori preferred). If pure Ori fits entirely, modules may live under `ori-imgui-extras` — one package max. G1–G7. Smoke.
 
@@ -215,9 +229,11 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 
 **Dependencies:** None
 
+**Shipped:** `ori-imgui-widgets` **0.1.0** · **5 (Linux)**
+
 ---
 
-### PR 10: ori-imgui-memory 0.1.0 → 5 — Stage C3 / P2
+### PR 10: ori-imgui-memory 0.1.0 → 5 — Stage C3 / P2 — **done**
 
 **Description:** imgui_memory_editor binding. Byte buffer view/edit API; headless tests. G1–G7. Smoke.
 
@@ -225,9 +241,11 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 
 **Dependencies:** None
 
+**Shipped:** **0.1.0** · **5 (Linux)**
+
 ---
 
-### PR 11: imgui test harness — Stage C4 / P2
+### PR 11: imgui test harness — Stage C4 / P2 — **done**
 
 **Description:** Pure Ori `imgui.test_harness` (preferred) **or** thin wrap of imgui_test_engine. Query widgets by label; simulate click/open; ≥4 tests. Ship inside `ori-imgui` or `ori-imgui-extras`. Document non-goal: full official test engine CI.
 
@@ -235,9 +253,11 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 
 **Dependencies:** None
 
+**Shipped:** pure Ori `imgui.test_harness` in `ori-imgui` **0.5.1**
+
 ---
 
-### PR 12: ori-implot3d 0.1.0 → 5 — Stage D1 / P3
+### PR 12: ori-implot3d 0.1.0 → 5 — Stage D1 / P3 — **done**
 
 **Description:** ImPlot3D package; path-dep implot + imgui. Series milli; dual FULL. G1–G7. Smoke.
 
@@ -245,9 +265,11 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 
 **Dependencies:** None
 
+**Shipped:** **0.1.0** · **5 (Linux)**
+
 ---
 
-### PR 13: markdown UI + IME policy — Stage D2–D3 / P3
+### PR 13: markdown UI + IME policy — Stage D2–D3 / P3 — **done**
 
 **Description:**  
 - Markdown: `ori-imgui-markdown` **or** extras module — headings, paragraphs, fenced code → ImGui. G1–G7.  
@@ -257,9 +279,11 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 
 **Dependencies:** None
 
+**Shipped:** pure Ori `ori-imgui-markdown` **0.1.0** + IME Linux stubs · **5 (Linux)**
+
 ---
 
-### PR 14: Catalog + matrix + ROADMAP + umbrella smoke
+### PR 14: Catalog + matrix + ROADMAP + umbrella smoke — **done**
 
 **Description:** Mark all new packages **5 (Linux)** in ori-lang catalog/status/matrix. Update ROADMAP-GAME-ECO residual tables to **done**. Extend `smoke_eco_linux.sh` for new packages (SKIP if missing). Plan status → stages complete except Phase OS.
 
@@ -272,6 +296,8 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 `/home/raillen/Documentos/Projetos/game-engine-full/ori-game/tools/smoke_eco_linux.sh`
 
 **Dependencies:** PR 2, PR 3, PR 4, PR 5, PR 6, PR 7, PR 8, PR 9, PR 10, PR 11, PR 12, PR 13
+
+**Done notes (2026-07-15):** all Stage A–D packages marked **5 (Linux)**; ROADMAP residual A–D → **done**; umbrella smoke lists new packages (SKIP if missing); plan residual = **PR15 only**.
 
 ---
 

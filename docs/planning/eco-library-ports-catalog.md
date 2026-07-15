@@ -1,6 +1,6 @@
 # Catálogo canônico — tradução de bibliotecas nativas para Ori (ECO)
 
-> **Status:** canônico (2026-07-15) · **alta fechada** · **médios M1–M6 done** · miniaudio **skipped** · **U1–U15 = 5 (Linux)** · **W10 done** · Phase OS note **done** (multi-OS still last)  
+> **Status:** canônico (2026-07-15) · **alta fechada** · **médios M1–M6 done** · miniaudio **skipped** · **U1–U15 = 5 (Linux)** · **W10 done** · **ImGui tools A–D = 5 (Linux)** · Phase OS multi-OS still **last**  
 
 > **Âmbito:** packages irmãos `ori-*` (bindings / ports C·C++ → Ori S3), **não** stdlib do monorepo.  
 > **Cluster path:** `/home/raillen/Documentos/Projetos/game-engine-full/ori-*` (model A: pasta única, N remotes).  
@@ -9,7 +9,7 @@
 > **Score 5 (Linux) gate (resumo):** G1 broad API · G2 ≥4 tests · G3 smoke ok · G4 README · G5 CHANGELOG · G6 leaf único · G7 version bump — detalhe em [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) §3.  
 > **Execute-plan (ports médios 0.1.0):** [`pr-plan-eco-ports-e2e.md`](pr-plan-eco-ports-e2e.md) — **complete**  
 > **Execute-plan (engine → 5 Linux):** [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) — **PRs 1–19 complete** (W10)  
-> **Execute-plan (ImGui tools residual → 5):** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **executing** (`a68f7529`)  
+> **Execute-plan (ImGui tools residual → 5):** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **stages A–D + catalog PR14 done** (`a68f7529`); **PR15 Phase OS last**  
 > **Product roadmap / Next work:** `game-engine-full/ori-game/docs/planning/ROADMAP-GAME-ECO.md`
 
 > **Relacionados:**  
@@ -50,7 +50,7 @@ Repos sob **`game-engine-full/ori-*`**. Maturidade **5** = gate G1–G7 (plan §
 |-------------|------|------------------|------|------------|
 | `raylib` | `ori-raylib` | [raylib](https://www.raylib.com/) L0 + shim | 0.1.0 | **5 (Linux)** |
 | `ori_game` | `ori-game` | helpers L1 + content loaders + wires (`game.gltf`/`obj`/`physfs_assets`/`noise`/`compress`/`navmesh`) | 0.3.0 | **5 (Linux)** (PR 17 wires done) |
-| `imgui` | `ori-imgui` | [Dear ImGui](https://github.com/ocornut/imgui) / cimgui | 0.4.0 | **5 (Linux)** |
+| `imgui` | `ori-imgui` | [Dear ImGui](https://github.com/ocornut/imgui) / cimgui + multi-ctx/image + timeline + `test_harness` | **0.5.1** | **5 (Linux)** (tools B2/B3/C4) |
 | `raygui` | `ori-raygui` | [raygui](https://github.com/raysan5/raygui) | 0.2.0 | **5 (Linux)** |
 | `box2d` | `ori-box2d` | [Box2D](https://box2d.org/) 3.x milli-int | 0.3.0 | **5 (Linux)** |
 | `jolt` | `ori-jolt` | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | 0.2.0 | **5 (Linux)** |
@@ -67,7 +67,7 @@ Repos sob **`game-engine-full/ori-*`**. Maturidade **5** = gate G1–G7 (plan §
 | `nfd` | `ori-nfd` | portable-file-dialogs | **0.2.0** | **5 (Linux)** (U5 / PR 6) |
 | `implot` | `ori-implot` | [implot](https://github.com/epezent/implot) (+ FULL draw) | **0.2.0** | **5 (Linux)** (U6 / PR 7) |
 | `imnodes` | `ori-imnodes` | [imnodes](https://github.com/Nelarius/imnodes) (+ FULL) | **0.2.0** | **5 (Linux)** (U7 / PR 8) |
-| `imguizmo` | `ori-imguizmo` | [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo) (+ FULL) | **0.2.0** | **5 (Linux)** (U8 / PR 9) |
+| `imguizmo` | `ori-imguizmo` | [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo) TRS + CurveEdit/Gradient/Zoom | **0.3.0** | **5 (Linux)** (U8 + tools B1) |
 | `tracy` | `ori-tracy` | [Tracy](https://github.com/wolfpld/tracy) zones/frames | **0.2.0** | **5 (Linux)** (U9 / PR 10) |
 | `enkits` | `ori-enkiTS` | [enkiTS](https://github.com/dougbinks/enkiTS) task scheduler | **0.2.0** | **5 (Linux)** (U10 / PR 11) |
 | `cgltf` | `ori-cgltf` | [cgltf](https://github.com/jkuhlmann/cgltf) glTF 2.0 | **0.2.0** | **5 (Linux)** (U11 / PR 12) |
@@ -75,6 +75,14 @@ Repos sob **`game-engine-full/ori-*`**. Maturidade **5** = gate G1–G7 (plan §
 | `physfs` | `ori-physfs` | [PhysFS](https://github.com/icculus/physfs) virtual FS | **0.2.0** | **5 (Linux)** (U13 / PR 14) |
 | `clay` | `ori-clay` | [Clay](https://github.com/nicbarker/clay) IM layout | **0.2.0** | **5 (Linux)** (U14 / PR 15) |
 | `recast` | `ori-recast` | [Recast Navigation](https://github.com/recastnavigation/recastnavigation) navmesh | **0.2.0** | **5 (Linux)** (U15 / PR 16) |
+| `imguidialog` | `ori-imguidialog` | in-UI open/save (pure Ori; complement nfd) | **0.1.0** | **5 (Linux)** (tools A1) |
+| `imgui_extras` | `ori-imgui-extras` | notify / search / hotkey / palette / metrics | **0.1.0** | **5 (Linux)** (tools B4) |
+| `texinspect` | `ori-imgui-texinspect` | texture inspect zoom/channels MVP | **0.1.0** | **5 (Linux)** (tools B5) |
+| `imtextedit` | `ori-imgui-textedit` | ColorTextEdit-style buffer + highlight stub | **0.1.0** | **5 (Linux)** (tools C1) |
+| `widgets` | `ori-imgui-widgets` | knobs / toggle / spinner / spectrum theme | **0.1.0** | **5 (Linux)** (tools C2) |
+| `immemory` | `ori-imgui-memory` | hex memory buffer view/edit | **0.1.0** | **5 (Linux)** (tools C3) |
+| `implot3d` | `ori-implot3d` | [ImPlot3D](https://github.com/brenocq/implot3d) series milli | **0.1.0** | **5 (Linux)** (tools D1) |
+| `markdown` | `ori-imgui-markdown` | pure Ori markdown subset + IME Linux stubs | **0.1.0** | **5 (Linux)** (tools D2–D3) |
 
 ### 2.2 U1–U15 — **done** (merged into §2.1)
 
@@ -92,7 +100,7 @@ Nada em aberto. Ports de alto valor (nfd, implot, imnodes, imguizmo, stb, noise,
 |-------------|--------|
 | *(vazio)* | **Não reabrir** como fila alta — ver §2 |
 
-**Next work (não é port novo):** **W10 done** — U1–U15 **5 (Linux)**. Maturity-5 plan **PRs 1–19 complete** ([`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md)). Multi-OS execution remains last (non-blocking).  
+**Next work (não é port novo):** **W10 done** — U1–U15 **5 (Linux)**. ImGui tools residual **stages A–D done** ([`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) PRs 1–13 + catalog PR14). **PR15 Phase OS** scaffolding last (non-blocking). Multi-OS execution remains last.  
 Fila média de **novos** ports: **vazia** (`ori-miniaudio` **skipped** — `game.audio`+raylib fecha o gap). Plan e2e 0.1.0: [`pr-plan-eco-ports-e2e.md`](pr-plan-eco-ports-e2e.md) (PRs 1–10 done).
 
 ---
@@ -193,10 +201,12 @@ ALTA     (vazia — não reabrir ports)
 MÉDIA    (vazia — miniaudio skipped)
 BAIXA    OpenAL Soft · ozz · cute_c2 · steam/discord · Lua host
 EVITAR   Yoga · cglm/HMM core · bgfx · ejson · 2º physics · flecs/EnTT default
-FEITO-5  raylib · ori_game · imgui · raygui · box2d · jolt · rres · sqlite · enet
+FEITO-5  raylib · ori_game · imgui (0.5.1) · raygui · box2d · jolt · rres · sqlite · enet
          · freetype · harfbuzz · MC (in ori-game)
-         · stb · noise · miniz · lz4 · nfd · implot · imnodes · imguizmo
+         · stb · noise · miniz · lz4 · nfd · implot · imnodes · imguizmo (0.3)
          · tracy · enkits · cgltf · fast_obj · physfs · clay · recast
-         (U1–U15 W10 complete — all 0.2.0 / 5 Linux)
+         · imguidialog · imgui-extras · texinspect · textedit · widgets
+         · immemory · implot3d · markdown
+         (U1–U15 W10 + ImGui tools A–D complete — 5 Linux)
 LAYOUT   Documentos/Projetos/game-engine-full/ori-*
 ```

@@ -2,8 +2,9 @@
 
 > **Status:** active consult doc (implementation reference)  
 > **Updated:** 2026-07-15  
-> **Program:** core Linux-5 **complete**; **W10** (U1–U15 → **5 Linux**) **done**.  
-> **Maturity-5 plan:** [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) — **PRs 1–19 complete**. Multi-OS still last (non-blocking).  
+> **Program:** core Linux-5 **complete**; **W10** (U1–U15 → **5 Linux**) **done**; **ImGui tools A–D → 5 Linux** **done**.  
+> **Maturity-5 plan:** [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) — **PRs 1–19 complete**.  
+> **ImGui tools plan:** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **PRs 1–14 done** (`a68f7529`); **PR15 Phase OS last**.  
 > **Policy:** implement / mature / port libs **on Linux first**. Multi-OS (**Phase OS**) is **last**.  
 > **Cluster path:** `/home/raillen/Documentos/Projetos/game-engine-full/ori-*`  
 > **Related:** [`eco-packages-status.md`](eco-packages-status.md) ·  
@@ -53,6 +54,7 @@ Package reaches **5** when plan §3 **G1–G7** hold (Linux only):
 | **W8** | Integration demos + umbrella smoke | **done** (2026-07-14) |
 | **W9+** | Deepen + new ports (Linux) 0.1.0 | **done** — high+medium + ImGui T2 |
 | **W10** | All ECO packages → **5 (Linux)** (U1–U15) | **done** (2026-07-15) — PRs 2–16 packages + PR 17 wires + PR 18 catalog |
+| **W11** | ImGui tools residual A–D → **5 (Linux)** | **done** (2026-07-15) — plan `a68f7529` PRs 2–13 packages + PR14 catalog |
 | **Phase OS** | Win/mac stage + smoke | **last** (scripts/docs done; not blocking) — multi-OS execution deferred |
 
 ---
@@ -67,7 +69,7 @@ Paths under `game-engine-full/`.
 | `ori_game` | `ori-game` | **0.3.0** | **5 (Linux)** | L1 `game.*` + content; wires PR 17 **done** |
 | `box2d` | `ori-box2d` | **0.3.0** | **5 (Linux)** | joints, poly4, queries, contacts, materials |
 | `jolt` | `ori-jolt` | **0.2.0** | **5 (Linux)** | layers, friction, torque, floor, hit body |
-| `imgui` | `ori-imgui` | **0.4.0** | **5 (Linux)** | Tier0 dock/tables + Tier1 file/plot/nodes |
+| `imgui` | `ori-imgui` | **0.5.1** | **5 (Linux)** | multi-ctx/image + timeline + `test_harness` (tools B2/B3/C4) |
 | `raygui` | `ori-raygui` | **0.2.0** | **5 (Linux)** | textbox, toggle, dropdown, style, … |
 | `rres` | `ori-rres` | **0.3.0** | **5 (Linux)** | validate, list_names, read_bytes |
 | `sqlite` | `ori-sqlite` | **0.3.0** | **5 (Linux)** | prepared + multi-row JSON |
@@ -81,7 +83,7 @@ Paths under `game-engine-full/`.
 | `nfd` | `ori-nfd` | **0.2.0** | **5 (Linux)** | U5 / PR 6 — file dialogs |
 | `implot` | `ori-implot` | **0.2.0** | **5 (Linux)** | U6 / PR 7 — series + FULL |
 | `imnodes` | `ori-imnodes` | **0.2.0** | **5 (Linux)** | U7 / PR 8 — node graph + FULL |
-| `imguizmo` | `ori-imguizmo` | **0.2.0** | **5 (Linux)** | U8 / PR 9 — gizmo + FULL |
+| `imguizmo` | `ori-imguizmo` | **0.3.0** | **5 (Linux)** | U8 + tools B1 — TRS + CurveEdit/Gradient/Zoom |
 | `tracy` | `ori-tracy` | **0.2.0** | **5 (Linux)** | U9 / PR 10 — zones/frames |
 | `enkits` | `ori-enkiTS` | **0.2.0** | **5 (Linux)** | U10 / PR 11 — task scheduler |
 | `cgltf` | `ori-cgltf` | **0.2.0** | **5 (Linux)** | U11 / PR 12 — glTF 2.0 |
@@ -89,6 +91,14 @@ Paths under `game-engine-full/`.
 | `physfs` | `ori-physfs` | **0.2.0** | **5 (Linux)** | U13 / PR 14 — virtual FS |
 | `clay` | `ori-clay` | **0.2.0** | **5 (Linux)** | U14 / PR 15 — IM layout |
 | `recast` | `ori-recast` | **0.2.0** | **5 (Linux)** | U15 / PR 16 — navmesh MVP |
+| `imguidialog` | `ori-imguidialog` | **0.1.0** | **5 (Linux)** | tools A1 — in-UI open/save |
+| `imgui_extras` | `ori-imgui-extras` | **0.1.0** | **5 (Linux)** | tools B4 — notify/search/hotkey/palette/metrics |
+| `texinspect` | `ori-imgui-texinspect` | **0.1.0** | **5 (Linux)** | tools B5 — texture inspect |
+| `imtextedit` | `ori-imgui-textedit` | **0.1.0** | **5 (Linux)** | tools C1 — ColorTextEdit-style buffer |
+| `widgets` | `ori-imgui-widgets` | **0.1.0** | **5 (Linux)** | tools C2 — knobs/toggle/spinner/theme |
+| `immemory` | `ori-imgui-memory` | **0.1.0** | **5 (Linux)** | tools C3 — hex memory editor |
+| `implot3d` | `ori-implot3d` | **0.1.0** | **5 (Linux)** | tools D1 — ImPlot3D |
+| `markdown` | `ori-imgui-markdown` | **0.1.0** | **5 (Linux)** | tools D2–D3 — markdown + IME stubs |
 
 ## Table A2 — U1–U15 historical IDs (all **5 (Linux)** @ **0.2.0**)
 
@@ -103,7 +113,7 @@ Canonical API targets: [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) 
 | **U5** | `nfd` | `ori-nfd` | **0.2.0** | **5 (Linux)** | PR 6 | file dialogs |
 | **U6** | `implot` | `ori-implot` | **0.2.0** | **5 (Linux)** | PR 7 | series + FULL draw |
 | **U7** | `imnodes` | `ori-imnodes` | **0.2.0** | **5 (Linux)** | PR 8 | node graph + FULL |
-| **U8** | `imguizmo` | `ori-imguizmo` | **0.2.0** | **5 (Linux)** | PR 9 | gizmo + FULL |
+| **U8** | `imguizmo` | `ori-imguizmo` | **0.3.0** | **5 (Linux)** | PR 9 + tools B1 | TRS + CurveEdit/Gradient/Zoom |
 | **U9** | `tracy` | `ori-tracy` | **0.2.0** | **5 (Linux)** | PR 10 | zones/frames + FULL |
 | **U10** | `enkits` | `ori-enkiTS` | **0.2.0** | **5 (Linux)** | PR 11 | task scheduler |
 | **U11** | `cgltf` | `ori-cgltf` | **0.2.0** | **5 (Linux)** | PR 12 | glTF 2.0 |
@@ -157,6 +167,7 @@ Scaffolding: core real/stub scripts + U1–U15 README Phase OS + `build_windows.
 | **B2.17** | Surface maturity 4→5 (3D/shaders, mechanics, audio edge) | P2 | **done** — buses/pool/seek; combat i-frames; fog presets; dialogue/inv |
 | **B2.18** | New sibling ports (product-driven `ori-*`) | P2 | **done (high + medium 0.1.0)** — do not re-scaffold. Plan e2e: [`pr-plan-eco-ports-e2e.md`](pr-plan-eco-ports-e2e.md). Residual new port: `ori-miniaudio` only if gap (skipped). |
 | **B2.18b** | **Maturity U1–U15 → 5 (Linux)** | P1 | **done** — Table A / A2; plan PRs 2–16 + PR 18 catalog (G1–G7). |
+| **B2.18c** | **ImGui tools residual A–D → 5 (Linux)** | P1 | **done** — Table A tools rows; plan `a68f7529` PRs 2–13 + PR14 catalog |
 | **B2.19** | In-`ori-game` exploration (camera, save, A\*, actions) | P2 | **done** — camera limits/shake; slots; pathfind; actions; cutscene; net_predict |
 | **B2.20** | ECS (flecs/EnTT) | — | **declined as default** — optional only if measured need |
 
@@ -178,4 +189,4 @@ Scaffolding: core real/stub scripts + U1–U15 README Phase OS + `build_windows.
 ## How to update
 
 1. After Phase OS work: raise maturity to **5 (Linux+Win)** etc., clear B1 rows.  
-2. New ports only with catalog product need — do not re-open U1–U15 maturity.
+2. New ports only with catalog product need — do not re-open U1–U15 or ImGui tools A–D maturity.
