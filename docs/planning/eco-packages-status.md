@@ -185,9 +185,9 @@ Catalog: [`eco-library-ports-catalog.md`](eco-library-ports-catalog.md)
 
 Residual / roadmap (2026-07-15):
 1. **Maturity U1–U15 → 5 (Linux)** — **done** (W10).  
-2. **ImGui tools residual (P0–P3) → 5** — **active** · product source  
-   `game-engine-full/ori-game/docs/planning/ROADMAP-GAME-ECO.md` · execute-plan  
-   [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) (stages A–E).  
+2. **ImGui tools residual (P0–P3) → 5** — **executing** (`a68f7529`) · product source  
+   `game-engine-full/ori-game/docs/planning/ROADMAP-GAME-ECO.md` **Next work** · execute-plan  
+   [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) (stages A–E; residual §4).  
 3. **`ori-miniaudio` skipped** — `game.audio` covers gap.  
 4. Studio app = separate product track (`ori-game-studio`)  
 5. Phase OS **execution** on MSVC = **last** (scaffolding done; non-blocking)

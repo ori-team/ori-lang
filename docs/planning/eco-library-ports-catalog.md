@@ -9,8 +9,8 @@
 > **Score 5 (Linux) gate (resumo):** G1 broad API · G2 ≥4 tests · G3 smoke ok · G4 README · G5 CHANGELOG · G6 leaf único · G7 version bump — detalhe em [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) §3.  
 > **Execute-plan (ports médios 0.1.0):** [`pr-plan-eco-ports-e2e.md`](pr-plan-eco-ports-e2e.md) — **complete**  
 > **Execute-plan (engine → 5 Linux):** [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) — **PRs 1–19 complete** (W10)  
-> **Execute-plan (ImGui tools residual → 5):** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **active**  
-> **Product roadmap:** `game-engine-full/ori-game/docs/planning/ROADMAP-GAME-ECO.md`
+> **Execute-plan (ImGui tools residual → 5):** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **executing** (`a68f7529`)  
+> **Product roadmap / Next work:** `game-engine-full/ori-game/docs/planning/ROADMAP-GAME-ECO.md`
 
 > **Relacionados:**  
 > - Inventário vivo + Next work: [`eco-packages-status.md`](eco-packages-status.md)  

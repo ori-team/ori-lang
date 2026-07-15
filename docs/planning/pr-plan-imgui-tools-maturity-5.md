@@ -1,6 +1,6 @@
 # Design + PR Plan — ImGui tools residual → maturity **5 (Linux)**
 
-**Status:** ready for `/execute-plan`  
+**Status:** **executing** — `/execute-plan` plan id `a68f7529` (PR1 lock-in **done**)  
 **Date:** 2026-07-15  
 **Source of truth (product backlog):**  
 `game-engine-full/ori-game/docs/planning/ROADMAP-GAME-ECO.md` (ImGui extensions + packaging)  
@@ -8,6 +8,7 @@
 **Policy:** Linux first. **Phase OS last** (non-blocking).  
 **Maturity gate:** same **G1–G7** as [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) §3 (API + ≥4 tests + smoke + README + CHANGELOG + unique modules + version).  
 **Prior plan (engine packages U1–U15):** **complete** — do not re-port nfd/implot/imnodes/imguizmo TRS/stb/cgltf/….  
+**Linked from:** [`docs/planning/README.md`](README.md) · status Next work · catalog header · ROADMAP-GAME-ECO Next work  
 
 **Execute:**
 
@@ -118,7 +119,7 @@ ImNodeFlow · imGuIZMO.quat · Hello ImGui · ImRAD · ImTui · netImGui · imgu
 
 ## 5. PR Plan (DAG)
 
-### PR 1: ROADMAP lock-in + residual inventory (docs)
+### PR 1: ROADMAP lock-in + residual inventory (docs) — **done** (2026-07-15)
 
 **Description:** Ensure `ROADMAP-GAME-ECO.md` reflects done P0 packages and points **Next work** at this plan. Sync short pointers in `ori-lang` status/catalog. No package code.
 
@@ -129,6 +130,8 @@ ImNodeFlow · imGuIZMO.quat · Hello ImGui · ImRAD · ImTui · netImGui · imgu
 `docs/planning/README.md`
 
 **Dependencies:** None
+
+**Done notes:** ROADMAP **Next work** → this plan; status/README pointers set; residual inventory remains in this plan §4 (no long-table duplication). Plan status **executing** (`a68f7529`).
 
 ---
 
