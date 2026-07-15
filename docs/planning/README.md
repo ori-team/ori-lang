@@ -23,7 +23,7 @@
 | [eco-library-ports-catalog.md](eco-library-ports-catalog.md) | **Canonical** — all ports **5 (Linux)** incl. U1–U15 @ 0.2.0; alta/média **fechadas** |
 | [pr-plan-eco-ports-e2e.md](pr-plan-eco-ports-e2e.md) | Execute-plan DAG — medium ports 0.1.0 (**complete**) |
 | [pr-plan-eco-maturity-5.md](pr-plan-eco-maturity-5.md) | Engine packages → 5 (Linux) — **PRs 1–19 complete** (W10) |
-| [pr-plan-imgui-tools-maturity-5.md](pr-plan-imgui-tools-maturity-5.md) | **PRs 1–14 done** (`a68f7529`) — stages A–D + catalog; **PR15 Phase OS last** |
+| [pr-plan-imgui-tools-maturity-5.md](pr-plan-imgui-tools-maturity-5.md) | ImGui tools residual → 5 (Linux) — **PRs 1–15 complete** (`a68f7529`) |
 | [PHASE-OS.md](PHASE-OS.md) | **Phase OS** Windows/mac ECO staging (**last**, non-blocking) |
 | [game-ports-maturity-matrix.md](game-ports-maturity-matrix.md) | **Consult** — Table A (all **5 Linux**) · A2 historical U-ids · W10 **done** |
 | [roadtov1.md](roadtov1.md) | Long-horizon 1.0 sketch |

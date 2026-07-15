@@ -2,12 +2,12 @@
 
 > **Status:** active (2026-07-15)  
 > **Linux-5 core stack:** **complete** (raylib…harfbuzz).  
-> **W10 maturity-5 (U1–U15):** **done** — all packages **5 (Linux)** at **0.2.0**.  
-> **ImGui tools residual (A–D):** **done** — packages **5 (Linux)**; catalog PR14 **done**; Phase OS PR15 **last**.  
+> **W10 maturity-5 (U1–U15):** **done** — all packages **5 (Linux)** at **0.2.0** (imguizmo **0.3.0**).  
+> **ImGui tools residual (A–D + Phase OS scaffolding):** **plan complete** — packages **5 (Linux)**; **PRs 1–15 complete**.  
 > **Plan (engine):** [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) — **PRs 1–19 complete** (W10).  
-> **Plan (ImGui tools):** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **PRs 1–14 done** (`a68f7529`); **PR15 last**.  
+> **Plan (ImGui tools):** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **PRs 1–15 complete** (`a68f7529`).  
 > **Policy (2026-07-15):** **implement / mature / port libs on Linux first.**  
-> Multi-OS validation (Windows/mac) is **last** — scripts may exist, but execution is deferred.  
+> Multi-OS validation (Windows/mac) is **last** — scripts/stubs exist; execution is deferred.  
 > **Canonical paths:** `/home/raillen/Documentos/Projetos/game-engine-full/ori-*`  
 > **Matrix:** [`game-ports-maturity-matrix.md`](game-ports-maturity-matrix.md) ·  
 > **Catálogo de ports (canônico):** [`eco-library-ports-catalog.md`](eco-library-ports-catalog.md) ·  
@@ -180,14 +180,14 @@ ECO_SMOKE_SKIP_GAME=1 ECO_SMOKE_SKIP_DEMOS=1 \
 
 | Tier | Scripts | Status |
 |------|---------|--------|
-| Core (game, box2d, jolt, sqlite, rres, imgui, raygui, enet) | real/stub `build_windows.ps1` + smoke | scripts ready — execute on MSVC host |
-| U1–U15 (all **5 Linux** @ 0.2.0) | **deferred** `tools/build_windows.ps1` (echo only) | Linux-complete; multi-OS last |
-| ImGui tools residual packages (A–D) | deferred stubs + PR15 scaffolding | Linux-complete @ 0.1.0/0.3/0.5.x; multi-OS last |
+| Core (game, box2d, jolt, sqlite, rres, imgui **0.5.1**, raygui, enet) | real/stub `build_windows.ps1` + smoke | scripts ready — execute on MSVC host |
+| U1–U15 (all **5 Linux**; imguizmo **0.3.0**, rest @ 0.2.0) | **deferred** `tools/build_windows.ps1` (echo only) | Linux-complete; multi-OS last |
+| ImGui tools residual packages (A–D) | **deferred** stubs + README Phase OS (**PR15 done**) | Linux-complete @ 0.1.0/0.3/0.5.x; multi-OS last |
 | (legacy M1–M6 labels) | same as U4/U11–U15 | absorbed into maturity-5 |
 
 Canonical write-up: [`PHASE-OS.md`](PHASE-OS.md). Umbrella: `ori-game/tools/smoke_eco_windows.ps1` (core only).  
 **Engine maturity-5 residual:** **none** — PR 19 Phase OS note refresh **done**.  
-**ImGui tools residual:** Linux G1–G7 **done** — only plan **PR15** Phase OS scaffolding remains.
+**ImGui tools residual:** **none** — plan **PRs 1–15 complete** (Phase OS scaffolding PR15 **done**).
 
 ---
 
@@ -200,9 +200,9 @@ Canonical write-up: [`PHASE-OS.md`](PHASE-OS.md). Umbrella: `ori-game/tools/smok
 Prior ports plan [`pr-plan-eco-ports-e2e.md`](pr-plan-eco-ports-e2e.md): **PRs 1–10 complete** (0.1.0 scaffolds; do not re-scaffold).  
 Catalog: [`eco-library-ports-catalog.md`](eco-library-ports-catalog.md)
 
-### ImGui tools residual plan — **stages A–D + catalog done**
+### ImGui tools residual plan — **complete**
 
-**Plan:** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) (`a68f7529`) — **PRs 1–14 done**; **PR15 Phase OS last**.
+**Plan:** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) (`a68f7529`) — **PRs 1–15 complete**.
 
 | Shipped | Ver. | Maturity |
 |---------|------|----------|
@@ -220,12 +220,12 @@ Catalog: [`eco-library-ports-catalog.md`](eco-library-ports-catalog.md)
 Residual / roadmap (2026-07-15):
 1. **Maturity U1–U15 → 5 (Linux)** — **done** (W10).  
 2. **ImGui tools residual (P0–P3) → 5** — **done** (stages A–D + catalog PR14).  
-3. **PR15 Phase OS scaffolding** on new ImGui tools packages — **last** (non-blocking).  
+3. **PR15 Phase OS scaffolding** — **done** (non-blocking; multi-OS execution still deferred).  
 4. **`ori-miniaudio` skipped** — `game.audio` covers gap.  
 5. Studio app = separate product track (`ori-game-studio`)  
-6. Phase OS **execution** on MSVC = **last** (scaffolding done; non-blocking)
+6. Phase OS **execution** on MSVC = **last** optional track (scaffolding done; non-blocking)
 
-**Do not re-queue W10 engine ports or ImGui tools A–D packages.**
+**Plan residual: none.** Do not re-queue W10 engine ports or ImGui tools A–D packages.
 
 **ECS:** no flecs/EnTT as default — see catalog §7 / roadmap § ECS.
 

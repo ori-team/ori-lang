@@ -4,7 +4,7 @@
 > **Updated:** 2026-07-15  
 > **Program:** core Linux-5 **complete**; **W10** (U1–U15 → **5 Linux**) **done**; **ImGui tools A–D → 5 Linux** **done**.  
 > **Maturity-5 plan:** [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) — **PRs 1–19 complete**.  
-> **ImGui tools plan:** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **PRs 1–14 done** (`a68f7529`); **PR15 Phase OS last**.  
+> **ImGui tools plan:** [`pr-plan-imgui-tools-maturity-5.md`](pr-plan-imgui-tools-maturity-5.md) — **PRs 1–15 complete** (`a68f7529`).  
 > **Policy:** implement / mature / port libs **on Linux first**. Multi-OS (**Phase OS**) is **last**.  
 > **Cluster path:** `/home/raillen/Documentos/Projetos/game-engine-full/ori-*`  
 > **Related:** [`eco-packages-status.md`](eco-packages-status.md) ·  
@@ -54,8 +54,8 @@ Package reaches **5** when plan §3 **G1–G7** hold (Linux only):
 | **W8** | Integration demos + umbrella smoke | **done** (2026-07-14) |
 | **W9+** | Deepen + new ports (Linux) 0.1.0 | **done** — high+medium + ImGui T2 |
 | **W10** | All ECO packages → **5 (Linux)** (U1–U15) | **done** (2026-07-15) — PRs 2–16 packages + PR 17 wires + PR 18 catalog |
-| **W11** | ImGui tools residual A–D → **5 (Linux)** | **done** (2026-07-15) — plan `a68f7529` PRs 2–13 packages + PR14 catalog |
-| **Phase OS** | Win/mac stage + smoke | **last** (scripts/docs done; not blocking) — multi-OS execution deferred |
+| **W11** | ImGui tools residual A–D → **5 (Linux)** | **done** (2026-07-15) — plan `a68f7529` PRs 1–15 complete |
+| **Phase OS** | Win/mac stage + smoke | **last** (scaffolding/docs done; not blocking) — multi-OS execution deferred |
 
 ---
 
@@ -144,10 +144,10 @@ Canonical API targets: [`pr-plan-eco-maturity-5.md`](pr-plan-eco-maturity-5.md) 
 
 | ID | Item | Priority | Notes |
 |----|------|----------|-------|
-| **B1.4** | Stage Win (+ mac) libs for all ECO packages | **last** | Core scripts ready; U1–U15 = deferred stubs only ([`PHASE-OS.md`](PHASE-OS.md)) |
+| **B1.4** | Stage Win (+ mac) libs for all ECO packages | **last** | Core scripts ready; U1–U15 + ImGui tools = deferred stubs ([`PHASE-OS.md`](PHASE-OS.md)) |
 | **B1.4b** | smoke_windows / CI multi-OS | **last** | **Do not** require green for product progress |
 
-Scaffolding: core real/stub scripts + U1–U15 README Phase OS + `build_windows.ps1` deferred stubs — **done** (ports-e2e PR 10 + maturity-5 PR 19).
+Scaffolding: core real/stub scripts + U1–U15 + ImGui tools residual README Phase OS + `build_windows.ps1` deferred stubs — **done** (ports-e2e PR 10 + maturity-5 PR 19 + ImGui tools PR 15).
 
 ### B2 — Deepen + ports (Linux)
 
@@ -167,7 +167,7 @@ Scaffolding: core real/stub scripts + U1–U15 README Phase OS + `build_windows.
 | **B2.17** | Surface maturity 4→5 (3D/shaders, mechanics, audio edge) | P2 | **done** — buses/pool/seek; combat i-frames; fog presets; dialogue/inv |
 | **B2.18** | New sibling ports (product-driven `ori-*`) | P2 | **done (high + medium 0.1.0)** — do not re-scaffold. Plan e2e: [`pr-plan-eco-ports-e2e.md`](pr-plan-eco-ports-e2e.md). Residual new port: `ori-miniaudio` only if gap (skipped). |
 | **B2.18b** | **Maturity U1–U15 → 5 (Linux)** | P1 | **done** — Table A / A2; plan PRs 2–16 + PR 18 catalog (G1–G7). |
-| **B2.18c** | **ImGui tools residual A–D → 5 (Linux)** | P1 | **done** — Table A tools rows; plan `a68f7529` PRs 2–13 + PR14 catalog |
+| **B2.18c** | **ImGui tools residual A–D → 5 (Linux)** | P1 | **done** — Table A tools rows; plan `a68f7529` **PRs 1–15 complete** |
 | **B2.19** | In-`ori-game` exploration (camera, save, A\*, actions) | P2 | **done** — camera limits/shake; slots; pathfind; actions; cutscene; net_predict |
 | **B2.20** | ECS (flecs/EnTT) | — | **declined as default** — optional only if measured need |
 

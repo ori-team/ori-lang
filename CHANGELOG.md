@@ -11,6 +11,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Notas
+- **ECO ImGui tools residual plan complete (2026-07-15):** plan
+  `pr-plan-imgui-tools-maturity-5.md` (`a68f7529`) **PRs 1–15 complete**. Packages
+  **5 (Linux)** (imguidialog, imguizmo **0.3.0**, imgui **0.5.1**, extras,
+  texinspect, textedit, widgets, memory, implot3d, markdown). Phase OS scaffolding
+  (PR 15): README Phase OS + deferred `build_windows.ps1` on new packages;
+  `PHASE-OS.md` ImGui tools table; multi-OS execution still last / non-blocking.
 - **ECO W10 maturity-5 complete (2026-07-15):** U1–U15 packages at **0.2.0 / 5 (Linux)**
   (stb, noise, miniz, lz4, nfd, implot, imnodes, imguizmo, tracy, enkiTS, cgltf,
   fast_obj, physfs, clay, recast) + ori-game wires (PR 17). Catalog/status/matrix

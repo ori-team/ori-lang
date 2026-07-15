@@ -1,6 +1,6 @@
 # Design + PR Plan — ImGui tools residual → maturity **5 (Linux)**
 
-**Status:** **stages A–D + catalog done** — `/execute-plan` plan id `a68f7529` (PRs **1–14 done**; **PR15 Phase OS last**)  
+**Status:** **PRs 1–15 complete** (2026-07-15) — stages A–D + catalog + Phase OS scaffolding (`/execute-plan` plan id `a68f7529`)  
 **Date:** 2026-07-15  
 **Source of truth (product backlog):**  
 `game-engine-full/ori-game/docs/planning/ROADMAP-GAME-ECO.md` (ImGui extensions + packaging)  
@@ -301,13 +301,18 @@ Path-dep `imgui` only. ≥4 tests covering queue/filter/palette/metrics. Smoke. 
 
 ---
 
-### PR 15: Phase OS scaffolding last (non-blocking)
+### PR 15: Phase OS scaffolding last (non-blocking) — **done**
 
 **Description:** Phase OS section + deferred `build_windows.ps1` on every **new** package from this plan. Update `PHASE-OS.md`. No multi-OS CI green required.
 
 **Files/components affected:** `docs/planning/PHASE-OS.md`, new package READMEs under `game-engine-full/ori-imgui-*/`, `docs/planning/eco-packages-status.md`
 
 **Dependencies:** PR 14
+
+**Done notes (2026-07-15):** all new residual packages have README **Phase OS** + deferred
+`tools/build_windows.ps1`; **ori-imguizmo 0.3.0** / **ori-imgui 0.5.1** Phase OS notes
+refreshed; `PHASE-OS.md` ImGui tools table; plan residual **none**. Multi-OS **execution**
+on MSVC remains optional / last / non-blocking.
 
 ---
 
