@@ -1,6 +1,7 @@
 # Plano ARC/ORC — implementação e correção a partir do estudo Nim
 
-> **Status:** ativo · criado 2026-07-16
+> **Status:** **CONCLUÍDO 2026-07-18** — F0–F7 entregues (LANG-MEM-0…9
+> done no BACKLOG; F6 fechado como ADR de deferimento). Criado 2026-07-16
 > **Base:** nota de estudo C0 [`historico/nim-study-2026-07-16-c0.md`](historico/nim-study-2026-07-16-c0.md)
 > (Nim `devel` @ `3bb46d3`) e direção
 > [`language-direction-decisions-2026-06-30.md`](language-direction-decisions-2026-06-30.md)

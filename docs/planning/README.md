@@ -12,7 +12,7 @@
 | **[BACKLOG.md](BACKLOG.md)** | **Only** open implementation list (priority · difficulty · deps · waves) |
 | [PENDENTES.md](PENDENTES.md) | History + pointer to BACKLOG |
 | [uso-real-pequeno-medio.md](uso-real-pequeno-medio.md) | Small/medium real-use narrative (open items → BACKLOG) |
-| [plano-arc-nim-2026-07-16.md](plano-arc-nim-2026-07-16.md) | **LANG-MEM-0…7** — plano ARC/ORC derivado do estudo Nim (correções dtor×edges, collector incremental, elisão de RC) |
+| [plano-arc-nim-2026-07-16.md](plano-arc-nim-2026-07-16.md) | **LANG-MEM-0…9** — plano ARC/ORC do estudo Nim (**concluído 2026-07-18**: dono único da cascata, collector incremental, elisão, wrappers do runtime, spec + ADR COW) |
 | [prompt-analisar-nim-para-ori.md](prompt-analisar-nim-para-ori.md) | Prompt mestre do programa de estudo Nim→Ori (campanhas C0–C7; requer clone local do Nim em `_references/nim-lang/`, gitignored) |
 | [PLANO-CDYLIB-EMBED.md](PLANO-CDYLIB-EMBED.md) | `ori compile --lib` / embed (P1 done; P2–P5 open) |
 | [eco-game-imgui-raylib3d-plan.md](eco-game-imgui-raylib3d-plan.md) | External packages plan (ori-game / ori-imgui / raylib3d …) |

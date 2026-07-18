@@ -52,9 +52,20 @@ const b: list[int] = a          -- b holds the same reference as a
 
 The heap data is freed when the last reference to it goes out of scope.
 
-In practice, Ori's value semantics and immutability mean that managed types
-behave as if they were copied — mutations produce new values, not in-place
-changes — so the distinction is invisible in most code.
+Sharing semantics by operation kind:
+
+- **Functional string/bytes operations** (`+` concat, slicing, `str.*`
+  helpers) produce fresh values; the inputs are never modified, so
+  aliasing is unobservable there.
+- **Collection mutators** (`lists.push`, `maps.set`, `sets.add`, index
+  assignment, …) modify the shared heap object **in place**: every alias
+  observes the change. `const` prevents rebinding the name, not mutation
+  of the referenced collection through its API.
+
+Copy-on-write (mutate-in-place only while the reference is unique) was
+evaluated and **deferred** — it would change the observable aliasing
+behavior above, which FREEZE-1 forbids. Decision record:
+`docs/planning/adr-arc-cow-collections.md`.
 
 ---
 
@@ -197,6 +208,37 @@ Current native status:
 Async shapes outside the current state-machine subset are rejected before
 Cranelift with `backend.native_unsupported` instead of falling back to a sync
 bridge.
+
+### Threads and RC atomicity (recorded trade-off)
+
+Ori uses a **shared heap with atomic reference counts** plus a global
+registry lock for allocation/edge bookkeeping. This is a deliberate
+divergence from Nim ORC, which uses *non-atomic* RC and stays sound only
+because entire subgraphs are **moved** between threads rather than shared.
+
+- Any managed value may be touched from any thread or task; retain/release
+  are always safe. There is no thread-local heap and no ownership-transfer
+  requirement in the runtime model.
+- Values sent through channels or returned from task joins carry their +1
+  through the transfer (the receiving side owns them); the wrappers built
+  for those results hold raw `i64` payloads whose type only the generated
+  code knows, so the runtime never guesses at managed-ness there.
+- The cost of this choice (a registry lookup under the global lock per RC
+  op) is the known performance ceiling; RC **elision** (return transfer,
+  implicit caller→callee argument transfer) reduces op counts instead of
+  weakening atomicity.
+- Revisiting non-atomic RC requires an explicit ADR **and** a thread model
+  that guarantees subgraph isolation (Nim-style move semantics) — gated on
+  a FREEZE exit, since it changes observable sharing semantics.
+
+### Cancellation and cleanup
+
+Cancel tokens mark associated futures as cancelled. The generated state
+machine observes the failed/cancelled status on resume, runs terminal
+cleanup (releasing the frame's managed edges) and propagates the status
+through the async wrapper. `using` disposal on every terminal path
+(cancelled future, some `break`/`continue` combinations) has a residual
+compiler TODO — see the note in "Async and ARC" above.
 
 ---
 
