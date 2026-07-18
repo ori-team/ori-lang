@@ -3,6 +3,9 @@ build/
 .cargo/
 !Cargo.lock
 dist/
+# Keep generated Ori book PDF/HTML in-repo
+!docs/book/dist/
+!docs/book/dist/**
 .DS_Store
 /hello.*
 # IDE
