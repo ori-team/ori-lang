@@ -28,15 +28,16 @@ unsafe fn result_ptr_payload(ptr: *mut u8) -> *mut u8 {
     *(ptr.add(std::mem::size_of::<*mut u8>()) as *mut *mut u8)
 }
 
+// LANG-MEM-9: result wrappers are ARC-managed (`ori_alloc` + ownership
+// edge to the payload). A single release cascades; the manual
+// payload-release + raw free of the malloc era would double-release the
+// payload and hand `libc::free` an interior (post-header) pointer.
 unsafe fn release_result_payload_and_free(ptr: *mut u8) {
-    if !ptr.is_null() {
-        ori_arc_release(result_ptr_payload(ptr));
-        free_result(ptr);
-    }
+    ori_arc_release(ptr);
 }
 
 unsafe fn free_result(ptr: *mut u8) {
-    libc::free(ptr as *mut libc::c_void);
+    ori_arc_release(ptr);
 }
 
 unsafe extern "C" fn test_task_entry(_env: *mut u8) -> i64 {

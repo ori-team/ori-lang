@@ -43,6 +43,15 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [`docs/planning/historico/nim-study-2026-07-17-c3.md`](docs/planning/historico/nim-study-2026-07-17-c3.md).
 
 ### Corrigido
+- **ARC: wrappers `result`/`optional` do runtime nativo eram invisíveis ao
+  ARC (LANG-MEM-9).** `new_result*`/`new_optional_ptr` usavam `malloc` cru:
+  releases do codegen eram no-ops e toda chamada de `ori.fs`/`ori.process`/
+  net vazava o payload (12 alocações a cada 10 `fs.read_text_or`). Agora os
+  wrappers passam por `ori_alloc` e possuem o payload via edge (dono único
+  da cascata). Junto, o `try`/`?` foi corrigido: abandonava o wrapper owned
+  no caminho ok e não consumia o +1 no caminho err (32 leaks a cada 10
+  `try`); o payload extraído agora é sempre owned. Regressão:
+  `memory_arc.rs` (`fs_read_text_or_loop`, `try_unwrap_loop`).
 - **ARC: scrutinee owned de `match`/`if some` era vazado.** Um scrutinee
   managed fresco (ex. `match mk(i)` direto, sem binding) nunca era
   liberado — 1-2 alocações vazadas por execução do match; o mesmo em

@@ -6632,6 +6632,7 @@ impl<'a> FuncCodegen<'a> {
                 | HirExprKind::None_
                 | HirExprKind::Ok_(_)
                 | HirExprKind::Err_(_)
+                | HirExprKind::Propagate(_)
                 | HirExprKind::Await(_)
                 | HirExprKind::Range { .. }
                 | HirExprKind::InterpolatedStr(_)
@@ -10923,6 +10924,15 @@ impl<'a> FuncCodegen<'a> {
             }
             HirExprKind::Propagate(inner) => {
                 // `try expr` / Propagate — load has_value/is_ok; if false, early return; else unwrap
+                //
+                // Wrapper accounting (LANG-MEM-9): an owned wrapper (fresh
+                // Call result) must be consumed on BOTH paths — before this,
+                // the ok path abandoned it and the err path retained it
+                // without ever dropping the temporary's +1, so every `try`
+                // leaked once wrappers became ARC-managed. The unwrapped
+                // payload is always produced OWNED (Propagate is listed in
+                // `expr_produces_owned_ref`), independent of the wrapper.
+                let inner_owned = Self::expr_produces_owned_ref(inner) && is_managed_ty(&inner.ty);
                 let ptr = self.emit_expr(inner)?;
                 let flag = self.builder.ins().load(types::I8, MemFlags::new(), ptr, 0);
                 let ok_blk = self.builder.create_block();
@@ -10940,7 +10950,12 @@ impl<'a> FuncCodegen<'a> {
                         frame,
                         ASYNC_FRAME_RESULT_OFFSET,
                     );
-                    self.emit_arc_retain_if_managed(&plan.inner_ty, ptr)?;
+                    // Owned wrapper: skip the retain so the release below
+                    // consumes the temporary's +1 (the future takes its own
+                    // reference in emit_future_complete).
+                    if !inner_owned {
+                        self.emit_arc_retain_if_managed(&plan.inner_ty, ptr)?;
+                    }
                     self.emit_future_complete(result_future, &plan.inner_ty, Some(ptr))?;
                     self.emit_arc_release_if_managed(&plan.inner_ty, ptr)?;
                     self.emit_scope_cleanup_calls_from(0, 0)?;
@@ -10948,7 +10963,12 @@ impl<'a> FuncCodegen<'a> {
                     let zero = self.builder.ins().iconst(types::I64, 0);
                     self.builder.ins().return_(&[zero]);
                 } else {
-                    self.emit_arc_retain_if_managed(&self.current_return_ty.clone(), ptr)?;
+                    // Owned wrapper: its +1 transfers to the return value
+                    // (return-transfer); borrowed wrappers get a retain for
+                    // the caller.
+                    if !inner_owned {
+                        self.emit_arc_retain_if_managed(&self.current_return_ty.clone(), ptr)?;
+                    }
                     self.emit_scope_cleanup_calls_from(0, 0)?;
                     self.builder.ins().return_(&[ptr]);
                 }
@@ -10958,14 +10978,22 @@ impl<'a> FuncCodegen<'a> {
                 self.builder.switch_to_block(ok_blk);
                 self.terminated = false;
 
-                let (pay_off, cl_ty) = match &inner.ty {
+                let (pay_off, payload_ty, cl_ty) = match &inner.ty {
                     Ty::Result(ok, err) => {
                         let (off, _, _) = result_layout(ok, err, self.ptr_ty);
-                        (off as i32, cl_type(ok, self.ptr_ty).unwrap_or(types::I64))
+                        (
+                            off as i32,
+                            ok.as_ref().clone(),
+                            cl_type(ok, self.ptr_ty).unwrap_or(types::I64),
+                        )
                     }
                     Ty::Optional(t) => {
                         let (off, _) = optional_layout(t, self.ptr_ty);
-                        (off as i32, cl_type(t, self.ptr_ty).unwrap_or(types::I64))
+                        (
+                            off as i32,
+                            t.as_ref().clone(),
+                            cl_type(t, self.ptr_ty).unwrap_or(types::I64),
+                        )
                     }
                     _ => {
                         return Err(format!(
@@ -10975,9 +11003,18 @@ impl<'a> FuncCodegen<'a> {
                     }
                 };
 
-                self.builder
+                let payload = self
+                    .builder
                     .ins()
-                    .load(cl_ty, MemFlags::new(), ptr, pay_off)
+                    .load(cl_ty, MemFlags::new(), ptr, pay_off);
+                // The payload leaves the wrapper with its own +1; an owned
+                // wrapper is consumed here (releasing it may cascade, which
+                // is why the payload is retained first).
+                self.emit_arc_retain_if_managed(&payload_ty, payload)?;
+                if inner_owned {
+                    self.emit_arc_release_if_managed(&inner.ty, ptr)?;
+                }
+                payload
             }
             HirExprKind::Await(inner) => self.emit_await(inner, &expr.ty)?,
             HirExprKind::StructLit { def_id, fields } => {

@@ -1458,3 +1458,109 @@ end
     assert!(success, "{stdout}");
     assert_eq!(stdout.trim(), "inner-value");
 }
+
+// ── LANG-MEM-9 — runtime-built result/optional wrappers are ARC-managed ────
+//
+// `new_result*` / `new_optional_ptr` in ori-runtime used raw libc::malloc:
+// wrappers were invisible to the ARC registry, codegen releases were silent
+// no-ops, and every runtime result (ori.fs, ori.process, net, ...) leaked
+// its payload. Wrappers now go through ori_alloc and own their managed
+// payload via an edge; the `try`/`?` unwrap consumes an owned wrapper on
+// both paths and always produces an owned payload.
+
+/// fs.read_text_or in a loop must not leak the runtime-built result
+/// wrappers or their string payloads (12 leaked allocations per 10 calls
+/// before the fix).
+#[test]
+fn compile_runs_native_fs_read_text_or_loop_no_leak() {
+    let dir = TestDir::new("fs_read_text_or_loop");
+    let (stdout, _stderr, success) = compile_and_run_with_leak_check(
+        &dir,
+        r#"module app.main
+
+imports
+    ori.io = io
+    ori.fs = fs
+    ori.test = test
+end
+
+exercise(path: string, n: int) -> int
+    var i: int = 0
+    var total: int = 0
+    while i < n
+        const text: string = fs.read_text_or(path, "MISSING")
+        total = total + len(text)
+        i = i + 1
+    end
+    return total
+end
+
+main()
+    const path: string = "/tmp/ori_mem9_regression.txt"
+    fs.write_text(path, "regression-content")
+    const r: int = exercise(path, 10)
+    const leaked: int = test.assert_no_leaks("fs_read_text_or_loop")
+    io.print("r:" + string(r))
+    io.print("leaks:" + string(leaked))
+end
+"#,
+        "fs_read_text_or_loop",
+    );
+    assert!(success, "{stdout}");
+    assert_eq!(stdout.trim(), "r:180\nleaks:0");
+}
+
+/// `try` over codegen-built results in a loop must consume the wrapper on
+/// both the ok and err paths (32 leaked allocations per 10 iterations
+/// before the fix).
+#[test]
+fn compile_runs_native_try_unwrap_loop_no_leak() {
+    let dir = TestDir::new("try_unwrap_loop");
+    let (stdout, _stderr, success) = compile_and_run_with_leak_check(
+        &dir,
+        r#"module app.main
+
+import ori.io = io
+import ori.test = test
+
+mk(i: int) -> result[string, string]
+    if i % 2 == 0
+        return ok("val-" + string(i))
+    end
+    return err("odd-" + string(i))
+end
+
+use_try(i: int) -> result[int, string]
+    const text: string = try mk(i)
+    return ok(len(text))
+end
+
+exercise(n: int) -> int
+    var i: int = 0
+    var total: int = 0
+    while i < n
+        match use_try(i)
+            case ok(v):
+                total = total + v
+            case err(_):
+                total = total + 100
+        end
+        i = i + 1
+    end
+    return total
+end
+
+main()
+    const r: int = exercise(10)
+    const leaked: int = test.assert_no_leaks("try_unwrap_loop")
+    io.print("r:" + string(r))
+    io.print("leaks:" + string(leaked))
+end
+"#,
+        "try_unwrap_loop",
+    );
+    assert!(success, "{stdout}");
+    // Even i (0,2,4,6,8): ok("val-N") -> len 5 each = 25.
+    // Odd i: err propagated -> +100 each = 500. Total 525.
+    assert_eq!(stdout.trim(), "r:525\nleaks:0");
+}

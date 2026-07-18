@@ -998,7 +998,7 @@ unsafe fn alloc_async_spawn_job(
 unsafe fn new_result_raw(is_ok: bool, raw: i64) -> *mut u8 {
     let ptr_size = std::mem::size_of::<*mut u8>();
     let total = ptr_size * 2;
-    let ptr = libc::malloc(total) as *mut u8;
+    let ptr = ori_alloc(total, None);
     if ptr.is_null() {
         return ptr;
     }
@@ -7420,6 +7420,10 @@ unsafe fn new_optional_ptr(has_value: bool, payload: *mut u8) -> *mut u8 {
     std::ptr::write_bytes(ptr, 0, total);
     *ptr = u8::from(has_value);
     *(ptr.add(ptr_size) as *mut *mut u8) = payload;
+    // LANG-MEM-9: the wrapper owns its fresh managed payload via an edge
+    // (it was stored as a raw pointer before — released wrappers left the
+    // payload orphaned).
+    wrapper_owns_payload(ptr, payload);
     ptr
 }
 
@@ -7551,16 +7555,32 @@ pub unsafe extern "C" fn ori_string_to_float(s: *const u8) -> *mut OriOptionalFl
 // Both ok and err payloads are pointer-sized, so the same helper covers
 // result[string, string] AND result[list[string], string].
 
+/// Transfers ownership of a freshly created managed payload to a wrapper:
+/// the wrapper's ARC edge becomes the payload's owner (+1 via the edge,
+/// then the temporary's own +1 is dropped — single cascade owner). No-op
+/// for null or unregistered (non-managed) payloads.
+unsafe fn wrapper_owns_payload(wrapper: *mut u8, payload: *mut u8) {
+    if wrapper.is_null() || payload.is_null() {
+        return;
+    }
+    ori_arc_register_edge(wrapper, payload);
+    ori_arc_release(payload);
+}
+
 unsafe fn new_result(is_ok: bool, payload: *mut u8) -> *mut u8 {
     let ptr_size = std::mem::size_of::<*mut u8>();
     let total = ptr_size * 2;
-    let ptr = libc::malloc(total) as *mut u8;
+    // ARC-managed (LANG-MEM-9): result wrappers used to be raw malloc,
+    // invisible to the registry — codegen releases were silent no-ops and
+    // every wrapper (plus any payload only it referenced) leaked.
+    let ptr = ori_alloc(total, None);
     if ptr.is_null() {
         return ptr;
     }
     std::ptr::write_bytes(ptr, 0, total);
     *ptr = u8::from(is_ok);
     *(ptr.add(ptr_size) as *mut *mut u8) = payload;
+    wrapper_owns_payload(ptr, payload);
     ptr
 }
 
@@ -7572,7 +7592,7 @@ pub unsafe extern "C" fn ori_new_result(is_ok: c_uchar, payload: *mut u8) -> *mu
 unsafe fn new_result_i64_ok(value: i64) -> *mut u8 {
     let ptr_size = std::mem::size_of::<*mut u8>();
     let total = ptr_size * 2;
-    let ptr = libc::malloc(total) as *mut u8;
+    let ptr = ori_alloc(total, None);
     if ptr.is_null() {
         return ptr;
     }
@@ -7585,7 +7605,7 @@ unsafe fn new_result_i64_ok(value: i64) -> *mut u8 {
 unsafe fn new_result_f64_ok(value: f64) -> *mut u8 {
     let ptr_size = std::mem::size_of::<*mut u8>();
     let total = ptr_size * 2;
-    let ptr = libc::malloc(total) as *mut u8;
+    let ptr = ori_alloc(total, None);
     if ptr.is_null() {
         return ptr;
     }
@@ -7598,7 +7618,7 @@ unsafe fn new_result_f64_ok(value: f64) -> *mut u8 {
 unsafe fn new_result_bool_ok(value: bool) -> *mut u8 {
     let ptr_size = std::mem::size_of::<*mut u8>();
     let total = ptr_size * 2;
-    let ptr = libc::malloc(total) as *mut u8;
+    let ptr = ori_alloc(total, None);
     if ptr.is_null() {
         return ptr;
     }
