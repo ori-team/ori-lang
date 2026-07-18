@@ -43,6 +43,18 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [`docs/planning/historico/nim-study-2026-07-17-c3.md`](docs/planning/historico/nim-study-2026-07-17-c3.md).
 
 ### Corrigido
+- **ARC: args owned nas coleções restantes + arestas de graph canônicas.**
+  Os emissores especiais de `hash_table`/`graph`/`heap`/`tree`/
+  `linked_list.find` e as listas-fonte de `maps.from_entries`/
+  `sets.from_list`/`heap.from_list` não liberavam chaves/valores
+  temporários owned (6–12 alocações vazadas por punhado de operações com
+  strings frescas). Todos seguem agora a regra uniforme "call → release do
+  temp owned". O fix expôs um bug real no runtime do graph: as arestas
+  guardavam o ponteiro cru do argumento — com nós deduplicados por
+  conteúdo, a aresta podia referenciar um temporário liberado;
+  `graph_add_node_raw` agora retorna o nó canônico armazenado e as
+  arestas o utilizam. Regressão:
+  `memory_arc::compile_runs_native_collections_owned_args_no_leak`.
 - **Otimizador: capturas de closure e contratos de campo agora contam como
   uso/efeito no DCE.** O passe de dead-code (LANG-PERF-2-1) removia
   `const` capturados apenas por closures (o corpo vive numa função

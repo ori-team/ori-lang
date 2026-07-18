@@ -5598,15 +5598,27 @@ unsafe fn graph_edge_index(graph: *mut OriGraph, from: i64, to: i64, node_kind: 
     -1
 }
 
-unsafe fn graph_add_node_raw(graph: *mut OriGraph, node: i64, node_kind: u8) {
-    if !graph_prepare_kind(graph, node_kind) || graph_find_node(graph, node, node_kind) >= 0 {
-        return;
+/// Adds `node` (or finds an existing content-equal one) and returns the
+/// **canonical** stored value. Callers that persist node references (the
+/// edge arrays) must use the returned value: for string nodes, a caller's
+/// temporary can be content-equal to an already-stored node but be a
+/// different allocation that the caller releases right after the call
+/// (LANG-MEM owned-arg rule) — storing the raw argument would leave a
+/// dangling pointer in the edge list.
+unsafe fn graph_add_node_raw(graph: *mut OriGraph, node: i64, node_kind: u8) -> i64 {
+    if !graph_prepare_kind(graph, node_kind) {
+        return node;
+    }
+    let existing = graph_find_node(graph, node, node_kind);
+    if existing >= 0 {
+        return *(*graph).nodes.add(existing as usize);
     }
     graph_reserve_nodes(graph, (*graph).len + 1);
     *(*graph).nodes.add((*graph).len as usize) = node;
     (*graph).len += 1;
     (*graph).version += 1;
     ori_arc_register_edge(graph as *mut u8, node as *mut u8);
+    node
 }
 
 unsafe fn graph_add_edge_raw(graph: *mut OriGraph, from: i64, to: i64, node_kind: u8) {
@@ -5623,8 +5635,8 @@ unsafe fn graph_add_weighted_edge_raw(
     if !graph_prepare_kind(graph, node_kind) {
         return;
     }
-    graph_add_node_raw(graph, from, node_kind);
-    graph_add_node_raw(graph, to, node_kind);
+    let from = graph_add_node_raw(graph, from, node_kind);
+    let to = graph_add_node_raw(graph, to, node_kind);
     let existing = graph_edge_index(graph, from, to, node_kind);
     if existing >= 0 {
         let old_weight = *(*graph).edge_weight.add(existing as usize);
@@ -6550,12 +6562,14 @@ unsafe fn heap_compare(heap: *mut OriHeap, left: i64, right: i64) -> i64 {
         },
         HEAP_ITEM_CUSTOM if !(*heap).compare_fn.is_null() => {
             let compare: HeapCompareFn = std::mem::transmute((*heap).compare_fn);
+            // Ori functions release their managed parameters on exit
+            // (callee-owns contract, same as the codegen's trait-method call
+            // sites): these retains are exactly the +1 the compare consumes.
+            // Releasing again afterwards double-counted and freed live heap
+            // elements once owned push temporaries stopped leaking.
             ori_arc_retain(left as *mut u8);
             ori_arc_retain(right as *mut u8);
-            let result = compare(left, right);
-            ori_arc_release(left as *mut u8);
-            ori_arc_release(right as *mut u8);
-            result
+            compare(left, right)
         }
         _ => match left.cmp(&right) {
             std::cmp::Ordering::Less => -1,

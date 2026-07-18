@@ -424,9 +424,18 @@ struct TestScore {
 }
 
 unsafe extern "C" fn test_score_compare(left: i64, right: i64) -> i64 {
-    let left = &*(left as *const TestScore);
-    let right = &*(right as *const TestScore);
-    left.value - right.value
+    // Mirrors the product contract: Ori compare functions release their
+    // managed parameters on exit (callee-owns), and `heap_compare` retains
+    // both operands before each call precisely so the callee can consume
+    // them. A comparator that kept the references would leak per comparison.
+    let result = {
+        let l = &*(left as *const TestScore);
+        let r = &*(right as *const TestScore);
+        l.value - r.value
+    };
+    ori_arc_release(left as *mut u8);
+    ori_arc_release(right as *mut u8);
+    result
 }
 
 #[test]

@@ -11574,8 +11574,14 @@ impl<'a> FuncCodegen<'a> {
                 .func_refs
                 .get(runtime_name)
                 .ok_or_else(|| format!("missing runtime function `{runtime_name}`"))?;
+            let entries_is_owned = Self::expr_produces_owned_ref(&args[0].value);
             let entries = self.emit_expr(&args[0].value)?;
             let call = self.builder.ins().call(fref, &[entries]);
+            // The new map copies/retains the entries itself; an owned
+            // entries-list temporary must be released after the call.
+            if entries_is_owned {
+                self.emit_arc_release_if_managed(&args[0].value.ty, entries)?;
+            }
             return Ok(self.builder.inst_results(call)[0]);
         }
         let Some(first_arg) = args.first() else {
@@ -11737,6 +11743,8 @@ impl<'a> FuncCodegen<'a> {
                 if args.len() != 3 {
                     return Err("ori_hash_table_set expects table, key, and value".to_string());
                 }
+                let key_is_owned = Self::expr_produces_owned_ref(&args[1].value);
+                let value_is_owned = Self::expr_produces_owned_ref(&args[2].value);
                 let key_value = self.emit_expr_for_expected(&args[1].value, key_ty)?;
                 let table_value = self.emit_expr_for_expected(&args[2].value, value_ty)?;
                 let stored_key = self.to_list_storage_value(key_value, key_ty);
@@ -11746,24 +11754,40 @@ impl<'a> FuncCodegen<'a> {
                     .call(fref, &[table_v, stored_key, stored_value]);
                 self.emit_arc_register_edge_if_managed(key_ty, table_v, key_value)?;
                 self.emit_arc_register_edge_if_managed(value_ty, table_v, table_value)?;
+                // The container owns stored/lookup managed values via its
+                // internal edges; drop an owned temporary's own +1.
+                if key_is_owned && is_managed_ty(key_ty) {
+                    self.emit_arc_release_if_managed(key_ty, key_value)?;
+                }
+                if value_is_owned && is_managed_ty(value_ty) {
+                    self.emit_arc_release_if_managed(value_ty, table_value)?;
+                }
                 Ok(self.builder.ins().iconst(types::I8, 0))
             }
             "ori_hash_table_get" | "ori_hash_table_remove" => {
                 if args.len() != 2 {
                     return Err(format!("{name} expects table and key"));
                 }
+                let key_is_owned = Self::expr_produces_owned_ref(&args[1].value);
                 let key_value = self.emit_expr_for_expected(&args[1].value, key_ty)?;
                 let stored_key = self.to_list_storage_value(key_value, key_ty);
                 let call = self.builder.ins().call(fref, &[table_v, stored_key]);
+                if key_is_owned && is_managed_ty(key_ty) {
+                    self.emit_arc_release_if_managed(key_ty, key_value)?;
+                }
                 Ok(self.builder.inst_results(call)[0])
             }
             "ori_hash_table_contains" => {
                 if args.len() != 2 {
                     return Err("ori_hash_table_contains expects table and key".to_string());
                 }
+                let key_is_owned = Self::expr_produces_owned_ref(&args[1].value);
                 let key_value = self.emit_expr_for_expected(&args[1].value, key_ty)?;
                 let stored_key = self.to_list_storage_value(key_value, key_ty);
                 let call = self.builder.ins().call(fref, &[table_v, stored_key]);
+                if key_is_owned && is_managed_ty(key_ty) {
+                    self.emit_arc_release_if_managed(key_ty, key_value)?;
+                }
                 Ok(self.builder.inst_results(call)[0])
             }
             _ => Err(native_codegen_unsupported(format!(
@@ -11802,9 +11826,14 @@ impl<'a> FuncCodegen<'a> {
             .get(runtime_name)
             .ok_or_else(|| format!("missing runtime function `{runtime_name}`"))?;
         let list = self.emit_expr(&args[0].value)?;
+        let value_is_owned = Self::expr_produces_owned_ref(&args[1].value);
         let value = self.emit_expr_for_expected(&args[1].value, &elem_ty)?;
         let stored = self.to_list_storage_value(value, &elem_ty);
         let call = self.builder.ins().call(fref, &[list, stored]);
+        // Lookup only borrows the probe value; drop an owned temporary.
+        if value_is_owned && is_managed_ty(&elem_ty) {
+            self.emit_arc_release_if_managed(&elem_ty, value)?;
+        }
         Ok(self.builder.inst_results(call)[0])
     }
 
@@ -11857,9 +11886,15 @@ impl<'a> FuncCodegen<'a> {
                 if args.len() != 2 {
                     return Err("ori_graph_add_node expects graph and node".to_string());
                 }
+                let node_is_owned = Self::expr_produces_owned_ref(&args[1].value);
                 let node = self.emit_expr_for_expected(&args[1].value, &node_ty)?;
                 let stored = self.to_list_storage_value(node, &node_ty);
                 self.builder.ins().call(fref, &[graph, stored]);
+                // The graph owns stored nodes via its internal edges; drop
+                // an owned temporary's own +1.
+                if node_is_owned && is_managed_ty(&node_ty) {
+                    self.emit_arc_release_if_managed(&node_ty, node)?;
+                }
                 Ok(self.builder.ins().iconst(types::I8, 0))
             }
             "ori_graph_remove_node"
@@ -11870,9 +11905,13 @@ impl<'a> FuncCodegen<'a> {
                 if args.len() != 2 {
                     return Err(format!("{name} expects graph and node"));
                 }
+                let node_is_owned = Self::expr_produces_owned_ref(&args[1].value);
                 let node = self.emit_expr_for_expected(&args[1].value, &node_ty)?;
                 let stored = self.to_list_storage_value(node, &node_ty);
                 let call = self.builder.ins().call(fref, &[graph, stored]);
+                if node_is_owned && is_managed_ty(&node_ty) {
+                    self.emit_arc_release_if_managed(&node_ty, node)?;
+                }
                 let res = self.builder.inst_results(call);
                 Ok(res
                     .first()
@@ -11883,6 +11922,8 @@ impl<'a> FuncCodegen<'a> {
                 if args.len() != 3 {
                     return Err("ori_graph_add_edge expects graph, from, and to".to_string());
                 }
+                let from_is_owned = Self::expr_produces_owned_ref(&args[1].value);
+                let to_is_owned = Self::expr_produces_owned_ref(&args[2].value);
                 let from = self.emit_expr_for_expected(&args[1].value, &node_ty)?;
                 let to = self.emit_expr_for_expected(&args[2].value, &node_ty)?;
                 let stored_from = self.to_list_storage_value(from, &node_ty);
@@ -11890,6 +11931,12 @@ impl<'a> FuncCodegen<'a> {
                 self.builder
                     .ins()
                     .call(fref, &[graph, stored_from, stored_to]);
+                if from_is_owned && is_managed_ty(&node_ty) {
+                    self.emit_arc_release_if_managed(&node_ty, from)?;
+                }
+                if to_is_owned && is_managed_ty(&node_ty) {
+                    self.emit_arc_release_if_managed(&node_ty, to)?;
+                }
                 Ok(self.builder.ins().iconst(types::I8, 0))
             }
             "ori_graph_add_weighted_edge" => {
@@ -11899,6 +11946,8 @@ impl<'a> FuncCodegen<'a> {
                             .to_string(),
                     );
                 }
+                let from_is_owned = Self::expr_produces_owned_ref(&args[1].value);
+                let to_is_owned = Self::expr_produces_owned_ref(&args[2].value);
                 let from = self.emit_expr_for_expected(&args[1].value, &node_ty)?;
                 let to = self.emit_expr_for_expected(&args[2].value, &node_ty)?;
                 let weight = self.emit_expr_for_expected(&args[3].value, &Ty::Int)?;
@@ -11907,6 +11956,12 @@ impl<'a> FuncCodegen<'a> {
                 self.builder
                     .ins()
                     .call(fref, &[graph, stored_from, stored_to, weight]);
+                if from_is_owned && is_managed_ty(&node_ty) {
+                    self.emit_arc_release_if_managed(&node_ty, from)?;
+                }
+                if to_is_owned && is_managed_ty(&node_ty) {
+                    self.emit_arc_release_if_managed(&node_ty, to)?;
+                }
                 Ok(self.builder.ins().iconst(types::I8, 0))
             }
             "ori_graph_remove_edge"
@@ -11917,6 +11972,8 @@ impl<'a> FuncCodegen<'a> {
                 if args.len() != 3 {
                     return Err(format!("{name} expects graph, from, and to"));
                 }
+                let from_is_owned = Self::expr_produces_owned_ref(&args[1].value);
+                let to_is_owned = Self::expr_produces_owned_ref(&args[2].value);
                 let from = self.emit_expr_for_expected(&args[1].value, &node_ty)?;
                 let to = self.emit_expr_for_expected(&args[2].value, &node_ty)?;
                 let stored_from = self.to_list_storage_value(from, &node_ty);
@@ -11925,6 +11982,12 @@ impl<'a> FuncCodegen<'a> {
                     .builder
                     .ins()
                     .call(fref, &[graph, stored_from, stored_to]);
+                if from_is_owned && is_managed_ty(&node_ty) {
+                    self.emit_arc_release_if_managed(&node_ty, from)?;
+                }
+                if to_is_owned && is_managed_ty(&node_ty) {
+                    self.emit_arc_release_if_managed(&node_ty, to)?;
+                }
                 let res = self.builder.inst_results(call);
                 Ok(res
                     .first()
@@ -11960,8 +12023,14 @@ impl<'a> FuncCodegen<'a> {
                 .func_refs
                 .get(runtime_name)
                 .ok_or_else(|| format!("missing runtime function `{runtime_name}`"))?;
+            let source_is_owned = Self::expr_produces_owned_ref(&args[0].value);
             let source = self.emit_expr(&args[0].value)?;
             let call = self.builder.ins().call(fref, &[source]);
+            // The new set copies/retains the elements itself; an owned
+            // source-list temporary must be released after the call.
+            if source_is_owned {
+                self.emit_arc_release_if_managed(&args[0].value.ty, source)?;
+            }
             return Ok(self.builder.inst_results(call)[0]);
         }
         let Some(first_arg) = args.first() else {
@@ -12067,10 +12136,16 @@ impl<'a> FuncCodegen<'a> {
                     return Err("ori_tree_new expects one root value".to_string());
                 }
                 let elem_ty = args[0].value.ty.clone();
+                let value_is_owned = Self::expr_produces_owned_ref(&args[0].value);
                 let value = self.emit_expr(&args[0].value)?;
                 let stored = self.to_list_storage_value(value, &elem_ty);
                 let call = self.builder.ins().call(fref, &[stored]);
                 let tree = self.builder.inst_results(call)[0];
+                // The tree owns stored managed values via its internal
+                // edges; drop an owned temporary's own +1.
+                if value_is_owned && is_managed_ty(&elem_ty) {
+                    self.emit_arc_release_if_managed(&elem_ty, value)?;
+                }
                 Ok(tree)
             }
             "ori_tree_add_child" => {
@@ -12079,10 +12154,14 @@ impl<'a> FuncCodegen<'a> {
                 }
                 let tree = self.emit_expr(&args[0].value)?;
                 let parent = self.emit_expr_for_expected(&args[1].value, &node_id_ty)?;
+                let value_is_owned = Self::expr_produces_owned_ref(&args[2].value);
                 let value = self.emit_expr_for_expected(&args[2].value, &elem_ty)?;
                 let stored = self.to_list_storage_value(value, &elem_ty);
                 let call = self.builder.ins().call(fref, &[tree, parent, stored]);
                 let node = self.builder.inst_results(call)[0];
+                if value_is_owned && is_managed_ty(&elem_ty) {
+                    self.emit_arc_release_if_managed(&elem_ty, value)?;
+                }
                 Ok(node)
             }
             "ori_tree_value" => {
@@ -12101,9 +12180,13 @@ impl<'a> FuncCodegen<'a> {
                 }
                 let tree = self.emit_expr(&args[0].value)?;
                 let node = self.emit_expr_for_expected(&args[1].value, &node_id_ty)?;
+                let value_is_owned = Self::expr_produces_owned_ref(&args[2].value);
                 let value = self.emit_expr_for_expected(&args[2].value, &elem_ty)?;
                 let stored = self.to_list_storage_value(value, &elem_ty);
                 let call = self.builder.ins().call(fref, &[tree, node, stored]);
+                if value_is_owned && is_managed_ty(&elem_ty) {
+                    self.emit_arc_release_if_managed(&elem_ty, value)?;
+                }
                 Ok(self.builder.inst_results(call)[0])
             }
             "ori_tree_find" => {
@@ -12111,9 +12194,14 @@ impl<'a> FuncCodegen<'a> {
                     return Err("ori_tree_find expects tree and value".to_string());
                 }
                 let tree = self.emit_expr(&args[0].value)?;
+                let value_is_owned = Self::expr_produces_owned_ref(&args[1].value);
                 let value = self.emit_expr_for_expected(&args[1].value, &elem_ty)?;
                 let stored = self.to_list_storage_value(value, &elem_ty);
                 let call = self.builder.ins().call(fref, &[tree, stored]);
+                // Lookup only borrows the probe value; drop an owned temp.
+                if value_is_owned && is_managed_ty(&elem_ty) {
+                    self.emit_arc_release_if_managed(&elem_ty, value)?;
+                }
                 Ok(self.builder.inst_results(call)[0])
             }
             "ori_tree_root"
@@ -12269,6 +12357,11 @@ impl<'a> FuncCodegen<'a> {
                     }
                 }
                 self.emit_arc_register_edge_if_managed(&elem_ty, heap, value)?;
+                // The heap owns stored managed values via edges; drop an
+                // owned temporary's own +1.
+                if Self::expr_produces_owned_ref(&args[1].value) && is_managed_ty(&elem_ty) {
+                    self.emit_arc_release_if_managed(&elem_ty, value)?;
+                }
                 Ok(self.builder.ins().iconst(types::I8, 0))
             }
             "ori_heap_from_list" => {
@@ -12281,6 +12374,7 @@ impl<'a> FuncCodegen<'a> {
                         _ => None,
                     })
                     .unwrap_or(Ty::Int);
+                let source_is_owned = Self::expr_produces_owned_ref(&args[0].value);
                 let source = self.emit_expr(&args[0].value)?;
                 let runtime_name = match &elem_ty {
                     Ty::String => "ori_heap_from_list_string",
@@ -12308,6 +12402,11 @@ impl<'a> FuncCodegen<'a> {
                                         .to_string()
                                 })?;
                         let call = self.builder.ins().call(fref, &[source, compare_ptr]);
+                        // The heap copies/retains the elements itself; an
+                        // owned source-list temporary must be released.
+                        if source_is_owned {
+                            self.emit_arc_release_if_managed(&args[0].value.ty, source)?;
+                        }
                         return Ok(self.builder.inst_results(call)[0]);
                     }
                     _ => "ori_heap_from_list",
@@ -12317,6 +12416,9 @@ impl<'a> FuncCodegen<'a> {
                     .get(runtime_name)
                     .ok_or_else(|| format!("missing runtime function `{runtime_name}`"))?;
                 let call = self.builder.ins().call(fref, &[source]);
+                if source_is_owned {
+                    self.emit_arc_release_if_managed(&args[0].value.ty, source)?;
+                }
                 Ok(self.builder.inst_results(call)[0])
             }
             "ori_heap_remove" => {
@@ -12328,6 +12430,7 @@ impl<'a> FuncCodegen<'a> {
                     _ => args[1].value.ty.clone(),
                 };
                 let heap = self.emit_expr(&args[0].value)?;
+                let value_is_owned = Self::expr_produces_owned_ref(&args[1].value);
                 let value = self.emit_expr_for_expected(&args[1].value, &elem_ty)?;
                 let stored = self.to_list_storage_value(value, &elem_ty);
                 let call = match &elem_ty {
@@ -12373,6 +12476,10 @@ impl<'a> FuncCodegen<'a> {
                         self.builder.ins().call(fref, &[heap, stored])
                     }
                 };
+                // Removal only borrows the probe value; drop an owned temp.
+                if value_is_owned && is_managed_ty(&elem_ty) {
+                    self.emit_arc_release_if_managed(&elem_ty, value)?;
+                }
                 Ok(self.builder.inst_results(call)[0])
             }
             "ori_heap_merge" => {

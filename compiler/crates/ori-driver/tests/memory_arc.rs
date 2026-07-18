@@ -1564,3 +1564,141 @@ end
     // Odd i: err propagated -> +100 each = 500. Total 525.
     assert_eq!(stdout.trim(), "r:525\nleaks:0");
 }
+
+// ── C2 final — owned-arg accounting across every collection emitter ────────
+// The special-cased hash_table/graph/heap/tree emitters (and from_entries/
+// from_list source lists) never released fresh owned key/value temporaries;
+// graph edges additionally stored the caller's raw argument pointer, which
+// dangles once temporaries are released (nodes are deduplicated by content,
+// so the canonical stored node must back each edge).
+
+/// Every remaining collection exercised with fresh owned string arguments in
+/// loops must end with zero live allocations, and graph adjacency built from
+/// content-equal temporaries must stay intact.
+#[test]
+fn compile_runs_native_collections_owned_args_no_leak() {
+    let dir = TestDir::new("collections_owned_args");
+    let (stdout, _stderr, success) = compile_and_run_with_leak_check(
+        &dir,
+        r#"module app.main
+
+imports
+    ori.io = io
+    ori.list = lists
+    ori.map = maps
+    ori.set = sets
+    ori.hash_table = ht
+    ori.graph = graph
+    ori.heap = heap
+    ori.tree = tree
+    ori.test = test
+end
+
+case_hash_table(n: int) -> int
+    const table: ht.HashTable[string, int] = ht.new()
+    var i: int = 0
+    while i < n
+        ht.set(table, "key-" + string(i), i)
+        i = i + 1
+    end
+    match ht.get(table, "key-" + string(1))
+        case some(v):
+            return v
+        case none:
+            return 0 - 1
+    end
+    return 0 - 1
+end
+
+case_graph(n: int) -> int
+    const g: graph.Graph[string] = graph.new(false)
+    var i: int = 0
+    while i < n
+        graph.add_edge(g, "n" + string(i), "n" + string(i + 1))
+        i = i + 1
+    end
+    const nb: list[string] = graph.neighbors(g, "n" + string(1))
+    return lists.len(nb)
+end
+
+case_heap(n: int) -> int
+    const h: heap.Heap[string] = heap.new()
+    var i: int = 0
+    while i < n
+        heap.push(h, "item-" + string(i))
+        i = i + 1
+    end
+    return heap.len(h)
+end
+
+case_from_entries(n: int) -> int
+    var total: int = 0
+    var i: int = 0
+    while i < n
+        const m: map[string, int] = maps.from_entries([tuple("a" + string(i), 1), tuple("b", 2)])
+        total = total + maps.len(m)
+        i = i + 1
+    end
+    return total
+end
+
+case_set_from_list(n: int) -> int
+    var total: int = 0
+    var i: int = 0
+    while i < n
+        const s: set[string] = sets.from_list(["x" + string(i), "y", "x" + string(i)])
+        total = total + sets.len(s)
+        i = i + 1
+    end
+    return total
+end
+
+case_tree(n: int) -> int
+    const t: tree.Tree[string] = tree.new("root-" + string(n))
+    const root: tree.NodeId = tree.root(t)
+    var i: int = 0
+    while i < n
+        const child: tree.NodeId = tree.add_child(t, root, "child-" + string(i))
+        tree.set_value(t, child, "renamed-" + string(i))
+        i = i + 1
+    end
+    return lists.len(tree.children(t, root))
+end
+
+case_heap_from_list(n: int) -> int
+    var total: int = 0
+    var i: int = 0
+    while i < n
+        const h: heap.Heap[string] = heap.from_list(["c-" + string(i), "a", "b"])
+        total = total + heap.len(h)
+        i = i + 1
+    end
+    return total
+end
+
+main()
+    const a: int = case_hash_table(5)
+    const la: int = test.assert_no_leaks("hash_table")
+    const b: int = case_graph(5)
+    const lb: int = test.assert_no_leaks("graph")
+    const c: int = case_heap(5)
+    const lc: int = test.assert_no_leaks("heap")
+    const d: int = case_from_entries(3)
+    const ld: int = test.assert_no_leaks("from_entries")
+    const e: int = case_set_from_list(3)
+    const le: int = test.assert_no_leaks("set_from_list")
+    const f: int = case_tree(4)
+    const lf: int = test.assert_no_leaks("tree")
+    const g: int = case_heap_from_list(3)
+    const lg: int = test.assert_no_leaks("heap_from_list")
+    io.print("r:" + string(a + b + c + d + e + f + g))
+    io.print("leaks:" + string(la + lb + lc + ld + le + lf + lg))
+end
+"#,
+        "collections_owned_args",
+    );
+    assert!(success, "{stdout}");
+    // a=1 (value at key-1), b=2 (n0/n2 neighbors of n1 — canonical nodes),
+    // c=5, d=6 (2 entries x3), e=6 (2 uniques x3), f=4 children, g=9 (3x3).
+    assert_eq!(stdout.trim(), "r:33\nleaks:0");
+}
