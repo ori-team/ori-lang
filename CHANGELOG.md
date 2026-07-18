@@ -43,6 +43,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [`docs/planning/historico/nim-study-2026-07-17-c3.md`](docs/planning/historico/nim-study-2026-07-17-c3.md).
 
 ### Corrigido
+- **Resolução de nomes: binding local agora sombreia builtin sem prefixo
+  (LANG-FRONT-1).** `const len: int = lists.len(xs); return len` falhava
+  no codegen nativo com `undefined variable ori_len` — o identificador de
+  segmento único era resolvido para o símbolo do builtin (`len` → `ori_len`)
+  antes de consultar os bindings locais. Locais têm precedência agora;
+  chamar o builtin continua funcionando no mesmo escopo. Regressão:
+  `ori_spec::compile_runs_local_binding_shadows_bare_builtin`.
 - **ARC: wrappers `result`/`optional` do runtime nativo eram invisíveis ao
   ARC (LANG-MEM-9).** `new_result*`/`new_optional_ptr` usavam `malloc` cru:
   releases do codegen eram no-ops e toda chamada de `ori.fs`/`ori.process`/

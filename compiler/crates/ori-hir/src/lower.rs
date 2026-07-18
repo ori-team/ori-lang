@@ -2943,6 +2943,21 @@ impl<'a> Lowerer<'a> {
             }
             Expr::QualifiedIdent(q) => {
                 let path = q.to_string();
+                // A single-segment "qualified" name that names a local
+                // binding is just a variable reference — locals shadow bare
+                // stdlib builtins (`len`, `string`, ...). Without this,
+                // `const len = ...; return len` lowered to the stdlib
+                // runtime symbol (`ori_len`) and native codegen failed with
+                // "undefined variable" (LANG-FRONT-1).
+                if q.parts.len() == 1 {
+                    if let Some(ty) = self.lookup_var(&path) {
+                        return HirExpr {
+                            kind: HirExprKind::Var(SmolStr::new(&path)),
+                            ty,
+                            span,
+                        };
+                    }
+                }
                 // Check stdlib / alias resolution first
                 // Math constants emitted as float literals
                 let expanded_path = self.expand_alias(&path);

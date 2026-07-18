@@ -4472,3 +4472,44 @@ end
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["false", "true"]);
 }
+
+/// Regression (LANG-FRONT-1): a local binding must shadow a bare stdlib
+/// builtin of the same name. `const len = ...; return len` used to lower
+/// the identifier to the stdlib runtime symbol (`ori_len`) and fail native
+/// codegen with "undefined variable"; calls to the builtin keep working.
+#[test]
+fn compile_runs_local_binding_shadows_bare_builtin() {
+    let dir = TestDir::new("local_shadows_bare_builtin");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+
+helper() -> int
+    var xs: list[string] = lists.new()
+    lists.push(xs, "ab")
+    const len: int = lists.len(xs)
+    const first: string = lists.get(xs, 0)
+    -- the builtin is still callable while the local exists
+    return len + string_len(first)
+end
+
+string_len(s: string) -> int
+    return len(s)
+end
+
+main()
+    io.println(string(helper()))
+end
+"#,
+    );
+    let exe = exe_path(&dir, "local_shadows_bare_builtin");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.trim(), "3");
+}
