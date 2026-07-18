@@ -10,6 +10,17 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Adicionado
+- **Livro Ori (rascunho `0.3.x-book.2`).** Narrativa + processo + prática +
+  consulta em português sob [`docs/book/`](docs/book/README.md) (22 capítulos,
+  apêndices, template e mapa de exemplos). Índices
+  [`docs/README.md`](docs/README.md) / [`docs/README.pt-BR.md`](docs/README.pt-BR.md)
+  apontam para o livro. Não substitui a spec normativa em `docs/spec/`.
+  Revisão: snippets principais validados com `ori check`; caps 3/10/12/13/15/17
+  e soluções de exercícios aprofundados; multiarquivo documenta `ori.proj`+`entry`.
+  PDF com syntax highlight: [`docs/book/dist/ori-livro.pdf`](docs/book/dist/ori-livro.pdf)
+  gerado via [`tools/book/`](tools/book/) (marked + highlight.js Ori + Puppeteer).
+
 ### Mudado
 - **ARC: elisão de RC no return (LANG-MEM-4, ação 1).** `return x` de um
   local managed transfere o +1 do binding ao caller — o par

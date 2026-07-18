@@ -9,6 +9,7 @@
 | Público | Comece aqui |
 |---------|-------------|
 | **Usuário novo** | [Instalação](install.pt-BR.md) → [Tour da linguagem](language/tour.pt-BR.md) → [Primeiro projeto](guides/first-project.pt-BR.md) |
+| **Livro (rascunho)** | **[Livro Ori](book/README.md)** · [PDF](book/dist/ori-livro.pdf) (`0.3.x-book.2`) |
 | **Uso diário** | [Cookbook](guides/cookbook.pt-BR.md) · [Erros / optional / result](guides/errors-null-void.pt-BR.md) · [Exemplos](../examples/) |
 | **Performance** | [Microbench Ori / Python / Rust](guides/performance.pt-BR.md) · [EN](guides/performance.md) |
 | **Contrato da linguagem** | [Especificação](spec/README.md) (normativa, **em inglês**) |
@@ -20,6 +21,7 @@
 |--------|--------|--------|
 | Superfície GitHub (README, guias, install) | **EN canônico** + **irmão `.pt-BR.md`** | Mesma estrutura e versão |
 | Spec normativa (`docs/spec/`) | **Inglês** | Não duplicar capítulos em PT |
+| Livro (`docs/book/`) | **Português** na prosa; código S3 | Rascunho narrativo/consulta; **não** substitui `spec/` |
 | Planejamento | PT ou EN (idioma do arquivo) | Não é tutorial de usuário |
 | Histórico | como escrito | Não ensinar como superfície atual |
 
