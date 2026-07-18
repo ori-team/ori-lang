@@ -852,9 +852,11 @@ public const LIMIT: int = 21
         r#"module app.main
 
 import app.config = config
+import ori.io = io
 
 main()
     const value: int = config.LIMIT
+    io.print(string(value))
 end
 "#,
     );
@@ -4274,9 +4276,12 @@ fn compile_runs_native_showcase_example() {
     let output = Command::new(&exe).output().unwrap();
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
+    // `io.print(string(user))` renders via core.Displayable — the
+    // "Grace <admin>" line was silently swallowed while closure captures
+    // were broken (the old expectation was calibrated to that bug).
     assert_eq!(
         stdout.replace("\r\n", "\n"),
-        "Grace:admin\nGrace:admin\nboot\nGrace\n7\nseven\ndisposed-1\n"
+        "Grace:admin\nGrace:admin\nGrace <admin>\nboot\nGrace\n7\nseven\ndisposed-1\n"
     );
 }
 
@@ -7473,10 +7478,15 @@ fn build_preserves_numeric_literal_suffix_values() {
         "main.orl",
         r#"module app.main
 
+import ori.io = io
+
 main()
     const a: float = 3.5f64
     const b: int = 42i64
     const c: u8 = 0x2Au8
+    io.print(string(a))
+    io.print(string(b))
+    io.print(string(c))
 end
 "#,
     );
@@ -9118,18 +9128,20 @@ end
 fn check_official_examples() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     // M2.layout: each example is a mini-project (`ori.proj` + `main.orl`).
+    // Kept in sync with the shipping `examples/` catalog (LANG-DOC
+    // consolidated/renamed the earlier hello_world/calculator/
+    // logic_and_matching/task_cli variants).
     let examples = [
         "examples/hello",
-        "examples/hello_world",
-        "examples/calculator",
         "examples/bytes_usage",
         "examples/collections_demo",
-        "examples/logic_and_matching",
+        "examples/error_handling",
         "examples/file_organizer",
         "examples/json_validator",
+        "examples/language_features",
         "examples/log_analyzer",
-        "examples/task_cli",
         "examples/process_runner",
+        "examples/string_toolkit",
     ];
 
     for example in examples {

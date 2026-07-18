@@ -43,6 +43,18 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [`docs/planning/historico/nim-study-2026-07-17-c3.md`](docs/planning/historico/nim-study-2026-07-17-c3.md).
 
 ### Corrigido
+- **Otimizador: capturas de closure e contratos de campo agora contam como
+  uso/efeito no DCE.** O passe de dead-code (LANG-PERF-2-1) removia
+  `const` capturados apenas por closures (o corpo vive numa função
+  liftada) — toda closure com captura falhava no codegen nativo com
+  `closure capture X is not available`, inclusive across await — e
+  removia literais de struct com contrato de campo violado (o trap de
+  contrato sumia). Capturas agora são usos; literais de tipos com
+  contrato têm efeito. Isso zerou os últimos 9 testes vermelhos do repo
+  (8 em `multifile_imports` + 1 async); 4 deles tinham expectativas
+  calibradas no comportamento bugado e foram atualizados (showcase com a
+  linha `Displayable`, catálogo real de `examples/`, e os 2 de build com
+  bindings realmente usados).
 - **Resolução de nomes: binding local agora sombreia builtin sem prefixo
   (LANG-FRONT-1).** `const len: int = lists.len(xs); return len` falhava
   no codegen nativo com `undefined variable ori_len` — o identificador de

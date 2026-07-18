@@ -2,19 +2,28 @@
 
 use std::collections::HashSet;
 
+use ori_types::DefId;
 use smol_str::SmolStr;
 
 use crate::hir::*;
 
 pub(super) fn dce_module(module: &mut HirModule) {
+    // Struct literals whose type has field contracts trap at runtime when a
+    // contract is violated — an observable effect DCE must not remove.
+    let contract_structs: HashSet<DefId> = module
+        .structs
+        .iter()
+        .filter(|s| s.fields.iter().any(|f| f.contract.is_some()))
+        .map(|s| s.def_id)
+        .collect();
     for f in &mut module.funcs {
-        dce_block(&mut f.body);
+        dce_block(&mut f.body, &contract_structs);
     }
 }
 
-fn dce_block(block: &mut HirBlock) {
+fn dce_block(block: &mut HirBlock, contract_structs: &HashSet<DefId>) {
     for stmt in &mut block.stmts {
-        dce_stmt_nested(stmt);
+        dce_stmt_nested(stmt, contract_structs);
     }
 
     let mut used = HashSet::<SmolStr>::new();
@@ -35,13 +44,13 @@ fn dce_block(block: &mut HirBlock) {
             if used.contains(name) {
                 return true;
             }
-            expr_may_effect(value)
+            expr_may_effect(value, contract_structs)
         }
         _ => true,
     });
 }
 
-fn dce_stmt_nested(stmt: &mut HirStmt) {
+fn dce_stmt_nested(stmt: &mut HirStmt, contract_structs: &HashSet<DefId>) {
     match stmt {
         HirStmt::If {
             then,
@@ -49,23 +58,23 @@ fn dce_stmt_nested(stmt: &mut HirStmt) {
             else_,
             ..
         } => {
-            dce_block(then);
+            dce_block(then, contract_structs);
             for (_, b) in else_ifs {
-                dce_block(b);
+                dce_block(b, contract_structs);
             }
             if let Some(b) = else_ {
-                dce_block(b);
+                dce_block(b, contract_structs);
             }
         }
         HirStmt::While { body, .. }
         | HirStmt::For { body, .. }
         | HirStmt::Loop { body, .. }
         | HirStmt::Repeat { body, .. }
-        | HirStmt::WhileSome { body, .. } => dce_block(body),
+        | HirStmt::WhileSome { body, .. } => dce_block(body, contract_structs),
         HirStmt::IfSome { then, else_, .. } => {
-            dce_block(then);
+            dce_block(then, contract_structs);
             if let Some(b) = else_ {
-                dce_block(b);
+                dce_block(b, contract_structs);
             }
         }
         HirStmt::Match { arms, .. } => {
@@ -74,7 +83,7 @@ fn dce_stmt_nested(stmt: &mut HirStmt) {
                     stmts: std::mem::take(&mut arm.body),
                     span: arm.span,
                 };
-                dce_block(&mut nested);
+                dce_block(&mut nested, contract_structs);
                 arm.body = nested.stmts;
             }
         }
@@ -112,9 +121,7 @@ fn collect_stmt_uses(stmt: &HirStmt, used: &mut HashSet<SmolStr>) {
             collect_expr_uses(cond, used);
             collect_block_uses(body, used);
         }
-        HirStmt::For {
-            iterable, body, ..
-        } => {
+        HirStmt::For { iterable, body, .. } => {
             collect_expr_uses(iterable, used);
             collect_block_uses(body, used);
         }
@@ -180,8 +187,12 @@ fn collect_expr_uses(expr: &HirExpr, used: &mut HashSet<SmolStr>) {
             collect_expr_uses(rhs, used);
         }
         HirExprKind::Unary { operand, .. }
-        | HirExprKind::Field { object: operand, .. }
-        | HirExprKind::TupleIndex { object: operand, .. }
+        | HirExprKind::Field {
+            object: operand, ..
+        }
+        | HirExprKind::TupleIndex {
+            object: operand, ..
+        }
         | HirExprKind::Some_(operand)
         | HirExprKind::Ok_(operand)
         | HirExprKind::Err_(operand)
@@ -249,32 +260,65 @@ fn collect_expr_uses(expr: &HirExpr, used: &mut HashSet<SmolStr>) {
                 }
             }
         }
+        // A closure's captures are reads of the enclosing bindings even
+        // though the body lives in a lifted function: without this, DCE
+        // removed `const offset = 3` and closure creation failed with
+        // "closure capture `offset` is not available in native codegen".
+        HirExprKind::Closure { captures, .. } => {
+            for capture in captures {
+                used.insert(capture.name.clone());
+            }
+        }
         _ => {}
     }
 }
 
-fn expr_may_effect(expr: &HirExpr) -> bool {
+fn expr_may_effect(expr: &HirExpr, contract_structs: &HashSet<DefId>) -> bool {
     match &expr.kind {
         HirExprKind::Call { .. }
         | HirExprKind::MethodCall { .. }
         | HirExprKind::Await(_)
         | HirExprKind::Propagate(_) => true,
-        HirExprKind::Binary { lhs, rhs, .. } => expr_may_effect(lhs) || expr_may_effect(rhs),
+        HirExprKind::Binary { lhs, rhs, .. } => {
+            expr_may_effect(lhs, contract_structs) || expr_may_effect(rhs, contract_structs)
+        }
         HirExprKind::Unary { operand, .. }
-        | HirExprKind::Field { object: operand, .. }
+        | HirExprKind::Field {
+            object: operand, ..
+        }
         | HirExprKind::Some_(operand)
         | HirExprKind::Ok_(operand)
-        | HirExprKind::Err_(operand) => expr_may_effect(operand),
+        | HirExprKind::Err_(operand) => expr_may_effect(operand, contract_structs),
         HirExprKind::Index { object, index } => {
-            expr_may_effect(object) || expr_may_effect(index)
+            expr_may_effect(object, contract_structs) || expr_may_effect(index, contract_structs)
         }
         HirExprKind::IfExpr { cond, then, else_ } => {
-            expr_may_effect(cond) || expr_may_effect(then) || expr_may_effect(else_)
+            expr_may_effect(cond, contract_structs)
+                || expr_may_effect(then, contract_structs)
+                || expr_may_effect(else_, contract_structs)
         }
-        HirExprKind::ListLit { elements, .. } | HirExprKind::TupleLit(elements) => {
-            elements.iter().any(expr_may_effect)
+        HirExprKind::ListLit { elements, .. } | HirExprKind::TupleLit(elements) => elements
+            .iter()
+            .any(|e| expr_may_effect(e, contract_structs)),
+        // Building a struct whose type carries field contracts runs those
+        // contracts (and can trap): keep the binding even when unused.
+        HirExprKind::StructLit { def_id, fields } => {
+            contract_structs.contains(def_id)
+                || fields
+                    .iter()
+                    .any(|(_, e)| expr_may_effect(e, contract_structs))
         }
-        HirExprKind::StructLit { fields, .. } => fields.iter().any(|(_, e)| expr_may_effect(e)),
+        HirExprKind::StructUpdate {
+            def_id,
+            base,
+            updates,
+        } => {
+            contract_structs.contains(def_id)
+                || expr_may_effect(base, contract_structs)
+                || updates
+                    .iter()
+                    .any(|(_, e)| expr_may_effect(e, contract_structs))
+        }
         _ => false,
     }
 }
