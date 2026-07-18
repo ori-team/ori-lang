@@ -105,11 +105,7 @@ mod tests {
                 name: SmolStr::new("x"),
                 ty: Ty::Int,
                 mutable: false,
-                value: bin(
-                    ori_ast::expr::BinaryOp::Add,
-                    int_lit(2),
-                    int_lit(3),
-                ),
+                value: bin(ori_ast::expr::BinaryOp::Add, int_lit(2), int_lit(3)),
                 span: span(),
             },
             HirStmt::Return(Some(var("x")), span()),
@@ -134,14 +130,8 @@ mod tests {
                 cond: bin(ori_ast::expr::BinaryOp::Lt, var("i"), int_lit(10)),
                 body: HirBlock {
                     stmts: vec![
-                        assign(
-                            "s",
-                            bin(ori_ast::expr::BinaryOp::Add, var("s"), var("i")),
-                        ),
-                        assign(
-                            "i",
-                            bin(ori_ast::expr::BinaryOp::Add, var("i"), int_lit(1)),
-                        ),
+                        assign("s", bin(ori_ast::expr::BinaryOp::Add, var("s"), var("i"))),
+                        assign("i", bin(ori_ast::expr::BinaryOp::Add, var("i"), int_lit(1))),
                     ],
                     span: span(),
                 },
@@ -152,9 +142,7 @@ mod tests {
         let stmts = &module.funcs[0].body.stmts;
         // While should be replaced by if true { s = ...; i = ... }
         assert!(
-            !stmts
-                .iter()
-                .any(|s| matches!(s, HirStmt::While { .. })),
+            !stmts.iter().any(|s| matches!(s, HirStmt::While { .. })),
             "expected while to be strength-reduced, got {stmts:?}"
         );
         assert!(
@@ -179,11 +167,7 @@ mod tests {
             return_ty: Ty::Int,
             body: HirBlock {
                 stmts: vec![HirStmt::Return(
-                    Some(bin(
-                        ori_ast::expr::BinaryOp::Add,
-                        var("x"),
-                        int_lit(1),
-                    )),
+                    Some(bin(ori_ast::expr::BinaryOp::Add, var("x"), int_lit(1))),
                     span(),
                 )],
                 span: span(),
@@ -268,11 +252,7 @@ mod tests {
             return_ty: Ty::Int,
             body: HirBlock {
                 stmts: vec![HirStmt::Return(
-                    Some(bin(
-                        ori_ast::expr::BinaryOp::Add,
-                        var("x"),
-                        int_lit(1),
-                    )),
+                    Some(bin(ori_ast::expr::BinaryOp::Add, var("x"), int_lit(1))),
                     span(),
                 )],
                 span: span(),

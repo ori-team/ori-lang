@@ -84,9 +84,7 @@ fn inline_in_stmt(stmt: &mut HirStmt, leaves: &HashMap<SmolStr, LeafFn>) {
             inline_in_expr(cond, leaves);
             inline_in_block(body, leaves);
         }
-        HirStmt::For {
-            iterable, body, ..
-        } => {
+        HirStmt::For { iterable, body, .. } => {
             inline_in_expr(iterable, leaves);
             inline_in_block(body, leaves);
         }
@@ -118,7 +116,10 @@ fn inline_in_stmt(stmt: &mut HirStmt, leaves: &HashMap<SmolStr, LeafFn>) {
             inline_in_expr(value, leaves);
             inline_in_block(body, leaves);
         }
-        HirStmt::Using { value, .. } | HirStmt::Check { condition: value, .. } => {
+        HirStmt::Using { value, .. }
+        | HirStmt::Check {
+            condition: value, ..
+        } => {
             inline_in_expr(value, leaves);
         }
     }
@@ -132,14 +133,18 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
             inline_in_expr(rhs, leaves);
         }
         HirExprKind::Unary { operand, .. }
-        | HirExprKind::Field { object: operand, .. }
+        | HirExprKind::Field {
+            object: operand, ..
+        }
         | HirExprKind::Some_(operand)
         | HirExprKind::Ok_(operand)
         | HirExprKind::Err_(operand)
         | HirExprKind::Propagate(operand)
         | HirExprKind::Await(operand)
         | HirExprKind::IsCheck { value: operand, .. }
-        | HirExprKind::TupleIndex { object: operand, .. } => inline_in_expr(operand, leaves),
+        | HirExprKind::TupleIndex {
+            object: operand, ..
+        } => inline_in_expr(operand, leaves),
         HirExprKind::Index { object, index } => {
             inline_in_expr(object, leaves);
             inline_in_expr(index, leaves);
@@ -243,14 +248,18 @@ fn subst_var(expr: &mut HirExpr, name: &str, replacement: &HirExpr) {
             subst_var(rhs, name, replacement);
         }
         HirExprKind::Unary { operand, .. }
-        | HirExprKind::Field { object: operand, .. }
+        | HirExprKind::Field {
+            object: operand, ..
+        }
         | HirExprKind::Some_(operand)
         | HirExprKind::Ok_(operand)
         | HirExprKind::Err_(operand)
         | HirExprKind::Propagate(operand)
         | HirExprKind::Await(operand)
         | HirExprKind::IsCheck { value: operand, .. }
-        | HirExprKind::TupleIndex { object: operand, .. } => {
+        | HirExprKind::TupleIndex {
+            object: operand, ..
+        } => {
             subst_var(operand, name, replacement);
         }
         HirExprKind::Index { object, index } => {
@@ -345,9 +354,9 @@ fn stmt_calls_name(stmt: &HirStmt, name: &str) -> bool {
         HirStmt::While { cond, body, .. } => {
             expr_calls_name(cond, name) || func_calls_name(body, name)
         }
-        HirStmt::For {
-            iterable, body, ..
-        } => expr_calls_name(iterable, name) || func_calls_name(body, name),
+        HirStmt::For { iterable, body, .. } => {
+            expr_calls_name(iterable, name) || func_calls_name(body, name)
+        }
         HirStmt::Loop { body, .. } | HirStmt::Repeat { body, .. } => func_calls_name(body, name),
         HirStmt::Match {
             scrutinee, arms, ..
@@ -372,7 +381,9 @@ fn expr_calls_name(expr: &HirExpr, name: &str) -> bool {
             expr_calls_name(lhs, name) || expr_calls_name(rhs, name)
         }
         HirExprKind::Unary { operand, .. }
-        | HirExprKind::Field { object: operand, .. }
+        | HirExprKind::Field {
+            object: operand, ..
+        }
         | HirExprKind::Some_(operand)
         | HirExprKind::Ok_(operand)
         | HirExprKind::Err_(operand) => expr_calls_name(operand, name),

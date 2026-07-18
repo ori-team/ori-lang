@@ -112,8 +112,14 @@ fn try_rewrite_at(stmts: &mut Vec<HirStmt>, i: usize) -> bool {
         && match_assign_add_var(&body.stmts[0], &s_name, &i_name)
         && match_assign_add_one(&body.stmts[1], &i_name)
     {
-        let replacement =
-            make_sum_closed_form(&s_name, &i_name, n_expr.clone(), *while_span, s_span, i_span);
+        let replacement = make_sum_closed_form(
+            &s_name,
+            &i_name,
+            n_expr.clone(),
+            *while_span,
+            s_span,
+            i_span,
+        );
         stmts[i + 2] = replacement;
         return true;
     }

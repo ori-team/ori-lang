@@ -47,9 +47,7 @@ fn fold_stmt(stmt: &mut HirStmt) {
             fold_expr(cond);
             fold_block(body);
         }
-        HirStmt::For {
-            iterable, body, ..
-        } => {
+        HirStmt::For { iterable, body, .. } => {
             fold_expr(iterable);
             fold_block(body);
         }
