@@ -245,6 +245,11 @@ fn collect_strings_lvalue(lvalue: &HirLValue, out: &mut StringCollector) {
 
 fn collect_strings_pattern(pat: &HirPattern, out: &mut StringCollector) {
     match pat {
+        HirPattern::Or(alternatives) => {
+            for alternative in alternatives {
+                collect_strings_pattern(alternative, out);
+            }
+        }
         HirPattern::Wildcard
         | HirPattern::Binding(_, _)
         | HirPattern::BoolLit(_)

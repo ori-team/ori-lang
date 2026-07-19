@@ -78,6 +78,8 @@ Em `const`/`var` **locais**, pode omitir o tipo se o lado direito for campo,
 - `match` com `case ok(x):` / `case err(m):` (sem `.` em variantes de enum)
 - `case padrão if condição:` — guard: se falso, cai para o próximo case;
   `case else:` é o fallback explícito
+- `case a or b:` — alternativas no mesmo braço (palavra `or`, não `|`); não
+  ligam valores e, juntas, contam como cobertura completa
 
 ```ori
 match score

@@ -276,6 +276,9 @@ pub enum HirPattern {
         fields: Vec<(SmolStr, HirPattern)>,
     },
     Tuple(Vec<HirPattern>),
+    /// `a or b` — matches when any alternative matches. Alternatives never
+    /// bind (rejected by the checker), so this is a pure test.
+    Or(Vec<HirPattern>),
 }
 
 #[derive(Debug, Clone)]

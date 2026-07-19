@@ -86,6 +86,12 @@ impl<'a> Checker<'a> {
             return;
         }
 
+        // `case a or b:` covers exactly what `case a:` and `case b:` cover, so
+        // expanding first lets every per-type branch below stay unaware of
+        // or-patterns.
+        let expanded = expand_or_patterns(cases);
+        let cases: &[ori_ast::stmt::MatchCase] = &expanded;
+
         if cases
             .iter()
             .any(|case| self.case_is_unguarded_catch_all(case, scr_ty))
@@ -280,6 +286,10 @@ impl<'a> Checker<'a> {
 
     fn match_duplicate_key(&self, pattern: &Pattern, allow_binding: bool) -> Option<String> {
         match pattern {
+            // Each alternative is its own coverage key; an or-pattern as a
+            // whole has none, so it never reads as a duplicate of a single
+            // pattern.
+            Pattern::Or(_, _) => None,
             Pattern::Wildcard(_) => Some("_".to_string()),
             Pattern::Binding(_) if allow_binding => Some("_".to_string()),
             Pattern::Binding(_) => None,
@@ -351,4 +361,34 @@ fn match_case_span(case: &ori_ast::stmt::MatchCase) -> ori_diagnostics::Span {
         ori_ast::stmt::MatchCase::Pattern { span, .. }
         | ori_ast::stmt::MatchCase::Else { span, .. } => *span,
     }
+}
+
+/// Rewrite `case a or b:` into one case per alternative.
+///
+/// Coverage-wise the two are identical, so every per-type analysis in this
+/// module can ignore `Pattern::Or` entirely. Bodies are dropped: only
+/// pattern, guard and span are read by these checks.
+fn expand_or_patterns(cases: &[ori_ast::stmt::MatchCase]) -> Vec<ori_ast::stmt::MatchCase> {
+    let mut expanded = Vec::with_capacity(cases.len());
+    for case in cases {
+        match case {
+            ori_ast::stmt::MatchCase::Pattern {
+                pattern: Pattern::Or(alternatives, _),
+                guard,
+                span,
+                ..
+            } => {
+                for alternative in alternatives {
+                    expanded.push(ori_ast::stmt::MatchCase::Pattern {
+                        pattern: alternative.clone(),
+                        guard: guard.clone(),
+                        body: Vec::new(),
+                        span: *span,
+                    });
+                }
+            }
+            other => expanded.push(other.clone()),
+        }
+    }
+    expanded
 }

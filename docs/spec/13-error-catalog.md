@@ -273,6 +273,7 @@ aliases) use the `bind.*` prefix instead — see the `bind` section below.
 |---|---|---|
 | `match.duplicate_case` | warning | Match arm repeats an earlier unguarded pattern |
 | `match.non_exhaustive` | error | `match` does not cover all possible cases |
+| `match.or_pattern_binding` | error | an alternative in an `or` pattern binds a value; alternatives must be binding-free |
 | `match.unreachable_case` | warning | Match arm appears after an unguarded catch-all case |
 
 ### `mut`

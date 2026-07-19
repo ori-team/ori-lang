@@ -6213,6 +6213,38 @@ impl<'a> Checker<'a> {
         let scr_ty = &resolved;
         match pat {
             Pattern::Wildcard(_) => {}
+            // `a or b` — every alternative is checked against the same
+            // scrutinee, and none of them may bind: alternatives that bound
+            // different names (or the same name at different types) would put
+            // the reader in charge of reconciling them.
+            Pattern::Or(alternatives, span) => {
+                for alternative in alternatives {
+                    if self.pattern_binds_value(alternative, scr_ty) {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                "match.or_pattern_binding",
+                                "alternatives in an `or` pattern cannot bind values",
+                            )
+                            .with_label(Label::primary(
+                                self.file_id,
+                                alternative.span(),
+                                "this alternative binds a value",
+                            ))
+                            .with_note(
+                                "each alternative would have to bind the same names \
+                                 at the same types",
+                            )
+                            .with_action(
+                                "write one `case` per alternative, or match the \
+                                 payload with a guard",
+                            ),
+                        );
+                        continue;
+                    }
+                    self.check_pattern_type(alternative, scr_ty);
+                }
+                let _ = span;
+            }
             Pattern::Binding(n) => {
                 if let Some(variant) = self.enum_variant_sig_for_name(scr_ty, n) {
                     self.check_enum_variant_arity(scr_ty, n, 0, variant.fields.len());
@@ -6378,6 +6410,27 @@ impl<'a> Checker<'a> {
             None
         } else {
             None
+        }
+    }
+
+    /// Whether this pattern introduces a binding, judged the way
+    /// `check_pattern_type` judges it: a bare identifier is a *variant
+    /// reference* when the scrutinee's enum has a variant by that name, and
+    /// only a binding otherwise.
+    fn pattern_binds_value(&self, pat: &Pattern, scr_ty: &Ty) -> bool {
+        match pat {
+            Pattern::Binding(name) => self.enum_variant_sig_for_name(scr_ty, name).is_none(),
+            Pattern::Wildcard(_) | Pattern::Literal(_) | Pattern::None(_) => false,
+            Pattern::VariantUnit { .. } => false,
+            // Payload sub-patterns can bind; anything non-trivial counts.
+            Pattern::VariantNamed { fields, .. } => !fields.is_empty(),
+            Pattern::Some(inner, _) | Pattern::Ok(inner, _) | Pattern::Err(inner, _) => {
+                !matches!(inner.as_ref(), Pattern::Wildcard(_))
+            }
+            Pattern::Tuple(items, _) => !items.is_empty(),
+            Pattern::Or(alternatives, _) => alternatives
+                .iter()
+                .any(|alt| self.pattern_binds_value(alt, scr_ty)),
         }
     }
 

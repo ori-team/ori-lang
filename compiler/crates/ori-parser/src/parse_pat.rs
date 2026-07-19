@@ -5,7 +5,26 @@ use ori_ast::pattern::{NamedPattern, Pattern};
 use ori_lexer::TokenKind;
 
 impl<'src> Parser<'src> {
+    /// A full arm pattern, including `a or b or c` alternatives.
+    ///
+    /// Safe to look for `or` here: literal patterns are parsed with
+    /// `parse_primary_expr`, which never consumes binary operators, so the
+    /// `or` can only belong to the pattern.
     pub fn parse_pattern(&mut self) -> Option<Pattern> {
+        let first = self.parse_pattern_alternative()?;
+        if !self.at(&TokenKind::Or) {
+            return Some(first);
+        }
+        let start = first.span();
+        let mut alternatives = vec![first];
+        while self.eat(&TokenKind::Or) {
+            alternatives.push(self.parse_pattern_alternative()?);
+        }
+        let end = alternatives.last().map(|p| p.span()).unwrap_or(start);
+        Some(Pattern::Or(alternatives, start.cover(end)))
+    }
+
+    fn parse_pattern_alternative(&mut self) -> Option<Pattern> {
         let span = self.current_span();
         match self.peek_kind()? {
             // `_` wildcard

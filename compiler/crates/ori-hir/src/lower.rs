@@ -4495,6 +4495,13 @@ fn bind_pattern_names(pattern: &ori_ast::pattern::Pattern, bound: &mut HashSet<S
         Pattern::Binding(name) => {
             bound.insert(name.text.clone());
         }
+        // Alternatives cannot bind (checker-enforced), but walking them keeps
+        // this function correct if that rule is ever relaxed.
+        Pattern::Or(alternatives, _) => {
+            for alternative in alternatives {
+                bind_pattern_names(alternative, bound);
+            }
+        }
         Pattern::Some(inner, _) | Pattern::Ok(inner, _) | Pattern::Err(inner, _) => {
             bind_pattern_names(inner, bound);
         }
@@ -4523,6 +4530,12 @@ fn lower_pattern(
     use ori_ast::pattern::Pattern;
     match pat {
         Pattern::Wildcard(_) => HirPattern::Wildcard,
+        Pattern::Or(alternatives, _) => HirPattern::Or(
+            alternatives
+                .iter()
+                .map(|alt| lower_pattern(alt, scr_ty, enum_sigs))
+                .collect(),
+        ),
         Pattern::Binding(n) => {
             let mut resolved_def_id = None;
             if let Ty::Named(def_id, _) = scr_ty {

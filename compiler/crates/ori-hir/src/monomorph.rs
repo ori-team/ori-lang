@@ -589,7 +589,7 @@ fn substitute_pattern(pattern: &mut HirPattern, subst: &HashMap<u32, Ty>) {
                 substitute_pattern(pattern, subst);
             }
         }
-        HirPattern::Tuple(patterns) => {
+        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 substitute_pattern(pattern, subst);
             }
@@ -881,7 +881,9 @@ fn pattern_has_generic_param(pattern: &HirPattern) -> bool {
         HirPattern::Variant { fields, .. } => fields
             .iter()
             .any(|(_, pattern)| pattern_has_generic_param(pattern)),
-        HirPattern::Tuple(patterns) => patterns.iter().any(pattern_has_generic_param),
+        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+            patterns.iter().any(pattern_has_generic_param)
+        }
         HirPattern::Wildcard
         | HirPattern::BoolLit(_)
         | HirPattern::IntLit(_)

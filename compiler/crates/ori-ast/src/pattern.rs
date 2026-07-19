@@ -43,6 +43,14 @@ pub enum Pattern {
 
     /// `tuple(a, b, c)` — tuple destructuring.
     Tuple(Vec<Pattern>, Span),
+
+    /// `case North or South:` — one arm, several alternatives.
+    ///
+    /// Alternatives may not bind anything: every branch would have to bind the
+    /// same names to the same types, which is a rule readers must carry in
+    /// their head. Keeping it binding-free means an or-pattern is a pure
+    /// "is it one of these?" test.
+    Or(Vec<Pattern>, Span),
 }
 
 impl Pattern {
@@ -53,7 +61,7 @@ impl Pattern {
             Pattern::Binding(n) => n.span,
             Pattern::VariantUnit { span, .. } | Pattern::VariantNamed { span, .. } => *span,
             Pattern::Some(_, s) | Pattern::Ok(_, s) | Pattern::Err(_, s) => *s,
-            Pattern::Tuple(_, s) => *s,
+            Pattern::Tuple(_, s) | Pattern::Or(_, s) => *s,
         }
     }
 }

@@ -318,6 +318,25 @@ case else:
 end
 ```
 
+**Alternatives (`or` patterns):**
+
+```ori
+match direction
+case North or South:
+    move_vertical()
+case East or West:
+    move_horizontal()
+end
+```
+
+- `case a or b:` matches when any alternative matches.
+- Alternatives **may not bind values** (`match.or_pattern_binding`): each
+  branch would otherwise have to bind the same names at the same types.
+  Use one `case` per alternative, or a guard, when the payload is needed.
+- For coverage, `case a or b:` counts exactly as `case a:` plus `case b:`.
+- The separator is the word `or`, matching the boolean operators; `|` is not
+  a token in Ori.
+
 **Guard:**
 
 ```ori

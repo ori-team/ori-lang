@@ -5116,6 +5116,13 @@ fn escape_c_str(s: &str) -> String {
 fn pattern_cond(pat: &HirPattern, scrutinee: &str) -> String {
     match pat {
         HirPattern::Wildcard => "1".into(),
+        HirPattern::Or(alternatives) => {
+            let tests: Vec<String> = alternatives
+                .iter()
+                .map(|alt| pattern_cond(alt, scrutinee))
+                .collect();
+            format!("({})", tests.join(" || "))
+        }
         HirPattern::BoolLit(b) => format!("{} == {}", scrutinee, if *b { "true" } else { "false" }),
         HirPattern::IntLit(n) => format!("{} == INT64_C({})", scrutinee, n),
         HirPattern::StrLit(s) => {

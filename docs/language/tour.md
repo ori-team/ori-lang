@@ -135,6 +135,8 @@ end
 - `case pattern if cond:` guards an arm: a false guard falls through to the
   next case. `case else:` is the explicit fallback (guarded cases do not
   count toward exhaustiveness).
+- `case a or b:` groups alternatives (the word `or`, not `|`). Alternatives
+  cannot bind values, and together they count as full coverage.
 
 ---
 

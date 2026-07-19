@@ -637,6 +637,11 @@ impl NativeHirValidator {
     fn pattern(&self, pattern: &HirPattern, span: Span) -> Result<(), String> {
         match pattern {
             HirPattern::Binding(_, ty) => self.reject_error_ty(ty, "pattern binding type", span)?,
+            HirPattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.pattern(alternative, span)?;
+                }
+            }
             HirPattern::Some_(inner) | HirPattern::Ok_(inner) | HirPattern::Err_(inner) => {
                 self.pattern(inner, span)?;
             }
@@ -10066,6 +10071,16 @@ impl<'a> FuncCodegen<'a> {
         match pat {
             HirPattern::Wildcard | HirPattern::Binding(_, _) => {
                 self.builder.ins().iconst(types::I8, 1)
+            }
+            // `a or b` — true when any alternative matches. Alternatives never
+            // bind, so testing them all eagerly has no observable effect.
+            HirPattern::Or(alternatives) => {
+                let mut cond = self.builder.ins().iconst(types::I8, 0);
+                for alternative in alternatives {
+                    let alt_cond = self.pattern_cond(alternative, scr, scr_ty);
+                    cond = self.builder.ins().bor(cond, alt_cond);
+                }
+                cond
             }
             HirPattern::BoolLit(b) => {
                 let lit = self.builder.ins().iconst(types::I8, if *b { 1 } else { 0 });

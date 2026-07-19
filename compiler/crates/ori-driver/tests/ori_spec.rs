@@ -5037,3 +5037,192 @@ end
         build.c_source
     );
 }
+
+// ── Or-patterns: `case North or South:` (0.4 surface) ───────────────────────
+//
+// The word `or` (not `|`): the language already spells boolean operators as
+// words, and the comma is taken by payload fields.
+
+#[test]
+fn compile_runs_or_patterns_across_kinds() {
+    let dir = TestDir::new("or_patterns_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+enum Direction
+    North
+    South
+    East
+    West
+end
+
+axis(d: Direction) -> string
+    match d
+    case North or South:
+        return "vertical"
+    case else:
+        return "horizontal"
+    end
+end
+
+size(n: int) -> string
+    match n
+    case 1 or 2 or 3:
+        return "small"
+    case else:
+        return "big"
+    end
+end
+
+label(n: int) -> string
+    return match n
+    case 0 or 1: "binary"
+    case else: "other"
+    end
+end
+
+kind(s: string) -> string
+    match s
+    case "a" or "b":
+        return "letter"
+    case else:
+        return "?"
+    end
+end
+
+main()
+    io.println(axis(Direction.North) + axis(Direction.South) + axis(Direction.West))
+    io.println(size(2) + size(9))
+    io.println(label(1) + label(7))
+    io.println(kind("b") + kind("z"))
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "or_patterns");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        "verticalverticalhorizontal\nsmallbig\nbinaryother\nletter?\n"
+    );
+}
+
+#[test]
+fn check_or_pattern_covers_enum_exhaustiveness() {
+    let dir = TestDir::new("or_pattern_exhaustive");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+enum Direction
+    North
+    South
+    East
+    West
+end
+
+axis(d: Direction) -> string
+    var out: string = ""
+    match d
+    case North or South:
+        out = "vertical"
+    case East or West:
+        out = "horizontal"
+    end
+    return out
+end
+
+main()
+    io.println(axis(Direction.East))
+end
+"#,
+    );
+
+    // No `case else`: the two or-patterns together cover all four variants.
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        !diagnostic_codes(&out).contains(&"match.non_exhaustive"),
+        "or-patterns should count toward coverage: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_bindings_inside_or_patterns() {
+    let dir = TestDir::new("or_pattern_binding");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+enum Shape
+    Circle(radius: int)
+    Square(side: int)
+end
+
+describe(s: Shape) -> string
+    match s
+    case Circle(r) or Square(r):
+        return "has-side"
+    case else:
+        return "?"
+    end
+end
+
+main()
+    io.println(describe(Shape.Circle(radius: 1)))
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"match.or_pattern_binding"),
+        "expected or-pattern binding rejection: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn build_c_or_pattern_emits_disjunction() {
+    let dir = TestDir::new("or_pattern_c");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+size(n: int) -> string
+    match n
+    case 1 or 2:
+        return "small"
+    case else:
+        return "big"
+    end
+end
+
+main()
+    io.println(size(1))
+end
+"#,
+    );
+
+    let build = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build.has_errors, "{:?}", build.diagnostics);
+    assert!(
+        build.c_source.contains("||"),
+        "expected a disjunction for the or-pattern:\n{}",
+        build.c_source
+    );
+}
