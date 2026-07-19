@@ -224,11 +224,9 @@ struct Point
     y: int
 end
 
-apply Point
-    use core.Displayable
-        display(self) -> string
-            return f"({self.x}, {self.y})"
-        end
+apply Point use core.Displayable
+    display(self) -> string
+        return f"({self.x}, {self.y})"
     end
 end
 

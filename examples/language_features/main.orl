@@ -102,11 +102,9 @@ struct Animal
     legs: int
 end
 
-apply Animal
-    use core.Equatable
-        equals(self, other: Animal) -> bool
-            return self.name == other.name
-        end
+apply Animal use core.Equatable
+    equals(self, other: Animal) -> bool
+        return self.name == other.name
     end
 end
 
@@ -181,14 +179,14 @@ demo_optional_result()
     case ok(val):
         io.println(f"  10 / 3 = {val}")
     case err(msg):
-        io.println(f"  error: {msg}")
+        io.println(f"  err: {msg}")
     end
 
     match safe_divide(10, 0)
     case ok(val):
         io.println(f"  10 / 0 = {val}")
     case err(msg):
-        io.println(f"  10 / 0 error: {msg}")
+        io.println(f"  10 / 0 err: {msg}")
     end
 
     const people: list[string] = ["Ada", "Grace", "Margaret"]

@@ -75,8 +75,26 @@ end
 
 ## `apply Type` + `use Trait` (S3)
 
+When the whole block is one trait and nothing else, the **compact header** is
+the required form:
+
+```ori
+apply Circle use Drawable
+    draw(self, canvas: Canvas)
+        canvas.draw_circle(self.center, self.radius)
+    end
+end
+```
+
+The nested form is required when the compact header cannot express the
+content — two or more traits, or free members alongside a trait:
+
 ```ori
 apply Circle
+    area(self) -> float
+        return 3.14159 * self.radius * self.radius
+    end
+
     use Drawable
         draw(self, canvas: Canvas)
             canvas.draw_circle(self.center, self.radius)
@@ -84,6 +102,15 @@ apply Circle
     end
 end
 ```
+
+**Which form applies is decided by the content, never by the writer.** A
+nested block holding a single `use` and nothing else is rejected with
+`apply.redundant_use_block` — it says exactly what the compact header says,
+one indentation level deeper. `ori migrate-syntax` rewrites that shape
+automatically.
+
+The compact header is recognised by layout: `use` on the **same line** as
+`apply` opens it; `use` on the next line is the nested form.
 
 ### Order (fixed)
 
@@ -100,10 +127,8 @@ comparePoints(a: Point, b: Point) -> int
     return a.x - b.x
 end
 
-apply Point
-    use Comparable
-        compare = comparePoints
-    end
+apply Point use Comparable
+    compare = comparePoints
 end
 ```
 

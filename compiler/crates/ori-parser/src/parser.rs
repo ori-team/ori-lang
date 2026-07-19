@@ -138,9 +138,7 @@ impl<'src> Parser<'src> {
             if label != expected {
                 self.error(
                     "parse.end_label_mismatch",
-                    format!(
-                        "labeled `end {label}` does not match opening `{expected}`",
-                    ),
+                    format!("labeled `end {label}` does not match opening `{expected}`",),
                     end_span.cover(label_span),
                 );
             }

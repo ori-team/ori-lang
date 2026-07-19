@@ -126,6 +126,7 @@ pub fn migrate_source(source: &str) -> MigrateTextResult {
         c
     });
     text = rewrite_postfix_question(&text, &mut rewrites, &mut notes);
+    text = rewrite_redundant_apply_use(&text, &mut rewrites, &mut notes);
 
     let mut seen = std::collections::HashSet::new();
     rewrites.retain(|tag| seen.insert(tag.clone()));
@@ -281,7 +282,11 @@ fn map_code_regions(source: &str, mut f: impl FnMut(&str) -> String) -> String {
     out
 }
 
-fn apply_line_rewrites(source: &str, rewrites: &mut Vec<String>, notes: &mut Vec<String>) -> String {
+fn apply_line_rewrites(
+    source: &str,
+    rewrites: &mut Vec<String>,
+    notes: &mut Vec<String>,
+) -> String {
     let mut out = String::with_capacity(source.len());
     for (idx, line) in source.lines().enumerate() {
         let (code_part, comment) = split_line_comment(line);
@@ -504,7 +509,9 @@ fn rewrite_func_decl_keyword(code: &mut String) -> bool {
             }
             // declaration: `func name` / `func\tname`
             if rest.starts_with(|c: char| c.is_whitespace()) {
-                let name_start = rest.find(|c: char| !c.is_whitespace()).unwrap_or(rest.len());
+                let name_start = rest
+                    .find(|c: char| !c.is_whitespace())
+                    .unwrap_or(rest.len());
                 let after_ws = &rest[name_start..];
                 if after_ws
                     .chars()
@@ -596,9 +603,7 @@ fn rewrite_where_is_bounds(code: &mut String) -> bool {
     let mut out = String::with_capacity(code.len());
     let mut i = 0;
     while i < code.len() {
-        if code[i..].starts_with("where ")
-            && is_word_boundary_before_str(code, i)
-        {
+        if code[i..].starts_with("where ") && is_word_boundary_before_str(code, i) {
             if let Some((consumed, replacement)) = parse_where_clause_at(code, i) {
                 out.push_str(&replacement);
                 i += consumed;
@@ -1132,10 +1137,7 @@ fn try_rewrite_line_question(code: &str) -> Option<String> {
 }
 
 fn is_simple_expr_token(s: &str) -> bool {
-    !s.is_empty()
-        && !s.contains(" if ")
-        && !s.contains(" else ")
-        && !s.contains(" match ")
+    !s.is_empty() && !s.contains(" if ") && !s.contains(" else ") && !s.contains(" match ")
 }
 
 #[cfg(test)]
@@ -1154,7 +1156,11 @@ public func main()
 end
 "#;
         let result = migrate_source(src);
-        assert!(result.source.contains("module app.main"), "{}", result.source);
+        assert!(
+            result.source.contains("module app.main"),
+            "{}",
+            result.source
+        );
         assert!(result.source.contains("import ori.io = io"));
         assert!(result.source.contains("import ori.list (len)"));
         assert!(result.source.contains("public main()"), "{}", result.source);
@@ -1175,7 +1181,11 @@ end
         let src = "const xs: list<int> = []\nconst m: map of string to int = {}\n";
         let result = migrate_source(src);
         assert!(result.source.contains("list[int]"), "{}", result.source);
-        assert!(result.source.contains("map[string, int]"), "{}", result.source);
+        assert!(
+            result.source.contains("map[string, int]"),
+            "{}",
+            result.source
+        );
     }
 
     #[test]
@@ -1187,7 +1197,11 @@ match v
 end
 "#;
         let result = migrate_source(src);
-        assert!(result.source.contains("= (x: int) => x * 2"), "{}", result.source);
+        assert!(
+            result.source.contains("= (x: int) => x * 2"),
+            "{}",
+            result.source
+        );
         assert!(result.source.contains("case Ok(x):"));
         assert!(!result.source.contains("do("));
     }
@@ -1231,8 +1245,12 @@ end
     #[test]
     fn should_skip_path_is_permissive_by_default() {
         assert!(!should_skip_path(Path::new("stdlib/list.orl")));
-        assert!(!should_skip_path(Path::new("examples/hello_world/main.orl")));
-        assert!(!should_skip_path(Path::new("packages/other-lib/src/main.orl")));
+        assert!(!should_skip_path(Path::new(
+            "examples/hello_world/main.orl"
+        )));
+        assert!(!should_skip_path(Path::new(
+            "packages/other-lib/src/main.orl"
+        )));
     }
 
     #[test]
@@ -1264,4 +1282,140 @@ end
         assert!(verbose.contains("[changed] b.orl"));
         assert!(verbose.contains("namespace→module"));
     }
+}
+
+/// Collapse `apply T` + a lone `use Trait` section into the compact header
+/// `apply T use Trait` (0.4).
+///
+/// Only the unambiguous shape is rewritten: an `apply` block whose entire body
+/// is one `use` section. Anything else (inherent members, two or more traits)
+/// is already correct as a nested block and is left alone. When the shape does
+/// not match exactly, the file is left untouched and the compiler's
+/// `apply.redundant_use_block` diagnostic — which prints the exact line to
+/// write — guides the manual fix.
+fn rewrite_redundant_apply_use(
+    source: &str,
+    rewrites: &mut Vec<String>,
+    notes: &mut Vec<String>,
+) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut index = 0usize;
+    let mut changed = false;
+
+    while index < lines.len() {
+        let Some(apply_rest) = apply_header_only(lines[index]) else {
+            out.push(lines[index].to_string());
+            index += 1;
+            continue;
+        };
+        let apply_indent = leading_indent(lines[index]);
+
+        // The body must open with the `use` line.
+        let Some(use_line) = lines.get(index + 1) else {
+            out.push(lines[index].to_string());
+            index += 1;
+            continue;
+        };
+        let Some(trait_name) = use_header_only(use_line) else {
+            out.push(lines[index].to_string());
+            index += 1;
+            continue;
+        };
+        let use_indent = leading_indent(use_line);
+
+        // Find the `end` closing the whole apply block: the first line at the
+        // apply's own indentation that is exactly `end`.
+        let mut apply_end = None;
+        let mut scan = index + 2;
+        while scan < lines.len() {
+            let trimmed = lines[scan].trim();
+            if trimmed == "end" && leading_indent(lines[scan]) == apply_indent {
+                apply_end = Some(scan);
+                break;
+            }
+            scan += 1;
+        }
+        let Some(apply_end) = apply_end else {
+            out.push(lines[index].to_string());
+            index += 1;
+            continue;
+        };
+
+        // The line before it must close the `use` section at its indentation.
+        let use_end = apply_end.saturating_sub(1);
+        let closes_use =
+            lines[use_end].trim() == "end" && leading_indent(lines[use_end]) == use_indent;
+        // Everything between must belong to the `use` section — i.e. be
+        // indented deeper than it. A line back at the section's own
+        // indentation means a sibling member (a second trait, or a method
+        // after the section), and the nested form has to stay.
+        let body_is_only_the_use = lines[index + 2..use_end]
+            .iter()
+            .all(|line| line.trim().is_empty() || leading_indent(line).len() > use_indent.len());
+        if !closes_use || !body_is_only_the_use {
+            out.push(lines[index].to_string());
+            index += 1;
+            continue;
+        }
+
+        // Rewrite: merged header, body dedented by one level, one `end` less.
+        let dedent = use_indent.len().saturating_sub(apply_indent.len());
+        out.push(format!("{apply_indent}apply {apply_rest} use {trait_name}"));
+        for line in &lines[index + 2..use_end] {
+            out.push(dedent_line(line, dedent));
+        }
+        out.push(format!("{apply_indent}end"));
+        changed = true;
+        index = apply_end + 1;
+    }
+
+    if !changed {
+        return source.to_string();
+    }
+    push_tag(rewrites, "apply/use→compact header");
+    notes.push(
+        "collapsed single-trait `apply` blocks into the compact `apply T use Trait` header"
+            .to_string(),
+    );
+    let mut text = out.join("\n");
+    if source.ends_with('\n') {
+        text.push('\n');
+    }
+    text
+}
+
+/// `apply Foo` alone on a line → `Some("Foo")`.
+fn apply_header_only(line: &str) -> Option<String> {
+    let (code, _) = split_line_comment(line);
+    let rest = code.trim().strip_prefix("apply ")?;
+    let rest = rest.trim();
+    if rest.is_empty() || rest.contains(' ') {
+        return None;
+    }
+    Some(rest.to_string())
+}
+
+/// `use Trait` alone on a line → `Some("Trait")`.
+fn use_header_only(line: &str) -> Option<String> {
+    let (code, _) = split_line_comment(line);
+    let rest = code.trim().strip_prefix("use ")?;
+    let rest = rest.trim();
+    if rest.is_empty() || rest.contains(' ') {
+        return None;
+    }
+    Some(rest.to_string())
+}
+
+fn leading_indent(line: &str) -> &str {
+    &line[..line.len() - line.trim_start().len()]
+}
+
+fn dedent_line(line: &str, amount: usize) -> String {
+    if line.trim().is_empty() {
+        return line.to_string();
+    }
+    let indent = leading_indent(line);
+    let keep = indent.len().saturating_sub(amount);
+    format!("{}{}", &indent[..keep], line.trim_start())
 }

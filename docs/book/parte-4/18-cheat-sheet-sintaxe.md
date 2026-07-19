@@ -206,11 +206,23 @@ trait Printable
     print(self)
 end
 
--- Aplicando trait a um struct
+-- Uma trait só: cabeçalho compacto ('use' na MESMA linha) — forma obrigatória
+apply User use Printable
+    print(self)
+        io.println(self.name)
+    end
+end
+
+-- Duas traits (ou trait + método próprio): aí a forma aninhada é a exigida
 apply User
     use Printable
         print(self)
             io.println(self.name)
+        end
+    end
+    use Comparable
+        compare(self, other: User) -> int
+            return self.age - other.age
         end
     end
 end

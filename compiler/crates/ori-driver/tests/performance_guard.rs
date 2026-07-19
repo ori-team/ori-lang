@@ -256,11 +256,9 @@ struct Item
     label: string
 end
 
-apply Item
-    use Named
-        name(self) -> string
-            return self.label
-        end
+apply Item use Named
+    name(self) -> string
+        return self.label
     end
 end
 

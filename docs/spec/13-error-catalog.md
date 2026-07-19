@@ -91,6 +91,7 @@ when the compiler starts producing it.
 | `parse.implement_removed` | error | `implement Trait for Type` was removed; use `apply Type` with `use Trait` |
 | `parse.apply_trait_to_removed` | error | `apply Trait to Type` / `apply Trait for Type` was removed; use `apply Type` with `use Trait` |
 | `parse.apply_member_after_use` | error | Free methods/binds appear after a `use Trait` section (order is free members, then `use`) |
+| `apply.redundant_use_block` | error | An `apply` block whose whole body is one `use` section; write the compact header `apply Type use Trait` |
 | `parse.poetic_call_nested` | error | Nested poetic call (juxtaposition of calls without parentheses) is not allowed; at most one poetic verb per expression |
 | `parse.end_label_mismatch` | error | Optional labeled `end` (`end if`, `end match`, …) does not match the opening construct |
 | `parse.do_removed` | error | Source used removed `do` closure keyword; write `(params) => expr` or `(params) … end` |

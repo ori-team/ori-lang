@@ -2221,11 +2221,9 @@ end
 struct Person
     name: string
 end
-apply Person
-    use Greetable
-        greet() -> string
-            return self.name
-        end
+apply Person use Greetable
+    greet() -> string
+        return self.name
     end
 end
 main()
@@ -2251,10 +2249,8 @@ trait Doubler
 end
 struct S
 end
-apply S
-    use Doubler
-        double(x: int) -> int => x * 2
-    end
+apply S use Doubler
+    double(x: int) -> int => x * 2
 end
 main()
     const s: S = S {}
@@ -2342,10 +2338,8 @@ end
 struct Res
     id: int
 end
-apply Res
-    use Disposable
-        mut dispose(self)
-        end
+apply Res use Disposable
+    mut dispose(self)
     end
 end
 async load() -> int
@@ -2405,11 +2399,9 @@ end
 struct User
     n: string
 end
-apply User
-    use Greetable
-        name(self) -> string
-            return self.n
-        end
+apply User use Greetable
+    name(self) -> string
+        return self.n
     end
 end
 main()
@@ -2437,9 +2429,7 @@ end
 struct User
     n: string
 end
-apply User
-    use Greetable
-    end
+apply User use Greetable
 end
 main()
 end
@@ -2471,18 +2461,14 @@ struct Rect
     w: float
     h: float
 end
-apply Circle
-    use Drawable
-        draw(self) -> string
-            return "circle"
-        end
+apply Circle use Drawable
+    draw(self) -> string
+        return "circle"
     end
 end
-apply Rect
-    use Drawable
-        draw(self) -> string
-            return "rect"
-        end
+apply Rect use Drawable
+    draw(self) -> string
+        return "rect"
     end
 end
 main()
@@ -2510,11 +2496,9 @@ end
 struct Circle
     radius: float
 end
-apply Circle
-    use Drawable
-        draw(self) -> string
-            return "circle"
-        end
+apply Circle use Drawable
+    draw(self) -> string
+        return "circle"
     end
 end
 main()
@@ -2550,18 +2534,14 @@ trait Beta
     output(self) -> string
 end
 struct S end
-apply S
-    use Alpha
-        output(self) -> string
-            return "alpha"
-        end
+apply S use Alpha
+    output(self) -> string
+        return "alpha"
     end
 end
-apply S
-    use Beta
-        output(self) -> string
-            return "beta"
-        end
+apply S use Beta
+    output(self) -> string
+        return "beta"
     end
 end
 main()
@@ -2790,10 +2770,8 @@ end
 struct Res
     name: string
 end
-apply Res
-    use Disposable
-        mut dispose(self)
-        end
+apply Res use Disposable
+    mut dispose(self)
     end
 end
 main()
@@ -2819,11 +2797,9 @@ end
 struct Logger
     label: string
 end
-apply Logger
-    use Disposable
-        mut dispose(self)
-            io.print(f"disposed {self.label}")
-        end
+apply Logger use Disposable
+    mut dispose(self)
+        io.print(f"disposed {self.label}")
     end
 end
 main()
@@ -2906,11 +2882,9 @@ end
 struct User
     name: string
 end
-apply User
-    use Labelled
-        label(self) -> string
-            return self.name
-        end
+apply User use Labelled
+    label(self) -> string
+        return self.name
     end
 end
 show for T: Labelled (value: T) -> string
@@ -2989,10 +2963,8 @@ trait Disposable
     mut dispose(self)
 end
 struct Res end
-apply Res
-    use Disposable
-        mut dispose(self)
-        end
+apply Res use Disposable
+    mut dispose(self)
     end
 end
 raw_copy for T: not Disposable (src: T) -> T
@@ -3139,19 +3111,15 @@ struct Session
     user: User
 end
 
-apply Session
-    use Disposable
-        mut dispose(self)
-            io.print(f"session of {self.user.name} disposed")
-        end
+apply Session use Disposable
+    mut dispose(self)
+        io.print(f"session of {self.user.name} disposed")
     end
 end
 
-apply User
-    use Loggable
-        to_log(self) -> string
-            return f"User({self.name}, {self.age})"
-        end
+apply User use Loggable
+    to_log(self) -> string
+        return f"User({self.name}, {self.age})"
     end
 end
 
@@ -3323,11 +3291,9 @@ fn crosscut_variadic_rejects_not_last_parameter() {
 trait Displayable
     display(self) -> string
 end
-apply string
-    use Displayable
-        display(self) -> string
-            return self
-        end
+apply string use Displayable
+    display(self) -> string
+        return self
     end
 end
 log(values: any[Displayable]..., prefix: string)
@@ -5374,4 +5340,126 @@ end
         "newtype must leave no trace in generated C:\n{}",
         build.c_source
     );
+}
+
+// ── Compact `apply Type use Trait` header (0.4 surface) ────────────────────
+//
+// Which form applies is decided by the content, never by the writer: one trait
+// and nothing else → compact; anything else → nested.
+
+#[test]
+fn compile_runs_compact_apply_use_header() {
+    let dir = TestDir::new("apply_compact");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+
+struct Point
+    x: int
+    y: int
+end
+
+apply Point use core.Displayable
+    display(self) -> string
+        return f"({self.x}, {self.y})"
+    end
+end
+
+main()
+    const p: Point = Point { x: 1, y: 2 }
+    io.println(string(p))
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "apply_compact");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "(1, 2)");
+}
+
+#[test]
+fn check_rejects_nested_apply_with_a_single_use() {
+    let dir = TestDir::new("apply_redundant_nested");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+
+struct Point
+    x: int
+end
+
+apply Point
+    use core.Displayable
+        display(self) -> string
+            return "p"
+        end
+    end
+end
+
+main()
+    io.println("x")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"apply.redundant_use_block"),
+        "a lone `use` section must be written as a compact header: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_accepts_nested_apply_that_the_compact_form_cannot_express() {
+    let dir = TestDir::new("apply_nested_still_valid");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+
+struct Point
+    x: int
+end
+
+-- Inherent member alongside a trait: the compact header cannot say this.
+apply Point
+    double(self) -> int
+        return self.x * 2
+    end
+
+    use core.Displayable
+        display(self) -> string
+            return "p"
+        end
+    end
+end
+
+main()
+    const p: Point = Point { x: 3 }
+    const d: int = p.double()
+    io.println(f"{d} {string(p)}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        !diagnostic_codes(&out).contains(&"apply.redundant_use_block"),
+        "nested form is required here, not redundant: {:?}",
+        out.diagnostics
+    );
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
 }

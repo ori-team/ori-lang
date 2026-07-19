@@ -44,11 +44,9 @@ apply User
     end
 end
 
-apply Resource
-    use Disposable
-        mut dispose(self)
-            io.print("disposed-" + string(self.id))
-        end
+apply Resource use Disposable
+    mut dispose(self)
+        io.print("disposed-" + string(self.id))
     end
 end
 

@@ -248,10 +248,8 @@ struct Resource
     id: int
 end
 
-apply Resource
-    use Disposable
-        mut dispose(self)
-        end
+apply Resource use Disposable
+    mut dispose(self)
     end
 end
 
@@ -1538,11 +1536,9 @@ struct Box
     id: int
 end
 
-apply Box
-    use Disposable
-        mut dispose(self)
-            io.print("d")
-        end
+apply Box use Disposable
+    mut dispose(self)
+        io.print("d")
     end
 end
 
@@ -1786,11 +1782,9 @@ struct Resource
     id: int
 end
 
-apply Resource
-    use Disposable
-        mut dispose(self)
-            dispose_count = dispose_count + self.id
-        end
+apply Resource use Disposable
+    mut dispose(self)
+        dispose_count = dispose_count + self.id
     end
 end
 
@@ -1855,11 +1849,9 @@ struct Resource
     id: int
 end
 
-apply Resource
-    use Disposable
-        mut dispose(self)
-            dispose_count = dispose_count + self.id
-        end
+apply Resource use Disposable
+    mut dispose(self)
+        dispose_count = dispose_count + self.id
     end
 end
 
@@ -1918,11 +1910,9 @@ struct Resource
     id: int
 end
 
-apply Resource
-    use Disposable
-        mut dispose(self)
-            dispose_count = dispose_count + self.id
-        end
+apply Resource use Disposable
+    mut dispose(self)
+        dispose_count = dispose_count + self.id
     end
 end
 

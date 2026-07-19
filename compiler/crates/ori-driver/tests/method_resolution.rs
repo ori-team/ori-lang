@@ -123,11 +123,9 @@ trait Entity
     id(self) -> int
 end
 
-apply Player
-    use Entity
-        id(self) -> int
-            return self.score
-        end
+apply Player use Entity
+    id(self) -> int
+        return self.score
     end
 end
 
@@ -174,19 +172,15 @@ trait Beta
     output(self) -> string
 end
 
-apply Thing
-    use Alpha
-        output(self) -> string
-            return "alpha"
-        end
+apply Thing use Alpha
+    output(self) -> string
+        return "alpha"
     end
 end
 
-apply Thing
-    use Beta
-        output(self) -> string
-            return "beta"
-        end
+apply Thing use Beta
+    output(self) -> string
+        return "beta"
     end
 end
 
@@ -221,19 +215,15 @@ trait Beta
     output(self) -> string
 end
 
-apply Thing
-    use Alpha
-        output(self) -> string
-            return "alpha"
-        end
+apply Thing use Alpha
+    output(self) -> string
+        return "alpha"
     end
 end
 
-apply Thing
-    use Beta
-        output(self) -> string
-            return "beta"
-        end
+apply Thing use Beta
+    output(self) -> string
+        return "beta"
     end
 end
 
@@ -275,9 +265,7 @@ trait Entity
     end
 end
 
-apply Player
-    use Entity
-    end
+apply Player use Entity
 end
 
 main()
@@ -312,11 +300,9 @@ trait Entity
     tick(self) -> void
 end
 
-apply Player
-    use Entity
-        id(self) -> int
-            return 1
-        end
+apply Player use Entity
+    id(self) -> int
+        return 1
     end
 end
 "#,
@@ -341,11 +327,9 @@ trait Cloneable
     merge(self, other: Self) -> Self
 end
 
-apply Player
-    use Cloneable
-        merge(self, other: int) -> Player
-            return self
-        end
+apply Player use Cloneable
+    merge(self, other: int) -> Player
+        return self
     end
 end
 "#,
@@ -370,11 +354,9 @@ trait Stackable
     mut push(self) -> void
 end
 
-apply Bag
-    use Stackable
-        push(self) -> void
-            return
-        end
+apply Bag use Stackable
+    push(self) -> void
+        return
     end
 end
 "#,
@@ -445,7 +427,9 @@ end
     let build = run_build(&dir.path("main.orl")).unwrap();
     assert!(!build.has_errors, "{:?}", build.diagnostics);
     assert!(
-        build.c_source.contains("ORI__app_dot_main_dot_pointDebugName")
+        build
+            .c_source
+            .contains("ORI__app_dot_main_dot_pointDebugName")
             || build.c_source.contains("pointDebugName"),
         "{}",
         build.c_source
@@ -538,10 +522,8 @@ playerId(player: Player) -> int
     return player.score
 end
 
-apply Player
-    use Entity
-        id = playerId
-    end
+apply Player use Entity
+    id = playerId
 end
 
 main()
@@ -649,19 +631,15 @@ trait Entity
     id(self) -> int
 end
 
-apply Player
-    use Entity
-        id(self) -> int
-            return 1
-        end
+apply Player use Entity
+    id(self) -> int
+        return 1
     end
 end
 
-apply Player
-    use Entity
-        id(self) -> int
-            return 2
-        end
+apply Player use Entity
+    id(self) -> int
+        return 2
     end
 end
 "#,

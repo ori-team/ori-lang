@@ -63,10 +63,9 @@ trait Show
     show(self)
 end
 
-apply User
-    use Show
-        show(self) => io.println(self.id)
-    end
+-- uma trait: cabeçalho compacto (obrigatório)
+apply User use Show
+    show(self) => io.println(self.id)
 end
 
 alias Ids = map[int, string]   -- apelido (transparente)

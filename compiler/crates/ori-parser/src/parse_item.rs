@@ -1187,6 +1187,37 @@ impl<'src> Parser<'src> {
 
         let for_type = first_name;
         let where_clause = self.parse_where_clause_opt();
+
+        // Compact header: `apply Type use Trait … end`.
+        //
+        // One trait and nothing else is the common case, and the nested form
+        // costs a whole indentation level to say nothing extra. Which form
+        // applies is decided by the content, never by the writer — see the
+        // `apply.redundant_use_block` check for the other half of the rule.
+        //
+        // Newlines are not tokens, so "same line" has to be read off the
+        // source text: `use` on the next line is the nested form.
+        if self.at(&TokenKind::Use) && self.same_line_as_span_end(for_type.span) {
+            let use_start = self.current_span();
+            self.advance(); // use
+            let trait_name = self.parse_qualified_name()?;
+            let (members, associated_types) = self.parse_apply_use_body_members()?;
+            let end = self.expect_block_end(start, "apply")?;
+            return Some(ApplyDecl {
+                type_params,
+                for_type,
+                where_clause,
+                free_members: Vec::new(),
+                uses: vec![ApplyUseSection {
+                    trait_name,
+                    members,
+                    associated_types,
+                    span: use_start.cover(end),
+                }],
+                span: start.cover(end),
+            });
+        }
+
         let mut free_members = Vec::new();
         let mut uses = Vec::new();
         let mut seen_use = false;
@@ -1235,6 +1266,24 @@ impl<'src> Parser<'src> {
         }
 
         let end = self.expect_block_end(start, "apply")?;
+
+        // The other half of the "one canonical form" rule: a nested block that
+        // holds a single `use` and nothing else says exactly what the compact
+        // header says, one level deeper. Reject it so both spellings never
+        // coexist for the same content.
+        if uses.len() == 1 && free_members.is_empty() {
+            let section = &uses[0];
+            self.error(
+                "apply.redundant_use_block",
+                format!(
+                    "`apply {}` with only `use {}` should use the compact header: \
+                     write `apply {} use {}`",
+                    for_type, section.trait_name, for_type, section.trait_name
+                ),
+                start.cover(section.trait_name.span),
+            );
+        }
+
         Some(ApplyDecl {
             type_params,
             for_type,
