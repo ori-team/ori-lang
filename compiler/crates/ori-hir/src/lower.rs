@@ -2813,18 +2813,22 @@ impl<'a> Lowerer<'a> {
         match case {
             MatchCase::Pattern {
                 pattern,
+                guard,
                 body,
                 span,
-                ..
             } => {
                 let resolved_scr_ty = replace_json_placeholder_in_ty(scr_ty.clone(), self.def_map);
                 let pat = lower_pattern(pattern, &resolved_scr_ty, self.enum_sigs);
                 self.push();
                 bind_hir_pattern_scope(self, &pat);
+                // The guard is lowered inside the pattern scope: `case n if
+                // n >= 90:` reads `n` from the arm's own bindings.
+                let guard = guard.as_ref().map(|g| self.lower_expr(g, tp));
                 let stmts = body.iter().filter_map(|s| self.lower_stmt(s, tp)).collect();
                 self.pop();
                 HirArm {
                     pattern: pat,
+                    guard,
                     body: stmts,
                     span: *span,
                 }
@@ -2835,6 +2839,7 @@ impl<'a> Lowerer<'a> {
                 self.pop();
                 HirArm {
                     pattern: HirPattern::Wildcard,
+                    guard: None,
                     body: stmts,
                     span: *span,
                 }

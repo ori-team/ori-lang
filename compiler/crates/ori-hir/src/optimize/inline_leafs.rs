@@ -98,6 +98,9 @@ fn inline_in_stmt(stmt: &mut HirStmt, leaves: &HashMap<SmolStr, LeafFn>) {
         } => {
             inline_in_expr(scrutinee, leaves);
             for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    inline_in_expr(guard, leaves);
+                }
                 for s in &mut arm.body {
                     inline_in_stmt(s, leaves);
                 }
@@ -362,9 +365,10 @@ fn stmt_calls_name(stmt: &HirStmt, name: &str) -> bool {
             scrutinee, arms, ..
         } => {
             expr_calls_name(scrutinee, name)
-                || arms
-                    .iter()
-                    .any(|a| a.body.iter().any(|s| stmt_calls_name(s, name)))
+                || arms.iter().any(|a| {
+                    a.guard.as_ref().is_some_and(|g| expr_calls_name(g, name))
+                        || a.body.iter().any(|s| stmt_calls_name(s, name))
+                })
         }
         _ => false,
     }

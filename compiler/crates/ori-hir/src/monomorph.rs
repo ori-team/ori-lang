@@ -298,6 +298,9 @@ fn rewrite_stmt_calls(stmt: &mut HirStmt, state: &mut MonoState) {
         } => {
             rewrite_expr_calls(scrutinee, state);
             for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_expr_calls(guard, state);
+                }
                 for stmt in &mut arm.body {
                     rewrite_stmt_calls(stmt, state);
                 }
@@ -519,6 +522,9 @@ fn substitute_stmt(stmt: &mut HirStmt, subst: &HashMap<u32, Ty>) {
             substitute_expr(scrutinee, subst);
             for arm in arms {
                 substitute_pattern(&mut arm.pattern, subst);
+                if let Some(guard) = &mut arm.guard {
+                    substitute_expr(guard, subst);
+                }
                 for stmt in &mut arm.body {
                     substitute_stmt(stmt, subst);
                 }
@@ -807,6 +813,7 @@ fn stmt_has_generic_param(stmt: &HirStmt) -> bool {
             expr_has_generic_param(scrutinee)
                 || arms.iter().any(|arm| {
                     pattern_has_generic_param(&arm.pattern)
+                        || arm.guard.as_ref().is_some_and(expr_has_generic_param)
                         || arm.body.iter().any(stmt_has_generic_param)
                 })
         }

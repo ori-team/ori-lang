@@ -238,6 +238,9 @@ pub enum HirStmt {
 #[derive(Debug, Clone)]
 pub struct HirArm {
     pub pattern: HirPattern,
+    /// `case pattern if guard:` — evaluated with the pattern's bindings in
+    /// scope; a false guard falls through to the next arm's test.
+    pub guard: Option<HirExpr>,
     pub body: Vec<HirStmt>,
     pub span: Span,
 }

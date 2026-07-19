@@ -429,6 +429,9 @@ impl NativeHirValidator {
                 self.expr(scrutinee)?;
                 for arm in arms {
                     self.pattern(&arm.pattern, arm.span)?;
+                    if let Some(guard) = &arm.guard {
+                        self.expr(guard)?;
+                    }
                     for stmt in &arm.body {
                         self.stmt(stmt)?;
                     }
@@ -1003,7 +1006,10 @@ fn stmt_contains_await(stmt: &HirStmt) -> bool {
             scrutinee, arms, ..
         } => {
             expr_contains_await(scrutinee)
-                || arms.iter().any(|arm| arm_body_contains_await(&arm.body))
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(expr_contains_await)
+                        || arm_body_contains_await(&arm.body)
+                })
         }
         HirStmt::IfSome {
             value, then, else_, ..
@@ -1233,6 +1239,9 @@ fn stmt_collect_var_uses(stmt: &HirStmt, uses: &mut HashSet<SmolStr>) {
         } => {
             expr_collect_var_uses(scrutinee, uses);
             for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    expr_collect_var_uses(guard, uses);
+                }
                 for stmt in &arm.body {
                     stmt_collect_var_uses(stmt, uses);
                 }
@@ -1730,7 +1739,10 @@ fn simple_async_lift_stmt_awaits(
             arms,
             span,
         } => {
-            if arms.iter().any(|arm| arm_body_contains_await(&arm.body)) {
+            if arms.iter().any(|arm| {
+                arm.guard.as_ref().is_some_and(expr_contains_await)
+                    || arm_body_contains_await(&arm.body)
+            }) {
                 return None;
             }
             HirStmt::Match {
@@ -2190,6 +2202,9 @@ impl GeneralAsyncCollector {
                                 value: dummy.clone(),
                             });
                         }
+                    }
+                    if let Some(guard) = &arm.guard {
+                        self.collect_expr(guard);
                     }
                     for arm_stmt in &arm.body {
                         self.collect_stmt(arm_stmt, loop_counter);
@@ -9836,6 +9851,25 @@ impl<'a> FuncCodegen<'a> {
             // only THIS, not-taken-at-runtime arm ever defined.
             let managed_cleanup_start = self.managed_stack.len();
             self.bind_pattern(&arm.pattern, scr, &scrutinee.ty, scrutinee_owned)?;
+            if let Some(guard) = &arm.guard {
+                // The guard reads the pattern's bindings, so it runs after
+                // bind_pattern — but BEFORE the owned-scrutinee release
+                // below: a false guard falls through to the next arm's
+                // test, which still loads from the scrutinee. The reject
+                // path only undoes this arm's binding retains.
+                let guard_val = self.emit_expr(guard)?;
+                let body_blk = self.builder.create_block();
+                let reject_blk = self.builder.create_block();
+                self.builder
+                    .ins()
+                    .brif(guard_val, body_blk, &[], reject_blk, &[]);
+                self.builder.seal_block(reject_blk);
+                self.builder.switch_to_block(reject_blk);
+                self.emit_managed_cleanup_calls_from(managed_cleanup_start)?;
+                self.builder.ins().jump(next_blk, &[]);
+                self.builder.seal_block(body_blk);
+                self.builder.switch_to_block(body_blk);
+            }
             if scrutinee_owned {
                 self.emit_arc_release_if_managed(&scrutinee.ty, scr)?;
             }

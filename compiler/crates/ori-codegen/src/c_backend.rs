@@ -2897,23 +2897,53 @@ impl CCodegen {
                     scr,
                     tmp
                 ));
-                // Emit as if-else chain
-                for (i, arm) in arms.iter().enumerate() {
-                    let cond = pattern_cond(&arm.pattern, &tmp);
-                    if i == 0 {
+                if arms.iter().any(|arm| arm.guard.is_some()) {
+                    // Guarded arms need "pattern matched but guard failed →
+                    // try the next arm", which an if/else chain cannot
+                    // express: bindings are declared inside the arm block
+                    // and the guard reads them. Emit each arm as a plain
+                    // `if` whose body jumps to the end label; a false guard
+                    // jumps past this arm's block to the next test. Labels
+                    // (not do/while+break) so `break` in an arm body still
+                    // binds to the enclosing Ori loop.
+                    for (i, arm) in arms.iter().enumerate() {
+                        let cond = pattern_cond(&arm.pattern, &tmp);
                         self.line(&format!("if ({}) {{", cond));
-                    } else if cond == "1" {
-                        self.line("} else {");
-                    } else {
-                        self.line(&format!("}} else if ({}) {{", cond));
+                        self.push();
+                        emit_pattern_bindings(&arm.pattern, &tmp, &mut self.out, self.indent);
+                        if let Some(guard) = &arm.guard {
+                            let guard_c = self.expr_to_c(guard);
+                            self.line(&format!("if (!({})) goto {}_next{};", guard_c, tmp, i));
+                        }
+                        self.emit_block(&arm.body);
+                        self.line(&format!("goto {}_end;", tmp));
+                        self.pop();
+                        self.line("}");
+                        if arm.guard.is_some() {
+                            self.line(&format!("{}_next{}:;", tmp, i));
+                        }
                     }
-                    self.push();
-                    // Bind pattern variables
-                    emit_pattern_bindings(&arm.pattern, &tmp, &mut self.out, self.indent);
-                    self.emit_block(&arm.body);
-                    self.pop();
+                    self.line(&format!("{}_end:;", tmp));
+                    self.line("}");
+                } else {
+                    // Emit as if-else chain
+                    for (i, arm) in arms.iter().enumerate() {
+                        let cond = pattern_cond(&arm.pattern, &tmp);
+                        if i == 0 {
+                            self.line(&format!("if ({}) {{", cond));
+                        } else if cond == "1" {
+                            self.line("} else {");
+                        } else {
+                            self.line(&format!("}} else if ({}) {{", cond));
+                        }
+                        self.push();
+                        // Bind pattern variables
+                        emit_pattern_bindings(&arm.pattern, &tmp, &mut self.out, self.indent);
+                        self.emit_block(&arm.body);
+                        self.pop();
+                    }
+                    self.line("} }");
                 }
-                self.line("} }");
             }
             HirStmt::IfSome {
                 binding,
@@ -4601,6 +4631,9 @@ fn collect_stmt_abi(stmt: &HirStmt, seen: &mut HashSet<String>, out: &mut Vec<Ty
             collect_expr_abi(scrutinee, seen, out);
             for arm in arms {
                 collect_pattern_abi(&arm.pattern, seen, out);
+                if let Some(guard) = &arm.guard {
+                    collect_expr_abi(guard, seen, out);
+                }
                 for stmt in &arm.body {
                     collect_stmt_abi(stmt, seen, out);
                 }

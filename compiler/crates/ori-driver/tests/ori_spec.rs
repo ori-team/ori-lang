@@ -4593,3 +4593,133 @@ end
         "expected releases in main's dump section:\n{main_section}"
     );
 }
+
+// ── Match guards (Spec 06 §match — guarded cases) ────────────────────────────
+//
+// Regression for the silent wrong-code bug found 2026-07-19: `case p if cond:`
+// parsed and type-checked, but AST→HIR lowering dropped the guard, so the
+// first binding arm captured every value at runtime in both backends.
+
+#[test]
+fn compile_runs_match_guards_select_arm_by_condition() {
+    let dir = TestDir::new("match_guards_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+enum Shape
+    Circle(radius: int)
+    Square(side: int)
+end
+
+grade(score: int) -> string
+    var out: string = ""
+    match score
+    case n if n >= 90:
+        out = "A"
+    case n if n >= 80:
+        out = "B"
+    case else:
+        out = "C"
+    end
+    return out
+end
+
+describe(shape: Shape) -> string
+    var out: string = ""
+    match shape
+    case Circle(radius) if radius > 10:
+        out = "big-circle"
+    case Circle(radius):
+        out = "small-circle"
+    case Square(side) if side == 0:
+        out = "point"
+    case else:
+        out = "square"
+    end
+    return out
+end
+
+label(name: string) -> string
+    var out: string = ""
+    match name
+    case s if s == "ori":
+        out = "lang"
+    case else:
+        out = "other"
+    end
+    return out
+end
+
+main()
+    io.println(grade(95) + grade(85) + grade(50))
+    io.println(describe(Shape.Circle(radius: 20)))
+    io.println(describe(Shape.Circle(radius: 5)))
+    io.println(describe(Shape.Square(side: 0)))
+    io.println(describe(Shape.Square(side: 3)))
+    io.println(label("ori") + "-" + label("x"))
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "match_guards");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        "ABC\nbig-circle\nsmall-circle\npoint\nsquare\nlang-other\n"
+    );
+}
+
+#[test]
+fn build_c_match_guard_falls_through_to_next_arm() {
+    let dir = TestDir::new("build_c_match_guard");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+grade(score: int) -> string
+    var out: string = ""
+    match score
+    case n if n >= 90:
+        out = "A"
+    case else:
+        out = "C"
+    end
+    return out
+end
+
+main()
+    io.println(grade(50))
+end
+"#,
+    );
+
+    let build = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build.has_errors, "{:?}", build.diagnostics);
+    // Guarded matches emit the goto shape: a false guard jumps past the arm
+    // to the next pattern test instead of running the first binding arm.
+    assert!(
+        build.c_source.contains("_next0:;"),
+        "guard reject label missing:\n{}",
+        build.c_source
+    );
+    assert!(
+        build.c_source.contains("_end:;"),
+        "match end label missing:\n{}",
+        build.c_source
+    );
+    assert!(
+        build.c_source.contains("if (!("),
+        "guard condition missing:\n{}",
+        build.c_source
+    );
+}

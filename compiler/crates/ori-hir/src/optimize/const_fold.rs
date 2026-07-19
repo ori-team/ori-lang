@@ -61,6 +61,9 @@ fn fold_stmt(stmt: &mut HirStmt) {
         } => {
             fold_expr(scrutinee);
             for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    fold_expr(guard);
+                }
                 for s in &mut arm.body {
                     fold_stmt(s);
                 }

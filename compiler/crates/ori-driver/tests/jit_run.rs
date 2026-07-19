@@ -157,3 +157,38 @@ end
         "expected `answer=42` in stdout, got: {stdout}"
     );
 }
+
+/// Guarded cases must fall through to the next arm when the guard is false
+/// (regression: guards were dropped in AST→HIR lowering — 2026-07-19).
+#[test]
+fn jit_match_guards_select_arm_by_condition() {
+    let dir = TestDir::new("jit_match_guards");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+grade(score: int) -> string
+    var out: string = ""
+    match score
+    case n if n >= 90:
+        out = "A"
+    case n if n >= 80:
+        out = "B"
+    case else:
+        out = "C"
+    end
+    return out
+end
+
+main()
+    io.print(grade(95) + grade(85) + grade(50))
+end
+"#,
+    );
+
+    let out = run_jit(&dir.path("main.orl"));
+    assert!(out.status.success(), "{:?}", out);
+    assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "ABC");
+}

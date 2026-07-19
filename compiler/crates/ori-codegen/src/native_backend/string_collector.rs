@@ -189,6 +189,9 @@ fn collect_strings_stmt(stmt: &HirStmt, out: &mut StringCollector) {
             collect_strings_expr(scrutinee, out);
             for arm in arms {
                 collect_strings_pattern(&arm.pattern, out);
+                if let Some(guard) = &arm.guard {
+                    collect_strings_expr(guard, out);
+                }
                 for s in &arm.body {
                     collect_strings_stmt(s, out);
                 }
