@@ -1818,3 +1818,59 @@ end
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.trim(), "done", "stderr: {stderr}");
 }
+
+/// Managed payloads bound by `if ok` / `if err` are released exactly once,
+/// on both the taken and the not-taken branch.
+#[test]
+fn compile_runs_if_ok_err_managed_payloads_no_leak() {
+    let dir = TestDir::new("if_ok_err_no_leak");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+load(flag: bool) -> result[string, string]
+    if flag
+        return ok("allocated-ok-value")
+    end
+    return err("allocated-err-value")
+end
+
+main()
+    var i: int = 0
+    while i < 200
+        if ok(v) = load(true)
+            const a: string = v
+        end
+        if err(e) = load(false)
+            const b: string = e
+        end
+        if ok(v) = load(false)
+            const c: string = v
+        else
+            const d: string = "fallback"
+        end
+        i = i + 1
+    end
+    io.println("done")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "if_ok_err_managed");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "done",
+        "stderr: {stderr}"
+    );
+}

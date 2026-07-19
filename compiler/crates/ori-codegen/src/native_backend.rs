@@ -1765,6 +1765,7 @@ fn simple_async_lift_stmt_awaits(
             }
         }
         HirStmt::IfSome {
+            kind,
             binding,
             inner_ty,
             value,
@@ -1776,6 +1777,7 @@ fn simple_async_lift_stmt_awaits(
                 return None;
             }
             HirStmt::IfSome {
+                kind: *kind,
                 binding: binding.clone(),
                 inner_ty: inner_ty.clone(),
                 value: simple_async_lift_expr_awaits(value, &mut awaits, first_index)?,
@@ -2268,6 +2270,7 @@ impl GeneralAsyncCollector {
                 then,
                 else_,
                 span,
+                ..
             } => {
                 let has_await = stmt_contains_await(stmt);
                 if has_await {
@@ -8079,6 +8082,7 @@ impl<'a> FuncCodegen<'a> {
                 scrutinee, arms, ..
             } => self.emit_match(scrutinee, arms)?,
             HirStmt::IfSome {
+                kind,
                 binding,
                 inner_ty,
                 value,
@@ -8086,7 +8090,7 @@ impl<'a> FuncCodegen<'a> {
                 else_,
                 ..
             } => {
-                self.emit_if_some(binding, inner_ty, value, then, else_.as_ref())?;
+                self.emit_if_some(*kind, binding, inner_ty, value, then, else_.as_ref())?;
             }
             HirStmt::WhileSome {
                 binding,
@@ -8327,12 +8331,14 @@ impl<'a> FuncCodegen<'a> {
 
     fn emit_if_some(
         &mut self,
+        kind: ori_ast::stmt::UnwrapKind,
         binding: &SmolStr,
         inner_ty: &Ty,
         value: &HirExpr,
         then: &HirBlock,
         else_: Option<&HirBlock>,
     ) -> Result<(), String> {
+        use ori_ast::stmt::UnwrapKind;
         // 1. Emit the optional expression (returns a pointer to the stack struct)
         // A fresh owned optional (not a bound Var) has no binding to release
         // it and payload extraction below is a plain load (a borrow); retain
@@ -8342,8 +8348,9 @@ impl<'a> FuncCodegen<'a> {
         // release has somewhere to run before falling into merge_blk.
         let value_owned = Self::expr_produces_owned_ref(value) && is_managed_ty(&value.ty);
         let opt_ptr = self.emit_expr(value)?;
-        // 2. Read has_value (byte 0)
-        let has_val = self
+        // 2. Read the discriminant (byte 0): `has_value` for optional,
+        // `is_ok` for result. Both wrappers put it at offset 0.
+        let flag = self
             .builder
             .ins()
             .load(types::I8, MemFlags::new(), opt_ptr, 0);
@@ -8354,9 +8361,13 @@ impl<'a> FuncCodegen<'a> {
         } else {
             merge_blk
         };
-        self.builder
-            .ins()
-            .brif(has_val, then_blk, &[], else_blk, &[]);
+        // `if err(e)` binds the error side, so it takes the branch when the
+        // result is NOT ok — same discriminant, inverted targets.
+        let (true_blk, false_blk) = match kind {
+            UnwrapKind::Some | UnwrapKind::Ok => (then_blk, else_blk),
+            UnwrapKind::Err => (else_blk, then_blk),
+        };
+        self.builder.ins().brif(flag, true_blk, &[], false_blk, &[]);
         // then block: bind inner value
         self.builder.seal_block(then_blk);
         self.builder.switch_to_block(then_blk);
@@ -8364,7 +8375,17 @@ impl<'a> FuncCodegen<'a> {
         self.push_scope();
         let managed_cleanup_start = self.managed_stack.len();
         if let Some(cl_ty) = cl_type(inner_ty, self.ptr_ty) {
-            let (val_off, _) = optional_layout(inner_ty, self.ptr_ty);
+            // Payload offset differs per wrapper: optional puts the value
+            // after the flag; result puts one union at the payload offset,
+            // shared by the ok and err sides.
+            let val_off = match (kind, &value.ty) {
+                (UnwrapKind::Ok | UnwrapKind::Err, Ty::Result(ok, err)) => {
+                    result_layout(ok, err, self.ptr_ty).0
+                }
+                // Type checking rejects other shapes; the optional layout is
+                // a harmless fallback during error recovery.
+                _ => optional_layout(inner_ty, self.ptr_ty).0,
+            };
             let inner_val =
                 self.builder
                     .ins()

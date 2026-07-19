@@ -4904,3 +4904,136 @@ end
         build.c_source
     );
 }
+
+// ── `if ok(v) =` / `if err(e) =` (0.4 surface) ──────────────────────────────
+//
+// Symmetry with the long-standing `if some(x) =`: same form, same node, only
+// the inspected wrapper and the bound side differ. `err` takes the branch when
+// the result is NOT ok.
+
+#[test]
+fn compile_runs_if_ok_and_if_err_bindings() {
+    let dir = TestDir::new("if_ok_err_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+divide(a: int, b: int) -> result[int, string]
+    if b == 0
+        return err("divide-by-zero")
+    end
+    return ok(a / b)
+end
+
+main()
+    if ok(v) = divide(10, 2)
+        io.println(f"ok={v}")
+    else
+        io.println("unexpected-ok-else")
+    end
+
+    if ok(v) = divide(1, 0)
+        io.println(f"unexpected={v}")
+    else
+        io.println("ok-else")
+    end
+
+    if err(e) = divide(1, 0)
+        io.println(f"err={e}")
+    else
+        io.println("unexpected-err-else")
+    end
+
+    if err(e) = divide(9, 3)
+        io.println(f"unexpected={e}")
+    else
+        io.println("err-else")
+    end
+
+    if ok(v) = divide(8, 4)
+        io.println(f"no-else={v}")
+    end
+
+    const maybe: optional[string] = some("still-works")
+    if some(x) = maybe
+        io.println(x)
+    end
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "if_ok_err");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        "ok=5\nok-else\nerr=divide-by-zero\nerr-else\nno-else=2\nstill-works\n"
+    );
+}
+
+#[test]
+fn check_rejects_if_ok_on_non_result() {
+    let dir = TestDir::new("if_ok_not_result");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const maybe: optional[int] = some(1)
+    if ok(v) = maybe
+        io.println(f"{v}")
+    end
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.ifok_not_result"),
+        "expected if-ok wrapper mismatch: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn build_c_if_err_inverts_the_ok_flag() {
+    let dir = TestDir::new("if_err_c");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+load() -> result[int, string]
+    return err("boom")
+end
+
+main()
+    if err(e) = load()
+        io.println(e)
+    end
+end
+"#,
+    );
+
+    let build = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build.has_errors, "{:?}", build.diagnostics);
+    assert!(
+        build.c_source.contains(".is_ok)") && build.c_source.contains("if (!"),
+        "expected an inverted is_ok test:\n{}",
+        build.c_source
+    );
+    assert!(
+        build.c_source.contains(".value.err"),
+        "expected the err side of the payload union:\n{}",
+        build.c_source
+    );
+}

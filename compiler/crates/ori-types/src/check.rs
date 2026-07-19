@@ -1460,25 +1460,39 @@ impl<'a> Checker<'a> {
                 self.warn_unused_result(&ty, e.span());
             }
             Stmt::IfSome(s) => {
+                use ori_ast::stmt::UnwrapKind;
                 let val_ty = self.infer_expr(&s.value);
-                let inner_ty = match &val_ty {
-                    Ty::Optional(t) => *t.clone(),
+                // Which side each form binds: `some` the optional payload,
+                // `ok` the success value, `err` the error value.
+                let inner_ty = match (s.kind, &val_ty) {
+                    (UnwrapKind::Some, Ty::Optional(t)) => *t.clone(),
+                    (UnwrapKind::Ok, Ty::Result(ok, _)) => *ok.clone(),
+                    (UnwrapKind::Err, Ty::Result(_, err)) => *err.clone(),
                     _ if val_ty.is_error() || val_ty.contains_infer() => Ty::Infer(0),
                     _ => {
+                        let (code, form, wanted) = match s.kind {
+                            UnwrapKind::Some => {
+                                ("type.ifsome_not_optional", "if some", "optional[T]")
+                            }
+                            UnwrapKind::Ok => ("type.ifok_not_result", "if ok", "result[T, E]"),
+                            UnwrapKind::Err => ("type.iferr_not_result", "if err", "result[T, E]"),
+                        };
                         self.sink.emit(
                             Diagnostic::error(
-                                "type.ifsome_not_optional",
+                                code,
                                 format!(
-                                    "`if some` requires an `optional[T]`, found `{}`",
+                                    "`{}` requires a `{}`, found `{}`",
+                                    form,
+                                    wanted,
                                     val_ty.display()
                                 ),
                             )
                             .with_label(Label::primary(
                                 self.file_id,
                                 s.value.span(),
-                                "expected optional here",
+                                format!("expected {} here", wanted),
                             ))
-                            .with_action("change the expression to return `optional[T]`"),
+                            .with_action(format!("change the expression to return `{}`", wanted)),
                         );
                         Ty::Error
                     }

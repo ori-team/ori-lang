@@ -118,12 +118,21 @@ end
 | `some` / `none` | construir `optional` |
 | `try expr` | propagar (única forma; sem `?`) |
 | `if some(x) = expr` | ramificar na presença, ligando o valor |
+| `if ok(v) = expr` / `if err(e) = expr` | ramificar num `result`, ligando qualquer um dos lados |
 
 ```ori
 if some(user) = find_user(id)
     greet(user)
 else
     io.println("não encontrado")
+end
+
+if ok(valor) = divide(10, 2)
+    io.println(string(valor))
+end
+
+if err(motivo) = divide(1, 0)
+    io.println(motivo)   -- entra quando o result NÃO deu ok
 end
 ```
 

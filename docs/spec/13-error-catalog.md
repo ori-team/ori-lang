@@ -124,6 +124,8 @@ when the compiler starts producing it.
 | `type.if_branch_mismatch` | error | `if` branches produce incompatible types |
 | `type.match_arm_mismatch` | error | `match` used as an expression has arms producing incompatible types |
 | `type.ifsome_not_optional` | error | `if some` was used on a non-optional value |
+| `type.ifok_not_result` | error | `if ok` was used on a value that is not a `result[T, E]` |
+| `type.iferr_not_result` | error | `if err` was used on a value that is not a `result[T, E]` |
 | `type.index_not_int` | error | Index expression must have type `int` |
 | `type.iterable_next_missing` | error | A type implements `Iterable` but does not provide `next` |
 | `type.iterable_next_signature` | error | `Iterable.next` does not match `mut next() -> optional[T]` |

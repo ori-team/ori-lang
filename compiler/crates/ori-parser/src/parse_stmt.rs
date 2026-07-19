@@ -4,7 +4,7 @@ use ori_ast::expr::Expr;
 use ori_ast::stmt::{
     AssignStmt, Block, CheckStmt, CompoundAssignStmt, CompoundOp, ForStmt, IfSomeStmt, IfStmt,
     LValue, LocalConst, LocalVar, LoopStmt, MatchCase, MatchStmt, RepeatStmt, ReturnStmt, Stmt,
-    UsingStmt, WhileSomeStmt, WhileStmt,
+    UnwrapKind, UsingStmt, WhileSomeStmt, WhileStmt,
 };
 use ori_ast::ty::Type;
 use ori_diagnostics::Span;
@@ -152,29 +152,48 @@ impl<'src> Parser<'src> {
     fn parse_if_stmt(&mut self) -> Option<Stmt> {
         let start = self.advance().unwrap().span; // if
 
-        // `if some(binding) = expr` — optional binding form
-        if self.at(&TokenKind::Some) && self.peek_nth_kind(1) == Some(&TokenKind::LParen) {
-            self.advance(); // some
-            self.expect(&TokenKind::LParen)?;
-            let binding = self.parse_name()?;
-            self.expect(&TokenKind::RParen)?;
-            self.expect(&TokenKind::Eq)?;
-            let value = self.parse_expr()?;
-            let then_block = self.parse_block()?;
-            let else_block = if self.eat(&TokenKind::Else) {
-                let b = self.parse_block()?;
-                Some(b)
-            } else {
-                None
-            };
-            let end = self.expect_block_end(start, "if some")?;
-            return Some(Stmt::IfSome(IfSomeStmt {
-                binding,
-                value: Box::new(value),
-                then_block,
-                else_block,
-                span: start.cover(end),
-            }));
+        // Conditional unwrap bindings: `if some(x) = …`, `if ok(v) = …`,
+        // `if err(e) = …`. All three share one node; only `kind` differs.
+        // `ok` / `err` are soft keywords (lexed as Ident, see parse_pat).
+        let unwrap_kind = match self.peek_kind() {
+            Some(TokenKind::Some) => Some(UnwrapKind::Some),
+            Some(TokenKind::Ident) => match self.slice(self.current_span()) {
+                "ok" => Some(UnwrapKind::Ok),
+                "err" => Some(UnwrapKind::Err),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(kind) = unwrap_kind {
+            if self.peek_nth_kind(1) == Some(&TokenKind::LParen) {
+                let label = match kind {
+                    UnwrapKind::Some => "if some",
+                    UnwrapKind::Ok => "if ok",
+                    UnwrapKind::Err => "if err",
+                };
+                self.advance(); // some / ok / err
+                self.expect(&TokenKind::LParen)?;
+                let binding = self.parse_name()?;
+                self.expect(&TokenKind::RParen)?;
+                self.expect(&TokenKind::Eq)?;
+                let value = self.parse_expr()?;
+                let then_block = self.parse_block()?;
+                let else_block = if self.eat(&TokenKind::Else) {
+                    let b = self.parse_block()?;
+                    Some(b)
+                } else {
+                    None
+                };
+                let end = self.expect_block_end(start, label)?;
+                return Some(Stmt::IfSome(IfSomeStmt {
+                    kind,
+                    binding,
+                    value: Box::new(value),
+                    then_block,
+                    else_block,
+                    span: start.cover(end),
+                }));
+            }
         }
 
         let condition = self.parse_expr()?;

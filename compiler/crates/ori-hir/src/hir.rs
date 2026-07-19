@@ -204,7 +204,11 @@ pub enum HirStmt {
         span: Span,
     },
     /// `if some(binding) = expr … end`
+    /// Conditional unwrap binding: `if some(x) =`, `if ok(v) =`, `if err(e) =`.
+    /// `kind` says which wrapper is inspected and which side `binding` takes;
+    /// `inner_ty` is already the bound side's type.
     IfSome {
+        kind: ori_ast::stmt::UnwrapKind,
         binding: SmolStr,
         inner_ty: Ty,
         value: HirExpr,

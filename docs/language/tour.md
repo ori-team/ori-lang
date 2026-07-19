@@ -159,12 +159,21 @@ end
 | `try expr` | propagate `err` or `none` |
 | `match` | exhaustive handling |
 | `if some(x) = expr` | branch on presence, binding the value |
+| `if ok(v) = expr` / `if err(e) = expr` | branch on a `result`, binding either side |
 
 ```ori
 if some(user) = find_user(id)
     greet(user)
 else
     io.println("not found")
+end
+
+if ok(value) = divide(10, 2)
+    io.println(string(value))
+end
+
+if err(message) = divide(1, 0)
+    io.println(message)   -- taken when the result is NOT ok
 end
 ```
 

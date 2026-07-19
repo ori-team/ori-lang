@@ -115,9 +115,26 @@ pub struct IfStmt {
     pub span: Span,
 }
 
-/// `if some(binding) = expr … end`
+/// Which wrapper a conditional binding unwraps, and which side it binds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnwrapKind {
+    /// `if some(x) = optional_expr` — binds the payload when present.
+    Some,
+    /// `if ok(v) = result_expr` — binds the success value.
+    Ok,
+    /// `if err(e) = result_expr` — binds the error value (branch taken when
+    /// the result is **not** ok).
+    Err,
+}
+
+/// Conditional unwrap binding: `if some(x) = …`, `if ok(v) = …`,
+/// `if err(e) = …`, each with an optional `else`.
+///
+/// One node covers all three because they differ only in which wrapper is
+/// inspected and which side is bound; `kind` carries that difference.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfSomeStmt {
+    pub kind: UnwrapKind,
     pub binding: Name,
     pub value: Box<Expr>,
     pub then_block: Block,

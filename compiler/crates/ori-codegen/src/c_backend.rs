@@ -2946,6 +2946,7 @@ impl CCodegen {
                 }
             }
             HirStmt::IfSome {
+                kind,
                 binding,
                 inner_ty,
                 value,
@@ -2953,18 +2954,29 @@ impl CCodegen {
                 else_,
                 ..
             } => {
+                use ori_ast::stmt::UnwrapKind;
                 // Desugar:
-                //   { auto _tmp = <value>; if (_tmp.has_value) { T binding = _tmp.value; ... } else { ... } }
+                //   { auto _tmp = <value>; if (<flag>) { T binding = <side>; ... } else { ... } }
+                // `some`/`ok` take the branch on the flag; `err` inverts it and
+                // binds the error side of the same wrapper.
                 let val_s = self.expr_to_c(value);
                 let tmp = self.fresh_tmp();
-                let opt_ty = ty_to_c(&Ty::Optional(Box::new(inner_ty.clone())));
+                let wrapper_ty = match kind {
+                    UnwrapKind::Some => ty_to_c(&Ty::Optional(Box::new(inner_ty.clone()))),
+                    UnwrapKind::Ok | UnwrapKind::Err => ty_to_c(&value.ty),
+                };
                 let val_ty = ty_to_c(inner_ty);
+                let (test, payload) = match kind {
+                    UnwrapKind::Some => (format!("{}.has_value", tmp), format!("{}.value", tmp)),
+                    UnwrapKind::Ok => (format!("{}.is_ok", tmp), format!("{}.value.ok", tmp)),
+                    UnwrapKind::Err => (format!("!{}.is_ok", tmp), format!("{}.value.err", tmp)),
+                };
                 self.line("{");
                 self.push();
-                self.line(&format!("{} {} = {};", opt_ty, tmp, val_s));
-                self.line(&format!("if ({}.has_value) {{", tmp));
+                self.line(&format!("{} {} = {};", wrapper_ty, tmp, val_s));
+                self.line(&format!("if ({}) {{", test));
                 self.push();
-                self.line(&format!("{} {} = {}.value;", val_ty, mangle(binding), tmp));
+                self.line(&format!("{} {} = {};", val_ty, mangle(binding), payload));
                 self.emit_block(&then.stmts);
                 self.pop();
                 if let Some(eb) = else_ {

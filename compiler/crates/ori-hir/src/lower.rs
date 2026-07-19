@@ -2765,14 +2765,21 @@ impl<'a> Lowerer<'a> {
                 })
             }
             Stmt::IfSome(s) => {
+                use ori_ast::stmt::UnwrapKind;
                 let value = self.lower_expr(&s.value, tp);
-                let inner_ty = unwrap_ty(&value.ty);
+                // `unwrap_ty` peels optional/result to the ok side; `err`
+                // binds the other side of the same wrapper.
+                let inner_ty = match (s.kind, &value.ty) {
+                    (UnwrapKind::Err, Ty::Result(_, err)) => *err.clone(),
+                    _ => unwrap_ty(&value.ty),
+                };
                 self.push();
                 self.bind(s.binding.text.clone(), inner_ty.clone());
                 let then = self.lower_block(&s.then_block, tp);
                 self.pop();
                 let else_ = s.else_block.as_ref().map(|b| self.lower_block(b, tp));
                 Some(HirStmt::IfSome {
+                    kind: s.kind,
                     binding: s.binding.text.clone(),
                     inner_ty,
                     value,

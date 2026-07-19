@@ -143,6 +143,35 @@ end
 
 ---
 
+## `if ok` / `if err` — Result Binding
+
+The same form for `result[T, E]`: `ok` binds the success value, `err` binds
+the error value.
+
+```ori
+if ok(value) = divide(10, 2)
+    io.print(string(value))
+else
+    io.print("failed")
+end
+
+if err(message) = divide(1, 0)
+    io.print(message)
+end
+```
+
+- `if ok(v) = expr` takes the branch when the result is `ok`, binding `T`.
+- `if err(e) = expr` takes the branch when the result is **not** ok,
+  binding `E`.
+- The scrutinee must be a `result[T, E]` (`type.ifok_not_result` /
+  `type.iferr_not_result` otherwise).
+- The binding is scoped to the `if` block only, as with `if some`.
+
+Use `try` when the intent is to propagate the error upward; use `if ok` /
+`if err` when this function handles it locally.
+
+---
+
 ## `while`
 
 ```ori
