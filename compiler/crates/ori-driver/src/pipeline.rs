@@ -813,7 +813,7 @@ fn parse_json_string(source: &str) -> Option<(String, usize)> {
     None
 }
 
-fn native_target_triple() -> String {
+pub(crate) fn native_target_triple() -> String {
     std::env::var("ORI_TARGET_TRIPLE")
         .ok()
         .filter(|value| !value.trim().is_empty())

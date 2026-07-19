@@ -44,6 +44,10 @@ cranelift-jit      = "0.131"
 # Dynamic library loading for JIT runtime resolution
 libloading         = "0.8"
 
+# Self-update (`ori update`): HTTPS release download + archive checksum
+ureq = { version = "2", features = ["json"] }
+sha2 = "0.10"
+
 # Internal crates
 ori-diagnostics = { path = "crates/ori-diagnostics" }
 ori-lexer       = { path = "crates/ori-lexer" }

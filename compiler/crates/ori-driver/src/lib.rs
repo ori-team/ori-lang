@@ -4,3 +4,4 @@ pub mod explain;
 pub mod oridoc;
 pub mod package;
 pub mod pipeline;
+pub mod update;

@@ -121,6 +121,22 @@ Próximo: [Tour da linguagem](language/tour.pt-BR.md) ·
 
 ---
 
+## Atualizando
+
+Instalações via pacote (tar.gz / zip do Windows) se atualizam sozinhas:
+
+```console
+$ ori update --check   # só informa se há versão nova
+$ ori update           # baixa, verifica (sha256) e troca no lugar
+```
+
+O `ori update` recusa instalações do gerenciador do sistema (use o novo
+`.deb`) e builds de desenvolvimento (atualize via `git pull` + `cargo
+build`). O checksum vem do manifest do release no GitHub; divergência
+aborta antes de tocar em qualquer arquivo.
+
+---
+
 ## Variáveis de ambiente (opcional)
 
 Normalmente **nenhuma** é necessária.

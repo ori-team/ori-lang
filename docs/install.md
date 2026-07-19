@@ -201,6 +201,22 @@ Next: [Language tour](language/tour.md) · [First project](guides/first-project.
 
 ---
 
+## Updating
+
+Package installs (tar.gz / Windows zip) can update themselves:
+
+```console
+$ ori update --check   # report whether a newer release exists
+$ ori update           # download, verify (sha256), and swap in place
+```
+
+`ori update` refuses system-package installs (use the new `.deb` instead)
+and development builds (update via `git pull` + `cargo build`). The archive
+checksum comes from the GitHub release manifest; a mismatch aborts before
+anything is touched.
+
+---
+
 ## Environment overrides
 
 Usually **none** are needed.

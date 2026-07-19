@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use ori_driver::{emit, explain, package, pipeline};
+use ori_driver::{emit, explain, package, pipeline, update};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -167,6 +167,12 @@ enum Commands {
     },
     /// Report environment, stdlib, and native runtime health.
     Doctor,
+    /// Update the Ori toolchain to the latest published release.
+    Update {
+        /// Check for a newer release without installing it.
+        #[arg(long)]
+        check: bool,
+    },
     /// Explain a diagnostic code from the error catalog.
     Explain {
         /// Diagnostic code (e.g. `name.undefined`).
@@ -735,6 +741,37 @@ fn main() {
                 }
             }
             process::exit(if report.has_failures() { 1 } else { 0 });
+        }
+
+        Commands::Update { check } => {
+            let options = update::UpdateOptions {
+                check_only: *check,
+                exe_path: None,
+            };
+            match update::run_update(&options) {
+                Ok(update::UpdateOutcome::UpToDate { current }) => {
+                    println!("ori {current} is up to date");
+                }
+                Ok(update::UpdateOutcome::UpdateAvailable { current, latest }) => {
+                    println!("ori {current} → {latest} available");
+                    println!("run `ori update` to install it");
+                }
+                Ok(update::UpdateOutcome::Installed {
+                    previous,
+                    installed,
+                    install_root,
+                }) => {
+                    println!(
+                        "ori {previous} → {installed} installed in {}",
+                        install_root.display()
+                    );
+                    println!("run `ori --version` to confirm");
+                }
+                Err(e) => {
+                    eprintln!("ori: {}", e);
+                    process::exit(1);
+                }
+            }
         }
 
         Commands::Explain { code } => match explain::explain_code(&code) {
