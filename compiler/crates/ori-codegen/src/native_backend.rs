@@ -579,6 +579,17 @@ impl NativeHirValidator {
                 self.expr(then)?;
                 self.expr(else_)?;
             }
+            HirExprKind::MatchExpr { scrutinee, arms } => {
+                self.expr(scrutinee)?;
+                for arm in arms {
+                    self.pattern(&arm.pattern, arm.span)?;
+                    if let Some(guard) = &arm.guard {
+                        self.expr(guard)?;
+                        self.expect_bool(&guard.ty, "match guard", guard.span)?;
+                    }
+                    self.expr(&arm.body)?;
+                }
+            }
             HirExprKind::Range { start, end } => {
                 self.expr(start)?;
                 self.expr(end)?;
@@ -943,6 +954,13 @@ fn expr_contains_await(expr: &HirExpr) -> bool {
         HirExprKind::IfExpr { cond, then, else_ } => {
             expr_contains_await(cond) || expr_contains_await(then) || expr_contains_await(else_)
         }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            expr_contains_await(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(expr_contains_await)
+                        || expr_contains_await(&arm.body)
+                })
+        }
         HirExprKind::Range { start, end, .. } => {
             expr_contains_await(start) || expr_contains_await(end)
         }
@@ -1128,6 +1146,15 @@ fn expr_collect_var_uses(expr: &HirExpr, uses: &mut HashSet<SmolStr>) {
             expr_collect_var_uses(cond, uses);
             expr_collect_var_uses(then, uses);
             expr_collect_var_uses(else_, uses);
+        }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            expr_collect_var_uses(scrutinee, uses);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    expr_collect_var_uses(guard, uses);
+                }
+                expr_collect_var_uses(&arm.body, uses);
+            }
         }
         HirExprKind::Range { start, end, .. } => {
             expr_collect_var_uses(start, uses);
@@ -1530,6 +1557,29 @@ fn simple_async_lift_expr_awaits(
                     cond: Box::new(simple_async_lift_expr_awaits(cond, awaits, first_index)?),
                     then: then.clone(),
                     else_: else_.clone(),
+                },
+                ty: expr.ty.clone(),
+                span: expr.span,
+            })
+        }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            // Only the scrutinee may carry an await here: an await inside a
+            // guard or arm body runs conditionally, which the simple
+            // state-machine lowering cannot express.
+            if arms.iter().any(|arm| {
+                arm.guard.as_ref().is_some_and(expr_contains_await)
+                    || expr_contains_await(&arm.body)
+            }) {
+                return None;
+            }
+            Some(HirExpr {
+                kind: HirExprKind::MatchExpr {
+                    scrutinee: Box::new(simple_async_lift_expr_awaits(
+                        scrutinee,
+                        awaits,
+                        first_index,
+                    )?),
+                    arms: arms.clone(),
                 },
                 ty: expr.ty.clone(),
                 span: expr.span,
@@ -2356,6 +2406,15 @@ impl GeneralAsyncCollector {
                 self.collect_expr(cond);
                 self.collect_expr(then);
                 self.collect_expr(else_);
+            }
+            HirExprKind::MatchExpr { scrutinee, arms } => {
+                self.collect_expr(scrutinee);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.collect_expr(guard);
+                    }
+                    self.collect_expr(&arm.body);
+                }
             }
             HirExprKind::Range { start, end } => {
                 self.collect_expr(start);
@@ -6655,6 +6714,9 @@ impl<'a> FuncCodegen<'a> {
                 // allocate a fresh +1 ref via runtime helpers.
                 | HirExprKind::Binary { .. }
                 | HirExprKind::Unary { .. }
+                // `emit_match_expr` retains any borrowed arm value before the
+                // merge, so the value leaving a match expression is always +1.
+                | HirExprKind::MatchExpr { .. }
         )
     }
 
@@ -9823,6 +9885,89 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
+    /// `match` in expression position: every arm produces a value, and the
+    /// arms merge through a block parameter (a phi) instead of the `select`
+    /// used by `if` expressions — arms must not be evaluated speculatively.
+    ///
+    /// The result is always handed back OWNED when managed: an arm whose value
+    /// is merely borrowed (a pattern binding, a variable) is retained before
+    /// the arm's own bindings are released, so the value survives the jump.
+    fn emit_match_expr(
+        &mut self,
+        expr: &HirExpr,
+        scrutinee: &HirExpr,
+        arms: &[HirExprArm],
+    ) -> Result<ir::Value, String> {
+        let result_cl = cl_type(&expr.ty, self.ptr_ty)
+            .ok_or_else(|| format!("unsupported match expression type `{}`", expr.ty.display()))?;
+        let scr = self.emit_expr(scrutinee)?;
+        let scrutinee_owned =
+            Self::expr_produces_owned_ref(scrutinee) && is_managed_ty(&scrutinee.ty);
+
+        let merge_blk = self.builder.create_block();
+        let result_param = self.builder.append_block_param(merge_blk, result_cl);
+
+        for arm in arms {
+            let arm_blk = self.builder.create_block();
+            let next_blk = self.builder.create_block();
+            let cond = self.pattern_cond(&arm.pattern, scr, &scrutinee.ty);
+            self.builder.ins().brif(cond, arm_blk, &[], next_blk, &[]);
+            self.builder.seal_block(arm_blk);
+            self.builder.switch_to_block(arm_blk);
+            self.terminated = false;
+
+            self.push_scope();
+            let managed_cleanup_start = self.managed_stack.len();
+            self.bind_pattern(&arm.pattern, scr, &scrutinee.ty, false)?;
+
+            if let Some(guard) = &arm.guard {
+                let guard_val = self.emit_expr(guard)?;
+                let body_blk = self.builder.create_block();
+                let reject_blk = self.builder.create_block();
+                self.builder
+                    .ins()
+                    .brif(guard_val, body_blk, &[], reject_blk, &[]);
+                self.builder.seal_block(reject_blk);
+                self.builder.switch_to_block(reject_blk);
+                self.emit_managed_cleanup_calls_from(managed_cleanup_start)?;
+                self.builder.ins().jump(next_blk, &[]);
+                self.builder.seal_block(body_blk);
+                self.builder.switch_to_block(body_blk);
+            }
+
+            let value = self.emit_expr_for_expected(&arm.body, &expr.ty)?;
+            // Retain BEFORE releasing this arm's bindings: the value may be
+            // one of them (`case some(v): v`), and the scrutinee it came from
+            // is released right after.
+            if is_managed_ty(&expr.ty) && !Self::expr_produces_owned_ref(&arm.body) {
+                self.emit_arc_retain_if_managed(&expr.ty, value)?;
+            }
+            self.emit_managed_cleanup_calls_from(managed_cleanup_start)?;
+            self.managed_stack.truncate(managed_cleanup_start);
+            self.pop_scope();
+            if !self.terminated {
+                self.builder.ins().jump(merge_blk, &[value.into()]);
+            }
+
+            self.builder.seal_block(next_blk);
+            self.builder.switch_to_block(next_blk);
+            self.terminated = false;
+        }
+
+        // Exhaustiveness is a type-check guarantee, so falling out of every
+        // arm is unreachable; the block still needs a terminator.
+        self.builder
+            .ins()
+            .trap(ir::TrapCode::user(2).ok_or_else(|| "invalid match trap code `2`".to_string())?);
+        self.builder.seal_block(merge_blk);
+        self.builder.switch_to_block(merge_blk);
+        self.terminated = false;
+        if scrutinee_owned {
+            self.emit_arc_release_if_managed(&scrutinee.ty, scr)?;
+        }
+        Ok(result_param)
+    }
+
     fn emit_match(&mut self, scrutinee: &HirExpr, arms: &[HirArm]) -> Result<(), String> {
         let scr = self.emit_expr(scrutinee)?;
         // A fresh owned scrutinee (e.g. `match some_call()`, not a bound Var)
@@ -10955,6 +11100,9 @@ impl<'a> FuncCodegen<'a> {
                 let tv = self.emit_expr(then)?;
                 let ev = self.emit_expr(else_)?;
                 self.builder.ins().select(cv, tv, ev)
+            }
+            HirExprKind::MatchExpr { scrutinee, arms } => {
+                self.emit_match_expr(expr, scrutinee, arms)?
             }
             HirExprKind::Propagate(inner) => {
                 // `try expr` / Propagate — load has_value/is_ok; if false, early return; else unwrap

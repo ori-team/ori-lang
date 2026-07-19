@@ -718,11 +718,7 @@ impl<'a> Checker<'a> {
                     "attr.c_export_not_public",
                     "`@c_export` requires a `public` function",
                 )
-                .with_label(Label::primary(
-                    self.file_id,
-                    attr.name.span,
-                    "export here",
-                ))
+                .with_label(Label::primary(self.file_id, attr.name.span, "export here"))
                 .with_action("add `public` to the function declaration"),
             );
         }
@@ -732,11 +728,7 @@ impl<'a> Checker<'a> {
                     "attr.c_export_async",
                     "`@c_export` cannot be used on async functions",
                 )
-                .with_label(Label::primary(
-                    self.file_id,
-                    attr.name.span,
-                    "async export",
-                ))
+                .with_label(Label::primary(self.file_id, attr.name.span, "async export"))
                 .with_action("export a synchronous wrapper instead"),
             );
         }
@@ -783,10 +775,7 @@ impl<'a> Checker<'a> {
                 self.sink.emit(
                     Diagnostic::error(
                         "attr.c_export_bad_type",
-                        format!(
-                            "`@c_export` return type `{}` is not FFI-safe",
-                            ty.display()
-                        ),
+                        format!("`@c_export` return type `{}` is not FFI-safe", ty.display()),
                     )
                     .with_label(Label::primary(self.file_id, ret.span(), "return type"))
                     .with_action("use `int`, `float`, `bool`, or omit for void"),
@@ -1640,6 +1629,32 @@ impl<'a> Checker<'a> {
                 self.expect_bool(&cond_ty, condition.span());
                 self.check_expr_assignable_to(then_expr, expected);
                 self.check_expr_assignable_to(else_expr, expected);
+                expected.clone()
+            }
+            // Push the expected type into every arm, so arms that need context
+            // (anonymous struct literals, bare enum variants, `none`, …) get it.
+            Expr::MatchExpr {
+                scrutinee,
+                arms,
+                span,
+            } => {
+                let scr_ty = self.infer_expr(scrutinee);
+                let cases = match_expr_arms_as_cases(arms);
+                self.check_match_duplicate_cases(&scr_ty, &cases);
+                self.check_match_unreachable_cases(&scr_ty, &cases);
+                for arm in arms {
+                    self.push_scope();
+                    if let Some(pattern) = &arm.pattern {
+                        self.check_pattern_type(pattern, &scr_ty);
+                    }
+                    if let Some(guard) = &arm.guard {
+                        let guard_ty = self.infer_expr(guard);
+                        self.expect_bool(&guard_ty, guard.span());
+                    }
+                    self.check_expr_assignable_to(&arm.body, expected);
+                    self.pop_scope();
+                }
+                self.check_match_exhaustiveness(&scr_ty, &cases, *span);
                 expected.clone()
             }
             _ => {
@@ -2758,6 +2773,65 @@ impl<'a> Checker<'a> {
                     return Ty::Error;
                 }
                 then_ty
+            }
+            Expr::MatchExpr {
+                scrutinee,
+                arms,
+                span,
+            } => {
+                let scr_ty = self.infer_expr(scrutinee);
+                let cases = match_expr_arms_as_cases(arms);
+                self.check_match_duplicate_cases(&scr_ty, &cases);
+                self.check_match_unreachable_cases(&scr_ty, &cases);
+
+                let mut result: Option<Ty> = None;
+                for arm in arms {
+                    self.push_scope();
+                    if let Some(pattern) = &arm.pattern {
+                        self.check_pattern_type(pattern, &scr_ty);
+                    }
+                    if let Some(guard) = &arm.guard {
+                        let guard_ty = self.infer_expr(guard);
+                        self.expect_bool(&guard_ty, guard.span());
+                    }
+                    let arm_ty = self.infer_expr(&arm.body);
+                    self.pop_scope();
+
+                    // `never` arms (a `return` inside the arm) do not constrain
+                    // the result type — the same rule `if` expressions use.
+                    if arm_ty.is_never() || arm_ty.is_error() {
+                        continue;
+                    }
+                    match &result {
+                        None => result = Some(arm_ty),
+                        Some(previous) if previous != &arm_ty => {
+                            self.sink.emit(
+                                Diagnostic::error(
+                                    "type.match_arm_mismatch",
+                                    format!(
+                                        "`match` arms have different types: `{}` vs `{}`",
+                                        previous.display(),
+                                        arm_ty.display()
+                                    ),
+                                )
+                                .with_label(Label::primary(
+                                    self.file_id,
+                                    arm.body.span(),
+                                    "this arm diverges from the earlier arms",
+                                ))
+                                .with_action(
+                                    "make every arm produce the same type, \
+                                     or use a `match` statement instead",
+                                ),
+                            );
+                            return Ty::Error;
+                        }
+                        Some(_) => {}
+                    }
+                }
+
+                self.check_match_exhaustiveness(&scr_ty, &cases, *span);
+                result.unwrap_or(Ty::Never)
             }
             Expr::Index {
                 object,
@@ -6514,6 +6588,27 @@ fn expr_root_name(expr: &Expr) -> Option<&Name> {
     }
 }
 
+/// Adapt expression-form arms to the statement-form `MatchCase` shape, so the
+/// duplicate / unreachable / exhaustiveness checkers work on both forms
+/// unchanged. Only pattern, guard and span are inspected by those checks, so
+/// the body is left empty rather than synthesized.
+fn match_expr_arms_as_cases(arms: &[ori_ast::expr::MatchExprArm]) -> Vec<ori_ast::stmt::MatchCase> {
+    arms.iter()
+        .map(|arm| match &arm.pattern {
+            Some(pattern) => ori_ast::stmt::MatchCase::Pattern {
+                pattern: pattern.clone(),
+                guard: arm.guard.clone(),
+                body: Vec::new(),
+                span: arm.span,
+            },
+            None => ori_ast::stmt::MatchCase::Else {
+                body: Vec::new(),
+                span: arm.span,
+            },
+        })
+        .collect()
+}
+
 fn expr_needs_expected_context(expr: &Expr) -> bool {
     match expr {
         Expr::AnonStructLit { .. }
@@ -6722,10 +6817,7 @@ fn attr_applies_to(name: &str, target: &str) -> bool {
 fn attr_args_valid(name: &str, attr: &Attr) -> bool {
     match name {
         "test" | "inline" | "no_inline" => attr.args.is_empty(),
-        "c_export" => matches!(
-            attr.args.as_slice(),
-            [] | [AttrArg::String(_, _)]
-        ),
+        "c_export" => matches!(attr.args.as_slice(), [] | [AttrArg::String(_, _)]),
         "deprecated" => matches!(attr.args.as_slice(), [AttrArg::String(_, _)]),
         "cfg" => matches!(
             attr.args.as_slice(),

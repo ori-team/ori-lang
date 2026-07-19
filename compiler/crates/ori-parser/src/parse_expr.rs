@@ -1,7 +1,7 @@
 use crate::parser::Parser;
 use ori_ast::expr::{
     Arg, ArgValue, BinaryOp, ClosureBody, ClosureExpr, ClosureParam, Expr, FStrPart, FieldInit,
-    IndexExpr, UnaryOp,
+    IndexExpr, MatchExprArm, UnaryOp,
 };
 use ori_diagnostics::{DiagnosticSink, Span};
 use ori_lexer::{lex, TokenKind};
@@ -399,6 +399,54 @@ impl<'src> Parser<'src> {
         (SmolStr::new(self.slice(span)), span)
     }
 
+    /// `match scr case p [if g]: expr … case else: expr end` — expression form.
+    ///
+    /// Mirrors `parse_match_stmt`, except each arm's body is a single
+    /// expression instead of a statement list. `start` is the `match` token's
+    /// span (already read by the caller's lookahead, not yet consumed).
+    fn parse_match_expr(&mut self, start: Span) -> Option<Expr> {
+        self.advance(); // match
+        let scrutinee = self.parse_expr()?;
+        let mut arms = Vec::new();
+        while self.at(&TokenKind::Case) {
+            let case_span = self.advance().unwrap().span; // case
+            if self.at(&TokenKind::Else) {
+                self.advance(); // else
+                self.expect(&TokenKind::Colon)?;
+                let body = self.parse_expr()?;
+                let end = body.span();
+                arms.push(MatchExprArm {
+                    pattern: None,
+                    guard: None,
+                    body: Box::new(body),
+                    span: case_span.cover(end),
+                });
+                break; // else must be last
+            }
+            let pattern = self.parse_pattern()?;
+            let guard = if self.eat(&TokenKind::If) {
+                Some(Box::new(self.parse_expr()?))
+            } else {
+                None
+            };
+            self.expect(&TokenKind::Colon)?;
+            let body = self.parse_expr()?;
+            let end = body.span();
+            arms.push(MatchExprArm {
+                pattern: Some(pattern),
+                guard,
+                body: Box::new(body),
+                span: case_span.cover(end),
+            });
+        }
+        let end = self.expect_block_end(start, "match")?;
+        Some(Expr::MatchExpr {
+            scrutinee: Box::new(scrutinee),
+            arms,
+            span: start.cover(end),
+        })
+    }
+
     pub fn parse_primary_expr(&mut self) -> Option<Expr> {
         let span = self.current_span();
         match self.peek_kind()? {
@@ -689,6 +737,11 @@ impl<'src> Parser<'src> {
                     span: span.cover(end),
                 })
             }
+
+            // `match scr case p: expr … end` — match in expression position.
+            // Statement position never reaches here: parse_stmt dispatches
+            // `match` to parse_match_stmt before trying an expression.
+            TokenKind::Match => self.parse_match_expr(span),
 
             // Identifier or qualified name — also handles `Name(fields)` struct/enum lit
             TokenKind::Ident | TokenKind::Lazy => {
@@ -1310,10 +1363,7 @@ impl<'src> Parser<'src> {
             } else {
                 None
             };
-            let end = ty
-                .as_ref()
-                .map(|t| t.span())
-                .unwrap_or(name.span);
+            let end = ty.as_ref().map(|t| t.span()).unwrap_or(name.span);
             params.push(ClosureParam {
                 name,
                 ty,

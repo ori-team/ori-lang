@@ -2550,6 +2550,15 @@ fn insert_default_arguments_expr(
             insert_default_arguments_expr(then, defaults);
             insert_default_arguments_expr(else_, defaults);
         }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            insert_default_arguments_expr(scrutinee, defaults);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    insert_default_arguments_expr(guard, defaults);
+                }
+                insert_default_arguments_expr(&mut arm.body, defaults);
+            }
+        }
         HirExprKind::Range { start, end } => {
             insert_default_arguments_expr(start, defaults);
             insert_default_arguments_expr(end, defaults);
@@ -3851,6 +3860,47 @@ impl<'a> Lowerer<'a> {
                     span,
                 }
             }
+            Expr::MatchExpr {
+                scrutinee, arms, ..
+            } => {
+                let scr = self.lower_expr(scrutinee, tp);
+                let resolved_scr_ty = replace_json_placeholder_in_ty(scr.ty.clone(), self.def_map);
+                let mut hir_arms = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    let pat = match &arm.pattern {
+                        Some(pattern) => lower_pattern(pattern, &resolved_scr_ty, self.enum_sigs),
+                        None => HirPattern::Wildcard,
+                    };
+                    self.push();
+                    bind_hir_pattern_scope(self, &pat);
+                    // Guard and body both read the arm's own bindings.
+                    let guard = arm.guard.as_ref().map(|g| self.lower_expr(g, tp));
+                    let body = self.lower_expr(&arm.body, tp);
+                    self.pop();
+                    hir_arms.push(HirExprArm {
+                        pattern: pat,
+                        guard,
+                        body,
+                        span: arm.span,
+                    });
+                }
+                // A `never` arm (one that returns) does not decide the result
+                // type; take the first arm that produces a real value.
+                let ty = hir_arms
+                    .iter()
+                    .map(|arm| &arm.body.ty)
+                    .find(|ty| !ty.is_never())
+                    .cloned()
+                    .unwrap_or(Ty::Never);
+                HirExpr {
+                    kind: HirExprKind::MatchExpr {
+                        scrutinee: Box::new(scr),
+                        arms: hir_arms,
+                    },
+                    ty,
+                    span,
+                }
+            }
             Expr::StructLit {
                 ty: type_name,
                 fields,
@@ -4251,8 +4301,16 @@ fn collect_free_names_stmt(stmt: &Stmt, bound: &mut HashSet<SmolStr>, names: &mu
             for case in &match_stmt.cases {
                 let mut nested = bound.clone();
                 match case {
-                    MatchCase::Pattern { pattern, body, .. } => {
+                    MatchCase::Pattern {
+                        pattern,
+                        guard,
+                        body,
+                        ..
+                    } => {
                         bind_pattern_names(pattern, &mut nested);
+                        if let Some(guard) = guard {
+                            collect_free_names_expr(guard, &mut nested, names);
+                        }
                         for stmt in body {
                             collect_free_names_stmt(stmt, &mut nested, names);
                         }
@@ -4380,6 +4438,23 @@ fn collect_free_names_expr(expr: &Expr, bound: &mut HashSet<SmolStr>, names: &mu
             collect_free_names_expr(condition, bound, names);
             collect_free_names_expr(then_expr, bound, names);
             collect_free_names_expr(else_expr, bound, names);
+        }
+        Expr::MatchExpr {
+            scrutinee, arms, ..
+        } => {
+            collect_free_names_expr(scrutinee, bound, names);
+            for arm in arms {
+                // Pattern bindings are local to the arm: shadow them for the
+                // guard and body so they are not reported as captures.
+                let mut nested = bound.clone();
+                if let Some(pattern) = &arm.pattern {
+                    bind_pattern_names(pattern, &mut nested);
+                }
+                if let Some(guard) = &arm.guard {
+                    collect_free_names_expr(guard, &mut nested, names);
+                }
+                collect_free_names_expr(&arm.body, &mut nested, names);
+            }
         }
         Expr::FStrLit { parts, .. } => {
             for part in parts {

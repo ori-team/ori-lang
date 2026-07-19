@@ -180,6 +180,15 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
             inline_in_expr(then, leaves);
             inline_in_expr(else_, leaves);
         }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            inline_in_expr(scrutinee, leaves);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    inline_in_expr(guard, leaves);
+                }
+                inline_in_expr(&mut arm.body, leaves);
+            }
+        }
         HirExprKind::StructLit { fields, .. } | HirExprKind::EnumVariant { fields, .. } => {
             for (_, e) in fields {
                 inline_in_expr(e, leaves);
@@ -285,6 +294,15 @@ fn subst_var(expr: &mut HirExpr, name: &str, replacement: &HirExpr) {
             subst_var(cond, name, replacement);
             subst_var(then, name, replacement);
             subst_var(else_, name, replacement);
+        }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            subst_var(scrutinee, name, replacement);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    subst_var(guard, name, replacement);
+                }
+                subst_var(&mut arm.body, name, replacement);
+            }
         }
         HirExprKind::StructLit { fields, .. } | HirExprKind::EnumVariant { fields, .. } => {
             for (_, e) in fields {
@@ -395,6 +413,13 @@ fn expr_calls_name(expr: &HirExpr, name: &str) -> bool {
             expr_calls_name(cond, name)
                 || expr_calls_name(then, name)
                 || expr_calls_name(else_, name)
+        }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            expr_calls_name(scrutinee, name)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(|g| expr_calls_name(g, name))
+                        || expr_calls_name(&arm.body, name)
+                })
         }
         _ => false,
     }

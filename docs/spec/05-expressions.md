@@ -257,6 +257,33 @@ Rules:
 
 ---
 
+## Match Expression
+
+`match` in expression position: each arm's body is a **single expression**,
+and every arm produces the value of the whole `match`.
+
+```ori
+const label: string = match n
+case 1: "one"
+case n if n >= 10: "big"
+case else: "other"
+end
+```
+
+Rules:
+- All arms must produce the same type (`type.match_arm_mismatch` otherwise).
+- The same exhaustiveness rule as the statement form applies; guarded arms do
+  not count toward coverage, so a `case else:` is normally required.
+- Guards (`case pattern if cond:`) behave as in the statement form: a false
+  guard falls through to the next arm.
+- Arms are **not** evaluated speculatively — exactly one arm's body runs.
+- An arm whose body diverges (`return`) does not constrain the result type.
+
+The statement form (chapter 06) keeps statement-list bodies; position decides
+which form applies, exactly as with `if`.
+
+---
+
 ## Closure Expressions
 
 See Chapter 07 — Functions and Closures for full specification.

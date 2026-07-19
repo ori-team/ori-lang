@@ -122,6 +122,7 @@ when the compiler starts producing it.
 | `type.field_on_tuple_not_int` | error | Tuple field access must use an integer index |
 | `type.hash_key_not_supported` | error | Computed hash key type is not supported by the current runtime |
 | `type.if_branch_mismatch` | error | `if` branches produce incompatible types |
+| `type.match_arm_mismatch` | error | `match` used as an expression has arms producing incompatible types |
 | `type.ifsome_not_optional` | error | `if some` was used on a non-optional value |
 | `type.index_not_int` | error | Index expression must have type `int` |
 | `type.iterable_next_missing` | error | A type implements `Iterable` but does not provide `next` |

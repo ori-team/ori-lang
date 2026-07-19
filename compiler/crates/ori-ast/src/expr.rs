@@ -149,6 +149,16 @@ pub enum Expr {
         span: Span,
     },
 
+    /// `match scrutinee case p: expr … case else: expr end` in expression
+    /// position. Each arm's body is a single expression; all arms must agree
+    /// on one type. The statement form (`Stmt::Match`, bodies are statement
+    /// lists) stays separate — position decides the form, as with `if`.
+    MatchExpr {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchExprArm>,
+        span: Span,
+    },
+
     // ── Closures ─────────────────────────────────────────────────────────────
     Closure(Box<ClosureExpr>),
 
@@ -199,6 +209,7 @@ impl Expr {
             | Expr::Await { span, .. }
             | Expr::Pipe { span, .. }
             | Expr::IfExpr { span, .. }
+            | Expr::MatchExpr { span, .. }
             | Expr::StructUpdate { span, .. }
             | Expr::IsCheck { span, .. } => *span,
             Expr::Closure(c) => c.span,
@@ -270,6 +281,17 @@ pub enum BinaryOp {
     Ge,
     And,
     Or,
+}
+
+/// One arm of a `match` used as an expression: `case pattern [if guard]: expr`.
+///
+/// `pattern: None` is the `case else:` arm, which must come last.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchExprArm {
+    pub pattern: Option<crate::pattern::Pattern>,
+    pub guard: Option<Box<Expr>>,
+    pub body: Box<Expr>,
+    pub span: Span,
 }
 
 /// A closure expression: `(params) => expr` or `(params) block end`.

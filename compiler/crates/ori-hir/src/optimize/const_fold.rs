@@ -143,6 +143,15 @@ fn fold_expr(expr: &mut HirExpr) {
                 fold_expr(a);
             }
         }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            fold_expr(scrutinee);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    fold_expr(guard);
+                }
+                fold_expr(&mut arm.body);
+            }
+        }
         HirExprKind::IfExpr { cond, then, else_ } => {
             fold_expr(cond);
             fold_expr(then);

@@ -192,3 +192,32 @@ end
     assert!(out.status.success(), "{:?}", out);
     assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "ABC");
 }
+
+/// `match` used as a value must pick exactly one arm (0.4 surface).
+#[test]
+fn jit_match_expression_selects_arm_value() {
+    let dir = TestDir::new("jit_match_expr");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+grade(score: int) -> string
+    return match score
+    case n if n >= 90: "A"
+    case n if n >= 80: "B"
+    case else: "C"
+    end
+end
+
+main()
+    io.print(grade(95) + grade(85) + grade(10))
+end
+"#,
+    );
+
+    let out = run_jit(&dir.path("main.orl"));
+    assert!(out.status.success(), "{:?}", out);
+    assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "ABC");
+}

@@ -1764,3 +1764,57 @@ end
     assert!(success, "{stdout}");
     assert_eq!(stdout.trim(), "r:1\nleaks:0");
 }
+
+/// A managed value leaving a `match` expression is handed back owned exactly
+/// once — whether the arm returned a borrowed pattern binding or a freshly
+/// allocated string.
+#[test]
+fn compile_runs_match_expression_managed_values_no_leak() {
+    let dir = TestDir::new("match_expr_managed_no_leak");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+unwrap_or(v: optional[string], fallback: string) -> string
+    return match v
+    case some(inner): inner
+    case else: fallback
+    end
+end
+
+describe(n: int) -> string
+    return match n
+    case 1: f"numero {n}"
+    case else: "outro"
+    end
+end
+
+main()
+    var i: int = 0
+    while i < 200
+        const a: string = unwrap_or(some("x"), "y")
+        const b: string = unwrap_or(none, "y")
+        const c: string = describe(1)
+        const d: string = describe(2)
+        i = i + 1
+    end
+    io.println("done")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "match_expr_managed");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.trim(), "done", "stderr: {stderr}");
+}

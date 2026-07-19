@@ -88,6 +88,12 @@ match score
     case else:
         io.println("C")
 end
+
+-- `match` também funciona como expressão: cada braço é um único valor
+const nota: string = match score
+    case n if n >= 90: "A"
+    case else: "C"
+end
 ```
 
 ---

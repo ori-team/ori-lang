@@ -220,6 +220,15 @@ fn collect_expr_uses(expr: &HirExpr, used: &mut HashSet<SmolStr>) {
             collect_expr_uses(then, used);
             collect_expr_uses(else_, used);
         }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            collect_expr_uses(scrutinee, used);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_expr_uses(guard, used);
+                }
+                collect_expr_uses(&arm.body, used);
+            }
+        }
         HirExprKind::StructLit { fields, .. } | HirExprKind::EnumVariant { fields, .. } => {
             for (_, e) in fields {
                 collect_expr_uses(e, used);
@@ -296,6 +305,15 @@ fn expr_may_effect(expr: &HirExpr, contract_structs: &HashSet<DefId>) -> bool {
             expr_may_effect(cond, contract_structs)
                 || expr_may_effect(then, contract_structs)
                 || expr_may_effect(else_, contract_structs)
+        }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            expr_may_effect(scrutinee, contract_structs)
+                || arms.iter().any(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .is_some_and(|g| expr_may_effect(g, contract_structs))
+                        || expr_may_effect(&arm.body, contract_structs)
+                })
         }
         HirExprKind::ListLit { elements, .. } | HirExprKind::TupleLit(elements) => elements
             .iter()

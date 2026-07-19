@@ -245,6 +245,16 @@ pub struct HirArm {
     pub span: Span,
 }
 
+/// One arm of a `match` used as an expression: the body is a single value
+/// instead of a statement list. Guard semantics match `HirArm`.
+#[derive(Debug, Clone)]
+pub struct HirExprArm {
+    pub pattern: HirPattern,
+    pub guard: Option<HirExpr>,
+    pub body: HirExpr,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub enum HirPattern {
     Wildcard,
@@ -374,6 +384,12 @@ pub enum HirExprKind {
         cond: Box<HirExpr>,
         then: Box<HirExpr>,
         else_: Box<HirExpr>,
+    },
+
+    // `match scr case p: expr … end` used as a value.
+    MatchExpr {
+        scrutinee: Box<HirExpr>,
+        arms: Vec<HirExprArm>,
     },
 
     // Range `a..b`

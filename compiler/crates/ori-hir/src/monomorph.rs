@@ -405,6 +405,15 @@ fn rewrite_expr_calls(expr: &mut HirExpr, state: &mut MonoState) {
             rewrite_expr_calls(then, state);
             rewrite_expr_calls(else_, state);
         }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            rewrite_expr_calls(scrutinee, state);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_expr_calls(guard, state);
+                }
+                rewrite_expr_calls(&mut arm.body, state);
+            }
+        }
         HirExprKind::Range { start, end } => {
             rewrite_expr_calls(start, state);
             rewrite_expr_calls(end, state);
@@ -651,6 +660,16 @@ fn substitute_expr(expr: &mut HirExpr, subst: &HashMap<u32, Ty>) {
             substitute_expr(cond, subst);
             substitute_expr(then, subst);
             substitute_expr(else_, subst);
+        }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            substitute_expr(scrutinee, subst);
+            for arm in arms {
+                substitute_pattern(&mut arm.pattern, subst);
+                if let Some(guard) = &mut arm.guard {
+                    substitute_expr(guard, subst);
+                }
+                substitute_expr(&mut arm.body, subst);
+            }
         }
         HirExprKind::Range { start, end } => {
             substitute_expr(start, subst);
@@ -916,6 +935,14 @@ fn expr_has_generic_param(expr: &HirExpr) -> bool {
                 expr_has_generic_param(cond)
                     || expr_has_generic_param(then)
                     || expr_has_generic_param(else_)
+            }
+            HirExprKind::MatchExpr { scrutinee, arms } => {
+                expr_has_generic_param(scrutinee)
+                    || arms.iter().any(|arm| {
+                        pattern_has_generic_param(&arm.pattern)
+                            || arm.guard.as_ref().is_some_and(expr_has_generic_param)
+                            || expr_has_generic_param(&arm.body)
+                    })
             }
             HirExprKind::Range { start, end } => {
                 expr_has_generic_param(start) || expr_has_generic_param(end)

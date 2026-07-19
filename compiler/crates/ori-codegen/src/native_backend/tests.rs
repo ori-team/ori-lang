@@ -146,6 +146,11 @@ const NATIVE_EXPR_COVERAGE: &[NativeHirCoverage] = &[
         note: "select Cranelift",
     },
     NativeHirCoverage {
+        variant: "MatchExpr",
+        evidence: &["HirExprKind::MatchExpr", "self.emit_match_expr("],
+        note: "bracos convergem num block param (phi); resultado sempre owned",
+    },
+    NativeHirCoverage {
         variant: "Range",
         evidence: &["HirExprKind::Range"],
         note: "handle runtime-managed start/end",

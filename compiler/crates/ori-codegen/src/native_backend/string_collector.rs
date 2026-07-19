@@ -61,6 +61,16 @@ fn collect_strings_expr(expr: &HirExpr, out: &mut StringCollector) {
             collect_strings_expr(then, out);
             collect_strings_expr(else_, out);
         }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            collect_strings_expr(scrutinee, out);
+            for arm in arms {
+                collect_strings_pattern(&arm.pattern, out);
+                if let Some(guard) = &arm.guard {
+                    collect_strings_expr(guard, out);
+                }
+                collect_strings_expr(&arm.body, out);
+            }
+        }
         HirExprKind::Propagate(e)
         | HirExprKind::Await(e)
         | HirExprKind::Some_(e)

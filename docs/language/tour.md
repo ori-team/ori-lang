@@ -122,6 +122,12 @@ match score
     case else:
         io.println("C")
 end
+
+-- `match` also works as an expression: each arm is a single value
+const grade: string = match score
+    case n if n >= 90: "A"
+    case else: "C"
+end
 ```
 
 - Use **`elif`**, not `else if`.

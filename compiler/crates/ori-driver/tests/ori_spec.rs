@@ -3703,9 +3703,7 @@ end
     assert!(registry
         .join("packages/demo.math/0.4.0/ori.pkg.toml")
         .is_file());
-    assert!(registry
-        .join("packages/demo.math/versions.json")
-        .is_file());
+    assert!(registry.join("packages/demo.math/versions.json").is_file());
     assert!(registry.join("index.json").is_file());
 
     std::env::set_var("ORI_REGISTRY", &registry);
@@ -3805,10 +3803,7 @@ end
         cache_root: Some(dir.path("cache")),
     })
     .expect_err("git+path must fail");
-    assert!(
-        err.contains("git") && err.contains("path"),
-        "{err}"
-    );
+    assert!(err.contains("git") && err.contains("path"), "{err}");
 }
 
 #[test]
@@ -4720,6 +4715,192 @@ end
     assert!(
         build.c_source.contains("if (!("),
         "guard condition missing:\n{}",
+        build.c_source
+    );
+}
+
+// ── `match` as an expression (0.4 surface) ───────────────────────────────────
+//
+// Arms converge on one value through a Cranelift block parameter, so arms are
+// never evaluated speculatively (unlike the `select` used by `if` expressions).
+
+#[test]
+fn compile_runs_match_expression_selects_arm_value() {
+    let dir = TestDir::new("match_expr_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+enum Shape
+    Circle(radius: int)
+    Square(side: int)
+end
+
+label(n: int) -> string
+    const text: string = match n
+    case 1: "um"
+    case 2: "dois"
+    case else: "outro"
+    end
+    return text
+end
+
+grade(score: int) -> string
+    return match score
+    case n if n >= 90: "A"
+    case n if n >= 80: "B"
+    case else: "C"
+    end
+end
+
+describe(s: Shape) -> string
+    return match s
+    case Circle(radius) if radius > 10: f"big-circle-{radius}"
+    case Circle(radius): f"circle-{radius}"
+    case Square(side): f"square-{side}"
+    case else: "?"
+    end
+end
+
+pick(flag: bool, a: string, b: string) -> string
+    return match flag
+    case true: a
+    case else: b
+    end
+end
+
+main()
+    io.println(label(1) + label(2) + label(9))
+    io.println(grade(95) + grade(85) + grade(10))
+    io.println(describe(Shape.Circle(radius: 20)))
+    io.println(describe(Shape.Circle(radius: 3)))
+    io.println(describe(Shape.Square(side: 7)))
+    io.println(pick(true, "left", "right") + pick(false, "left", "right"))
+    const n: int = 2
+    io.println(match n
+    case 1: "one"
+    case else: match n
+        case 2: "two"
+        case else: "many"
+        end
+    end)
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "match_expr");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        "umdoisoutro\nABC\nbig-circle-20\ncircle-3\nsquare-7\nleftright\ntwo\n"
+    );
+}
+
+#[test]
+fn check_rejects_match_expression_with_mismatched_arm_types() {
+    let dir = TestDir::new("match_expr_arm_mismatch");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const n: int = 1
+    const bad = match n
+    case 1: "texto"
+    case else: 42
+    end
+    io.println("unused")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.match_arm_mismatch"),
+        "expected arm-type mismatch: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_non_exhaustive_match_expression() {
+    let dir = TestDir::new("match_expr_non_exhaustive");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+enum Shape
+    Circle(radius: int)
+    Square(side: int)
+end
+
+name(s: Shape) -> string
+    return match s
+    case Circle(radius): "circle"
+    end
+end
+
+main()
+    io.println(name(Shape.Square(side: 1)))
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out)
+            .iter()
+            .any(|code| code.starts_with("match.")),
+        "expected an exhaustiveness diagnostic: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn build_c_match_expression_emits_result_temporary() {
+    let dir = TestDir::new("match_expr_c");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+label(n: int) -> string
+    return match n
+    case 1: "um"
+    case else: "outro"
+    end
+end
+
+main()
+    io.println(label(1))
+end
+"#,
+    );
+
+    let build = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build.has_errors, "{:?}", build.diagnostics);
+    // C has no multi-arm conditional expression: the arms assign one result
+    // temporary and jump to a shared end label.
+    assert!(
+        build.c_source.contains("_end:;"),
+        "match end label missing:\n{}",
+        build.c_source
+    );
+    assert!(
+        build.c_source.contains("goto "),
+        "arm jump missing:\n{}",
         build.c_source
     );
 }

@@ -3409,6 +3409,42 @@ impl CCodegen {
                 let e = self.expr_to_c(else_);
                 format!("({} ? {} : {})", c, t, e)
             }
+            HirExprKind::MatchExpr { scrutinee, arms } => {
+                // C has no multi-arm conditional expression, so the arms are
+                // emitted as statements that assign one result temporary; the
+                // expression itself is just that temporary's name. Statements
+                // emitted here land before the line currently being built.
+                let scr = self.expr_to_c(scrutinee);
+                let scr_tmp = self.fresh_tmp();
+                let result = self.fresh_tmp();
+                self.line(&format!(
+                    "{} {} = {};",
+                    ty_to_c(&scrutinee.ty),
+                    scr_tmp,
+                    scr
+                ));
+                self.line(&format!("{} {};", ty_to_c(&expr.ty), result));
+                for (i, arm) in arms.iter().enumerate() {
+                    let cond = pattern_cond(&arm.pattern, &scr_tmp);
+                    self.line(&format!("if ({}) {{", cond));
+                    self.push();
+                    emit_pattern_bindings(&arm.pattern, &scr_tmp, &mut self.out, self.indent);
+                    if let Some(guard) = &arm.guard {
+                        let guard_c = self.expr_to_c(guard);
+                        self.line(&format!("if (!({})) goto {}_next{};", guard_c, result, i));
+                    }
+                    let body = self.expr_to_c(&arm.body);
+                    self.line(&format!("{} = {};", result, body));
+                    self.line(&format!("goto {}_end;", result));
+                    self.pop();
+                    self.line("}");
+                    if arm.guard.is_some() {
+                        self.line(&format!("{}_next{}:;", result, i));
+                    }
+                }
+                self.line(&format!("{}_end:;", result));
+                result
+            }
             HirExprKind::Some_(inner) => {
                 let expected_inner = match &expr.ty {
                     Ty::Optional(inner_ty) => &**inner_ty,
@@ -4784,6 +4820,16 @@ fn collect_expr_abi(expr: &HirExpr, seen: &mut HashSet<String>, out: &mut Vec<Ty
             collect_expr_abi(cond, seen, out);
             collect_expr_abi(then, seen, out);
             collect_expr_abi(else_, seen, out);
+        }
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            collect_expr_abi(scrutinee, seen, out);
+            for arm in arms {
+                collect_pattern_abi(&arm.pattern, seen, out);
+                if let Some(guard) = &arm.guard {
+                    collect_expr_abi(guard, seen, out);
+                }
+                collect_expr_abi(&arm.body, seen, out);
+            }
         }
         HirExprKind::IsCheck { value, .. } => {
             collect_expr_abi(value, seen, out);
