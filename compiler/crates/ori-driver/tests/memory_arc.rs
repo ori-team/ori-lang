@@ -1702,3 +1702,65 @@ end
     // c=5, d=6 (2 entries x3), e=6 (2 uniques x3), f=4 children, g=9 (3x3).
     assert_eq!(stdout.trim(), "r:33\nleaks:0");
 }
+
+// ── Plan F1 gap closure — enum rebind across variants (scenario S2) ────────
+
+/// Rebinding a `var` enum to a different variant must release the previous
+/// allocation's managed payload for the variant that was actually active
+/// (the tag lives in the old allocation, so cascade release reads the right
+/// variant by construction) — including variant→variant and variant→empty.
+#[test]
+fn compile_runs_native_enum_rebind_across_variants_no_leak() {
+    let dir = TestDir::new("enum_rebind_variants");
+    let (stdout, _stderr, success) = compile_and_run_with_leak_check(
+        &dir,
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+import ori.test = test
+
+enum Shape
+    Empty
+    Polygon(points: list[int])
+    Label(name: string, tags: list[int])
+end
+
+make_list(n: int) -> list[int]
+    const xs: list[int] = lists.new()
+    var i: int = 0
+    while i < n
+        lists.push(xs, i)
+        i = i + 1
+    end
+    return xs
+end
+
+exercise() -> int
+    var s: Shape = Shape.Polygon(points: make_list(3))
+    s = Shape.Label(name: "x" + string(1), tags: make_list(2))
+    s = Shape.Polygon(points: make_list(5))
+    s = Shape.Empty
+    match s
+        case Empty:
+            return 1
+        case Polygon(points):
+            return lists.len(points)
+        case Label(name, tags):
+            return lists.len(tags)
+    end
+    return 0
+end
+
+main()
+    const r: int = exercise()
+    const leaked: int = test.assert_no_leaks("enum_rebind_variants")
+    io.print("r:" + string(r))
+    io.print("leaks:" + string(leaked))
+end
+"#,
+        "enum_rebind_variants",
+    );
+    assert!(success, "{stdout}");
+    assert_eq!(stdout.trim(), "r:1\nleaks:0");
+}

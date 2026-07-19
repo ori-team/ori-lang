@@ -313,3 +313,66 @@ fn assert_strict_budget(env_name: &str, elapsed: Duration, default_budget_ms: u6
         budget_ms
     );
 }
+
+#[test]
+fn run_cooperative_partial_pass_stays_flat_with_100k_live_allocations() {
+    // Plan F3 acceptance (LANG-MEM-3): with a large live heap and no cycle
+    // suspects, a cooperative pass must cost O(suspect subgraph) — i.e.
+    // effectively O(1) — instead of the old full O(live allocations) trial
+    // deletion. `ORI_COOPERATIVE_COLLECT_THRESHOLD=1` forces a pass at every
+    // allocating safe point: ~20k passes over a 100k-string heap finish in
+    // milliseconds with the suspect buffer, and took minutes with full scans.
+    let dir = TestDir::new("perf_partial_pass_100k");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+imports
+    ori.io = io
+    ori.list = lists
+end
+
+tick(i: int) -> int
+    const tmp: string = f"t{i}"
+    return len(tmp)
+end
+
+main()
+    const keep_count: int = 100_000
+    var keep: list[string] = lists.with_capacity(keep_count)
+    var k: int = 0
+    while k < keep_count
+        lists.push(keep, f"pad{k}")
+        k = k + 1
+    end
+    var acc: int = 0
+    var i: int = 0
+    while i < 20_000
+        acc = acc + tick(i)
+        i = i + 1
+    end
+    io.print(f"{lists.len(keep)}:{acc}")
+end
+"#,
+    );
+
+    let main_path = dir.path("main.orl");
+    let started = Instant::now();
+    let output = std::process::Command::new(common::ori_exe())
+        .args(["run", main_path.to_str().unwrap()])
+        .env("ORI_COOPERATIVE_COLLECT_THRESHOLD", "1")
+        .output()
+        .expect("failed to spawn `ori` subprocess");
+    let elapsed = started.elapsed();
+    let stdout = common::normalize_stdout(output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "`ori run` failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    // tick lengths: t0..t9 -> 2 (x10), up to t19999 -> 6 (x10000):
+    // 10*2 + 90*3 + 900*4 + 9000*5 + 10000*6 = 108890.
+    assert_eq!(stdout.trim(), "100000:108890");
+    assert_strict_budget("ORI_PERF_PARTIAL_PASS_100K_BUDGET_MS", elapsed, 10_000);
+}

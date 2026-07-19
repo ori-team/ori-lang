@@ -4513,3 +4513,83 @@ end
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.trim(), "3");
 }
+
+// ─── LANG-MEM-7 — ARC instrumentation (ORI_DUMP_ARC) ─────────────────────────
+
+/// Plan F7/F4 acceptance: `ORI_DUMP_ARC=<file>` writes per-function counts
+/// of the ARC ops inserted in the final CLIF, and the return-transfer
+/// elision (LANG-MEM-4) keeps `make_list`-style builders at zero
+/// retain/release. Spawns `ori` so the env var never leaks into (or races
+/// with) other tests in this process.
+#[test]
+fn compile_dump_arc_reports_ops_and_return_transfer_elision() {
+    let dir = TestDir::new("dump_arc_report");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+
+make_list(n: int) -> list[int]
+    const xs: list[int] = lists.with_capacity(2)
+    lists.push(xs, n)
+    return xs
+end
+
+main()
+    const s: list[int] = make_list(3)
+    io.print(string(lists.len(s)))
+end
+"#,
+    );
+    let dump_path = dir.path("arc_dump.txt");
+    let exe = exe_path(&dir, "dump_arc_report");
+    let output = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .args([
+            "compile",
+            dir.path("main.orl").to_str().unwrap(),
+            "-o",
+            exe.to_str().unwrap(),
+        ])
+        .env("ORI_DUMP_ARC", dump_path.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dump = std::fs::read_to_string(&dump_path).unwrap();
+
+    // Sections start with `;; ---- ARC ops for <func> ----`; splitting on the
+    // prefix yields one chunk per function, ending before the next header.
+    let make_list_section = dump
+        .split(";; ---- ARC ops for ")
+        .find(|s| s.starts_with("app.main.make_list "))
+        .unwrap_or_else(|| panic!("missing make_list section in dump:\n{dump}"));
+    // Return-transfer elision: the builder hands the binding's +1 to the
+    // caller — no retain/release may be emitted in its body.
+    assert!(
+        !make_list_section.contains("ori_arc_retain"),
+        "return-transfer elision regressed (retain in make_list):\n{make_list_section}"
+    );
+    assert!(
+        !make_list_section.contains("ori_arc_release"),
+        "return-transfer elision regressed (release in make_list):\n{make_list_section}"
+    );
+    assert!(
+        make_list_section.contains("ori_arc_maybe_collect_cycles"),
+        "expected the safe-point probe in make_list:\n{make_list_section}"
+    );
+
+    // main releases its bindings at scope exit — the dump must show that.
+    let main_section = dump
+        .split(";; ---- ARC ops for ")
+        .find(|s| s.starts_with("app.main.main "))
+        .unwrap_or_else(|| panic!("missing main section in dump:\n{dump}"));
+    assert!(
+        main_section.contains("ori_arc_release"),
+        "expected releases in main's dump section:\n{main_section}"
+    );
+}

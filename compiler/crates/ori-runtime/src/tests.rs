@@ -1587,3 +1587,76 @@ fn suspect_slot_cleared_when_object_freed_normally() {
         assert_eq!((freed, touched), (0, 0));
     }
 }
+
+// ── Plan F1 gap closure — destructor reentrancy (Nim bug #22927 analog) ─────
+
+static REENTRANT_DTOR_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+/// A destructor that re-enters the ARC runtime: allocates a fresh managed
+/// object, registers an edge on it, then releases it. Mirrors what a
+/// runtime-internal destructor could legitimately do (e.g. logging into a
+/// managed buffer while closing a resource).
+unsafe extern "C" fn reentrant_destructor(_ptr: *mut u8) {
+    REENTRANT_DTOR_CALLS.fetch_add(1, AtomicOrdering::SeqCst);
+    let scratch = ori_alloc(16, None);
+    assert!(!scratch.is_null());
+    let child = ori_alloc(8, None);
+    assert!(!child.is_null());
+    ori_arc_register_edge(scratch, child);
+    ori_arc_release(child);
+    ori_arc_release(scratch);
+}
+
+/// Destructors run without the global ARC lock held: a dtor that allocates,
+/// registers edges and releases must neither deadlock nor corrupt the
+/// registry, both on the plain release-to-zero path...
+#[test]
+fn destructor_reentering_arc_runtime_on_release_is_safe() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+    REENTRANT_DTOR_CALLS.store(0, AtomicOrdering::SeqCst);
+
+    unsafe {
+        let obj = ori_alloc(8, Some(reentrant_destructor));
+        assert!(!obj.is_null());
+        ori_arc_release(obj);
+        assert_eq!(REENTRANT_DTOR_CALLS.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+/// ...and on the cycle-collector path, where the state lock is dropped
+/// before destructors run and freshly registered suspects/allocations from
+/// a dtor must not corrupt the pass (the Nim analog protected `roots` with
+/// a length reset during frees — bug #22927).
+#[test]
+fn destructor_reentering_arc_runtime_during_cycle_collect_is_safe() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+    REENTRANT_DTOR_CALLS.store(0, AtomicOrdering::SeqCst);
+
+    unsafe {
+        let left = ori_alloc(8, Some(reentrant_destructor));
+        let right = ori_alloc(8, Some(reentrant_destructor));
+        ori_arc_register_edge(left, right);
+        ori_arc_register_edge(right, left);
+        ori_arc_release(left);
+        ori_arc_release(right);
+
+        assert_eq!(ori_arc_collect_cycles(), 2);
+        assert_eq!(REENTRANT_DTOR_CALLS.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(ori_arc_live_allocations(), 0);
+
+        // Partial (suspect-driven) pass with reentrant dtors as well.
+        let a = ori_alloc(8, Some(reentrant_destructor));
+        let b = ori_alloc(8, Some(reentrant_destructor));
+        ori_arc_register_edge(a, b);
+        ori_arc_register_edge(b, a);
+        ori_arc_release(a);
+        ori_arc_release(b);
+        let (freed, _) = collect_cycles_from_suspects();
+        assert_eq!(freed, 2);
+        assert_eq!(REENTRANT_DTOR_CALLS.load(AtomicOrdering::SeqCst), 4);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
