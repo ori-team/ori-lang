@@ -21,8 +21,8 @@ mod fmt;
 mod migrate_syntax;
 
 pub use migrate_syntax::{
-    migrate_source, run_migrate_syntax, MigrateSyntaxOptions, MigrateSyntaxReport, MigrateTextResult,
-    MigratedFile,
+    migrate_source, run_migrate_syntax, MigrateSyntaxOptions, MigrateSyntaxReport,
+    MigrateTextResult, MigratedFile,
 };
 
 // â”€â”€ Output types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -2059,10 +2059,12 @@ fn add_project_dependencies(
                 "package.cache_home_missing: set ORI_PACKAGE_CACHE to resolve git dependencies"
                     .to_string()
             })?;
-            let root =
-                crate::package::ensure_git_dependency_cached(&dependency.name, git, &cache)?;
-            let import_dependency =
-                import_dependency_from_root(&dependency.name, &root, dependency.version.as_deref())?;
+            let root = crate::package::ensure_git_dependency_cached(&dependency.name, git, &cache)?;
+            let import_dependency = import_dependency_from_root(
+                &dependency.name,
+                &root,
+                dependency.version.as_deref(),
+            )?;
             add_import_dependency(context, import_dependency);
             // Transitive native libs (e.g. sqlite from path/git package).
             push_package_native_libs(context, &root)?;
@@ -2155,7 +2157,10 @@ fn add_package_manifest_dependencies(
 }
 
 /// Register `native_libs` from a dependency package (and its nested package deps once).
-fn push_package_native_libs(context: &mut ImportContext, package_root: &Path) -> Result<(), String> {
+fn push_package_native_libs(
+    context: &mut ImportContext,
+    package_root: &Path,
+) -> Result<(), String> {
     let package_manifest = package_root.join("ori.pkg.toml");
     if !package_manifest.is_file() {
         return Ok(());
@@ -2188,10 +2193,9 @@ fn push_native_lib(context: &mut ImportContext, name: String, package_root: Path
     {
         return;
     }
-    context.native_libs.push(NativeLibContext {
-        name,
-        package_root,
-    });
+    context
+        .native_libs
+        .push(NativeLibContext { name, package_root });
 }
 
 fn import_dependency_from_root(
@@ -2836,6 +2840,7 @@ fn check_loaded_sources(
             &resolved.trait_sigs,
             &resolved.impl_sigs,
             &resolved.type_alias_sigs,
+            &resolved.newtype_sigs,
             &resolved.deprecated_sigs,
             &resolved.reexports,
             &namespace,
@@ -3248,6 +3253,21 @@ fn collect_doc_symbols(loaded: &[LoadedSource]) -> BTreeMap<String, DocSymbol> {
                         decl.name,
                         type_params_text(&decl.type_params),
                         type_text(source, &decl.ty)
+                    ),
+                    decl.span,
+                    inline_doc,
+                    decl.visibility.is_public(),
+                ),
+                Item::Newtype(decl) => insert_doc_symbol_without_params(
+                    &mut symbols,
+                    source,
+                    format!("{}.{}", namespace, decl.name),
+                    "newtype",
+                    format!(
+                        "{}newtype {} = {}",
+                        visibility_prefix(decl.visibility),
+                        decl.name,
+                        type_text(source, &decl.repr)
                     ),
                     decl.span,
                     inline_doc,
@@ -3768,7 +3788,7 @@ fn validate_doc_tags(source: &LoadedSource, sink: &mut DiagnosticSink) {
                     }
                 }
             }
-            Item::Enum(_) | Item::Alias(_) | Item::Const(_) | Item::Var(_) => {}
+            Item::Enum(_) | Item::Alias(_) | Item::Newtype(_) | Item::Const(_) | Item::Var(_) => {}
         }
     }
 }
@@ -4917,6 +4937,24 @@ fn render_source_documentation(
                     entry_count += 1;
                 }
             }
+            Item::Newtype(decl) => {
+                if let Some(doc) = doc_comment_for(source, leading_start) {
+                    append_doc_entry(
+                        out,
+                        &format!("{}.{}", namespace, decl.name),
+                        "newtype",
+                        &format!(
+                            "{}newtype {} = {}",
+                            visibility_prefix(decl.visibility),
+                            decl.name,
+                            type_text(source, &decl.repr)
+                        ),
+                        &doc,
+                        source,
+                    );
+                    entry_count += 1;
+                }
+            }
             Item::Const(decl) => {
                 if let Some(doc) = doc_comment_for(source, leading_start) {
                     append_doc_entry(
@@ -5285,6 +5323,7 @@ fn lower_loaded_sources(
         &resolved.trait_sigs,
         &resolved.impl_sigs,
         &resolved.type_alias_sigs,
+        &resolved.newtype_sigs,
         &resolved.reexports,
         &first_namespace,
         first.file_id,
@@ -5302,6 +5341,7 @@ fn lower_loaded_sources(
             &resolved.trait_sigs,
             &resolved.impl_sigs,
             &resolved.type_alias_sigs,
+            &resolved.newtype_sigs,
             &resolved.reexports,
             &namespace,
             source.file_id,

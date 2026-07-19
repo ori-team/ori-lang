@@ -2,9 +2,9 @@ use crate::parser::Parser;
 use ori_ast::common::{Attr, AttrArg, Visibility};
 use ori_ast::item::{
     AbiLabel, AliasDecl, ApplyDecl, ApplyMember, ApplyUseSection, EnumDecl, EnumVariant,
-    ExternBlock, ExternMember, FuncDecl, FuncSignature, ImportDecl, ImportItem, Item, ItemWithAttrs,
-    NamedField, NamespaceDecl, Param, ParamKind, SourceFile, StructDecl, StructField, TopConst,
-    TopVar, TraitDecl, TraitMember,
+    ExternBlock, ExternMember, FuncDecl, FuncSignature, ImportDecl, ImportItem, Item,
+    ItemWithAttrs, NamedField, NamespaceDecl, NewtypeDecl, Param, ParamKind, SourceFile,
+    StructDecl, StructField, TopConst, TopVar, TraitDecl, TraitMember,
 };
 use ori_diagnostics::Span;
 use ori_lexer::TokenKind;
@@ -71,6 +71,7 @@ impl<'src> Parser<'src> {
                     TokenKind::Apply,
                     TokenKind::Implement,
                     TokenKind::Alias,
+                    TokenKind::Newtype,
                     TokenKind::Const,
                     TokenKind::Var,
                     TokenKind::Extern,
@@ -166,11 +167,7 @@ impl<'src> Parser<'src> {
 
     /// Shared body after optional visibility / `import` keyword:
     /// `path`, `path = alias`, or `path (A, B [= alias])`.
-    fn parse_import_body(
-        &mut self,
-        start: Span,
-        visibility: Visibility,
-    ) -> Option<ImportDecl> {
+    fn parse_import_body(&mut self, start: Span, visibility: Visibility) -> Option<ImportDecl> {
         let path = self.parse_qualified_name()?;
         let (alias, selected) = if self.at(&TokenKind::LParen) {
             (None, self.parse_import_selection()?)
@@ -376,6 +373,7 @@ impl<'src> Parser<'src> {
                 Some(Item::Apply(self.parse_legacy_implement_as_apply()?))
             }
             TokenKind::Alias => Some(Item::Alias(self.parse_alias_decl(vis)?)),
+            TokenKind::Newtype => Some(Item::Newtype(self.parse_newtype_decl(vis)?)),
             TokenKind::Const => Some(Item::Const(self.parse_top_const(vis)?)),
             TokenKind::Var => Some(Item::Var(self.parse_top_var(vis)?)),
             TokenKind::Extern => Some(Item::Extern(self.parse_extern_block()?)),
@@ -1299,7 +1297,10 @@ impl<'src> Parser<'src> {
     /// Body of a `use Trait` (or recovered legacy implement): methods, binds, assoc types.
     fn parse_apply_use_body_members(
         &mut self,
-    ) -> Option<(Vec<ApplyMember>, Vec<(ori_ast::common::Name, ori_ast::ty::Type)>)> {
+    ) -> Option<(
+        Vec<ApplyMember>,
+        Vec<(ori_ast::common::Name, ori_ast::ty::Type)>,
+    )> {
         let mut members = Vec::new();
         let mut associated_types = Vec::new();
         while !self.at(&TokenKind::End) && !self.at(&TokenKind::Use) && !self.at_eof() {
@@ -1356,6 +1357,25 @@ impl<'src> Parser<'src> {
             name,
             type_params,
             ty,
+            span,
+        })
+    }
+
+    /// `newtype Name = Repr` — a distinct type over an existing representation.
+    ///
+    /// No type parameters for now: the motivating use is naming scalar domain
+    /// values (`newtype UserId = int`), and generics can be added later
+    /// without changing this form.
+    fn parse_newtype_decl(&mut self, vis: Visibility) -> Option<NewtypeDecl> {
+        let start = self.advance().unwrap().span; // newtype
+        let name = self.parse_name()?;
+        self.expect(&TokenKind::Eq)?;
+        let repr = self.parse_type()?;
+        let span = start.cover(repr.span());
+        Some(NewtypeDecl {
+            visibility: vis,
+            name,
+            repr,
             span,
         })
     }
@@ -1493,6 +1513,7 @@ fn is_import_alias_recovery_boundary(kind: Option<&TokenKind>) -> bool {
             | Some(TokenKind::Apply)
             | Some(TokenKind::Implement)
             | Some(TokenKind::Alias)
+            | Some(TokenKind::Newtype)
             | Some(TokenKind::Const)
             | Some(TokenKind::Var)
             | Some(TokenKind::Extern)

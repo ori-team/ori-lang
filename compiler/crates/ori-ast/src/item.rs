@@ -55,6 +55,9 @@ pub enum Item {
     /// S3: `apply Type … end` with free members and `use Trait` sections.
     Apply(ApplyDecl),
     Alias(AliasDecl),
+    /// `newtype UserId = int` — a distinct type over an existing
+    /// representation (no implicit conversion in either direction).
+    Newtype(NewtypeDecl),
     Const(TopConst),
     Var(TopVar),
     Extern(ExternBlock),
@@ -69,6 +72,7 @@ impl Item {
             Item::Trait(t) => t.span,
             Item::Apply(a) => a.span,
             Item::Alias(a) => a.span,
+            Item::Newtype(n) => n.span,
             Item::Const(c) => c.span,
             Item::Var(v) => v.span,
             Item::Extern(e) => e.span,
@@ -262,6 +266,21 @@ pub struct AliasDecl {
     pub name: Name,
     pub type_params: TypeParams,
     pub ty: Type,
+    pub span: Span,
+}
+
+/// `newtype UserId = int`.
+///
+/// The counterpart of `alias`: same representation, but a **distinct** type.
+/// `alias` says "another name for this type" (values flow freely); `newtype`
+/// says "a new type shaped like this one" (conversion is written out).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewtypeDecl {
+    pub visibility: Visibility,
+    pub name: Name,
+    /// The representation type. Carries no runtime cost: it is erased when
+    /// lowering to HIR, so a `newtype` over `int` *is* an `int` at runtime.
+    pub repr: Type,
     pub span: Span,
 }
 

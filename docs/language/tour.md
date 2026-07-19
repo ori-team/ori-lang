@@ -66,6 +66,14 @@ import ori.math                         -- whole module: only ori.math.…
 
 Composite types always use **`[]`**, never `<>` or `list of T`.
 
+`alias` names an existing type (transparent); `newtype` creates a distinct one
+with the same representation and no runtime cost:
+
+```ori
+alias UserMap = map[int, string]   -- interchangeable with its target
+newtype UserId = int               -- NOT an int: UserId(7) in, int(id) out
+```
+
 ```ori
 const names: list[string] = ["ada", "grace"]
 const maybe: optional[int] = none

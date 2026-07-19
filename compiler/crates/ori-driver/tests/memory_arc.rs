@@ -1874,3 +1874,50 @@ end
         "stderr: {stderr}"
     );
 }
+
+/// A `newtype` over a managed representation (`string`) is exactly its
+/// representation at runtime: constructing and unwrapping it in a loop must
+/// not leak.
+#[test]
+fn compile_runs_newtype_over_string_no_leak() {
+    let dir = TestDir::new("newtype_string_no_leak");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+newtype Email = string
+
+domain(mail: Email) -> string
+    return string(mail)
+end
+
+main()
+    var i: int = 0
+    while i < 200
+        const mail: Email = Email("someone@example.com")
+        const text: string = domain(mail)
+        i = i + 1
+    end
+    io.println("done")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "newtype_string_managed");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "done",
+        "stderr: {stderr}"
+    );
+}

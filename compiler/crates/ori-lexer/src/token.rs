@@ -120,6 +120,9 @@ pub enum TokenKind {
     Is,
     #[token("alias")]
     Alias,
+    /// `newtype Name = Repr` — a distinct type with the same representation.
+    #[token("newtype")]
+    Newtype,
     #[token("do")]
     Do,
     #[token("and")]
@@ -382,6 +385,7 @@ impl TokenKind {
             TokenKind::Where => "`where`",
             TokenKind::Is => "`is`",
             TokenKind::Alias => "`alias`",
+            TokenKind::Newtype => "`newtype`",
             TokenKind::Do => "`do`",
             TokenKind::And => "`and`",
             TokenKind::Or => "`or`",

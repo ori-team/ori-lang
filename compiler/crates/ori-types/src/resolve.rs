@@ -104,6 +104,18 @@ pub struct TypeAliasSig {
     pub ty: Ty,
 }
 
+/// `newtype UserId = int` — the nominal type's representation.
+///
+/// Unlike a type alias this is **not** substituted while checking: the name
+/// stays a distinct `Ty::Named`, which is what makes it nominal. The
+/// representation is only applied when lowering to HIR, so the newtype costs
+/// nothing at runtime.
+#[derive(Debug, Clone)]
+pub struct NewtypeSig {
+    pub def_id: DefId,
+    pub repr: Ty,
+}
+
 /// The output of resolving a single source file.
 #[derive(Debug)]
 pub struct ResolvedModule {
@@ -115,6 +127,7 @@ pub struct ResolvedModule {
     pub trait_sigs: Vec<TraitSig>,
     pub impl_sigs: Vec<ImplSig>,
     pub type_alias_sigs: Vec<TypeAliasSig>,
+    pub newtype_sigs: Vec<NewtypeSig>,
     pub deprecated_sigs: Vec<DeprecatedSig>,
     pub reexports: Vec<ReExport>,
     pub namespace: SmolStr,
@@ -177,6 +190,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
     let mut trait_sigs = builtin_core_trait_sigs(&core_traits);
     let mut impl_sigs = Vec::new();
     let mut type_alias_sigs = Vec::new();
+    let mut newtype_sigs = Vec::new();
     let deprecated_sigs = collect_deprecated_sigs(files, &def_map);
     for (file, file_id) in files {
         let namespace = SmolStr::new(file.namespace.name.to_string());
@@ -463,8 +477,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                 }
                             }
                         }
-                        if let (Some(trait_def_id), Some(type_def_id)) =
-                            (trait_def_id, type_def_id)
+                        if let (Some(trait_def_id), Some(type_def_id)) = (trait_def_id, type_def_id)
                         {
                             impl_sigs.push(ImplSig {
                                 trait_def_id,
@@ -780,6 +793,21 @@ pub fn resolve_many<S: Into<SmolStr>>(
                         }
                     }
                 }
+                Item::Newtype(n) => {
+                    let path = format!("{}.{}", namespace, n.name.text);
+                    if let Some(def_id) = def_map.lookup(&path) {
+                        let repr = lower_type_with_aliases(
+                            &n.repr,
+                            &namespace,
+                            &[],
+                            &def_map,
+                            *file_id,
+                            sink,
+                            &aliases,
+                        );
+                        newtype_sigs.push(NewtypeSig { def_id, repr });
+                    }
+                }
                 Item::Alias(a) => {
                     let path = format!("{}.{}", namespace, a.name.text);
                     if let Some(def_id) = def_map.lookup(&path) {
@@ -884,6 +912,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
         trait_sigs,
         impl_sigs,
         type_alias_sigs,
+        newtype_sigs,
         deprecated_sigs,
         reexports,
         namespace: entry_namespace.into(),
@@ -1053,9 +1082,7 @@ fn resolve_apply_method_func_sig(
     let return_ty = m
         .return_ty
         .as_ref()
-        .map(|t| {
-            lower_type_with_aliases(t, namespace, &all_tp, def_map, file_id, sink, &m_aliases)
-        })
+        .map(|t| lower_type_with_aliases(t, namespace, &all_tp, def_map, file_id, sink, &m_aliases))
         .unwrap_or(Ty::Void);
     let return_ty = async_return_ty(m.is_async, return_ty);
     let m_path = match trait_name {
@@ -1502,6 +1529,16 @@ fn register_item(
             file_id,
             sink,
         ),
+        Item::Newtype(n) => register_def(
+            def_map,
+            ns,
+            DefKind::Newtype,
+            &n.name.text,
+            n.visibility.is_public(),
+            n.span,
+            file_id,
+            sink,
+        ),
         Item::Alias(a) => register_def(
             def_map,
             ns,
@@ -1684,6 +1721,7 @@ fn item_def_paths(item: &Item, namespace: &str) -> Vec<String> {
         Item::Trait(t) => vec![format!("{}.{}", namespace, t.name.text)],
         Item::Func(f) => vec![format!("{}.{}", namespace, f.name.text)],
         Item::Alias(a) => vec![format!("{}.{}", namespace, a.name.text)],
+        Item::Newtype(n) => vec![format!("{}.{}", namespace, n.name.text)],
         Item::Const(c) => vec![format!("{}.{}", namespace, c.name.text)],
         Item::Var(v) => vec![format!("{}.{}", namespace, v.name.text)],
         Item::Extern(ext) => ext

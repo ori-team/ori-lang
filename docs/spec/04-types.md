@@ -337,12 +337,42 @@ A callable with no return value: `func(string)` (void return implied).
 `alias` gives a name to an existing type. It does not create a new type.
 
 ```ori
-alias UserId   = int
 alias UserMap  = map[int, User]
 alias Callback = func(string) -> bool
 ```
 
-Aliases are transparent: `UserId` and `int` are interchangeable everywhere.
+Aliases are transparent: an alias and its target are interchangeable everywhere.
+
+---
+
+## Nominal Types (`newtype`)
+
+`newtype` is the counterpart of `alias`: the same representation, but a
+**distinct** type.
+
+```ori
+newtype UserId    = int
+newtype AccountId = int
+newtype Email     = string
+```
+
+| Form | Meaning |
+|------|---------|
+| `alias X = T` | another name for `T` — values flow freely |
+| `newtype X = T` | a new type shaped like `T` — conversion is written out |
+
+Rules:
+
+- **Nominal.** `UserId` accepts neither an `int` nor an `AccountId`. This is
+  the point: `transfer(from: AccountId, to: AccountId, by: UserId)` becomes a
+  contract the compiler defends, not a comment.
+- **Explicit both ways.** `UserId(7)` converts in; `int(id)` converts out
+  (`string(mail)` for a newtype over `string`, and so on). There is no
+  implicit conversion in either direction.
+- **Zero cost.** The type is erased when lowering to HIR, so a `newtype` over
+  `int` *is* an `int` at runtime — no wrapper struct, no allocation, and no
+  trace in generated code.
+- No type parameters yet: `newtype Pair[T] = …` is not accepted.
 
 ---
 

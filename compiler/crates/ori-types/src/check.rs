@@ -93,6 +93,9 @@ pub struct Checker<'a> {
     infer: HashMap<u32, Ty>,
     /// `DefId` -> `(arity, underlying_ty)` for each `type alias` declaration.
     type_alias_map: HashMap<DefId, (usize, Ty)>,
+    /// `DefId` -> representation for each `newtype`. Unlike aliases this is
+    /// never substituted while checking — that is what keeps it nominal.
+    newtype_map: HashMap<DefId, Ty>,
 }
 
 impl<'a> Checker<'a> {
@@ -105,6 +108,7 @@ impl<'a> Checker<'a> {
         trait_sigs: &'a [TraitSig],
         impl_sigs: &'a [ImplSig],
         type_alias_sigs: &[crate::resolve::TypeAliasSig],
+        newtype_sigs: &[crate::resolve::NewtypeSig],
         deprecated_sigs: &'a [DeprecatedSig],
         reexports: &'a [ReExport],
         namespace: &'a str,
@@ -114,6 +118,10 @@ impl<'a> Checker<'a> {
         let type_alias_map: HashMap<DefId, (usize, Ty)> = type_alias_sigs
             .iter()
             .map(|s| (s.def_id, (s.type_params.len(), s.ty.clone())))
+            .collect();
+        let newtype_map: HashMap<DefId, Ty> = newtype_sigs
+            .iter()
+            .map(|s| (s.def_id, s.repr.clone()))
             .collect();
         Self {
             def_map,
@@ -141,6 +149,7 @@ impl<'a> Checker<'a> {
             current_where_constraints: Vec::new(),
             infer: HashMap::new(),
             type_alias_map,
+            newtype_map,
         }
     }
 
@@ -2610,6 +2619,42 @@ impl<'a> Checker<'a> {
                                 );
                                 return ret;
                             }
+                        } else if def.kind == DefKind::Newtype {
+                            // `UserId(7)` — the only way into a newtype. The
+                            // argument must already be the representation
+                            // type; no implicit conversion happens here.
+                            let repr = self.newtype_repr(def_id).unwrap_or(Ty::Error);
+                            if args.len() != 1 {
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        "type.arg_count_mismatch",
+                                        format!(
+                                            "`{}` takes exactly one value of `{}`",
+                                            path,
+                                            repr.display()
+                                        ),
+                                    )
+                                    .with_label(Label::primary(
+                                        self.file_id,
+                                        expr.span(),
+                                        "newtype conversion here",
+                                    ))
+                                    .with_action(format!("write `{}(value)`", path)),
+                                );
+                                for a in args {
+                                    self.infer_call_arg(a);
+                                }
+                                return Ty::Named(def_id, Vec::new());
+                            }
+                            match &args[0].value {
+                                ArgValue::Expr(inner) => {
+                                    self.check_expr_assignable_to(inner, &repr);
+                                }
+                                ArgValue::Spread(inner) => {
+                                    self.infer_expr(inner);
+                                }
+                            }
+                            return Ty::Named(def_id, Vec::new());
                         } else if def.kind == DefKind::Struct {
                             // S3: `Type(...)` struct construction is removed.
                             // Still check fields for cascade diagnostics, but poison the type
@@ -3739,14 +3784,14 @@ impl<'a> Checker<'a> {
                     format!(
                         "argument {} expects `{}`, found `{}`",
                         index + 1,
-                        expected.display(),
-                        actual.display(),
+                        expected.display_in(self.def_map),
+                        actual.display_in(self.def_map),
                     ),
                 )
                 .with_label(Label::primary(self.file_id, arg.span, "this argument"))
                 .with_action(format!(
                     "change the argument to produce `{}`",
-                    expected.display()
+                    expected.display_in(self.def_map)
                 )),
             );
         }
@@ -3770,7 +3815,7 @@ impl<'a> Checker<'a> {
                         .with_label(Label::primary(self.file_id, arg.span, "this argument"))
                         .with_action(format!(
                             "change the argument to produce `{}`",
-                            elem_ty.display()
+                            elem_ty.display_in(self.def_map)
                         )),
                     );
                 }
@@ -4730,6 +4775,11 @@ impl<'a> Checker<'a> {
         if self.supports_string_conversion_ty(&arg_ty) {
             return Some(Ty::String);
         }
+        // `string(email)` on `newtype Email = string` — the written-out way
+        // back to the representation, the mirror of `Email("…")`.
+        if self.supports_string_conversion_ty(&self.unwrap_newtype(&arg_ty)) {
+            return Some(Ty::String);
+        }
         if arg_ty.is_error() || arg_ty.contains_infer() {
             return Some(Ty::String);
         }
@@ -4739,7 +4789,7 @@ impl<'a> Checker<'a> {
                 "type.arg_type_mismatch",
                 format!(
                     "`string` expects `int`, `float`, `bool`, `string`, or a `Displayable` value, found `{}`",
-                    arg_ty.display()
+                    arg_ty.display_in(self.def_map)
                 ),
             )
             .with_label(Label::primary(
@@ -4781,6 +4831,10 @@ impl<'a> Checker<'a> {
             ArgValue::Expr(expr) | ArgValue::Spread(expr) => expr.as_ref(),
         };
         let arg_ty = self.infer_expr(expr);
+        // A newtype converts back through its representation: `int(id)` is the
+        // written-out way *out* of `newtype UserId = int`, mirroring
+        // `UserId(7)` on the way in.
+        let arg_ty = self.unwrap_newtype(&arg_ty);
         let accepted = match path {
             "int" => arg_ty.is_integer(),
             "float" => arg_ty.is_integer(),
@@ -4796,7 +4850,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "`{}` expects an integer value, found `{}`",
                     path,
-                    arg_ty.display()
+                    arg_ty.display_in(self.def_map)
                 ),
             )
             .with_label(Label::primary(
@@ -6413,6 +6467,21 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The representation of a `newtype`, if `def_id` names one.
+    fn newtype_repr(&self, def_id: DefId) -> Option<Ty> {
+        self.newtype_map.get(&def_id).cloned()
+    }
+
+    /// `UserId` → `int`, leaving every other type untouched. Used where a
+    /// newtype is allowed to stand in for its representation *explicitly*
+    /// (the `int(id)` conversion), never for implicit assignment.
+    fn unwrap_newtype(&self, ty: &Ty) -> Ty {
+        match ty {
+            Ty::Named(def_id, _) => self.newtype_repr(*def_id).unwrap_or_else(|| ty.clone()),
+            _ => ty.clone(),
+        }
+    }
+
     /// Whether this pattern introduces a binding, judged the way
     /// `check_pattern_type` judges it: a bare identifier is a *variant
     /// reference* when the scrutinee's enum has a variant by that name, and
@@ -6859,6 +6928,7 @@ fn item_target_name(item: &Item) -> &'static str {
         Item::Trait(_) => "trait",
         Item::Apply(_) => "apply",
         Item::Alias(_) => "alias",
+        Item::Newtype(_) => "newtype",
         Item::Const(_) => "const",
         Item::Var(_) => "var",
         Item::Extern(_) => "extern",

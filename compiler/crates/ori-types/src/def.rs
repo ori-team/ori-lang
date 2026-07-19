@@ -22,6 +22,8 @@ pub enum DefKind {
     Const,
     Var,
     TypeAlias,
+    /// `newtype Name = Repr` — nominal type over an existing representation.
+    Newtype,
     Extern,
 }
 

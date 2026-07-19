@@ -360,6 +360,45 @@ impl Ty {
     }
 
     /// Human-readable display name for diagnostics.
+    /// Like [`Ty::display`], but prints declared names for `Ty::Named` instead
+    /// of raw ids.
+    ///
+    /// `display` cannot do this because it has no def map, which is why
+    /// diagnostics used to leak `<def DefId(16)>` at the reader. Prefer this
+    /// wherever a def map is in reach.
+    pub fn display_in(&self, def_map: &DefMap) -> std::string::String {
+        match self {
+            Ty::Named(id, args) => {
+                let name = def_map.get(*id).name.clone();
+                let name = if name.is_empty() {
+                    return self.display();
+                } else {
+                    name
+                };
+                if args.is_empty() {
+                    name.to_string()
+                } else {
+                    let inner = args
+                        .iter()
+                        .map(|a| a.display_in(def_map))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{}[{}]", name, inner)
+                }
+            }
+            Ty::Optional(inner) => format!("optional[{}]", inner.display_in(def_map)),
+            Ty::Result(ok, err) => format!(
+                "result[{}, {}]",
+                ok.display_in(def_map),
+                err.display_in(def_map)
+            ),
+            Ty::List(inner) => format!("list[{}]", inner.display_in(def_map)),
+            Ty::Set(inner) => format!("set[{}]", inner.display_in(def_map)),
+            Ty::Map(k, v) => format!("map[{}, {}]", k.display_in(def_map), v.display_in(def_map)),
+            _ => self.display(),
+        }
+    }
+
     pub fn display(&self) -> std::string::String {
         match self {
             Ty::Bool => "bool".into(),
@@ -425,6 +464,9 @@ impl Ty {
                 format!("func({}) -> {}", ps, ret.display())
             }
             Ty::Named(id, args) => {
+                // No def map here, so the raw id is the only honest fallback.
+                // `display_in` prints the declared name and is what
+                // diagnostics should use; see its note.
                 if args.is_empty() {
                     format!("<def {:?}>", id)
                 } else {
@@ -607,6 +649,29 @@ pub fn expand_ty_aliases(
     normalize_ty_aliases(ty, &|id| {
         if def_map.get(id).kind == DefKind::TypeAlias {
             alias_map.get(&id).cloned()
+        } else {
+            None
+        }
+    })
+}
+
+/// Replace every `newtype` with its representation, everywhere in `ty`.
+///
+/// The checker needs newtypes to stay nominal (`UserId` is not `int`, so
+/// passing one where the other is expected fails). Codegen needs the opposite:
+/// a `newtype` over `int` must *be* an `int` at runtime, not a pointer to a
+/// boxed value. Lowering to HIR is the seam between those two views — erase
+/// there and nothing downstream (HIR, ARC, layout, both backends) has to know
+/// newtypes exist, which is also what makes them cost nothing.
+pub fn erase_newtypes(
+    ty: Ty,
+    def_map: &DefMap,
+    newtype_map: &std::collections::HashMap<DefId, Ty>,
+) -> Ty {
+    normalize_ty_aliases(ty, &|id| {
+        if def_map.get(id).kind == DefKind::Newtype {
+            // Arity 0: newtypes take no type parameters today.
+            newtype_map.get(&id).cloned().map(|repr| (0, repr))
         } else {
             None
         }

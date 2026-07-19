@@ -943,6 +943,9 @@ struct Lowerer<'a> {
     generated_funcs: Vec<HirFunc>,
     /// `DefId` → `(arity, underlying_ty)` for each `type alias` declaration.
     type_alias_map: HashMap<DefId, (usize, Ty)>,
+    /// `DefId` -> representation for each `newtype`, used to erase them from
+    /// every type that reaches the HIR.
+    newtype_map: HashMap<DefId, Ty>,
     local_type_aliases: HashMap<SmolStr, ori_ast::ty::Type>,
 }
 
@@ -956,14 +959,22 @@ impl<'a> Lowerer<'a> {
         trait_sigs: &'a [TraitSig],
         impl_sigs: &'a [ImplSig],
         type_alias_sigs: &[TypeAliasSig],
+        newtype_map: HashMap<DefId, Ty>,
         namespace: &'a str,
         file_id: FileId,
         sink: &'a mut DiagnosticSink,
     ) -> Self {
-        let type_alias_map: HashMap<DefId, (usize, Ty)> = type_alias_sigs
+        let mut type_alias_map: HashMap<DefId, (usize, Ty)> = type_alias_sigs
             .iter()
             .map(|s| (s.def_id, (s.type_params.len(), s.ty.clone())))
             .collect();
+        // Inside lowering a newtype behaves exactly like a transparent alias,
+        // so `lower_ast_ty` erases annotations for free.
+        type_alias_map.extend(
+            newtype_map
+                .iter()
+                .map(|(id, repr)| (*id, (0, repr.clone()))),
+        );
         Self {
             def_map,
             func_sigs,
@@ -982,6 +993,7 @@ impl<'a> Lowerer<'a> {
             closure_counter: 0,
             generated_funcs: Vec::new(),
             type_alias_map,
+            newtype_map,
             local_type_aliases: HashMap::new(),
         }
     }
@@ -1472,7 +1484,10 @@ impl<'a> Lowerer<'a> {
             &self.aliases,
             &self.local_type_aliases,
         );
-        expand_ty_aliases(raw, self.def_map, &self.type_alias_map)
+        let expanded = expand_ty_aliases(raw, self.def_map, &self.type_alias_map);
+        // `expand_ty_aliases` only substitutes `DefKind::TypeAlias`, so
+        // newtypes need their own erasure pass here.
+        ori_types::ty::erase_newtypes(expanded, self.def_map, &self.newtype_map)
     }
     fn lower_named_args(
         &mut self,
@@ -1777,11 +1792,71 @@ pub fn lower(
     trait_sigs: &[TraitSig],
     impl_sigs: &[ImplSig],
     type_alias_sigs: &[TypeAliasSig],
+    newtype_sigs: &[ori_types::resolve::NewtypeSig],
     reexports: &[ReExport],
     namespace: &str,
     file_id: FileId,
     sink: &mut DiagnosticSink,
 ) -> HirModule {
+    // Newtypes are erased before anything else sees the signatures: from here
+    // down, a `newtype` over `int` simply *is* an `int`.
+    let newtype_map: HashMap<DefId, Ty> = newtype_sigs
+        .iter()
+        .map(|s| (s.def_id, s.repr.clone()))
+        .collect();
+    let func_sigs: Vec<FuncSig> = func_sigs
+        .iter()
+        .map(|sig| {
+            let mut sig = sig.clone();
+            sig.params = sig
+                .params
+                .into_iter()
+                .map(|t| ori_types::ty::erase_newtypes(t, def_map, &newtype_map))
+                .collect();
+            sig.return_ty = ori_types::ty::erase_newtypes(sig.return_ty, def_map, &newtype_map);
+            sig
+        })
+        .collect();
+    let value_sigs: Vec<ValueSig> = value_sigs
+        .iter()
+        .map(|sig| {
+            let mut sig = sig.clone();
+            sig.ty = ori_types::ty::erase_newtypes(sig.ty, def_map, &newtype_map);
+            sig
+        })
+        .collect();
+    let struct_sigs: Vec<StructSig> = struct_sigs
+        .iter()
+        .map(|sig| {
+            let mut sig = sig.clone();
+            sig.fields = sig
+                .fields
+                .into_iter()
+                .map(|(n, t)| (n, ori_types::ty::erase_newtypes(t, def_map, &newtype_map)))
+                .collect();
+            sig
+        })
+        .collect();
+    let enum_sigs: Vec<EnumSig> = enum_sigs
+        .iter()
+        .map(|sig| {
+            let mut sig = sig.clone();
+            for variant in &mut sig.variants {
+                variant.fields = std::mem::take(&mut variant.fields)
+                    .into_iter()
+                    .map(|(n, t)| (n, ori_types::ty::erase_newtypes(t, def_map, &newtype_map)))
+                    .collect();
+            }
+            sig
+        })
+        .collect();
+    let (func_sigs, value_sigs, struct_sigs, enum_sigs) = (
+        &func_sigs[..],
+        &value_sigs[..],
+        &struct_sigs[..],
+        &enum_sigs[..],
+    );
+
     let mut l = Lowerer::new(
         def_map,
         func_sigs,
@@ -1791,6 +1866,7 @@ pub fn lower(
         trait_sigs,
         impl_sigs,
         type_alias_sigs,
+        newtype_map.clone(),
         namespace,
         file_id,
         sink,
@@ -3187,6 +3263,31 @@ impl<'a> Lowerer<'a> {
                 }
             }
             Expr::Call { callee, args, span } => {
+                // `UserId(7)` — a newtype conversion carries no runtime work:
+                // the value already *is* the representation, so the call
+                // disappears and only the argument is lowered. (The checker
+                // has already verified the argument's type.)
+                if args.len() == 1 {
+                    let callee_path = match callee.as_ref() {
+                        Expr::Ident(name) => Some(name.text.to_string()),
+                        Expr::QualifiedIdent(q) => Some(q.to_string()),
+                        _ => None,
+                    };
+                    if let Some(path) = callee_path {
+                        let resolved = self
+                            .resolve_def_path(&path)
+                            .unwrap_or_else(|| SmolStr::new(&path));
+                        if let Some(def_id) = self.def_map.lookup(&resolved) {
+                            if self.def_map.get(def_id).kind == DefKind::Newtype {
+                                let inner = match &args[0].value {
+                                    ori_ast::expr::ArgValue::Expr(e)
+                                    | ori_ast::expr::ArgValue::Spread(e) => e,
+                                };
+                                return self.lower_expr(inner, tp);
+                            }
+                        }
+                    }
+                }
                 // Desugar .or() method on optional/result
                 if let Expr::Field { object, field, .. } = callee.as_ref() {
                     if field.text.as_str() == "or" && args.len() == 1 {

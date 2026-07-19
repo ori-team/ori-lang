@@ -64,6 +64,14 @@ import ori.math                         -- só ori.math.…
 
 Tipos compostos só com **`[]`**.
 
+`alias` dá nome a um tipo existente (transparente); `newtype` cria um tipo
+distinto com a mesma representação e custo zero:
+
+```ori
+alias UserMap = map[int, string]   -- intercambiável com o alvo
+newtype UserId = int               -- NÃO é int: UserId(7) entra, int(id) sai
+```
+
 ### Inferência local (opção B)
 
 Em `const`/`var` **locais**, pode omitir o tipo se o lado direito for campo,

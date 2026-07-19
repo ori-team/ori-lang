@@ -5226,3 +5226,152 @@ end
         build.c_source
     );
 }
+
+// ── `newtype` — nominal type over an existing representation (0.4 surface) ──
+//
+// The counterpart of `alias`: same representation, distinct type. Erased at
+// lowering, so it costs nothing at runtime.
+
+#[test]
+fn compile_runs_newtype_round_trip() {
+    let dir = TestDir::new("newtype_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+newtype UserId = int
+newtype AccountId = int
+newtype Email = string
+
+label(id: UserId) -> int
+    return int(id)
+end
+
+domain(mail: Email) -> string
+    return string(mail)
+end
+
+transfer(from: AccountId, to: AccountId, by: UserId) -> string
+    return f"{int(from)}->{int(to)} by {int(by)}"
+end
+
+main()
+    const u: UserId = UserId(7)
+    const a: AccountId = AccountId(1)
+    const b: AccountId = AccountId(2)
+    const mail: Email = Email("someone@example.com")
+    io.println(f"{label(u)}")
+    io.println(domain(mail))
+    io.println(transfer(a, b, u))
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "newtype_round_trip");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout, "7\nsomeone@example.com\n1->2 by 7\n");
+}
+
+#[test]
+fn check_newtype_is_nominal_against_representation() {
+    let dir = TestDir::new("newtype_nominal_repr");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+newtype UserId = int
+
+take(id: UserId) -> int
+    return int(id)
+end
+
+main()
+    io.println(f"{take(7)}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.arg_type_mismatch"),
+        "a bare int must not pass as UserId: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_newtype_is_nominal_against_sibling_newtype() {
+    let dir = TestDir::new("newtype_nominal_sibling");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+newtype UserId = int
+newtype AccountId = int
+
+take(account: AccountId) -> int
+    return int(account)
+end
+
+main()
+    const u: UserId = UserId(1)
+    io.println(f"{take(u)}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let messages: Vec<&str> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.arg_type_mismatch"),
+        "two newtypes over int must not be interchangeable: {:?}",
+        out.diagnostics
+    );
+    // The whole point of the feature is readable domain types, so the message
+    // must name them instead of leaking internal ids.
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("AccountId") && m.contains("UserId")),
+        "diagnostic should name both newtypes: {messages:?}"
+    );
+}
+
+#[test]
+fn build_c_newtype_is_erased_entirely() {
+    let dir = TestDir::new("newtype_erased_c");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+newtype UserId = int
+
+main()
+    const u: UserId = UserId(7)
+    io.println(f"{int(u)}")
+end
+"#,
+    );
+
+    let build = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build.has_errors, "{:?}", build.diagnostics);
+    // Zero cost means zero trace: no constructor function, no wrapper struct.
+    assert!(
+        !build.c_source.contains("UserId"),
+        "newtype must leave no trace in generated C:\n{}",
+        build.c_source
+    );
+}
