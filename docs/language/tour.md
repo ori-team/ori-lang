@@ -113,10 +113,22 @@ match value
     case err(msg):
         io.eprintln(msg)
 end
+
+match score
+    case n if n >= 90:
+        io.println("A")
+    case n if n >= 80:
+        io.println("B")
+    case else:
+        io.println("C")
+end
 ```
 
 - Use **`elif`**, not `else if`.
 - Enum patterns: `case Variant` / `case Variant(fields)` — no leading `.`.
+- `case pattern if cond:` guards an arm: a false guard falls through to the
+  next case. `case else:` is the explicit fallback (guarded cases do not
+  count toward exhaustiveness).
 
 ---
 
@@ -140,6 +152,15 @@ end
 | `some(v)` / `none` | build an `optional` |
 | `try expr` | propagate `err` or `none` |
 | `match` | exhaustive handling |
+| `if some(x) = expr` | branch on presence, binding the value |
+
+```ori
+if some(user) = find_user(id)
+    greet(user)
+else
+    io.println("not found")
+end
+```
 
 Postfix `expr?` was **removed** in S3.
 
@@ -161,6 +182,9 @@ end
 
 const p: Point = Point { x: 1, y: 2 }
 const c: Color = Color.Rgb(r: 1, g: 2, b: 3)
+
+-- update expression: a new value derived from `p`; `p` is untouched
+const moved: Point = p with { x: 10 } end
 ```
 
 Traits use **`apply Type`** + **`use Trait`** (not `implement Trait for Type`).

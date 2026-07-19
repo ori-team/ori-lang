@@ -76,6 +76,19 @@ Em `const`/`var` **locais**, pode omitir o tipo se o lado direito for campo,
 - `if` / **`elif`** / `else` (não `else if`)
 - `while`, `for … in`
 - `match` com `case ok(x):` / `case err(m):` (sem `.` em variantes de enum)
+- `case padrão if condição:` — guard: se falso, cai para o próximo case;
+  `case else:` é o fallback explícito
+
+```ori
+match score
+    case n if n >= 90:
+        io.println("A")
+    case n if n >= 80:
+        io.println("B")
+    case else:
+        io.println("C")
+end
+```
 
 ---
 
@@ -98,6 +111,15 @@ end
 | `ok` / `err` | construir `result` |
 | `some` / `none` | construir `optional` |
 | `try expr` | propagar (única forma; sem `?`) |
+| `if some(x) = expr` | ramificar na presença, ligando o valor |
+
+```ori
+if some(user) = find_user(id)
+    greet(user)
+else
+    io.println("não encontrado")
+end
+```
 
 ---
 
@@ -110,6 +132,9 @@ struct Point
 end
 
 const p: Point = Point { x: 1, y: 2 }
+
+-- derivação: valor novo a partir de `p`; `p` fica intacto
+const movido: Point = p with { x: 10 } end
 ```
 
 Traits: **`apply Type`** + **`use Trait`** (não `implement … for`).

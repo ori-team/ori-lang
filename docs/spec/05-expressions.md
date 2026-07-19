@@ -403,15 +403,26 @@ iterator helper when a floating-point step is needed.
 
 ## Type Checking Expression (`is`)
 
-Tests whether a dynamic value has a specific type:
+Tests whether a value has a specific type, producing a `bool`:
 
 ```ori
-if shape is Circle
-    -- shape is narrowed to Circle in this block
+describe(s: any[Shape]) -> string
+    if s is Circle
+        return "circle"
+    end
+    return "other"
 end
 ```
 
-Valid only when the left operand is `any[Trait]` or an enum type.
+- The right operand must be a **named type** (struct or primitive). With an
+  `any[Trait]` left operand the test is answered at runtime through the
+  trait object; with a concrete left operand it is answered statically
+  (`user is User`, `1 is int`).
+- `is` does **not** narrow the value: inside the block, an `any[Trait]`
+  operand still exposes only the trait's methods.
+- Enum variants are not types — discriminate variants with `match` /
+  `case` (chapter 06). `value is Variant` is rejected with
+  `type.undefined_name`.
 
 ---
 
