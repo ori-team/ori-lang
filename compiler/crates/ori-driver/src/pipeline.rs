@@ -880,7 +880,7 @@ fn packaged_runtime_candidates(target: &str, artifact: &str) -> Vec<PathBuf> {
             }
         }
     }
-    candidates.push(workspace_root().join("runtime").join(target).join(artifact));
+    candidates.push(repo_root().join("runtime").join(target).join(artifact));
     candidates
 }
 
@@ -902,10 +902,22 @@ fn cargo_runtime_candidates(target: &str, artifact: &str) -> Vec<PathBuf> {
 fn cargo_target_dir() -> PathBuf {
     std::env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| workspace_root().join("target"))
+        .unwrap_or_else(|_| cargo_workspace_root().join("target"))
 }
 
-fn workspace_root() -> PathBuf {
+/// The Cargo workspace holding this crate (`<repo>/compiler`): where the
+/// fallback `cargo build -p ori-runtime` must run and where `target/` lives.
+fn cargo_workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
+        .to_path_buf()
+}
+
+/// The repository root (one level above the Cargo workspace): where
+/// `tools/stage_native_runtime.sh` stages `runtime/<target>/` artifacts.
+fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
@@ -916,7 +928,7 @@ fn workspace_root() -> PathBuf {
 fn build_native_runtime_with_cargo() -> Result<(), String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let mut cmd = std::process::Command::new(&cargo);
-    cmd.current_dir(workspace_root())
+    cmd.current_dir(cargo_workspace_root())
         .arg("build")
         .arg("-p")
         .arg("ori-runtime")
@@ -978,9 +990,9 @@ fn native_static_libs_for_target(target: &str) -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::{
-        missing_native_runtime_message, native_runtime_artifact_name, native_runtime_link_for,
-        native_static_libs_for_target, read_runtime_link_metadata, runtime_link_metadata_json,
-        ORI_DRIVER_ABI_VERSION, ORI_VERSION,
+        cargo_workspace_root, missing_native_runtime_message, native_runtime_artifact_name,
+        native_runtime_link_for, native_static_libs_for_target, read_runtime_link_metadata,
+        repo_root, runtime_link_metadata_json, ORI_DRIVER_ABI_VERSION, ORI_VERSION,
     };
 
     fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
@@ -992,6 +1004,24 @@ mod tests {
             .find(end)
             .unwrap_or_else(|| panic!("source marker `{end}` not found after `{start}`"));
         &tail[..end_index]
+    }
+
+    #[test]
+    fn runtime_bootstrap_roots_point_at_real_directories() {
+        // The fallback `cargo build -p ori-runtime` must run inside the Cargo
+        // workspace (`<repo>/compiler`), not the repo root — CI has no staged
+        // runtime and died with "could not find Cargo.toml" when this drifted.
+        assert!(
+            cargo_workspace_root().join("Cargo.toml").is_file(),
+            "cargo_workspace_root() must contain the workspace manifest: {}",
+            cargo_workspace_root().display()
+        );
+        // Staged runtime artifacts live at `<repo>/runtime/<target>/`.
+        assert!(
+            repo_root().join("runtime").is_dir(),
+            "repo_root() must contain the staged runtime dir: {}",
+            repo_root().display()
+        );
     }
 
     #[test]
