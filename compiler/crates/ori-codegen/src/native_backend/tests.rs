@@ -1866,7 +1866,9 @@ fn managed_type_audit_matches_native_abi_contract() {
 #[test]
 fn managed_return_retain_happens_before_scope_cleanup() {
     let source = include_str!("../native_backend.rs");
-    let emit_return = source_section(source, "fn emit_return", "fn emit_future_ready");
+    // "fn emit_return(" with the paren: a plain "fn emit_return" prefix now
+    // matches emit_return_scope_cleanup first, scanning the wrong section.
+    let emit_return = source_section(source, "fn emit_return(", "fn emit_future_ready");
     let future_return = source_section(
         emit_return,
         "if let Ty::Future(inner) = return_ty",
@@ -1874,10 +1876,13 @@ fn managed_return_retain_happens_before_scope_cleanup() {
     );
     let normal_return = source_section(emit_return, "let return_value = val", "Ok(())");
 
+    // Since LANG-MEM-4 the normal path cleans up through
+    // emit_return_scope_cleanup (transfer-aware), not the raw
+    // emit_scope_cleanup_calls_from.
     assert_order(
         normal_return,
         "self.emit_arc_retain_if_managed(&return_ty, value)?;",
-        "self.emit_scope_cleanup_calls_from(0, 0)?;",
+        "self.emit_return_scope_cleanup(transfer_var)?;",
     );
     assert_order(
         future_return,
