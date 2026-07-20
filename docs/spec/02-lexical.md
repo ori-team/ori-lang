@@ -11,7 +11,7 @@
 Ori source files are UTF-8 encoded. The `.orl` extension is canonical.
 
 A byte order mark (BOM) at the start of a file is accepted and ignored.
-A BOM anywhere else is a lexical err(`lex.unexpected_character`).
+A BOM anywhere else is a lexical error (`lex.unexpected_character`).
 
 ---
 
@@ -47,7 +47,7 @@ It spans multiple lines.
 `--|` opens a block comment. `|--` closes it. Block comments do not nest.
 The tokens `--|` and `|--` are mirrored by design — they cannot appear inside
 normal code because `|--` is not valid syntax anywhere else.
-An unclosed block comment is a lexical err(`lex.unclosed_block_comment`).
+An unclosed block comment is a lexical error (`lex.unclosed_block_comment`).
 
 ### Documentation Comments
 
@@ -93,47 +93,75 @@ implemented.
 
 ## Reserved Words
 
-The following identifiers are reserved and cannot be used as user-defined names:
+The following identifiers are reserved and cannot be used as user-defined names.
+A reserved word in identifier position is `parse.expected_identifier`.
 
 ```
-module     import     public     return     end
-const      var        if         else       elif
-while      for        in         repeat     break     continue
-match      case       loop
-struct     trait      apply      use        enum
-alias      and        or         not
-true       false      none       ok         err       some
-mut        self       attr       extern
-any        optional   result     list       map       set
-range      void
-using      check      with       then       tuple     lazy
-async      await
+module     namespace  import     as         public     func
+return     end        const      var
+if         else       elif       while      for        in
+repeat     break      continue   match      case       loop
+struct     trait      apply      use        implement  enum
+where      is         alias      newtype    do
+and        or         not        true       false      none
+success    error      some       mut        self       attr
+extern     any        using      check      with       then
+tuple      lazy       handle
+optional   result     list       map        set        range
+void       bool       string     bytes
+int        int8       int16      int32      int64
+u8         u16        u32        u64
+float      float32    float64
 ```
 
-Notes (S3 / `0.3.0`):
+### Reserved but not valid surface forms
 
-- `module`, declaration keyword `func`, `implement`, `do`, `as` (import),
-  `only` (import), and `where` (type bounds) are **not** valid surface forms.
-  Using them emits dedicated `parse.*_removed` diagnostics (see chapter 13).
-- `func` remains only as the **callable type** constructor: `func(T) -> R`.
-- `is` remains usable in type tests / bounds contexts where still implemented;
-  the removed bound form is `for T: Trait` (use `for T: Trait`).
-- `times` is contextual (see below), not reserved globally.
+Some words above are reserved precisely so that the pre-S3 spelling produces a
+**dedicated** diagnostic instead of a confusing generic one. Writing them emits
+a `parse.*_removed` error (see chapter 13):
+
+| Word | Removed form | Canonical S3 form |
+|---|---|---|
+| `namespace` | `namespace app.main` | `module app.main` |
+| `func` | declaration `func f(...)` | `f(...)` — `func` survives only as the **callable type**: `func(T) -> R` |
+| `implement` | `implement Trait for Type` | `apply Type use Trait` |
+| `do` | `do(u) => ...` | `(u) => ...` |
+| `as` | `import path as alias` | `import path = alias` |
+| `where` | `where T is Trait` | `for T: Trait` |
+
+`success` and `error` are reserved so that the pre-S3 result constructors report
+`parse.result_ctor_renamed` instead of "unknown name"; write `ok` and `err`.
+
+The remaining reserved words are live surface:
+
+| Word | Form |
+|---|---|
+| `with` | struct update expression: `base with { field: value } end` |
+| `then` | inline if expression: `if cond then a else b` (the `else` branch is mandatory — `parse.missing_else_in_if_expr`) |
+| `lazy` | the type `lazy[T]` |
+| `handle` | the type `handle[T]` |
+
+`attr` is reserved with no surface form today. It is held back so that adopting
+it later is not a breaking change.
 
 ### Contextual Keywords
 
-The following words are recognized only in specific syntactic positions and may
-be used as identifiers elsewhere:
+The following words are recognized only in specific syntactic positions and
+remain usable as ordinary identifiers elsewhere:
 
 | Word | Position |
 |---|---|
-| `c` | After `extern`, names the C ABI: `extern c` |
-| `host` | After `extern`, names the host ABI |
+| `async` | Before a function declaration: `async fetch() -> int` |
+| `await` | Before an expression inside an `async` function: `await fetch()` |
+| `ok` / `err` | `result` constructors and `match` / `if` patterns: `ok(v)`, `case err(e)` |
+| `try` | Before an expression — propagation form: `try read_config(path)` |
 | `it` | Inside an `if` value contract on a field or parameter — refers to the value being checked |
 | `times` | After `repeat expression` — optional readability word: `repeat 5 times` |
-| `try` | Before an expression — propagation form: `try read_config(path)` |
+| `c` | After `extern`, names the C ABI: `extern c` |
+| `host` | After `extern`, names the host ABI |
 | `for` | Also after a name in generic bounds: `max for T: Comparable (...)` |
 | `use` | Inside `apply Type` — starts a trait section: `use Trait` |
+| `imports` | Opens the multi-import block: `imports … end` |
 
 ---
 
@@ -284,12 +312,13 @@ yield a range of exactly one element. Current ranges use `int` endpoints only.
 ## Operators and Punctuation
 
 ```
-.   ..  ->  =>
+.   ..  ...  ->  =>  -->
 +   -   *   /   %
++=  -=  *=  /=
 ==  !=  <   <=  >   >=
 =
-?   |>
-(   )   [   ]   <   >
+|>
+(   )   [   ]   {   }
 :   ,
 @
 --|   |--
@@ -298,9 +327,10 @@ yield a range of exactly one element. Current ranges use `int` endpoints only.
 The `..` token is the range operator and slice operator.
 The `->` token separates parameter lists from return types.
 The `=>` token separates closure parameters from expression bodies.
-The `?` token is **removed** as postfix propagation on S3 (`parse.question_propagate_removed`);
-use the contextual keyword `try` before an expression.
-The `|>` token is the **pipe operator** (supported product feature; `a |> f` ≡ `f(a)`).
+The `|>` token is the **pipe operator** (`a |> f` ≡ `f(a)`).
+The `?` token is **removed** as postfix propagation on S3
+(`parse.question_propagate_removed`); use the contextual keyword `try` before
+an expression. It has no precedence level and appears nowhere in the grammar.
 The `@` token is the attribute prefix: `@test`, `@deprecated("message")`.
 The `--|` / `|--` tokens delimit block and documentation comments.
 
@@ -368,14 +398,13 @@ Operators bind in the following order (highest to lowest):
 | Level | Operators | Associativity |
 |---|---|---|
 | 1 | `.field`  `call()`  `[index]` | Left |
-| 2 | `?` | Postfix |
-| 3 | `-` (unary)  `not`  `try` | Prefix |
-| 4 | `*`  `/`  `%` | Left |
-| 5 | `+`  `-` | Left |
-| 6 | `==`  `!=`  `<`  `<=`  `>`  `>=` | Non-chainable* |
-| 7 | `and` | Left |
-| 8 | `or` | Left |
-| 9 | `\|>` | Left |
+| 2 | `-` (unary)  `not`  `try`  `await` | Prefix |
+| 3 | `*`  `/`  `%` | Left |
+| 4 | `+`  `-` | Left |
+| 5 | `==`  `!=`  `<`  `<=`  `>`  `>=` | Non-chainable* |
+| 6 | `and` | Left |
+| 7 | `or` | Left |
+| 8 | `\|>` | Left |
 
 *Comparison operators do not chain. `a < b < c` is a compile error.
 Use `a < b and b < c` instead.
@@ -386,14 +415,14 @@ Use `a < b and b < c` instead.
 
 | Category | Examples |
 |---|---|
-| Keywords | `func`, `struct`, `module`, `implement`, `loop`, `do` ... |
+| Keywords | `module`, `struct`, `trait`, `apply`, `use`, `match`, `loop` ... |
 | Identifiers | `player`, `User`, `get_name`, `_internal` |
-| Integer literals | `0`, `42`, `0xFF`, `1_000` |
-| Float literals | `3.14`, `1.0e10` |
+| Integer literals | `0`, `42`, `0xFF`, `1_000`, `42i8` |
+| Float literals | `3.14`, `1.0e10`, `3.14f32` |
 | String literals | `"hello"`, `f"hi {name}"`, `"""..."""` |
 | Byte literals | `b"data"` |
 | Boolean literals | `true`, `false` |
 | Range literals | `0..9`, `5..3` |
-| Operators | `+`, `-`, `==`, `?`, `\|>`, `..` |
-| Delimiters | `(`, `)`, `[`, `]`, `:`, `,` |
-| Comments | `-- line`, `--- block ---` |
+| Operators | `+`, `-`, `==`, `\|>`, `..`, `->`, `=>` |
+| Delimiters | `(`, `)`, `[`, `]`, `:`, `,`, `@` |
+| Comments | `-- line`, `--\| block \|--` |

@@ -157,6 +157,7 @@ These types are built into the language and require no import.
 | Type | Description |
 |---|---|
 | `list[T]` | Ordered, resizable sequence |
+| `array[T, size: N]` | Fixed-length sequence stored **inline** — see below |
 | `map[K, V]` | Key-value mapping. Current runtime supports `int`, `string`, and user-defined keys that implement `Hashable` and `Equatable` |
 | `set[T]` | Unordered unique values. Current runtime supports `int`, `string`, and user-defined elements that implement `Hashable` and `Equatable` |
 | `optional[T]` | A value that may be absent |
@@ -164,6 +165,69 @@ These types are built into the language and require no import.
 | `range[int]` | An inclusive integer range |
 | `lazy[T]` | Lazy value computed at most once through `lazy.once` and `lazy.force` |
 | `any[Trait]` | Dynamic dispatch over a trait |
+
+---
+
+## Fixed-Size Arrays (`array[T, size: N]`)
+
+`array` is the counterpart of `list`: the length is part of the **type**, so the
+elements are stored inline — in the stack frame for a local, or inside the
+owning struct for a field. No heap block, no length field, no reference
+counting.
+
+```ori
+struct Grid
+    cells: array[int, size: 4]
+    label: string
+end
+
+main()
+    var xs: array[int, size: 3] = [1, 2, 3]
+    xs[1] = 99
+
+    const g: Grid = Grid { cells: [10, 20, 30, 40], label: "grid" }
+    const third: int = g.cells[2]
+end
+```
+
+The length is written as a **named** const argument for the same reason
+`Buffer[size: 8]` is (chapter 11): a bare `array[int, 4]` puts a loose number
+between brackets, which reads as an index everywhere else in Ori. Any other name
+is `parse.expected_array_size`.
+
+### Rules
+
+- **The length is part of the identity.** `array[int, size: 4]` and
+  `array[int, size: 8]` are different types and do not substitute for each
+  other.
+- **A literal must match the length exactly** — `type.array_length_mismatch`
+  otherwise.
+- **A constant index is bounds-checked at compile time**
+  (`type.array_index_out_of_bounds`). `list` cannot do this, because its length
+  is not in the type.
+- **`ori.mem.size_of` reports the whole block**: `size_of` of an
+  `array[int, size: 4]` is 32, not the size of a pointer.
+- The length may be a `const` parameter, which is what makes const generics
+  useful:
+
+  ```ori
+  struct InlineString[const cap: int]
+      data: array[u8, size: cap]
+      len: int
+  end
+  ```
+
+### Element types must be scalars
+
+Inline storage has no reference counting, so a managed element (`string`,
+`list`, a struct, …) would be stored without a retain and released by nobody.
+Those are rejected with `type.array_element_not_inline`; use `list[T]` when the
+elements are managed.
+
+### Backend support
+
+Native only. The C debug backend declines inline arrays rather than lowering
+them to a heap list that would behave differently (chapter 14).
 
 ---
 
@@ -218,11 +282,12 @@ end
 `result[T, E]` represents an operation that may succeed or fail.
 
 ```ori
-const ok: result[int, string]  = success(42)
-const bad: result[int, string] = error("something went wrong")
+const good: result[int, string] = ok(42)
+const bad: result[int, string]  = err("something went wrong")
 ```
 
-Constructors: `success(value)` and `error(value)`.
+Constructors: `ok(value)` and `err(value)`. The pre-S3 spellings `success` /
+`error` were removed and report `parse.result_ctor_renamed`.
 
 Supported operations:
 
@@ -378,17 +443,17 @@ Rules:
 
 ## `success()` — Void Result
 
-When a function returns `result[void, E]`, `success()` with no arguments is valid:
+When a function returns `result[void, E]`, `ok()` with no arguments is valid:
 
 ```ori
 ping() -> result[void, string]
     try send_packet()
-    return success()
+    return ok()
 end
 
 start() -> result[void, string]
     try ping()
-    return success()
+    return ok()
 end
 ```
 
@@ -438,14 +503,15 @@ Structural equality rules:
 - Sets compare elements independent of insertion order.
 - Tuples and structs compare fields in declaration order.
 
-**`Equatable` override:** use `apply T` / `use Equatable` for custom equality:
+**`Equatable` override:** apply `core.Equatable` for custom equality. Import
+the trait module first — a bare `use Equatable` reports `impl.trait_not_found`:
 
 ```ori
-apply User
-    use Equatable
-        equals(other: User) -> bool
-            return self.id == other.id
-        end
+import ori.core = core
+
+apply User use core.Equatable
+    equals(self, other: User) -> bool
+        return self.id == other.id
     end
 end
 ```
@@ -471,11 +537,13 @@ const b: u8   = u8(n)         -- explicit narrowing (runtime check)
 const w: int64 = int64(n)     -- explicit widening
 ```
 
-**Conversao para string:** o compilador aceita escalares built-in, `string`
-e valores concretos definidos pelo usuario que implementam
+**String conversion:** `string(value)` accepts built-in scalars, `string`
+itself, and concrete user-defined values that implement
 `ori.core.Displayable`.
 
 ```ori
+import ori.core = core
+
 const s: string = string(42)
 const t: string = string(3.14)
 const b: string = string(true)
@@ -485,9 +553,8 @@ struct Resource
     id: int
 end
 
-apply Resource
-    use ori.core.Displayable
-        display(self) -> string
+apply Resource use core.Displayable
+    display(self) -> string
         return "Resource#" + string(self.id)
     end
 end
@@ -496,6 +563,9 @@ const r: Resource = Resource { id: 7 }
 const label: string = string(r)
 const line: string = f"value={r}"
 ```
+
+A struct **without** `Displayable` is not convertible: `string(value)` reports
+`type.arg_type_mismatch`.
 
 **Type checking at runtime** (for `any[Trait]`):
 

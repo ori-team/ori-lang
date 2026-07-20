@@ -6,6 +6,7 @@
 | Guide | EN | PT |
 |-------|----|----|
 | First project | [first-project.md](first-project.md) | [first-project.pt-BR.md](first-project.pt-BR.md) |
+| **CLI reference** (every `ori` command) | [cli-reference.md](cli-reference.md) | [cli-reference.pt-BR.md](cli-reference.pt-BR.md) |
 | Cookbook | [cookbook.md](cookbook.md) | [cookbook.pt-BR.md](cookbook.pt-BR.md) |
 | Errors / optional / result | [errors-null-void.md](errors-null-void.md) | [errors-null-void.pt-BR.md](errors-null-void.pt-BR.md) |
 | Testing | [testing.md](testing.md) | [testing.pt-BR.md](testing.pt-BR.md) |

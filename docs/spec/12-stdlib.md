@@ -121,35 +121,29 @@ Examples of hybrid parents already in this style: `ori.string`, `ori.list`,
 
 ## Current Implementation Status
 
-Implemented and importable today:
-- `ori.core`
-- `ori.io`
-- `ori.fs`
-- `ori.files` compatibility alias
-- `ori.string`
-- `ori.bytes`
-- `ori.list`
-- `ori.map`
-- `ori.set`
-- `ori.math`
-- `ori.convert`
-- `ori.mem`
-- `ori.time`
-- `ori.args`
-- `ori.config`
-- `ori.format`
-- `ori.log`
-- `ori.os`
-- `ori.random`
-- `ori.crypto`
-- `ori.iter`
-- `ori.lazy`
-- `ori.concurrent`
-- `ori.task`
-- `ori.channel`
-- `ori.atomic`
-- `ori.Error`
-- `ori.json`
+Every module below is importable today. The list is verified against
+`is_implemented_stdlib_module` in `compiler/crates/ori-types/src/stdlib.rs`;
+`implemented_stdlib_modules()` returns it programmatically.
+
+| Group | Modules |
+|---|---|
+| Core / runtime | `ori.core`, `ori.Error`, `ori.mem`, `ori.convert` |
+| I/O and system | `ori.io`, `ori.fs`, `ori.files` *(compat alias for `ori.fs`)*, `ori.path`, `ori.os`, `ori.process`, `ori.args`, `ori.config`, `ori.log` |
+| Text and bytes | `ori.string`, `ori.bytes`, `ori.buffer`, `ori.format`, `ori.json` |
+| Collections | `ori.list`, `ori.map`, `ori.set`, `ori.iter` |
+| Data structures | `ori.stack`, `ori.queue`, `ori.deque`, `ori.linked_list`, `ori.doubly_linked_list`, `ori.hash_table`, `ori.tree`, `ori.graph`, `ori.heap` |
+| Numeric and time | `ori.math`, `ori.random`, `ori.time` |
+| Concurrency | `ori.concurrent`, `ori.task`, `ori.channel`, `ori.atomic`, `ori.lazy` |
+| Network | `ori.net` |
+| Other | `ori.crypto`, `ori.validate`, `ori.test` |
+
+Modules with a `.orl` source live in `stdlib/`; the rest (`ori.core`,
+`ori.mem`, `ori.atomic`, `ori.channel`, `ori.task`, `ori.lazy`, `ori.files`)
+are Layer 1 and implemented in the runtime with no `.orl` file.
+
+The sections later in this chapter do **not** cover every module. Data
+structures, `ori.path`, `ori.process`, `ori.buffer`, and `ori.validate` are
+importable but documented only by their `.orl` source and `ori doc`.
 
 Hybrid modules expose native runtime functions and selected `.orl` helpers
 under the **same** public module `ori.X`. Prefer:
@@ -163,13 +157,11 @@ import ori.string = str   -- alias; call str.is_empty when the parent defines it
 Compatibility imports such as `import ori.fs.utils = fu` still work; prefer
 `ori.fs` in new code.
 
-Partially importable modules:
-- `ori.test`
-
 No stdlib module listed above is intentionally blocked at import time. Importing
 a planned future module is a compile-time error with
 `bind.stdlib_module_unavailable`. Importing an unknown `ori.*` module is a
-compile-time error with `bind.stdlib_module_unknown`.
+compile-time error with `bind.stdlib_module_unknown` — including a submodule
+path that is not itself registered, such as `ori.io.sub`.
 
 ---
 
@@ -227,21 +219,40 @@ For diagnostics with messages, use `ori.string.parse_int` and
 `Equatable`, `Comparable`, `Hashable`, `Disposable`, `Iterable`, `Default`,
 `Error`, `Cloneable`, `Transferable`
 
-Status: these names are registered as real `ori.core` traits. `Disposable`
-is enforced by `using`. `Transferable` is enforced for values that cross task
-or channel boundaries. `Addable`, `Subtractable`, `Multiplicable`, `Divisible`,
-`Equatable`, and `Comparable` are used by operator overloading for user-defined
-concrete types.
-`Iterable` is recognized by `for` when the implementation exposes
-`mut next() -> optional[T]`. `Displayable` is used by `string(value)` and
-interpolated strings for user-defined concrete values that provide
-`func display(self) -> string`.
+All fourteen names are registered as real `ori.core` traits, but they fall into
+two groups that behave very differently.
+
+**Traits with registered method signatures.** Implementing one of these makes
+the method callable on the value (`value.display()`):
+
+| Trait | Method | Used by |
+|---|---|---|
+| `Displayable` | `display(self) -> string` | `string(value)` and f-string interpolation |
+| `Error` | `message(self) -> string` | error types (chapter 09) |
+| `Disposable` | `mut dispose(self)` | `using` |
+| `Equatable`, `Comparable` | comparison methods | operator overloading, `for T:` bounds |
+| `Addable`, `Subtractable`, `Multiplicable`, `Divisible` | arithmetic methods | operator overloading |
+
+**Marker traits with no registered methods.** A type may `use` these, but any
+method written inside that section is **not** registered as a trait method —
+calling it reports `type.no_such_field`:
+
+| Trait | Effect today |
+|---|---|
+| `Iterable` | Recognized by `for` when the type exposes `mut next() -> optional[T]` — checked structurally, not through the trait table (`type.iterable_next_missing`) |
+| `Transferable` | Enforced for values crossing task or channel boundaries (`concurrency.not_transferable`) |
+| `Hashable` | Checked structurally for `map` keys and `set` elements |
+| `Cloneable` | **Inert.** `clone(self) -> Self` needs `Self` substituted at the call site; without it `a.clone()` would report `expected Config, found Cloneable` |
+| `Default` | **Inert.** `default() -> Self` needs a trait method with no receiver, which is not supported |
+
+If you need a callable contract that a marker does not provide (cloning, a
+default value), declare your own trait.
 
 ---
 
 ## `ori.io` — Basic Input/Output
 
-```ori
+```text
 import ori.io = io
 
 io.print(value: string)                              -> void
@@ -275,7 +286,7 @@ return errors.
 
 ### Layer 2 helpers (on `ori.io`)
 
-```ori
+```text
 import ori.io = io
 
 io.read_text(input: io.Input, max_chars: int)       -> result[optional[string], string]
@@ -288,7 +299,7 @@ Nested `ori.io.utils` remains a silent compat module; prefer `ori.io`.
 
 ## `ori.fs` — File System
 
-```ori
+```text
 import ori.fs = fs
 
 fs.read_text(path: string)             -> result[string, string]
@@ -315,7 +326,7 @@ compatibility alias for the same functions.
 
 Additional `.orl` helpers are available directly under `ori.fs`:
 
-```ori
+```text
 import ori.fs (read_text_or, remove_file)
 
 read_text_or(path: string, fallback: string) -> string
@@ -340,7 +351,7 @@ file-handle APIs are missing — see **Dedicated file handle** below.
 
 Status: **implemented** in the native runtime.
 
-```ori
+```text
 import ori.fs = fs
 
 fs.open_read(path: string)  -> result[fs.File, string]
@@ -356,7 +367,7 @@ fs.close(file: fs.File)                  -> void
 
 ## `ori.string` — String Operations
 
-```ori
+```text
 import ori.string = string
 
 string.len(s: string)                         -> int
@@ -381,8 +392,8 @@ string.from_bytes(b: bytes)                   -> result[string, string]
 
 Additional `.orl` helpers are available directly under `ori.string`:
 
-```ori
-import ori.string (is_empty, truncate as cut)
+```text
+import ori.string (is_empty, truncate = cut)
 
 is_empty(s: string)                           -> bool
 blank(s: string)                              -> bool
@@ -397,7 +408,7 @@ kept for optional-style parsing where invalid input should become `none`.
 
 ## `ori.convert` - Type Conversion
 
-```ori
+```text
 import ori.convert = conv
 
 conv.float_to_string(n: float)        -> string
@@ -414,7 +425,7 @@ today (`float_to_string`, `bool_to_string`, `string_to_int`,
 
 ## `ori.bytes` — Byte Operations
 
-```ori
+```text
 import ori.bytes = bytes
 
 bytes.len(b: bytes)                          -> int
@@ -437,7 +448,7 @@ user-defined values that satisfy the checker rules for `Hashable` and
 
 `ori.list` also exposes small `.orl` helpers directly:
 
-```ori
+```text
 import ori.list (singleton, sum_int)
 
 get_or[T](items: list[T], index: int, fallback: T) -> T
@@ -449,7 +460,7 @@ binary_search_int(items: list[int], target: int) -> int
 all_equal_int(items: list[int], expected: int) -> bool
 ```
 
-```ori
+```text
 import ori.deque = deque
 import ori.doubly_linked_list = dll
 import ori.graph = graph
@@ -733,7 +744,7 @@ The C backend keeps the original `list[int]` coverage for the full iterator
 surface, with additional string-specialized `sort`, `unique`, and `group_by`
 helpers.
 
-```ori
+```text
 import ori.iter = iter
 
 iter.map[T, R](values: list[T], mapper: func(T) -> R) -> list[R]
@@ -793,7 +804,7 @@ Current implementation status:
 
 ## `ori.math` — Mathematics
 
-```ori
+```text
 import ori.math = math
 
 math.abs(x: int) -> int
@@ -826,7 +837,7 @@ call should use the float overload.
 
 ## `ori.mem` - Memory Inspection
 
-```ori
+```text
 import ori.mem = mem
 
 mem.size_of(value) -> int
@@ -839,7 +850,7 @@ The current parser does not support type-argument call syntax such as
 
 ## `ori.time` - Time
 
-```ori
+```text
 import ori.time = time
 import ori.time (Instant, Duration, instant_now, duration_seconds)
 
@@ -872,7 +883,7 @@ runtime ABI.
 
 ## `ori.format` - Presentation Formatting
 
-```ori
+```text
 import ori.format = format
 
 format.number(value: float, decimals: int) -> string
@@ -902,7 +913,7 @@ blocked.
 
 ## `ori.random` — Random Numbers
 
-```ori
+```text
 import ori.random = random
 
 random.int(min: int, max: int) -> int       -- inclusive range
@@ -982,7 +993,7 @@ const value: int = lz.force(delayed)
 
 Functions:
 
-```ori
+```text
 lazy.once[T](thunk: func() -> T) -> lazy[T]
 lazy.force[T](value: lazy[T]) -> T
 ```
@@ -1037,7 +1048,7 @@ Async bodies outside the current subset fail with `backend.native_unsupported`
 before Cranelift. `task.block_on` stays available only as an explicit sync
 bridge.
 
-```ori
+```text
 import ori.task = task
 
 task.spawn[T](work: func() -> T) -> task.Job[T]
@@ -1088,7 +1099,7 @@ generated async frame reaches its terminal state.
 
 Status: implemented in the native runtime with real synchronization.
 
-```ori
+```text
 import ori.channel = channel
 
 channel.create[T]() -> channel.Channel[T]
@@ -1115,7 +1126,7 @@ The error values are opaque handles: `channel.SendError` and
 
 Status: implemented in the native runtime.
 
-```ori
+```text
 import ori.atomic = atomic
 
 atomic.new(value: int) -> atomic.AtomicInt
@@ -1208,7 +1219,7 @@ standard-library features when generated C would not preserve Ori semantics.
 
 ## `ori.net` — Networking (TCP/TLS/UDP)
 
-```ori
+```text
 import ori.net = net
 
 net.connect(host, port, timeout_ms) -> result[net.Connection, string]
@@ -1257,7 +1268,7 @@ Current implementation notes:
 
 ## `ori.os` — Operating System
 
-```ori
+```text
 import ori.os = os
 
 os.args() -> list[string]        -- command-line arguments
@@ -1283,7 +1294,7 @@ Current implementation notes:
 
 ## `ori.args` - CLI Arguments
 
-```ori
+```text
 import ori.args = args
 
 args.all() -> list[string]
@@ -1314,7 +1325,7 @@ The first version is intentionally simple and CLI-oriented. `info`, `warn`, and
 
 ## `ori.config` - Local Config Helpers
 
-```ori
+```text
 import ori.config = config
 
 config.read_text(path: string) -> result[string, string]

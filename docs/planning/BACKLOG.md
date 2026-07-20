@@ -2,7 +2,8 @@
 
 > **This file is the only active “what remains to implement” list.**  
 > Surface baseline: **S3 `0.3.0`** + inference B **`0.3.1`** + package **`0.3.4`**.  
-> Last consolidated: **2026-07-14** (LANG-PERF-2 closed; living QA scripts/skill landed).
+> Last consolidated: **2026-07-20** — §2 reopened with the real remaining work
+> (every row verified against the compiler, not copied from a plan).
 
 ---
 
@@ -60,6 +61,51 @@
 ---
 
 ## 2. Active work (language-first)
+
+### Open — consolidated 2026-07-20
+
+Everything below `LANG-CLI-1` was `done`, which left this file reading as "no
+work remains". These rows restore the real open list: items from
+[`roadmap-maturidade-v0.4-v0.5.md`](roadmap-maturidade-v0.4-v0.5.md) plus gaps
+found by probing the compiler during the 2026-07-19/20 docs sweep. Each was
+verified against the binary, not copied from a plan.
+
+| ID | Item | P | D | Status | What it means |
+|----|------|---|---|--------|---------------|
+| **LANG-TY-1** | Fixed-size arrays | 1 | M | **done** | **2026-07-20**: `array[T, size: N]`, stored inline (stack slot for locals, inline bytes inside structs). Surface chosen to match const generics rather than Rust's `[int; 4]`, which would have introduced `;`. Length may be a `const` parameter, so `InlineString[const cap: int]` works. Constant indices are bounds-checked at compile time. Managed element types rejected (`type.array_element_not_inline`) because inline storage has no ARC. Native backend only. Found and fixed a pre-existing bug on the way — see **BUG-MAPSET** |
+| **LANG-TY-2** | Applicable generic traits | 2 | M | todo | `trait Container[Item]` declares fine, but `apply X use Container[int]` does not parse and bare `use Container` leaves the parameter unbound (`impl.wrong_signature`). Workaround today: one concrete trait per element type |
+| **LANG-TY-3** | `Cloneable` / `Default` with real methods | 2 | M | todo | Both are registered core traits with **zero** methods. `clone(self) -> Self` needs `Self` substituted at the call site; `default() -> Self` also needs a receiver-less trait method. Attempted 2026-07-20 and reverted rather than ship half-working |
+| **LANG-TY-4** | `comptime` | 3 | L | todo | Run code at compile time (build tables, validate constants) without macros |
+| **LANG-TY-5** | Generators / `yield` | 3 | L | todo | Produce values on demand instead of materialising the whole list |
+| **LANG-TY-6** | Explicit `move` | 3 | M | todo | Transfer ownership without a refcount bump |
+| **LANG-TY-7** | Custom destructors | 3 | M | todo | Run user code when a value dies (close a socket, free an external resource) |
+| **LANG-MEM-10** | Static retain/release elision | 3 | L | **re-scoped 2026-07-20** | **Measured before implementing, and the premise did not hold.** `ORI_DUMP_ARC` on a managed-temporary hot loop shows `release=2, retain=0` — there is no retain/release *pair* to elide. LANG-MEM-4 had already driven retains to the minimum. The real cost is the **allocation registry**: every managed object takes the ARC mutex and touches a `HashMap` on alloc and on free. Dropping one string took **six** mutex acquisitions. Consolidating `ori_arc_release` into one critical section landed **19% off** a 2M-iteration loop (360 ns → 290 ns per managed temporary). What remains of the original idea is low-value; the follow-up with headroom is **LANG-MEM-11** |
+| **LANG-MEM-11b** | Cheaper ARC bookkeeping | 1 | M | **done** | **2026-07-20**: two ABI-neutral changes. (1) `ori_arc_release` consolidated from up to six mutex acquisitions into one. (2) The ARC maps are keyed by pointers the runtime allocated itself, so the standard library's SipHash buys nothing; switched to the `FxHasher` multiply-rotate. Together: **354 ns → 184 ns** per managed temporary (48% of ARC overhead), and `tools/bench/arc_list_churn.orl` runs **39%** faster. Regression: 2 new tests in `memory_arc.rs` |
+| **LANG-MEM-11c** | Skip registration for acyclic allocations | 4 | L | **not worth it — measured 2026-07-20** | Isolated by making `register_allocation` a no-op behind a one-shot flag: the whole map (insert + lookup + remove) is **~32 ns of 188 ns, 17%**. The other 83% is `malloc` + the concat copy. Removing the map costs the foreign-pointer safety property that `@c_export` string parameters depend on (spec 19 §8.3b), and a header magic would dereference `ptr - 16` on memory the runtime does not own. **Do not spend the safety budget for 17%.** |
+| **LANG-PERF-4b** | Free list for short-lived allocations | 2 | M | todo | With the map ruled out, the remaining cost is `malloc`/`free` per managed temporary. A size-classed free list inside `ori_alloc` would reuse recently freed blocks, keeping the payload pointer representation and the registry exactly as they are — no ABI change, no safety change. This is the honest replacement for the SSO idea below |
+| **LANG-MEM-11** | Acyclic type marking | 2 | M | todo | Types that provably cannot form a cycle skip the collector's suspect registry |
+| **LANG-PERF-4** | Small String Optimization | 4 | L | **blocked — do not attempt as specified** | An Ori `string` value **is** a NUL-terminated `const char*`: 50 runtime functions take it as `*const u8` and hand it to `CStr::from_ptr`, and spec 19 §8.3b makes that representation a normative part of `@c_export`. Storing short strings inline needs pointer tagging, which breaks every one of those call sites and the C boundary, and would require an **ABI bump**. Use **LANG-PERF-4b** instead |
+| **LANG-PERF-5** | Zero-copy slices | 2 | M | todo | `xs[1..2]` **copies** today. A slice would be a window over the original |
+| **LANG-PERF-6** | Scoped arenas | 3 | L | todo | Allocate a whole phase together and release it in one step (frame loops) |
+| **LANG-FFI-1** | `@c_export` for aggregates | 2 | L | todo | Structs, `list`, `map`, `optional`, `result` across the C boundary. Needs a stable C layout added to ABI-1. Scalars and `string` already cross (2026-07-20) |
+| **LANG-FFI-2** | Generated `.h` header | 3 | M | todo | Emit the C header from the exported functions instead of hand-writing it |
+| **DX-DWARF** | DWARF debug symbols | 2 | L | todo | Step through Ori in GDB/LLDB. Today the only tool is `io.println`; the existing `ori_debug_line` is a cooperative probe, not debug info |
+| **DX-INCR** | Incremental compilation | 3 | L | todo | Rebuild only what changed; every build is currently full |
+| **PKG-LOCK** | Dependency lockfile | 3 | M | todo | Pin exact versions for reproducible builds |
+| **PKG-REG** | Official registry | 4 | L | shelved | Only `ORI_REGISTRY` pointing at your own endpoint today |
+| **PKG-NS** | Cross-package namespace isolation | 3 | M | todo | Keep two packages from colliding on module paths |
+| **BACK-C-1** | C backend parity | 3 | L | todo | Rejects async, concurrency, and `ori.iter` with `backend.c_unsupported`. It is a debug aid, not a semantic reference — closing this is optional |
+| **BUG-MAPSET** | `m["k"] = v` silently did nothing | 1 | S | **done** | **2026-07-20**: the index-assignment codegen chain handled only `list` and fell through with no store and no error, so map index assignment compiled and did nothing. Implemented for `map`, and the fallthrough is now a hard error so the class cannot recur. Regression: `compile_runs_map_index_assignment` |
+| **DIAG-DEFID** | `<def DefId(N)>` in backend errors | 3 | S | todo | Codegen messages still print internal ids; the checker stopped doing so on 2026-07-20. Backends have no `DefMap` in reach |
+
+**Rejected by decision — do not reopen without a new ADR:**
+
+| ID | Item | Why |
+|----|------|-----|
+| **LANG-TY-HKT** | Higher-kinded types | A parameter standing for `list`/`optional` itself. Declaration parses but no implementation can satisfy it. Rejected 2026-07-20: three simultaneous abstractions in one signature is the opposite of reading-first; Rust, Go, and Zig all decline it; needs higher-order unification. Use concrete traits or `alias` in a `use` section |
+| **LANG-MEM-6** | COW collections | Would flip observable aliasing of collection mutators (FREEZE-1 breaker) with no measured perf pressure. ADR: [`adr-arc-cow-collections.md`](adr-arc-cow-collections.md) |
+
+### Closed earlier
 
 | ID | Item | P | D | Status | Notes |
 |----|------|---|---|--------|-------|

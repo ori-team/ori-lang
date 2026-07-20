@@ -1,16 +1,21 @@
 # Specs
 
 > Audience: maintainer, contributor  
-> Status: **current (2026-07-13)**  
+> Status: **current (2026-07-20)** — swept against the compiler at `0.3.x` HEAD  
 > Surface: **S3** (`0.3.0`) + local inference **`0.3.1` / option B** + pipe `|>`  
-> Package / workspace living line: **`0.3.4`** (Linux tar.gz + deb; FREEZE-1)  
+> Post-FREEZE-1 additions: `newtype`, match expressions, or-patterns, `if ok` /
+> `if err`, destructuring bindings, associated type aliases, const generics with
+> named arguments  
 > Milestones closed: **M2** stdlib · **M3** ABI · **M1** Rust-free install path  
-> Language-first implementation queue: **empty** (see [`../planning/BACKLOG.md`](../planning/BACKLOG.md))  
 > QA: skill **`ori-lang-qa`** · stages `tools/qa/` · matrix [`../planning/qa/test-matrix-ori.md`](../planning/qa/test-matrix-ori.md)
 
 This directory contains **normative** implementation-facing specifications for
-Ori. Language is **English only** (single source of truth). User tutorials live
-under [../guides/](../guides/) and [../language/](../language/) (EN + PT).
+Ori. Chapters 01–19 are **English only** (single source of truth).
+[`00-manifesto.md`](00-manifesto.md) is the one deliberate exception: it states
+identity and purpose for a Brazilian project and stays in Portuguese.
+
+User tutorials live under [../guides/](../guides/) and
+[../language/](../language/) (EN + PT).
 
 Product docs index: [../README.md](../README.md).
 
@@ -34,6 +39,8 @@ Use:
   competition.**
 - `01-overview.md` through `13-error-catalog.md` for the language contract
   under the **S3** surface (plus inference B and pipe as living features).
+  **There is no chapter 03** — a standalone EBNF grammar was planned and never
+  written; chapters 02 and 04–08 define the grammar between them.
 - `04-types.md` / `05-expressions.md` / `06-statements.md` for local inference
   rules and the pipe operator.
 - `13-error-catalog.md` for **emitted** diagnostics, including pre-S3 form

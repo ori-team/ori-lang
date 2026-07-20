@@ -354,7 +354,8 @@ case East or West:
 end
 ```
 
-- `case a or b:` matches when any alternative matches.
+- `case a or b:` matches when any alternative matches. `or` is the **only**
+  separator — `case a, b:` is a parse error (`expected ':', found ','`).
 - Alternatives **may not bind values** (`match.or_pattern_binding`): each
   branch would otherwise have to bind the same names at the same types.
   Use one `case` per alternative, or a guard, when the payload is needed.
@@ -474,11 +475,11 @@ The most common use is a function call with side effects:
 ```ori
 io.print("hello")
 counter.increment()
-list.push(item)
+lists.push(items, item)
 ```
 
 If a function returns `result[T, E]` and the result is discarded without
-propagation or handling, the compiler emits a warning: `unused result`.
+propagation or handling, the compiler emits the warning `type.unused_result`.
 
 ---
 

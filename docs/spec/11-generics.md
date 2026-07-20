@@ -29,8 +29,30 @@ first[T](items: list[T]) -> optional[T]
 end
 ```
 
-Type parameters are declared in `[T]` after the name (or via `for T: Trait` bounds).
+Type parameters are declared in `[T]` after the name.
 Multiple parameters: `[T, U]`, `[Key, Value]`.
+
+A function declares its type parameters in **exactly one** of two ways, never
+both:
+
+| Form | Declares | Bounds |
+|---|---|---|
+| `name[T, U](params)` | `T`, `U` in the bracket list | none |
+| `name for T: Trait (params)` | `T` in the bound clause | `T: Trait` |
+
+Mixing them is a parse error — `name for T: Trait [T, U](params)` reports
+`parse.unexpected_token` (`expected '(', found '['`). When a bound clause is
+present, **every** type parameter must be named in it:
+
+```ori
+-- Correct: both parameters declared by the bound clause.
+pick for K: Comparable, V: Displayable (k: K, v: V) -> K
+    return k
+end
+```
+
+Naming a type parameter the bound clause does not declare is
+`type.undefined_name`.
 
 ---
 
@@ -60,6 +82,8 @@ end
 
 ## Generic Traits
 
+A trait may be declared with type parameters:
+
 ```ori
 trait Container[Item]
     mut add(item: Item)
@@ -67,6 +91,10 @@ trait Container[Item]
     length() -> int
 end
 ```
+
+> **Declaration-only today.** No `apply` block can implement a generic trait —
+> `use Trait[Arg]` does not parse, and bare `use Trait` leaves the parameter
+> unbound. See "Not supported" at the end of this chapter.
 
 ---
 
@@ -85,11 +113,16 @@ end
 
 ### Multiple Constraints
 
+Constraints are separated by commas. Each entry names a type parameter and the
+trait it must satisfy; the same parameter may appear more than once:
+
 ```ori
-sorted_keys for K: Hashable, K: Comparable [K, V](m: map[K, V]) -> list[K]
+sorted_keys for K: Hashable, K: Comparable, V: Displayable (m: map[K, V]) -> list[K]
     -- ...
 end
 ```
+
+There is no separate `[K, V]` list — see the table above.
 
 ### Inline Value Contracts on Parameters
 
@@ -105,10 +138,11 @@ This is a value contract (checked at runtime), not a type constraint.
 ### Negative Constraints
 
 ```ori
-raw_copy for T: not Disposable [T](src: T, dst: T)
+raw_copy for T: not Disposable (src: T, dst: T)
 ```
 
-Prevents the function from being called with managed/resource types.
+Prevents the function from being called with managed/resource types. Violations
+report `generic.constraint_not_satisfied`.
 
 ---
 
@@ -218,17 +252,18 @@ trait Cloneable
     clone() -> Self
 end
 
-apply Config
-    use Cloneable
-        clone() -> Config
-            return Config {
-                timeout: self.timeout,
-                retries: self.retries
-            }
-        end
+apply Config use Cloneable
+    clone(self) -> Config
+        return Config {
+            timeout: self.timeout,
+            retries: self.retries
+        }
     end
 end
 ```
+
+The compact header is required here: the block holds one trait and nothing else
+(chapter 08). `self` is an explicit first parameter on the implementing method.
 
 ---
 
@@ -243,19 +278,47 @@ alias Callback[T] = func(T) -> bool
 
 ## Limitations in v1
 
-The following generic features are **supported** in the current compiler.
+### Associated types
 
-### Associated types in traits
-
-A trait may declare an associated `type` member that is resolved at
-monomorphization time:
+Ori's associated types are **implementation-side type aliases scoped to a `use`
+section**. They are a naming tool for the implementer, not an abstract member
+declared by the trait:
 
 ```ori
 trait Container
-    type Item
-    get(self) -> Item
+    first_item(self) -> string
+    size(self) -> int
+end
+
+apply Bag use Container
+    alias Item = string
+    alias Count = int
+
+    first_item(self) -> Item
+        return self.label
+    end
+
+    size(self) -> Count
+        return self.count
+    end
 end
 ```
+
+Rules:
+
+- Declared with `alias Name = Type` **inside** a `use` section. The trait itself
+  declares concrete signatures and knows nothing about the alias.
+- Transparent: `Item` *is* `string`. An alias that resolves to a type the trait
+  signature does not accept is `impl.wrong_signature` — the alias cannot widen
+  the contract, only rename it.
+- Scoped to its own `use` section. The name is undefined in a sibling `use`, in
+  free members of the same `apply`, and outside the block (`type.undefined_name`).
+- The pre-S3 spelling `type Name = …` is rejected with
+  `parse.associated_type_keyword_removed`. `ori migrate-syntax` rewrites it.
+
+> **Not** the Rust/Swift feature of the same name. A trait cannot declare an
+> abstract associated type that each implementer fills in with a different
+> concrete type; the trait signature is fixed. See "Not supported" below.
 
 ### Const generics
 
@@ -292,31 +355,72 @@ Rules:
   reaches runtime. (Fixed-size arrays, which would consume it, do not exist
   yet.)
 
-### Higher-kinded types (HKT)
+### Not supported
 
-Type constructors may appear as type parameters in constrained forms:
+#### Higher-kinded types (HKT) — out of scope
 
-```ori
-trait Functor<F[_]>
-    fmap<A, B>(fa: F[A], f: func(A) -> B) -> F[B]
-end
-```
+A type parameter that ranges over **type constructors** (`F` standing for
+`list`, `optional`, … so that `F[A]` is a type) is **not** a planned Ori
+feature. The declaration syntax `trait Functor[F[_]]` currently parses, but no
+implementation can satisfy it: the checker compares `F[int]` against the
+implementer's `Wrapper[int]` literally and reports `impl.wrong_signature`.
+Treat the parse acceptance as a wart, not a contract.
 
-### Not supported in v1
+This is a deliberate rejection, not a missing milestone:
 
-- **Variadic type parameters**: `tuple[T...]` — not supported; use
-  `tuple[A, B, ...]` with fixed arity.
+- A signature like `map[A, B](self: F[A], f: func(A) -> B) -> F[B]` holds three
+  simultaneous abstractions, none concrete. That is the opposite of the
+  reading-first goal in [`00-manifesto.md`](00-manifesto.md).
+- Rust, Go, and Zig all decline full HKT; Swift covers the practical cases with
+  associated types instead.
+- Implementing it requires higher-order unification (substituting a
+  *constructor* for a parameter), a substantially larger type-system change than
+  anything else in this chapter, benefiting library authors rather than
+  application readers.
 
-These may be extended in future versions via explicit design decisions.
+Use a concrete trait per container, or the alias mechanism above.
+
+#### Generic traits are declaration-only
+
+A trait may be *declared* with type parameters (`trait Container[Item]`), but it
+**cannot be applied**:
+
+- `apply IntStack use Stackable[int]` — `parse.expected_identifier`; `use`
+  accepts a bare trait name, with no type arguments.
+- `apply IntStack use Stackable` with concrete method types —
+  `impl.wrong_signature`, because the trait parameter is never bound.
+
+Until `use Trait[Arg]` is implemented, declare one concrete trait per element
+type.
+
+#### Variadic type parameters
+
+`tuple[T...]` is not supported (`parse.unexpected_token`); use `tuple[A, B]`
+with fixed arity.
 
 ### Sanity tests
 
-The syntax above is verified by `ori check` in `ori_spec.rs`:
+The forms above are verified in
+`compiler/crates/ori-driver/tests/ori_spec.rs`:
 
-- `generic_accepts_associated_type_in_trait` — `type Item` in a trait.
-- `generic_accepts_const_generic_param` — `struct Matrix<const N: int>`.
-- `generic_accepts_hkt` — `trait Functor<F[_]>`.
-- `generic_accepts_where_constraint` — `for T: Comparable`.
-- `generic_accepts_negative_constraint` — `for T: not Disposable`.
-- `generic_accepts_generic_struct` — `struct Pair[A, B]`.
-- `generic_accepts_type_inference` — type argument inferred from call site.
+| Test | Covers |
+|---|---|
+| `generic_accepts_generic_struct` | `struct Pair[A, B]` |
+| `generic_accepts_type_inference` | type argument inferred at the call site |
+| `generic_accepts_where_constraint` | `for T: Comparable` |
+| `generic_rejects_constraint_not_satisfied` | bound violation is an error |
+| `generic_accepts_negative_constraint` | `for T: not Disposable` |
+| `generic_rejects_negative_constraint_violated` | negative bound violation |
+| `generic_generic_struct_types_are_distinct` | `Pair[int, int]` ≠ `Pair[int, string]` |
+| `compile_runs_associated_types_in_apply_use` | `alias Item = string` end-to-end |
+| `check_rejects_associated_type_that_breaks_the_trait_signature` | alias cannot widen a contract |
+| `check_keeps_associated_types_scoped_to_their_use_section` | alias scoping |
+| `compile_runs_const_generics_with_named_arguments` | `Buffer[size: 8]` end-to-end |
+| `check_treats_different_const_arguments_as_different_types` | const args are part of identity |
+| `check_rejects_a_non_integer_const_argument` | non-integer const argument |
+
+> Two earlier tests, `generic_accepts_hkt` and
+> `generic_accepts_associated_type_in_trait`, were **removed**: both asserted
+> only that a *declaration* parsed, so they passed while neither feature could
+> be implemented. A test in this chapter must exercise an implementation, not
+> just a declaration.

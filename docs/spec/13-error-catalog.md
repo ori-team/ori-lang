@@ -91,7 +91,8 @@ when the compiler starts producing it.
 | `parse.implement_removed` | error | `implement Trait for Type` was removed; use `apply Type` with `use Trait` |
 | `parse.apply_trait_to_removed` | error | `apply Trait to Type` / `apply Trait for Type` was removed; use `apply Type` with `use Trait` |
 | `parse.apply_member_after_use` | error | Free methods/binds appear after a `use Trait` section (order is free members, then `use`) |
-| `parse.expected_const_arg_value` | error | A named type argument (`size: 8`) was given something other than an integer constant |
+| `parse.expected_const_arg_value` | error | A named type argument was given neither an integer constant nor a `const` parameter |
+| `parse.expected_array_size` | error | `array[…]` is missing its length, or names it something other than `size`: write `array[int, size: 4]` |
 | `parse.associated_type_keyword_removed` | error | `type Name = …` for an associated type was removed; write `alias Name = …` |
 | `apply.redundant_use_block` | error | An `apply` block whose whole body is one `use` section; write the compact header `apply Type use Trait` |
 | `parse.poetic_call_nested` | error | Nested poetic call (juxtaposition of calls without parentheses) is not allowed; at most one poetic verb per expression |
@@ -160,6 +161,11 @@ when the compiler starts producing it.
 | `type.set_element_mismatch` | error | Set literal elements have incompatible types |
 | `type.struct_literal_named_fields_required` | error | Struct construction requires named fields |
 | `type.tuple_index_on_non_tuple` | error | Tuple index access was used on a non-tuple value |
+| `type.array_index_out_of_bounds` | error | A constant index is past the end of an `array`. The length is part of the type, so this is caught at compile time |
+| `type.array_length_mismatch` | error | An array literal has a different number of elements than its declared length |
+| `type.array_element_not_inline` | error | An `array` element type is reference counted. Elements are stored inline with no ARC, so only scalars are allowed; use `list[T]` for managed values |
+| `type.negative_array_size` | error | `array[T, size: N]` was given a negative length |
+| `type.undefined_const_param` | error | A const type argument names a parameter that is not in scope (`size: cap` with no `const cap: int`) |
 | `type.tuple_index_out_of_bounds` | error | Tuple index is outside the tuple arity |
 | `type.type_mismatch` | error | Value type does not match the expected type |
 | `type.unused_result` | warning | `result[T, E]` expression value is discarded |
@@ -181,6 +187,19 @@ when the compiler starts producing it.
 | Code | Severity | Description |
 |---|---|---|
 | `contract.ok_void_mismatch` | error | `ok()` without a payload is used where the result success type is not `void` |
+| `contract.param_violation` | runtime abort | A parameter `if` contract was false at call time. Names the parameter and the function |
+| `contract.field_violation` | runtime abort | A struct field `if` contract was false when the field was written. Names the field |
+
+The two `*_violation` codes are **runtime**, not compile-time: they are printed
+by `ori_panic` on stderr and the process aborts. They carry no source span, so
+`ori explain` has no entry for them.
+
+```text
+ori panic: contract.param_violation: parameter `value` of `app.main.scaled` broke its `if` contract
+```
+
+Regression tests: `compile_reports_violated_param_contract`,
+`compile_reports_violated_field_contract`, `compile_runs_when_contracts_hold`.
 
 ### `async`
 
@@ -243,7 +262,7 @@ when the compiler starts producing it.
 | `attr.c_export_not_public` | error | `@c_export` used on a non-`public` function |
 | `attr.c_export_async` | error | `@c_export` used on an async function |
 | `attr.c_export_generic` | error | `@c_export` used on a generic function |
-| `attr.c_export_bad_type` | error | `@c_export` parameter or return type is not FFI-safe for phase 1 |
+| `attr.c_export_bad_type` | error | `@c_export` parameter or return type is not FFI-safe. Scalars and `string` are accepted; aggregates are not (see [19-abi.md](19-abi.md) §8.3b) |
 
 ### `doc`
 
@@ -272,6 +291,38 @@ aliases) use the `bind.*` prefix instead — see the `bind` section below.
 | Code | Severity | Description |
 |---|---|---|
 | `control.loop_required` | error | `break` or `continue` is used outside a loop |
+| `control.unconditional_recursion` | error | Every path through a function calls that same function, so it can never return |
+
+`control.unconditional_recursion` catches one decidable shape, not
+non-termination in general (that is the halting problem). It fires only when
+**every** path out of the body reaches a direct call to the same function:
+
+```ori
+forever(n: int) -> int
+    return forever(n + 1)     -- rejected: nothing returns without recursing
+end
+
+countdown(n: int) -> int
+    if n <= 0
+        return 0              -- accepted: this path escapes
+    end
+    return 1 + countdown(n - 1)
+end
+```
+
+Deliberately **not** detected, to keep the analysis free of false positives:
+
+- a base case that is never reached (`climb(n + 1)` guarded by `n < 0`) — needs
+  value analysis;
+- mutual recursion (`a` → `b` → `a`) — needs a call graph;
+- a self-call behind `and` / `or`, inside a loop body, in only one branch of an
+  `if`, or inside a closure — none of those is guaranteed to run.
+
+Those remaining cases are reported at runtime by the stack guard instead (see
+[18-stability-and-compatibility.md](18-stability-and-compatibility.md)).
+
+Regression tests: `check_rejects_recursion_with_no_escape`,
+`check_accepts_recursion_that_can_terminate`.
 
 ### `match`
 
@@ -378,9 +429,7 @@ design, or deferred to v2. They are no longer tracked as planned.
 
 | Code | Reason for removal |
 |---|---|
-| `contract.check_failure` | Runtime contract checking is not implemented in v1; deferred to v2. Compiler does not emit; runtime does not use the code string. |
-| `contract.field_violation` | Same as `contract.check_failure` — runtime-only, deferred to v2. |
-| `contract.param_violation` | Same as `contract.check_failure` — runtime-only, deferred to v2. |
+| `contract.check_failure` | Covered by `check condition`, which aborts through `ori_panic`. No separate code string. |
 | `doc.unclosed_block` | Redundant with `lex.unclosed_block_comment`, which already covers unclosed `--| ... |--` block comments. Doc comments use the same delimiter syntax. |
 | `generic.ambiguous_type_arg` | Ambiguous type argument inference is reported via `type.type_mismatch` when inference fails; a dedicated code is deferred to v2. |
 | `match.guard_not_exhaustive` | Guard exhaustiveness analysis is not implemented in v1; `match.non_exhaustive` covers unguarded cases. Guarded exhaustiveness deferred to v2. |

@@ -48,7 +48,7 @@ match find_user(42)
     case some(user):
         greet(user)
     case none:
-    io.print("not found")
+        io.print("not found")
 end
 ```
 
@@ -226,21 +226,37 @@ use `string` errors or `optional[T]` where documented.
 
 ### Defining Error Types
 
-Use `struct` + `implement Error for`:
+Declare a `struct` for the payload and apply `core.Error`, whose contract is a
+single method `message(self) -> string`:
 
 ```ori
+import ori.core = core
+
 struct ValidationError
     field: string
     reason: string
 end
 
-apply ValidationError
-    use Error
-    message() -> string
+apply ValidationError use core.Error
+    message(self) -> string
         return f"validation failed on '{self.field}': {self.reason}"
     end
 end
 ```
+
+Rules:
+
+- The trait module must be imported. A bare `use Error` reports
+  `impl.trait_not_found`.
+- `message` is **required**: omitting it is `impl.missing_method`, and any
+  signature other than `(self) -> string` is `impl.wrong_signature`.
+- The compact header is required — the block holds one trait and nothing else
+  (chapter 08). Writing `use core.Error` on its own line and then a method at
+  the `apply` level is `parse.apply_member_after_use`.
+
+Regression tests: `compile_runs_core_error_message_method`,
+`check_rejects_core_error_without_message`,
+`check_rejects_core_error_with_wrong_message_signature`.
 
 ### Error Union with `enum`
 
@@ -248,21 +264,20 @@ When a function may fail with multiple distinct error types, use an enum:
 
 ```ori
 enum AppError
-    Network { error: NetworkError }
-    Validation { error: ValidationError }
-    Parse { error: ParseError }
+    Network(cause: NetworkError)
+    Validation(cause: ValidationError)
+    Parse(cause: ParseError)
 end
 
-apply AppError
-    use Error
-    message() -> string
+apply AppError use core.Error
+    message(self) -> string
         match self
-        case Network(error):
-            return error.message()
-        case Validation(error):
-            return error.message()
-        case Parse(error):
-            return error.message()
+        case Network(cause):
+            return cause.message()
+        case Validation(cause):
+            return cause.message()
+        case Parse(cause):
+            return cause.message()
         end
     end
 end
@@ -271,6 +286,11 @@ run(input: string) -> result[Output, AppError]
 ```
 
 This guarantees exhaustive handling at the call site.
+
+> The payload is named `cause`, not `error`: `error` is a **reserved word**
+> (chapter 02) and is rejected in field and binding position with
+> `parse.expected_identifier`. The same applies to `success`, `some`, `with`,
+> `then`, `lazy`, `handle`, and `attr`.
 
 ---
 

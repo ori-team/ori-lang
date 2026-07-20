@@ -212,9 +212,58 @@ double(n: int) -> int => n * 2
 
 Pipe `|>` permanece e é tipado como `f(value)`.
 
+Em closures o tipo do parâmetro pode ser omitido quando uma anotação fornece o
+tipo da função: `const double: func(int) -> int = (x) => x * 2`. Sem contexto,
+escreva o tipo: `(x: int) => x + 1`.
+
 ---
 
-## 8. Projetos
+## 8. Genéricos
+
+```ori
+identity[T](value: T) -> T
+    return value
+end
+
+struct Pair[A, B]
+    first: A
+    second: B
+end
+```
+
+Restrições usam a cláusula `for` no lugar da lista em colchetes — as duas
+formas nunca se combinam:
+
+```ori
+max for T: Comparable (a: T, b: T) -> T
+    if a.compare(b) > 0
+        return a
+    end
+    return b
+end
+```
+
+Const generics deixam um número de tempo de compilação fazer parte do tipo. O
+argumento é **nomeado**, porque um `Buffer[8]` puro seria lido como o índice
+`frutas[8]`:
+
+```ori
+struct Buffer[const size: int]
+    used: int
+end
+
+const pequeno: Buffer[size: 8]  = Buffer { used: 0 }
+const grande: Buffer[size: 16] = Buffer { used: 0 }   -- outro tipo
+```
+
+Dois limites que valem saber: um **trait genérico** pode ser declarado mas não
+aplicado, e tipos de ordem superior (um parâmetro que representa `list` ou
+`optional` em si) estão deliberadamente fora de escopo. Veja
+[spec/11-generics.md](../spec/11-generics.md).
+
+---
+
+## 9. Projetos
 
 ```text
 my_app/
@@ -232,7 +281,7 @@ Guia: [Primeiro projeto](../guides/first-project.pt-BR.md).
 
 ---
 
-## 9. O que não escrever (pré-S3)
+## 10. O que não escrever (pré-S3)
 
 | Evite | Use |
 |-------|-----|
@@ -249,7 +298,7 @@ ori migrate-syntax caminho/
 
 ---
 
-## 10. Async (nativo)
+## 11. Async (nativo)
 
 ```ori
 module app.main
@@ -270,7 +319,7 @@ end
 
 ---
 
-## 11. Próximos passos
+## 12. Próximos passos
 
 | Objetivo | Doc |
 |----------|------|

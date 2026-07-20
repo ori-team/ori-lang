@@ -146,12 +146,12 @@ end
 Compile-time method provision via a free function (not a runtime assignment):
 
 ```ori
-comparePoints(a: Point, b: Point) -> int
+compare_points(a: Point, b: Point) -> int
     return a.x - b.x
 end
 
 apply Point use Comparable
-    compare = comparePoints
+    compare = compare_points
 end
 ```
 
@@ -177,37 +177,55 @@ available as inherent methods on the type.
 ## `mut` in Traits and Apply
 
 ```ori
-trait Stackable[T]
-    mut push(self, item: T)
-    mut pop(self) -> optional[T]
-    peek(self) -> optional[T]
+trait Counter
+    mut increment(self, by: int)
+    mut reset(self)
+    total(self) -> int
 end
 
-apply IntStack
-    use Stackable[int]
-        mut push(self, item: int)
-            self.items.push(item)
-        end
+struct Tally
+    count: int
+end
 
-        mut pop(self) -> optional[int]
-            return self.items.pop()
-        end
+apply Tally use Counter
+    mut increment(self, by: int)
+        self.count = self.count + by
+    end
 
-        peek(self) -> optional[int]
-            return self.items.last()
-        end
+    mut reset(self)
+        self.count = 0
+    end
+
+    total(self) -> int
+        return self.count
     end
 end
 ```
 
-`mut` on a trait method requires the applied method to also be `mut`.
+`mut` on a trait method requires the applied method to also be `mut`. A method
+without `mut` cannot assign to a field of `self`.
+
+The trait here is concrete rather than generic (`Counter`, not `Counter[T]`)
+because a generic trait cannot currently be applied — see below.
+
+Note that collections have **no methods**: `list`, `map`, and `set` are
+manipulated through their modules (`lists.push(items, v)`), not
+`items.push(v)`. See chapter 12.
 
 ---
 
 ## Generic Traits
 
-Traits may be generic over a type parameter (`Trait[T]`). Bounds use
-`for T: Trait` on generic methods (see chapter 11).
+Traits may be **declared** generic over a type parameter (`trait Trait[T]`), but
+no `apply` block can implement one today:
+
+- `apply Type use Trait[int]` — `parse.expected_identifier`. The `use` clause
+  accepts a bare trait name only.
+- `apply Type use Trait` with concrete method types — `impl.wrong_signature`,
+  because `T` is never bound to anything.
+
+Declare one concrete trait per element type until `use Trait[Arg]` lands.
+Bounds on generic *functions* (`for T: Trait`) do work — see chapter 11.
 
 ---
 

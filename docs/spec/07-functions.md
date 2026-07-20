@@ -200,8 +200,10 @@ struct Rectangle
     end
 
     scale(factor: float) -> Rectangle
-        return Rectangle(width: self.width * factor,
-            height: self.height * factor)
+        return Rectangle {
+            width: self.width * factor,
+            height: self.height * factor
+        }
     end
 end
 ```
@@ -216,7 +218,7 @@ Canonical forms — **no** `do` / `fn` / `given`:
 const double: func(int) -> int = (x: int) => x * 2
 const is_even: func(int) -> bool = (n: int) => n % 2 == 0
 
-users.map((u) => u.name)
+users.map((u: User) => u.name)
 users.filter((u: User) => u.active)
 
 -- multi-statement
@@ -229,7 +231,24 @@ end)
 Rules:
 - `(params) => expr` — single expression.
 - `(params) … end` — statement block.
-- Parameter types may be omitted when the checker context provides them.
+- **Parameter types may be omitted when the context provides a function type**
+  of the same arity — typically an annotated binding:
+
+  ```ori
+  const double: func(int) -> int = (x) => x * 2       -- x is int
+  const add: func(int, int) -> int = (a, b) => a + b  -- a, b are int
+  ```
+
+  The expected return type also fills in for a block body, so
+  `(n) … end` may `return` without declaring `-> string`.
+
+  An explicit annotation always wins, and an annotation that contradicts the
+  context is still an error. Without any context — `const f = (x) => x * 2` —
+  the parameter has no type to take, and the binding reports
+  `type.local_inference_failed`.
+- An explicit return type is allowed on the block form:
+  `(x: int) -> int … end`.
+- Closures capture enclosing bindings by value.
 - Prefer a named function when the body is large.
 - `do(...)` is rejected with `parse.do_removed`.
 
@@ -273,6 +292,9 @@ max for T: Comparable (a: T, b: T) -> T
 end
 ```
 
+A bound clause and a `[T, U]` parameter list are mutually exclusive: write
+either `name[T, U](params)` or `name for T: Trait (params)`, never both.
+
 See Chapter 11. Removed: `func max<T>(...) where T is Comparable`.
 
 ---
@@ -282,7 +304,7 @@ See Chapter 11. Removed: `func max<T>(...) where T is Comparable`.
 Optional construct labels improve navigation:
 
 ```ori
-if ok
+if count > 0
     ...
 end if
 
@@ -294,4 +316,7 @@ match shape
 end match
 ```
 
-Mismatch between label and opening construct → `parse.end_label_mismatch`.
+The label is optional; plain `end` closes either construct. Mismatch between
+label and opening construct → `parse.end_label_mismatch`.
+
+Note that `case Pattern:` requires the colon — omitting it is a parse error.

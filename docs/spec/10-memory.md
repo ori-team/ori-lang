@@ -151,6 +151,46 @@ with a live binding (use-after-free) and masked missing temporary releases
 in element stores. See the ADR and `ori-driver/tests/memory_arc.rs`
 (`shared_child_*`, `nested_list_*`, `*_owned_*` regression tests).
 
+### Release is one critical section
+
+`ori_arc_release` performs the decrement, the unregistration and the edge
+removal under a **single** ARC lock. The destructor and the recursive release of
+owned children run **after** the lock is dropped, because a destructor
+re-enters `ori_arc_release` and would otherwise deadlock.
+
+This shape is load-bearing for performance, not just tidiness. Before
+2026-07-20 the same work took up to **six** mutex acquisitions per released
+object (decrement, then unregister, take-edges and remove-incoming inside
+`free_registered_object`, plus a redundant `header_for_registered` lookup).
+Consolidating them removed **19%** of the wall time from a 2-million-iteration
+loop over managed temporaries (360 ns → 290 ns per temporary).
+
+### The ARC maps are keyed by pointers, and hashed as such
+
+`ArcState::allocations` and both edge indexes are keyed by payload address.
+They use a multiply-rotate hasher (the `FxHasher` construction) rather than the
+standard library default.
+
+That default is SipHash-1-3, which resists collision flooding from untrusted
+keys — a property with no meaning here, because the keys are pointers the
+runtime allocated itself. It cost more than the rest of a retain or release put
+together: switching the hasher took another **33%** off the same loop, and the
+project's own `tools/bench/arc_list_churn.orl` runs **39%** faster overall.
+
+Combined with the single-lock release above, a managed temporary went from
+**354 ns to 184 ns** — 48% of the ARC overhead removed.
+
+What remains is `malloc` plus one map insert and one removal. Removing those
+would mean not registering the allocation at all, which is what makes
+`ori_arc_retain` / `ori_arc_release` **safe no-ops on foreign pointers** — the
+property `@c_export` string parameters rely on (chapter 19 §8.3b). Any further
+gain here has to preserve that, or replace it with a check that never
+dereferences a pointer the runtime does not own. See `LANG-MEM-11b` in
+[`../planning/BACKLOG.md`](../planning/BACKLOG.md).
+
+Regression tests: `compile_runs_nested_owners_cascade_on_release`,
+`compile_runs_managed_temporaries_in_a_hot_loop_without_leaking`.
+
 ### Leak check mode
 
 The runtime exposes `ori.test.live_allocations()`, `ori.test.collect_cycles()`

@@ -1,86 +1,128 @@
-# Estabilidade e compatibilidade
+# Ori Language Specification — Chapter 18: Stability and Compatibility
 
-Status: normativo para o ciclo de superfície **S3 / `0.3.0`** (package Cargo
-pode permanecer `0.2.0` até a tag de release — ver `CHANGELOG.md` e `AGENTS.md`).
+> Status: normative for the **S3 / `0.3.0`** surface cycle
+> Audience: maintainers, contributors, users maintaining a project
 
-Ori ainda esta antes da versao `1.0`. Mesmo assim, o projeto deve separar o que
-e contrato publico do que e experimento. Essa separacao reduz surpresas para
-quem esta aprendendo a linguagem ou mantendo um projeto pequeno.
+---
 
-## Contrato estavel do ciclo atual
+Ori is still before `1.0`. Even so, the project must separate what is a
+**public contract** from what is an **experiment**. That separation is what
+keeps upgrades from surprising someone who is learning the language or
+maintaining a small project.
 
-Durante o ciclo **S3 (`0.3.0` surface)**, estes pontos devem ser tratados como
-contrato publico:
+---
 
-- arquivos `.orl` em UTF-8;
-- blocos terminados por `end` (labels opcionais: `end if`, `end match`, …);
-- `module` obrigatorio no topo do arquivo (`namespace` e erro);
-- imports explicitos nas tres formas S3: `import path (A)`, `import path = alias`,
-  `import path` (sem `as` / `only` de import);
-- tipos explicitos em bindings, parametros e retornos publicos;
-- tipos compostos com `[]` (`optional[T]`, `result[T, E]`, `list[T]`, …);
-- ausencia via `optional[T]`;
-- falha via `result[T, E]`;
-- propagacao **somente** via `try expr` (postfix `expr?` e erro);
-- construcao de struct por `Type { field: value }` ou `{ field: value}` quando o
-  tipo esperado e conhecido;
-- construcao de enum por `Enum.Variant(...)` ou `.Variant(...)` quando o tipo
-  esperado e conhecido;
-- traits via `apply Type` + `use Trait`;
-- backend nativo como referencia semantica.
+## Stable contract of the current cycle
 
-Mudancas nesses pontos devem ser documentadas no `CHANGELOG.md` e precisam de
-teste de regressao.
+During the **S3 (`0.3.0` surface)** cycle, these points are public contract:
 
-## Contrato binario nativo (M3 + ABI-1)
+- `.orl` files in UTF-8;
+- blocks terminated by `end` (labels optional: `end if`, `end match`, …);
+- `module` required at the top of the file (`namespace` is an error);
+- explicit imports in the three S3 forms: `import path (A)`,
+  `import path = alias`, `import path` (no import `as` / `only`);
+- explicit types on bindings, parameters, and public return types;
+- composite types with `[]` (`optional[T]`, `result[T, E]`, `list[T]`, …);
+- absence through `optional[T]`;
+- failure through `result[T, E]`;
+- propagation **only** through `try expr` (postfix `expr?` is an error);
+- struct construction with `Type { field: value }`, or `{ field: value }` when
+  the expected type is known;
+- enum construction with `Enum.Variant(...)`, or `.Variant(...)` when the
+  expected type is known;
+- traits through `apply Type` + `use Trait`;
+- the native backend as the semantic reference.
 
-O backend nativo documenta o ABI em [`19-abi.md`](19-abi.md) sob a tag
-**`ori-native-abi-1`** (`ORI_ABI_VERSION` no `ori-runtime`). **ABI-1 esta em
-vigor** com a janela FREEZE-1 (ver `docs/planning/freeze-and-abi-gates.md`).
-Isso inclui:
+Changes to these points must be documented in `CHANGELOG.md` and need a
+regression test.
 
-- layouts de primitivos, structs, enums (tag `i32`), `optional`/`result`/tuples;
-- header ARC (`OriHeapHeader`) e simbolos `ori_alloc` / `ori_arc_*`;
-- layouts de colecoes runtime (`OriList`, `OriMap`, `OriSet`, …);
-- mangling `ORI__*` e export de `main`;
-- checagem de `abi_version` no `runtime-link.json`.
+### Added after the S3 cut
 
-Mudanca **incompativel** com runtimes ja staged exige bump de
-`ori-native-abi-N`, atualizacao do cap. 19 e re-stage staticlib+cdylib.
-Simbolos `ori_*` **aditivos** nao exigem bump, mas devem ser listados no
-manifesto stdlib.
+These forms are also public contract. They were added inside the `0.3.x` line
+under FREEZE-1 as additive surface, each with regression tests:
 
-O backend C/debug **nao** e referencia de ABI.
+| Form | Chapter |
+|---|---|
+| `newtype Name = Type` — nominal type, erased at lowering | [04](04-types.md) |
+| `match` as an expression | [05](05-expressions.md) |
+| `case a or b:` — or-patterns | [06](06-statements.md) |
+| `if ok(v) = expr` / `if err(e) = expr` | [06](06-statements.md) |
+| `const { field } = value` — destructuring bindings | [06](06-statements.md) |
+| `alias Name = Type` inside a `use` section | [08](08-traits.md) |
+| `Buffer[size: 8]` — const generics with named arguments | [11](11-generics.md) |
 
-## Contrato experimental
+---
 
-Estes pontos podem mudar antes de `1.0`:
+## Native binary contract (M3 + ABI-1)
 
-- formato final de pacote e lockfile;
-- registry hospedado;
-- limites do REPL;
-- APIs marcadas como experimentais na stdlib;
-- detalhes de otimizacao de generics e tamanho de binario;
-- superficie publica do backend C/debug;
-- detalhes finos de inferencia local alem da opcao B ja documentada
-  (literais + campo/index/call/pipe); **HM global permanece fora**);
-- formatos de package/registry ainda nao estabilizados;
-- nomes finais de aliases de dominio na stdlib alem dos ja documentados.
+The native backend documents its ABI in [`19-abi.md`](19-abi.md) under the tag
+**`ori-native-abi-1`** (`ORI_ABI_VERSION` in `ori-runtime`). **ABI-1 is in
+force** together with the FREEZE-1 window (see
+`docs/planning/freeze-and-abi-gates.md`). It covers:
 
-> **Ja estabilizado na superficie pre-1.0 (mas ainda pre-1.0):** pipe `|>`
-> (mantido na Ori), inferencia local Nim-style + opcao B (`0.3.1`+), ABI nativo
-> `ori-native-abi-1` (M3), caminho de instalacao sem Rust (M1).
+- layouts of primitives, structs, enums (tag `i32`), `optional` / `result` /
+  tuples;
+- the ARC header (`OriHeapHeader`) and the `ori_alloc` / `ori_arc_*` symbols;
+- layouts of runtime collections (`OriList`, `OriMap`, `OriSet`, …);
+- `ORI__*` mangling and the export of `main`;
+- the `abi_version` check in `runtime-link.json`.
 
-## Regra de documentacao
+A change **incompatible** with already-staged runtimes requires bumping to
+`ori-native-abi-N`, updating chapter 19, and re-staging staticlib + cdylib.
+**Additive** `ori_*` symbols do not require a bump, but must be listed in the
+stdlib manifest.
 
-A spec deve descrever o que o parser, checker, runtime e tooling aceitam hoje.
-Ideias futuras pertencem a `docs/planning/`.
+The C / debug backend is **not** an ABI reference.
 
-Quando uma feature sair de planejamento para implementacao, a alteracao deve
-atualizar na mesma entrega:
+---
 
-- spec normativa;
-- exemplos ou fixtures;
-- testes;
+## Experimental contract
+
+These points may change before `1.0`:
+
+- the final package and lockfile format;
+- the hosted registry;
+- REPL limits;
+- stdlib APIs marked experimental;
+- generic optimization and binary-size details;
+- the public surface of the C / debug backend;
+- fine details of local inference beyond the documented option B
+  (literals + field / index / call / pipe); **global HM stays out**;
+- package / registry formats not yet stabilized;
+- final names of stdlib domain aliases beyond those already documented.
+
+> **Already stabilized on the pre-1.0 surface (but still pre-1.0):** pipe `|>`
+> (kept in Ori), Nim-style local inference + option B (`0.3.1`+), the native
+> ABI `ori-native-abi-1` (M3), and the Rust-free install path (M1).
+
+---
+
+## Known gaps
+
+Documented here so that nobody mistakes them for contract. Each is a real
+limitation of the current compiler, not a planned removal:
+
+| Gap | Detail |
+|---|---|
+| Generic traits | Declarable, not applicable — `use Trait[Arg]` does not parse ([08](08-traits.md)) |
+| Higher-kinded types | Declaration parses, no implementation can satisfy it; **out of scope** by decision ([11](11-generics.md)) |
+| `@c_export` aggregates | Structs, `list`, `map`, `optional`, `result` have no stable C layout; scalars and `string` do cross ([19](19-abi.md) §8.3b) |
+| Infinite recursion | Not detected at compile time (undecidable). At runtime the stack guard reports `stack overflow` instead of dying on a bare signal |
+| `Cloneable` / `Default` | Registered core traits with no methods: `Self` return and receiver-less trait methods are unsupported ([12](12-stdlib.md)) |
+| Type names in backend errors | Codegen messages still print `<def DefId(N)>`; the checker no longer does |
+
+---
+
+## Documentation rule
+
+The spec must describe what the parser, checker, runtime, and tooling accept
+**today**. Future ideas belong in `docs/planning/`.
+
+When a feature moves from planning to implementation, the same delivery must
+update:
+
+- the normative spec;
+- examples or fixtures;
+- tests;
 - `CHANGELOG.md`;
-- docs de planejamento, marcando o item como entregue ou alterado.
+- the planning docs, marking the item as delivered or changed.
