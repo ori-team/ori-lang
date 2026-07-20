@@ -1,4 +1,4 @@
-use crate::common::QualifiedName;
+use crate::common::{Name, QualifiedName};
 use ori_diagnostics::Span;
 
 /// Every type that can appear in an Ori program.
@@ -28,6 +28,18 @@ pub enum Type {
     // ── Named types ───────────────────────────────────────────────────────────
     /// A user-defined type by name: `User`, `app.config.Config`.
     Named(QualifiedName),
+
+    /// A compile-time constant used as a type argument: `size: 8` in
+    /// `Buffer[size: 8]`.
+    ///
+    /// Named on purpose. A bare number between brackets reads as an index
+    /// everywhere else in Ori, so const arguments carry the parameter's name
+    /// the same way call arguments and struct fields do.
+    ConstArg {
+        name: Name,
+        value: i64,
+        span: Span,
+    },
 
     // ── Built-in generic types ────────────────────────────────────────────────
     Optional(Box<Type>, Span),
@@ -80,6 +92,7 @@ impl Type {
             | Type::Bytes(s)
             | Type::Void(s) => *s,
             Type::Named(q) => q.span,
+            Type::ConstArg { span, .. } => *span,
             Type::Optional(_, s)
             | Type::List(_, s)
             | Type::Set(_, s)

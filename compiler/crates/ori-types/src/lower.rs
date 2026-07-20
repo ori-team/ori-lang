@@ -76,6 +76,8 @@ pub fn lower_type_with_local_aliases(
         };
     }
     match ast_ty {
+        // `size: 8` — a named compile-time constant in argument position.
+        AstType::ConstArg { name, value, .. } => Ty::ConstInt(name.text.clone(), *value),
         // Check local type aliases (e.g. associated types in implement blocks)
         AstType::Named(name)
             if name.is_single() && local_aliases.contains_key(name.last().as_str()) =>

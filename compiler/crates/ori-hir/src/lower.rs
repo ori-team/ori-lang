@@ -55,6 +55,8 @@ fn ori_mem_size_of_ty(ty: &Ty) -> i64 {
         Ty::Int32 | Ty::U32 | Ty::Float32 => 4,
         Ty::Int | Ty::Int64 | Ty::U64 | Ty::Float | Ty::Float64 => 8,
         Ty::Void | Ty::Never => 0,
+        // A const argument is a type-level tag; it occupies no storage.
+        Ty::ConstInt(_, _) => 0,
         Ty::Error => 0,
         Ty::Infer(_) | Ty::Param { .. } => 8,
         Ty::String

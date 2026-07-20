@@ -507,6 +507,7 @@ fn ty_simple_name(ty: &Ty, resolved: &ResolvedModule) -> Option<String> {
 /// Render a `Ty` to a compact string for hover/completion details.
 fn ty_to_str(ty: &Ty, resolved: &ResolvedModule) -> String {
     match ty {
+        Ty::ConstInt(name, value) => format!("{name}: {value}"),
         Ty::Bool => "bool".into(),
         Ty::Int => "int".into(),
         Ty::Int8 => "int8".into(),

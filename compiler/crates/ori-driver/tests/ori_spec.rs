@@ -5853,3 +5853,121 @@ end
         out.diagnostics
     );
 }
+
+// ── Const generics with named arguments (roadmap §3) ───────────────────────
+//
+// `Buffer[size: 8]`, not `Buffer[8]`: a bare number in brackets reads as an
+// index everywhere else in Ori, so const arguments carry the parameter name
+// the way call arguments and struct fields already do.
+
+#[test]
+fn compile_runs_const_generics_with_named_arguments() {
+    let dir = TestDir::new("const_generics");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Buffer[const size: int]
+    used: int
+end
+
+struct Matrix[const rows: int, const cols: int]
+    label: string
+end
+
+capacity(b: Buffer[size: 8]) -> int
+    return b.used
+end
+
+describe(m: Matrix[rows: 2, cols: 3]) -> string
+    return m.label
+end
+
+main()
+    const b: Buffer[size: 8] = Buffer { used: 5 }
+    io.println(f"{capacity(b)}")
+
+    const m: Matrix[rows: 2, cols: 3] = Matrix { label: "2x3" }
+    io.println(describe(m))
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "const_generics");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "5\n2x3\n");
+}
+
+#[test]
+fn check_treats_different_const_arguments_as_different_types() {
+    let dir = TestDir::new("const_generics_distinct");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Buffer[const size: int]
+    used: int
+end
+
+takes_eight(b: Buffer[size: 8]) -> int
+    return b.used
+end
+
+main()
+    const b16: Buffer[size: 16] = Buffer { used: 0 }
+    io.println(f"{takes_eight(b16)}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let messages: Vec<&str> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.arg_type_mismatch"),
+        "sizes 8 and 16 are different types: {:?}",
+        out.diagnostics
+    );
+    // The value is the whole point of the type, so it must be in the message.
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("size: 8") && m.contains("size: 16")),
+        "diagnostic should show both const arguments: {messages:?}"
+    );
+}
+
+#[test]
+fn check_rejects_a_non_integer_const_argument() {
+    let dir = TestDir::new("const_generics_bad_value");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Buffer[const size: int]
+    used: int
+end
+
+main()
+    const b: Buffer[size: "eight"] = Buffer { used: 0 }
+    io.println(f"{b.used}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"parse.expected_const_arg_value"),
+        "a named type argument takes an integer constant: {:?}",
+        out.diagnostics
+    );
+}

@@ -259,13 +259,38 @@ end
 
 ### Const generics
 
-A struct may take a compile-time integer constant as a type parameter:
+A struct may take a compile-time integer constant as a type parameter.
+Declaration marks it with `const`; use sites **name** the argument:
 
 ```ori
-struct Matrix<const N: int>
-    value: int
+struct Buffer[const size: int]
+    used: int
 end
+
+struct Matrix[const rows: int, const cols: int]
+    label: string
+end
+
+const b: Buffer[size: 8] = Buffer { used: 0 }
+const m: Matrix[rows: 2, cols: 3] = Matrix { label: "2x3" }
 ```
+
+Rules:
+
+- **Arguments are named**, not positional. A bare `Buffer[8]` would read
+  exactly like the index expression `frutas[8]`; `Buffer[size: 8]` reads as
+  an argument, matching how calls, struct literals and enum payloads already
+  name their values. A non-integer value is `parse.expected_const_arg_value`.
+- The value is part of the type's identity: `Buffer[size: 8]` and
+  `Buffer[size: 16]` are **different types** and do not substitute for each
+  other.
+- A struct literal takes the const arguments from the type it is checked
+  against (`const b: Buffer[size: 8] = Buffer { used: 0 }`), since the value
+  appears only in the annotation. Type arguments are not inherited this way —
+  those come from the fields.
+- The constant is a compile-time tag only: it occupies no storage and never
+  reaches runtime. (Fixed-size arrays, which would consume it, do not exist
+  yet.)
 
 ### Higher-kinded types (HKT)
 

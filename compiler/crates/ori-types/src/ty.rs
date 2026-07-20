@@ -133,6 +133,14 @@ pub enum Ty {
 
     /// An unsolved inference variable (used during type inference).
     Infer(u32),
+
+    /// A compile-time constant standing in a type argument position:
+    /// `Buffer[size: 8]` is `Named(Buffer, [ConstInt("size", 8)])`.
+    ///
+    /// Purely a type-level tag today: two buffers with different sizes are
+    /// different types, and nothing about the value reaches runtime (fixed
+    /// size arrays, which would use it, do not exist yet).
+    ConstInt(SmolStr, i64),
 }
 
 impl Ty {
@@ -480,6 +488,8 @@ impl Ty {
             }
             Ty::Param { name, .. } => name.to_string(),
             Ty::Infer(id) => format!("_#{}", id),
+            // Printed the way it is written: `size: 8`.
+            Ty::ConstInt(name, value) => format!("{}: {}", name, value),
         }
     }
 

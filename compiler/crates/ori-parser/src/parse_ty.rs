@@ -268,12 +268,68 @@ impl<'src> Parser<'src> {
     pub fn parse_type_list(&mut self, stop: &TokenKind) -> Option<Vec<Type>> {
         let mut types = Vec::new();
         while !self.at(stop) && !self.at_eof() {
+            if let Some(const_arg) = self.parse_named_const_arg() {
+                types.push(const_arg);
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                continue;
+            }
             types.push(self.parse_type()?);
             if !self.eat(&TokenKind::Comma) {
                 break;
             }
         }
         Some(types)
+    }
+
+    /// `size: 8` inside type arguments — a named compile-time constant.
+    ///
+    /// Named rather than positional so it cannot be misread as indexing: a
+    /// bare `Buffer[8]` looks exactly like `frutas[8]`, while `Buffer[size: 8]`
+    /// reads as an argument, matching how calls and struct literals already
+    /// name their values.
+    fn parse_named_const_arg(&mut self) -> Option<Type> {
+        if !matches!(self.peek_kind(), Some(TokenKind::Ident))
+            || self.peek_nth_kind(1) != Some(&TokenKind::Colon)
+        {
+            return None;
+        }
+        let name = self.parse_name()?;
+        self.expect(&TokenKind::Colon)?;
+        let tok = self.peek()?.clone();
+        let negative = tok.kind == TokenKind::Minus;
+        if negative {
+            self.advance();
+        }
+        if !matches!(self.peek_kind(), Some(TokenKind::IntLit)) {
+            let span = self.current_span();
+            self.error(
+                "parse.expected_const_arg_value",
+                "a named type argument takes an integer constant, e.g. `size: 8`",
+                span,
+            );
+            return None;
+        }
+        let value_tok = self.advance().unwrap();
+        let text = self.slice(value_tok.span).replace('_', "");
+        let value: i64 = match text.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                self.error(
+                    "parse.expected_const_arg_value",
+                    "integer constant is out of range for a type argument",
+                    value_tok.span,
+                );
+                return None;
+            }
+        };
+        let span = name.span.cover(value_tok.span);
+        Some(Type::ConstArg {
+            name,
+            value: if negative { -value } else { value },
+            span,
+        })
     }
 
     fn error_removed_angle_type(&mut self, span: ori_diagnostics::Span) {

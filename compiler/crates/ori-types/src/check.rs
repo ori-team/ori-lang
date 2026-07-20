@@ -1729,6 +1729,7 @@ impl<'a> Checker<'a> {
             }
             Expr::StructLit { ty, fields, span } => {
                 let actual = self.check_struct_literal(ty, fields, *span);
+                let actual = adopt_const_args_from_expected(actual, expected);
                 self.expect_assignable(&actual, expected, *span);
                 actual
             }
@@ -5572,6 +5573,8 @@ impl<'a> Checker<'a> {
 
     fn is_transferable_ty(&self, ty: &Ty) -> bool {
         match ty {
+            // A const argument is a compile-time tag, never runtime data.
+            Ty::ConstInt(_, _) => true,
             Ty::Bool
             | Ty::Int
             | Ty::Int8
@@ -6855,6 +6858,32 @@ fn match_expr_arms_as_cases(arms: &[ori_ast::expr::MatchExprArm]) -> Vec<ori_ast
             },
         })
         .collect()
+}
+
+/// Let a struct literal take the **const** arguments of the type it is being
+/// checked against: `const b: Buffer[size: 8] = Buffer { used: 0 }`.
+///
+/// A const argument cannot be recovered from the fields — the value appears
+/// only in the annotation — so context is the sole source, which is the same
+/// rule option-B inference already follows. Type arguments are deliberately
+/// left alone: those *are* recoverable from the fields, and adopting them
+/// blindly could paper over a real mismatch.
+fn adopt_const_args_from_expected(actual: Ty, expected: &Ty) -> Ty {
+    let (Ty::Named(actual_id, actual_args), Ty::Named(expected_id, expected_args)) =
+        (&actual, expected)
+    else {
+        return actual;
+    };
+    if actual_id != expected_id || !actual_args.is_empty() || expected_args.is_empty() {
+        return actual;
+    }
+    if !expected_args
+        .iter()
+        .all(|arg| matches!(arg, Ty::ConstInt(_, _)))
+    {
+        return actual;
+    }
+    Ty::Named(*actual_id, expected_args.clone())
 }
 
 fn expr_needs_expected_context(expr: &Expr) -> bool {
