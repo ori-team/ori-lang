@@ -177,8 +177,17 @@ runtime allocated itself. It cost more than the rest of a retain or release put
 together: switching the hasher took another **33%** off the same loop, and the
 project's own `tools/bench/arc_list_churn.orl` runs **39%** faster overall.
 
-Combined with the single-lock release above, a managed temporary went from
-**354 ns to 184 ns** — 48% of the ARC overhead removed.
+### One allocation per string
+
+Runtime string constructors write their parts straight into the final
+`ori_alloc` block. They previously built a `Vec`, copied the parts into it,
+copied that into a fresh block and freed the `Vec` — two allocations, two
+copies and a free for every string produced, paid on every concatenation and
+every slice.
+
+Combined with the single-lock release and the pointer hasher above, a managed
+temporary went from **355 ns to 171 ns** — **52%** of the ARC overhead removed
+across the three changes.
 
 What remains is `malloc` plus one map insert and one removal. Removing those
 would mean not registering the allocation at all, which is what makes

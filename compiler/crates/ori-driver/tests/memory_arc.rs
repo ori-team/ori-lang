@@ -2081,3 +2081,99 @@ end
         "stderr: {stderr}"
     );
 }
+
+// ── Strings are built with one allocation (LANG-PERF-4b) ───────────────────
+//
+// `ori_string_concat_parts` and friends used to build a `Vec`, copy the parts
+// in, copy the `Vec` into a fresh `ori_alloc` block, then free the `Vec` — two
+// mallocs, two copies and a free for every string the runtime produced. The
+// parts are now written straight into the final block. These cases pin the
+// behaviour that the rewrite could have broken: empty operands, chained
+// concatenation, and multi-byte characters across a slice boundary.
+
+#[test]
+fn compile_runs_string_building_edge_cases() {
+    let dir = TestDir::new("string_one_alloc");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.string = str
+
+main()
+    io.println("[" + "" + "x" + "][" + "x" + "" + "][" + "" + "" + "]")
+    io.println("a" + "b" + "c" + "d")
+
+    const u: string = "café" + " ☕"
+    io.println(u)
+    io.println(f"{str.len(u)}")
+
+    io.println(str.slice("abcdef", 1, 4))
+    io.println(str.slice("café☕", 0, 4))
+
+    var s: string = ""
+    var i: int = 0
+    while i < 200
+        s = s + "ab"
+        i = i + 1
+    end
+    io.println(f"{str.len(s)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "string_one_alloc");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[x][x][]\nabcd\ncafé ☕\n6\nbcd\ncafé\n400\n",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_bytes_concat_and_slice() {
+    let dir = TestDir::new("bytes_one_alloc");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.bytes = by
+
+main()
+    const joined: bytes = by.concat(b"abc", b"def")
+    const sliced: bytes = by.slice(joined, 1, 4)
+    const from_empty: bytes = by.concat(b"", b"z")
+    io.println(f"{by.len(joined)}")
+    io.println(f"{by.len(sliced)}")
+    io.println(f"{by.len(from_empty)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "bytes_one_alloc");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "6\n3\n1\n",
+        "stderr: {stderr}"
+    );
+}

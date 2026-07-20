@@ -2282,10 +2282,7 @@ pub unsafe extern "C" fn ori_string_concat_parts(
 ) -> *mut u8 {
     let a = bounded_cstr_bytes(a, a_len);
     let b = bounded_cstr_bytes(b, b_len);
-    let mut out = Vec::with_capacity(a.len() + b.len());
-    out.extend_from_slice(a);
-    out.extend_from_slice(b);
-    cstring_from_bytes(out)
+    cstring_from_slices(&[a, b])
 }
 
 #[no_mangle]
@@ -2438,7 +2435,32 @@ unsafe fn cstr_str<'a>(ptr: *const u8) -> &'a str {
 }
 
 fn cstring_from_str(s: &str) -> *mut u8 {
-    cstring_from_bytes(s.as_bytes().to_vec())
+    cstring_from_slices(&[s.as_bytes()])
+}
+
+/// Allocates one managed string holding `parts` end to end, NUL-terminated.
+///
+/// The point is that there is exactly **one** allocation. The previous shape
+/// built a `Vec`, copied the parts into it, copied the `Vec` into a fresh
+/// `ori_alloc` block, then freed the `Vec` — two mallocs, two copies and a free
+/// for every string the runtime produced. Concatenation paid it on every call.
+fn cstring_from_slices(parts: &[&[u8]]) -> *mut u8 {
+    let len: usize = parts.iter().map(|part| part.len()).sum();
+    unsafe {
+        let ptr = ori_alloc(len + 1, None);
+        if ptr.is_null() {
+            return ptr;
+        }
+        let mut offset = 0usize;
+        for part in parts {
+            if !part.is_empty() {
+                std::ptr::copy_nonoverlapping(part.as_ptr(), ptr.add(offset), part.len());
+                offset += part.len();
+            }
+        }
+        *ptr.add(len) = 0;
+        ptr
+    }
 }
 
 fn cstring_from_bytes(bytes: Vec<u8>) -> *mut u8 {
@@ -8035,10 +8057,7 @@ pub unsafe extern "C" fn ori_bytes_len(ptr: *const u8) -> i64 {
 pub unsafe extern "C" fn ori_bytes_concat(a: *const u8, b: *const u8) -> *mut u8 {
     let a = bytes_payload(a);
     let b = bytes_payload(b);
-    let mut out = Vec::with_capacity(a.len() + b.len());
-    out.extend_from_slice(a);
-    out.extend_from_slice(b);
-    cstring_from_bytes(out)
+    cstring_from_slices(&[a, b])
 }
 
 #[no_mangle]
@@ -8053,7 +8072,7 @@ pub unsafe extern "C" fn ori_bytes_slice(ptr: *const u8, start: i64, end: i64) -
         end,
         "ori bytes slice bounds out of range",
     );
-    cstring_from_bytes(bytes[start..end].to_vec())
+    cstring_from_slices(&[&bytes[start..end]])
 }
 
 #[no_mangle]
