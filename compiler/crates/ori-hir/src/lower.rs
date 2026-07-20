@@ -1200,6 +1200,16 @@ impl<'a> Lowerer<'a> {
         let id = self.resolve_def_id_with_kind(&enum_path, DefKind::Enum)?;
         Some((id, q.last().text.clone()))
     }
+    /// Declared return type of a function/method definition, or `Infer` when
+    /// no signature is registered (generic instantiation fills it in later).
+    fn func_return_ty(&self, def_id: ori_types::DefId) -> Ty {
+        self.func_sigs
+            .iter()
+            .find(|sig| sig.def_id == def_id)
+            .map(|sig| sig.return_ty.clone())
+            .unwrap_or(Ty::Infer(0))
+    }
+
     fn ty_for_def_path(&self, path: &str) -> Ty {
         if let Some(id) = self.def_map.lookup(path) {
             match self.def_map.get(id).kind {
@@ -3644,7 +3654,16 @@ impl<'a> Lowerer<'a> {
                                 let resolved = if let Some(m_def_id) =
                                     self.def_map.lookup(&method_path)
                                 {
-                                    Some((self.def_map.get(m_def_id).path.clone(), Ty::Infer(0)))
+                                    // Take the return type from the method's
+                                    // own signature. Leaving `Infer` here made
+                                    // the call untyped whenever the context
+                                    // gave no expected type (`const d =
+                                    // p.method()`, or inside an f-string),
+                                    // which then failed in codegen.
+                                    Some((
+                                        self.def_map.get(m_def_id).path.clone(),
+                                        self.func_return_ty(m_def_id),
+                                    ))
                                 } else {
                                     self.trait_method_func_for_type(*def_id, method_name.as_str())
                                 };

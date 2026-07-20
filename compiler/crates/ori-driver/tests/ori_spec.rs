@@ -5606,3 +5606,125 @@ end
         "diagnostic should name both structs: {messages:?}"
     );
 }
+
+#[test]
+fn compile_runs_method_call_without_expected_type() {
+    // Regression: a method call resolved by path got `Ty::Infer` as its return
+    // type, so any use without an expected type (a bare `const`, or an
+    // interpolation) reached codegen untyped.
+    let dir = TestDir::new("method_call_no_expected_ty");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Counter
+    value: int
+end
+
+apply Counter
+    double(self) -> int
+        return self.value * 2
+    end
+
+    label(self) -> string
+        return "counter"
+    end
+end
+
+main()
+    const c: Counter = Counter { value: 3 }
+    const doubled = c.double()
+    io.println(f"{doubled}")
+    io.println(f"{c.double()}")
+    io.println(f"{c.label()}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "method_no_expected_ty");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "6\n6\ncounter\n");
+}
+
+#[test]
+fn check_accepts_exhaustive_enum_match_returning_without_case_else() {
+    // Regression: return analysis demanded a `case else` even when the match
+    // already covered every variant, forcing dead code.
+    let dir = TestDir::new("exhaustive_match_returns");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+enum Direction
+    North
+    South
+end
+
+name(d: Direction) -> string
+    match d
+    case North:
+        return "north"
+    case South:
+        return "south"
+    end
+end
+
+main()
+    io.println(name(Direction.North) + name(Direction.South))
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        !diagnostic_codes(&out).contains(&"type.missing_return"),
+        "an exhaustive match that returns everywhere does return: {:?}",
+        out.diagnostics
+    );
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_still_rejects_match_that_does_not_return_on_every_arm() {
+    let dir = TestDir::new("match_arm_without_return");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+enum Direction
+    North
+    South
+end
+
+name(d: Direction) -> string
+    match d
+    case North:
+        return "north"
+    case South:
+        io.println("no return here")
+    end
+end
+
+main()
+    io.println(name(Direction.North))
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.missing_return"),
+        "an arm that falls through must still be reported: {:?}",
+        out.diagnostics
+    );
+}

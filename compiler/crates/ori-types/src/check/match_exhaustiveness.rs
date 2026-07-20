@@ -96,6 +96,7 @@ impl<'a> Checker<'a> {
             .iter()
             .any(|case| self.case_is_unguarded_catch_all(case, scr_ty))
         {
+            self.exhaustive_matches.insert(span);
             return;
         }
 
@@ -343,6 +344,9 @@ impl<'a> Checker<'a> {
 
     fn emit_match_non_exhaustive(&mut self, span: ori_diagnostics::Span, missing: Vec<String>) {
         if missing.is_empty() {
+            // Nothing missing: record it so return analysis (which runs later
+            // and has no types) can treat every arm as covering a path.
+            self.exhaustive_matches.insert(span);
             return;
         }
         self.sink.emit(

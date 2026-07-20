@@ -96,6 +96,11 @@ pub struct Checker<'a> {
     /// `DefId` -> representation for each `newtype`. Unlike aliases this is
     /// never substituted while checking — that is what keeps it nominal.
     newtype_map: HashMap<DefId, Ty>,
+    /// Spans of `match` statements proven exhaustive while checking.
+    ///
+    /// Return analysis runs after the body and cannot re-derive this (it has
+    /// no types), so exhaustiveness is recorded here as it is computed.
+    exhaustive_matches: HashSet<ori_diagnostics::Span>,
 }
 
 impl<'a> Checker<'a> {
@@ -150,6 +155,7 @@ impl<'a> Checker<'a> {
             infer: HashMap::new(),
             type_alias_map,
             newtype_map,
+            exhaustive_matches: HashSet::new(),
         }
     }
 
@@ -862,7 +868,9 @@ impl<'a> Checker<'a> {
         }
         self.check_block(&func.body, &expected_ret, &tp);
         self.current_async_depth = prev_async_depth;
-        if expected_ret != Ty::Void && !block_definitely_returns(&func.body) {
+        if expected_ret != Ty::Void
+            && !block_definitely_returns(&func.body, &self.exhaustive_matches)
+        {
             self.sink.emit(
                 Diagnostic::error(
                     "type.missing_return",
@@ -3190,7 +3198,9 @@ impl<'a> Checker<'a> {
                         let prev_ret = self.current_return_ty.take();
                         self.current_return_ty = Some(expected.clone());
                         self.check_block(block, &expected, &[]);
-                        if expected != Ty::Void && !block_definitely_returns(block) {
+                        if expected != Ty::Void
+                            && !block_definitely_returns(block, &self.exhaustive_matches)
+                        {
                             self.sink.emit(
                                 Diagnostic::error(
                                     "type.missing_return",
@@ -6871,15 +6881,17 @@ fn ty_is_locally_inferable(ty: &Ty) -> bool {
     }
 }
 
-fn block_definitely_returns(block: &Block) -> bool {
-    stmts_definitely_return(&block.stmts)
+fn block_definitely_returns(block: &Block, exhaustive: &HashSet<ori_diagnostics::Span>) -> bool {
+    stmts_definitely_return(&block.stmts, exhaustive)
 }
 
-fn stmts_definitely_return(stmts: &[Stmt]) -> bool {
-    stmts.iter().any(stmt_definitely_returns)
+fn stmts_definitely_return(stmts: &[Stmt], exhaustive: &HashSet<ori_diagnostics::Span>) -> bool {
+    stmts
+        .iter()
+        .any(|stmt| stmt_definitely_returns(stmt, exhaustive))
 }
 
-fn stmt_definitely_returns(stmt: &Stmt) -> bool {
+fn stmt_definitely_returns(stmt: &Stmt, exhaustive: &HashSet<ori_diagnostics::Span>) -> bool {
     match stmt {
         Stmt::Return(_) => true,
         Stmt::Expr(expr) => is_never_form_call_expr(expr),
@@ -6887,29 +6899,37 @@ fn stmt_definitely_returns(stmt: &Stmt) -> bool {
             if_stmt
                 .else_block
                 .as_ref()
-                .is_some_and(block_definitely_returns)
-                && block_definitely_returns(&if_stmt.then_block)
+                .is_some_and(|b| block_definitely_returns(b, exhaustive))
+                && block_definitely_returns(&if_stmt.then_block, exhaustive)
                 && if_stmt
                     .else_ifs
                     .iter()
-                    .all(|(_, block)| block_definitely_returns(block))
+                    .all(|(_, block)| block_definitely_returns(block, exhaustive))
         }
         Stmt::IfSome(if_some) => {
             if_some
                 .else_block
                 .as_ref()
-                .is_some_and(block_definitely_returns)
-                && block_definitely_returns(&if_some.then_block)
+                .is_some_and(|b| block_definitely_returns(b, exhaustive))
+                && block_definitely_returns(&if_some.then_block, exhaustive)
         }
         Stmt::Match(match_stmt) => {
-            let has_else = match_stmt
+            // A `match` returns on every path when every arm returns AND the
+            // match covers every case. An explicit `case else` is one way to
+            // be covered; an enum match listing all variants is another, and
+            // requiring `else` there forced dead code just to satisfy this
+            // check.
+            let covered = match_stmt
                 .cases
                 .iter()
-                .any(|case| matches!(case, ori_ast::stmt::MatchCase::Else { .. }));
-            has_else
+                .any(|case| matches!(case, ori_ast::stmt::MatchCase::Else { .. }))
+                || exhaustive.contains(&match_stmt.span);
+            covered
                 && match_stmt.cases.iter().all(|case| match case {
                     ori_ast::stmt::MatchCase::Pattern { body, .. }
-                    | ori_ast::stmt::MatchCase::Else { body, .. } => stmts_definitely_return(body),
+                    | ori_ast::stmt::MatchCase::Else { body, .. } => {
+                        stmts_definitely_return(body, exhaustive)
+                    }
                 })
         }
         _ => false,
