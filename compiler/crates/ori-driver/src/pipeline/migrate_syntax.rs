@@ -127,6 +127,7 @@ pub fn migrate_source(source: &str) -> MigrateTextResult {
     });
     text = rewrite_postfix_question(&text, &mut rewrites, &mut notes);
     text = rewrite_redundant_apply_use(&text, &mut rewrites, &mut notes);
+    text = rewrite_associated_type_keyword(&text, &mut rewrites);
 
     let mut seen = std::collections::HashSet::new();
     rewrites.retain(|tag| seen.insert(tag.clone()));
@@ -1418,4 +1419,43 @@ fn dedent_line(line: &str, amount: usize) -> String {
     let indent = leading_indent(line);
     let keep = indent.len().saturating_sub(amount);
     format!("{}{}", &indent[..keep], line.trim_start())
+}
+
+/// `type Item = …` → `alias Item = …` for associated types (0.4).
+///
+/// Only rewrites lines inside an `apply` block, where `type` was the old
+/// keyword; a top-level `type` was never valid Ori, so there is nothing else
+/// this could hit.
+fn rewrite_associated_type_keyword(source: &str, rewrites: &mut Vec<String>) -> String {
+    let mut out = Vec::new();
+    let mut in_apply = false;
+    let mut changed = false;
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("apply ") {
+            in_apply = true;
+        } else if in_apply && trimmed == "end" && leading_indent(line).is_empty() {
+            in_apply = false;
+        }
+        if in_apply {
+            if let Some(rest) = trimmed.strip_prefix("type ") {
+                if rest.contains('=') {
+                    let indent = leading_indent(line);
+                    out.push(format!("{indent}alias {rest}"));
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+        out.push(line.to_string());
+    }
+    if !changed {
+        return source.to_string();
+    }
+    push_tag(rewrites, "associated `type`→`alias`");
+    let mut text = out.join("\n");
+    if source.ends_with('\n') {
+        text.push('\n');
+    }
+    text
 }

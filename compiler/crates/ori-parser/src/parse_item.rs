@@ -1353,10 +1353,30 @@ impl<'src> Parser<'src> {
         let mut members = Vec::new();
         let mut associated_types = Vec::new();
         while !self.at(&TokenKind::End) && !self.at(&TokenKind::Use) && !self.at_eof() {
-            let is_assoc = self
+            // Associated type: `alias Item = string`.
+            //
+            // The same word as a top-level alias, because it means the same
+            // thing — a transparent name for a type. Being inside a `use`
+            // section is what makes it associated; a separate `type` keyword
+            // for that was a second word for one concept.
+            if self.at(&TokenKind::Alias) {
+                self.advance(); // alias
+                let name = self.parse_name()?;
+                self.expect(&TokenKind::Eq)?;
+                let ty = self.parse_type()?;
+                associated_types.push((name, ty));
+                continue;
+            }
+            let removed_type_kw = self
                 .peek()
                 .is_some_and(|tok| tok.kind == TokenKind::Ident && self.slice(tok.span) == "type");
-            if is_assoc {
+            if removed_type_kw {
+                let kw_span = self.current_span();
+                self.error(
+                    "parse.associated_type_keyword_removed",
+                    "`type Name = …` for associated types was removed; write `alias Name = …`",
+                    kw_span,
+                );
                 self.advance(); // type
                 let name = self.parse_name()?;
                 self.expect(&TokenKind::Eq)?;

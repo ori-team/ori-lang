@@ -5754,8 +5754,8 @@ struct Bag
 end
 
 apply Bag use Container
-    type Item = string
-    type Count = int
+    alias Item = string
+    alias Count = int
 
     first_item(self) -> Item
         return self.label
@@ -5801,7 +5801,7 @@ struct Bag
 end
 
 apply Bag use Container
-    type Item = int
+    alias Item = int
     first_item(self) -> Item
         return 1
     end

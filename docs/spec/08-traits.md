@@ -116,7 +116,30 @@ The compact header is recognised by layout: `use` on the **same line** as
 
 1. Free methods and binds (`slot = freeFunction`) — optional; inherent-style on the type
 2. Zero or more `use Trait` sections
-3. Inside each `use`: required slots and optional default overrides (inline or bind)
+3. Inside each `use`: associated types (`alias Name = Type`), then required
+   slots and optional default overrides (inline or bind)
+
+### Associated types
+
+A `use` section may name types for its own signatures:
+
+```ori
+apply Bag use Container
+    alias Item = string
+
+    first_item(self) -> Item
+        return self.label
+    end
+end
+```
+
+- Written with `alias`, the same word as a top-level alias, because it means
+  the same thing: a transparent name for a type. Being inside a `use` section
+  is what makes it associated.
+- Scoped to that section: the name is undefined in a sibling `use`, in free
+  members, and outside the `apply` block.
+- The old `type Name = …` spelling was removed
+  (`parse.associated_type_keyword_removed`); `ori migrate-syntax` rewrites it.
 
 ### Bind
 
