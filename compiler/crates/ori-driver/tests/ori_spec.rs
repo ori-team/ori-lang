@@ -6297,6 +6297,135 @@ end
     );
 }
 
+// ── `Self` resolves to the implementing type ───────────────────────────────
+//
+// A trait signature carries `Self` as a stand-in for the trait's own DefId.
+// The generic-parameter path substituted it; the concrete-type path did not, so
+// `clone(self) -> Self` reported its return type as the *trait*
+// (`expected Config, found Cloneable`). That is why `core.Cloneable` shipped as
+// a method-less marker.
+
+#[test]
+fn compile_runs_core_cloneable() {
+    let dir = TestDir::new("core_cloneable");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+
+struct Config
+    timeout: int
+    retries: int
+end
+
+apply Config use core.Cloneable
+    clone(self) -> Config
+        return Config { timeout: self.timeout, retries: self.retries }
+    end
+end
+
+main()
+    const a: Config = Config { timeout: 5, retries: 2 }
+    const b: Config = a.clone()
+    io.println(f"{b.timeout} {b.retries}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "core_cloneable");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "5 2\n");
+}
+
+#[test]
+fn compile_runs_user_trait_returning_self() {
+    let dir = TestDir::new("user_trait_self");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+trait Duplicable
+    duplicate(self) -> Self
+end
+
+trait Rankable
+    higher(self, other: Self) -> bool
+end
+
+struct Point
+    x: int
+end
+
+apply Point
+    use Duplicable
+        duplicate(self) -> Point
+            return Point { x: self.x }
+        end
+    end
+
+    use Rankable
+        higher(self, other: Point) -> bool
+            return self.x > other.x
+        end
+    end
+end
+
+main()
+    const p: Point = Point { x: 7 }
+    const q: Point = p.duplicate()
+    io.println(f"{q.x}")
+    io.println(f"{p.higher(Point { x: 1 })}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "user_trait_self");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "7\ntrue\n");
+}
+
+#[test]
+fn check_still_enforces_the_cloneable_contract() {
+    for (label, body, expected) in [
+        (
+            "wrong_return",
+            "apply C use core.Cloneable\n    clone(self) -> int\n        return 1\n    end\nend\n",
+            "impl.wrong_signature",
+        ),
+        (
+            "missing",
+            "apply C use core.Cloneable\nend\n",
+            "impl.missing_method",
+        ),
+    ] {
+        let dir = TestDir::new(&format!("cloneable_bad_{label}"));
+        dir.write(
+            "main.orl",
+            &format!(
+                "module app.main\n\nimport ori.core = core\n\nstruct C\n    v: int\nend\n\n{body}\nmain()\nend\n"
+            ),
+        );
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(&expected),
+            "`{label}` should report `{expected}`: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
 // ── `ori.core.Error` carries a real contract ───────────────────────────────
 //
 // `Error` used to be a registered trait name with zero methods: `use core.Error`

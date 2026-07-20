@@ -1399,13 +1399,17 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     has_default: false,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
-                // `Cloneable` and `Default` stay markers on purpose:
-                // - `clone(self) -> Self` needs `Self` substituted at the call
-                //   site. The stand-in used above resolves to the *trait* type,
-                //   so `a.clone()` would report `expected Config, found Cloneable`.
-                // - `default() -> Self` additionally needs a trait method with
-                //   no receiver, which the impl machinery does not support.
-                // Declare your own trait until those two land.
+                "Cloneable" => vec![TraitMethodSig {
+                    name: SmolStr::new("clone"),
+                    params: vec![self_ty.clone()],
+                    return_ty: self_ty,
+                    is_mut: false,
+                    has_default: false,
+                    span: ori_diagnostics::Span::DUMMY,
+                }],
+                // `Default` stays a marker: `default() -> Self` needs a trait
+                // method with **no receiver**, which the impl machinery does not
+                // support. Unlike `Cloneable`, that is not a `Self` problem.
                 _ => Vec::new(),
             };
             TraitSig {

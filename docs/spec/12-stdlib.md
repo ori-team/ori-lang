@@ -229,6 +229,7 @@ the method callable on the value (`value.display()`):
 |---|---|---|
 | `Displayable` | `display(self) -> string` | `string(value)` and f-string interpolation |
 | `Error` | `message(self) -> string` | error types (chapter 09) |
+| `Cloneable` | `clone(self) -> Self` | explicit copies; `Self` resolves to the implementing type |
 | `Disposable` | `mut dispose(self)` | `using` |
 | `Equatable`, `Comparable` | comparison methods | operator overloading, `for T:` bounds |
 | `Addable`, `Subtractable`, `Multiplicable`, `Divisible` | arithmetic methods | operator overloading |
@@ -242,8 +243,7 @@ calling it reports `type.no_such_field`:
 | `Iterable` | Recognized by `for` when the type exposes `mut next() -> optional[T]` — checked structurally, not through the trait table (`type.iterable_next_missing`) |
 | `Transferable` | Enforced for values crossing task or channel boundaries (`concurrency.not_transferable`) |
 | `Hashable` | Checked structurally for `map` keys and `set` elements |
-| `Cloneable` | **Inert.** `clone(self) -> Self` needs `Self` substituted at the call site; without it `a.clone()` would report `expected Config, found Cloneable` |
-| `Default` | **Inert.** `default() -> Self` needs a trait method with no receiver, which is not supported |
+| `Default` | **Inert.** `default() -> Self` needs a trait method with **no receiver**, which the impl machinery does not support. Unlike `Cloneable`, this is not a `Self` problem |
 
 If you need a callable contract that a marker does not provide (cloning, a
 default value), declare your own trait.

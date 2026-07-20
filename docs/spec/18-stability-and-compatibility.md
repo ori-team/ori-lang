@@ -108,7 +108,7 @@ limitation of the current compiler, not a planned removal:
 | Higher-kinded types | Declaration parses, no implementation can satisfy it; **out of scope** by decision ([11](11-generics.md)) |
 | `@c_export` aggregates | Structs, `list`, `map`, `optional`, `result` have no stable C layout; scalars and `string` do cross ([19](19-abi.md) §8.3b) |
 | Infinite recursion | Not detected at compile time (undecidable). At runtime the stack guard reports `stack overflow` instead of dying on a bare signal |
-| `Cloneable` / `Default` | Registered core traits with no methods: `Self` return and receiver-less trait methods are unsupported ([12](12-stdlib.md)) |
+| `Default` | A registered core trait with no methods: `default() -> Self` needs a receiver-less trait method, which is unsupported ([12](12-stdlib.md)) |
 | Type names in backend errors | Codegen messages still print `<def DefId(N)>`; the checker no longer does |
 
 ---

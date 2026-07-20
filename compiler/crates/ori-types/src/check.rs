@@ -305,6 +305,13 @@ impl<'a> Checker<'a> {
         type_def_id: DefId,
         method: &str,
     ) -> Vec<crate::resolve::TraitMethodSig> {
+        // A trait signature carries `Self` as a stand-in `Named(trait_def_id)`.
+        // It has to be replaced by the implementing type here, exactly as the
+        // generic-parameter path below already does — otherwise a method
+        // declared `clone(self) -> Self` reports its return type as the *trait*
+        // (`expected Config, found Cloneable`), which is what kept `Cloneable`
+        // and `Default` as method-less markers.
+        let self_ty = Ty::Named(type_def_id, Vec::new());
         let mut matches = Vec::new();
         for impl_sig in self
             .impl_sigs
@@ -315,7 +322,18 @@ impl<'a> Checker<'a> {
                 .trait_sig(impl_sig.trait_def_id)
                 .and_then(|trait_sig| trait_sig.methods.iter().find(|sig| sig.name == method))
             {
-                matches.push(method_sig.clone());
+                let mut method_sig = method_sig.clone();
+                method_sig.params = method_sig
+                    .params
+                    .iter()
+                    .map(|ty| substitute_trait_self(ty, impl_sig.trait_def_id, &self_ty))
+                    .collect();
+                method_sig.return_ty = substitute_trait_self(
+                    &method_sig.return_ty,
+                    impl_sig.trait_def_id,
+                    &self_ty,
+                );
+                matches.push(method_sig);
             }
         }
         matches
