@@ -96,6 +96,10 @@ pub struct Checker<'a> {
     /// `DefId` -> representation for each `newtype`. Unlike aliases this is
     /// never substituted while checking — that is what keeps it nominal.
     newtype_map: HashMap<DefId, Ty>,
+    /// Associated types of the `use Trait` section being checked
+    /// (`type Item = int`), so method signatures in that section can name
+    /// them. Empty outside an `apply … use …` body.
+    local_type_aliases: HashMap<SmolStr, ori_ast::ty::Type>,
     /// Spans of `match` statements proven exhaustive while checking.
     ///
     /// Return analysis runs after the body and cannot re-derive this (it has
@@ -155,6 +159,7 @@ impl<'a> Checker<'a> {
             infer: HashMap::new(),
             type_alias_map,
             newtype_map,
+            local_type_aliases: HashMap::new(),
             exhaustive_matches: HashSet::new(),
         }
     }
@@ -508,11 +513,19 @@ impl<'a> Checker<'a> {
                         }
                     }
                     for use_sec in &apply.uses {
+                        // `type Item = int` in this section names a type for
+                        // the signatures inside it, and only inside it.
+                        self.local_type_aliases = use_sec
+                            .associated_types
+                            .iter()
+                            .map(|(name, ty)| (name.text.clone(), ty.clone()))
+                            .collect();
                         for member in &use_sec.members {
                             if let ApplyMember::Method(m) = member {
                                 self.check_func(m, &tp, implicit_self_ty.clone());
                             }
                         }
+                        self.local_type_aliases.clear();
                     }
                     restore_alias(&mut self.aliases, "Self", previous_self);
                 }
@@ -1003,7 +1016,15 @@ impl<'a> Checker<'a> {
 
         let self_ty = Ty::Named(type_def_id, Vec::new());
         for use_sec in &apply.uses {
+            // Signature comparison lowers the method's types, so this section's
+            // `type Item = …` has to be in scope for it too.
+            self.local_type_aliases = use_sec
+                .associated_types
+                .iter()
+                .map(|(name, ty)| (name.text.clone(), ty.clone()))
+                .collect();
             self.check_apply_use_section(apply, use_sec, type_def_id, &self_ty, &type_name);
+            self.local_type_aliases.clear();
         }
     }
 
@@ -5281,7 +5302,7 @@ impl<'a> Checker<'a> {
 
     fn lower(&mut self, ty: &ori_ast::ty::Type, type_params: &[SmolStr]) -> Ty {
         self.mark_type_alias_usage(ty);
-        let raw = lower_type_with_aliases(
+        let raw = crate::lower::lower_type_with_local_aliases(
             ty,
             self.namespace,
             type_params,
@@ -5289,6 +5310,7 @@ impl<'a> Checker<'a> {
             self.file_id,
             self.sink,
             &self.aliases,
+            &self.local_type_aliases,
         );
         expand_ty_aliases(raw, self.def_map, &self.type_alias_map)
     }

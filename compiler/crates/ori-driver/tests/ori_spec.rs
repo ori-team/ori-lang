@@ -5728,3 +5728,128 @@ end
         out.diagnostics
     );
 }
+
+// ── Associated types in `apply … use …` (roadmap §3) ───────────────────────
+//
+// `type Item = int` was parsed but never consumed: the name was undefined in
+// the very signatures it exists to serve.
+
+#[test]
+fn compile_runs_associated_types_in_apply_use() {
+    let dir = TestDir::new("assoc_types");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+trait Container
+    first_item(self) -> string
+    size(self) -> int
+end
+
+struct Bag
+    label: string
+    count: int
+end
+
+apply Bag use Container
+    type Item = string
+    type Count = int
+
+    first_item(self) -> Item
+        return self.label
+    end
+
+    size(self) -> Count
+        return self.count
+    end
+end
+
+main()
+    const b: Bag = Bag { label: "books", count: 3 }
+    io.println(b.first_item())
+    io.println(f"{b.size()}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "assoc_types");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "books\n3\n");
+}
+
+#[test]
+fn check_rejects_associated_type_that_breaks_the_trait_signature() {
+    let dir = TestDir::new("assoc_type_wrong");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+trait Container
+    first_item(self) -> string
+end
+
+struct Bag
+    label: string
+end
+
+apply Bag use Container
+    type Item = int
+    first_item(self) -> Item
+        return 1
+    end
+end
+
+main()
+    io.println("x")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"impl.wrong_signature"),
+        "an associated type resolving to the wrong type must still fail: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_keeps_associated_types_scoped_to_their_use_section() {
+    let dir = TestDir::new("assoc_type_scope");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct A
+    v: int
+end
+
+apply A
+    uses_item(self) -> Item
+        return 1
+    end
+end
+
+main()
+    io.println("x")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.undefined_name"),
+        "`Item` is only defined inside its own `use` section: {:?}",
+        out.diagnostics
+    );
+}

@@ -389,6 +389,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                 &tp,
                                 apply.where_clause.as_ref(),
                                 &aliases,
+                                &HashMap::new(),
                                 &def_map,
                                 self_ty.clone(),
                                 *file_id,
@@ -415,6 +416,11 @@ pub fn resolve_many<S: Into<SmolStr>>(
                             &aliases,
                             &def_map,
                         );
+                        let section_assoc_types: HashMap<SmolStr, ori_ast::ty::Type> = use_sec
+                            .associated_types
+                            .iter()
+                            .map(|(name, ty)| (name.text.clone(), ty.clone()))
+                            .collect();
                         let mut impl_methods = Vec::new();
                         for member in &use_sec.members {
                             match member {
@@ -440,6 +446,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         &tp,
                                         apply.where_clause.as_ref(),
                                         &aliases,
+                                        &section_assoc_types,
                                         &def_map,
                                         self_ty.clone(),
                                         *file_id,
@@ -1057,6 +1064,9 @@ fn resolve_apply_method_func_sig(
     apply_tp: &[SmolStr],
     apply_where: Option<&WhereClause>,
     aliases: &HashMap<SmolStr, SmolStr>,
+    // `type Item = int` declared in the enclosing `use Trait` section, so the
+    // signature can name it. Empty for free members.
+    associated_types: &HashMap<SmolStr, ori_ast::ty::Type>,
     def_map: &DefMap,
     self_ty: Ty,
     file_id: FileId,
@@ -1071,8 +1081,15 @@ fn resolve_apply_method_func_sig(
         .params
         .iter()
         .map(|p| {
-            lower_type_with_aliases(
-                &p.ty, namespace, &all_tp, def_map, file_id, sink, &m_aliases,
+            crate::lower::lower_type_with_local_aliases(
+                &p.ty,
+                namespace,
+                &all_tp,
+                def_map,
+                file_id,
+                sink,
+                &m_aliases,
+                associated_types,
             )
         })
         .collect();
@@ -1082,7 +1099,18 @@ fn resolve_apply_method_func_sig(
     let return_ty = m
         .return_ty
         .as_ref()
-        .map(|t| lower_type_with_aliases(t, namespace, &all_tp, def_map, file_id, sink, &m_aliases))
+        .map(|t| {
+            crate::lower::lower_type_with_local_aliases(
+                t,
+                namespace,
+                &all_tp,
+                def_map,
+                file_id,
+                sink,
+                &m_aliases,
+                associated_types,
+            )
+        })
         .unwrap_or(Ty::Void);
     let return_ty = async_return_ty(m.is_async, return_ty);
     let m_path = match trait_name {
