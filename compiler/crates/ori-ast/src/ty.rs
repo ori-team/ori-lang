@@ -57,6 +57,8 @@ pub enum Type {
     Optional(Box<Type>, Span),
     Result(Box<Type>, Box<Type>, Span),
     List(Box<Type>, Span),
+    /// `slice[T]` — a read-only window over a `list[T]`.
+    Slice(Box<Type>, Span),
     /// `array[T, size: N]` — fixed length, part of the type.
     ///
     /// Distinct from `list[T]`: the length is known at compile time, so the
@@ -118,6 +120,7 @@ impl Type {
             Type::Array { span, .. } => *span,
             Type::Optional(_, s)
             | Type::List(_, s)
+            | Type::Slice(_, s)
             | Type::Set(_, s)
             | Type::Range(_, s)
             | Type::Lazy(_, s)

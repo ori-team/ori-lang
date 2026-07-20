@@ -76,6 +76,7 @@ pub fn lower_type_with_local_aliases(
         };
     }
     match ast_ty {
+        AstType::Slice(inner, _) => Ty::Slice(Box::new(rec!(inner))),
         // `size: 8` — a named compile-time constant in argument position.
         // `size: cap` names a `const` parameter instead, resolved by
         // substitution at the use site.

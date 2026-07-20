@@ -6297,6 +6297,132 @@ end
     );
 }
 
+// ── `slice[T]`: a window, not a copy ───────────────────────────────────────
+//
+// `lists.slice` copies every element — 2.4 ms for a 100k list. `lists.window`
+// returns `(owner, start, len)` in O(1). It stores the **list object**, not its
+// element buffer, because `push` calls `list_ensure_capacity` and can move the
+// buffer; resolving through the owner on each read cannot dangle.
+
+#[test]
+fn compile_runs_slice_window_over_a_list() {
+    let dir = TestDir::new("slice_window");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+import ori.slice = sl
+
+main()
+    var xs: list[int] = [10, 20, 30, 40, 50]
+    const w: slice[int] = lists.window(xs, 1, 4)
+    io.println(f"{sl.len(w)}")
+    io.println(f"{sl.get(w, 0)}")
+    io.println(f"{sl.get(w, 2)}")
+
+    -- a window sees the owner, unlike a copy
+    lists.set(xs, 1, 999)
+    io.println(f"{sl.get(w, 0)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "slice_window");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "3\n20\n40\n999\n",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_slice_that_survives_owner_reallocation_and_scope() {
+    let dir = TestDir::new("slice_lifetime");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+import ori.slice = sl
+
+make_window() -> slice[int]
+    var local: list[int] = [7, 8, 9]
+    return lists.window(local, 0, 3)
+end
+
+main()
+    -- the owner's buffer moves many times underneath the window
+    var xs: list[int] = [1, 2, 3]
+    const w: slice[int] = lists.window(xs, 0, 3)
+    var i: int = 0
+    while i < 5000
+        lists.push(xs, i)
+        i = i + 1
+    end
+    io.println(f"{sl.get(w, 1)}")
+
+    -- and the window outlives the binding that created the list
+    const escaped: slice[int] = make_window()
+    io.println(f"{sl.get(escaped, 1)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "slice_lifetime");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "2\n8\n",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn check_keeps_slice_and_array_usable_as_identifiers() {
+    // Both are contextual: they name types in type position and stay ordinary
+    // names everywhere else. Reserving `slice` outright broke an existing test
+    // that had `const slice: list[string] = ...`.
+    let dir = TestDir::new("slice_identifier");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+
+main()
+    var values: list[int] = [1, 2, 3]
+    const slice: list[int] = lists.slice(values, 0, 2)
+    const array: int = 7
+    io.println(f"{lists.len(slice)} {array}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
 // ── Generic traits can be applied ──────────────────────────────────────────
 //
 // `trait Container[Item]` declared fine but could not be used: `use Container[int]`

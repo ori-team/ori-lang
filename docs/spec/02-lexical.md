@@ -162,6 +162,8 @@ remain usable as ordinary identifiers elsewhere:
 | `for` | Also after a name in generic bounds: `max for T: Comparable (...)` |
 | `use` | Inside `apply Type` — starts a trait section: `use Trait` |
 | `imports` | Opens the multi-import block: `imports … end` |
+| `array` | Names a type in type position: `array[int, size: 4]` |
+| `slice` | Names a type in type position: `slice[int]` |
 
 ---
 

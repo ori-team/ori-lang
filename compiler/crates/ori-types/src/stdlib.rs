@@ -197,6 +197,11 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.list.with_capacity", ["list.with_capacity"] => "ori_list_with_capacity"),
     stdlib!("ori.list.push", ["list.push"] => "ori_list_push"),
     stdlib!("ori.list.get", ["list.get"] => "ori_list_get"),
+    // `slice[T]` — a read-only **window**, distinct from `ori.list.slice`,
+    // which copies. The name says which one you get.
+    stdlib!("ori.list.window", ["list.window"] => "ori_slice_new"),
+    stdlib!("ori.slice.len", ["slice.len"] => "ori_slice_len"),
+    stdlib!("ori.slice.get", ["slice.get"] => "ori_slice_get"),
     stdlib!("ori.list.try_get", ["list.try_get"] => "ori_list_try_get"),
     stdlib!("ori.list.set", ["list.set"] => "ori_list_set"),
     stdlib!("ori.list.len", ["list.len"] => "ori_list_len"),
@@ -1000,6 +1005,15 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
         ),
         "ori.list.get" => (
             vec![Ty::List(Box::new(Ty::Infer(0))), Ty::Int],
+            Ty::Infer(0),
+        ),
+        "ori.list.window" => (
+            vec![Ty::List(Box::new(Ty::Infer(0))), Ty::Int, Ty::Int],
+            Ty::Slice(Box::new(Ty::Infer(0))),
+        ),
+        "ori.slice.len" => (vec![Ty::Slice(Box::new(Ty::Infer(0)))], Ty::Int),
+        "ori.slice.get" => (
+            vec![Ty::Slice(Box::new(Ty::Infer(0))), Ty::Int],
             Ty::Infer(0),
         ),
         "ori.list.try_get" => (
@@ -1868,6 +1882,9 @@ pub fn stdlib_native_abi(
         | "ori_doubly_linked_list_insert_after"
         | "ori_doubly_linked_list_insert_before" => (vec![Ptr, I64, I64], Some(I8)),
         "ori_list_get" | "ori_map_get" => (vec![Ptr, I64], Some(I64)),
+        "ori_slice_new" => (vec![Ptr, I64, I64], Some(Ptr)),
+        "ori_slice_len" => (vec![Ptr], Some(I64)),
+        "ori_slice_get" => (vec![Ptr, I64], Some(I64)),
         "ori_list_try_get" | "ori_map_try_get" | "ori_map_try_remove" => {
             (vec![Ptr, I64], Some(Ptr))
         }

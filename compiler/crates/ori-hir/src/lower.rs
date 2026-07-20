@@ -66,6 +66,8 @@ fn ori_mem_size_of_ty(ty: &Ty) -> i64 {
         },
         Ty::Error => 0,
         Ty::Infer(_) | Ty::Param { .. } => 8,
+        // A slice is a small `(owner, start, len)` block behind a pointer.
+        Ty::Slice(_) => 8,
         Ty::String
         | Ty::Bytes
         | Ty::Optional(_)
@@ -532,6 +534,19 @@ fn specialized_stdlib_call_ret_ty(c_name: &str, args: &[HirArg], fallback: Ty) -
             .first()
             .and_then(list_elem)
             .map(|elem| Ty::List(Box::new(elem)))
+            .unwrap_or(fallback),
+        // A window keeps the owner's element type but is not a list.
+        "ori.list.window" => args
+            .first()
+            .and_then(list_elem)
+            .map(|elem| Ty::Slice(Box::new(elem)))
+            .unwrap_or(fallback),
+        "ori.slice.get" => args
+            .first()
+            .and_then(|arg| match &arg.value.ty {
+                Ty::Slice(elem) => Some((**elem).clone()),
+                _ => None,
+            })
             .unwrap_or(fallback),
         "ori.list.clone" | "ori.list.to_list" | "ori.list.from_list" => args
             .first()

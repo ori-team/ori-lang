@@ -36,6 +36,21 @@ macro_rules! single_bracket_type {
 impl<'src> Parser<'src> {
     pub fn parse_type(&mut self) -> Option<Type> {
         let span = self.current_span();
+
+        // `array` and `slice` are **contextual**: they name types here, and stay
+        // ordinary identifiers everywhere else. Reserving them outright would
+        // break any program with a variable called `slice`, which is a very
+        // plausible name — the language already treats `ok`, `err`, `try`,
+        // `async` and `await` the same way.
+        if self.at_contextual("array") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
+            return self.parse_array_type(span);
+        }
+        if self.at_contextual("slice") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
+            self.advance();
+            let (inner, end) = self.parse_single_type_arg()?;
+            return Some(Type::Slice(Box::new(inner), span.cover(end)));
+        }
+
         match self.peek_kind()? {
             // ── Primitive types ───────────────────────────────────────────────
             TokenKind::BoolTy => primitive_type!(self, span, Bool),
@@ -58,7 +73,6 @@ impl<'src> Parser<'src> {
             // ── Single-arg generic built-in types ─────────────────────────────
             TokenKind::Optional => single_bracket_type!(self, span, Optional),
             TokenKind::List => single_bracket_type!(self, span, List),
-            TokenKind::Array => self.parse_array_type(span),
             TokenKind::Set => single_bracket_type!(self, span, Set),
             TokenKind::Range => single_bracket_type!(self, span, Range),
             TokenKind::Lazy => single_bracket_type!(self, span, Lazy),
@@ -355,7 +369,7 @@ impl<'src> Parser<'src> {
     /// `array[int, 4]` puts a loose number between brackets, which reads as an
     /// index everywhere else in Ori.
     fn parse_array_type(&mut self, start: ori_diagnostics::Span) -> Option<Type> {
-        self.advance(); // `array`
+        self.advance(); // contextual `array`
         self.expect(&TokenKind::LBracket)?;
         let elem = self.parse_type()?;
         self.expect(&TokenKind::Comma)?;

@@ -158,6 +158,7 @@ These types are built into the language and require no import.
 |---|---|
 | `list[T]` | Ordered, resizable sequence |
 | `array[T, size: N]` | Fixed-length sequence stored **inline** — see below |
+| `slice[T]` | A read-only **window** over a `list[T]` — see below |
 | `map[K, V]` | Key-value mapping. Current runtime supports `int`, `string`, and user-defined keys that implement `Hashable` and `Equatable` |
 | `set[T]` | Unordered unique values. Current runtime supports `int`, `string`, and user-defined elements that implement `Hashable` and `Equatable` |
 | `optional[T]` | A value that may be absent |
@@ -165,6 +166,60 @@ These types are built into the language and require no import.
 | `range[int]` | An inclusive integer range |
 | `lazy[T]` | Lazy value computed at most once through `lazy.once` and `lazy.force` |
 | `any[Trait]` | Dynamic dispatch over a trait |
+
+---
+
+## Slices (`slice[T]`)
+
+`slice[T]` is a read-only window over a `list[T]`. It holds the owning list plus
+a range, never a copy of the elements, so taking one is O(1) whatever the
+length.
+
+```ori
+import ori.list = lists
+import ori.slice = sl
+
+var xs: list[int] = [10, 20, 30, 40, 50]
+const w: slice[int] = lists.window(xs, 1, 4)
+
+const n: int = sl.len(w)        -- 3
+const first: int = sl.get(w, 0) -- 20
+```
+
+The two ways of taking part of a list are **named differently on purpose**:
+
+| Call | Result | Cost |
+|---|---|---|
+| `lists.slice(xs, a, b)` | a new `list[T]`, elements copied | O(n) |
+| `lists.window(xs, a, b)` | a `slice[T]` over `xs` | O(1) |
+
+Measured on a 100 000-element list: **2.4 ms** to copy, **12 µs** for a window.
+
+### It is a window, and that is observable
+
+```ori
+const w: slice[int] = lists.window(xs, 1, 4)
+lists.set(xs, 1, 999)
+const v: int = sl.get(w, 0)     -- 999, not 20
+```
+
+This is the whole point, and it is why the window is a **distinct type** rather
+than a faster `lists.slice`: sharing is visible in the source, at the call and
+in the type. Changing `xs[1..3]` to share silently was rejected for the same
+reason copy-on-write was (`docs/planning/adr-arc-cow-collections.md`).
+
+### Safety
+
+- **Read-only.** There is no `sl.set`. Writing through a window would make
+  aliasing mutable, which is a much larger surprise than reading through one.
+- **The owner cannot be freed underneath it.** Creating a window registers an
+  ARC edge to the list, so a window may outlive the binding that made it.
+- **The owner may be resized underneath it.** `lists.push` can move the element
+  buffer, so the window stores the *list object* and resolves the buffer on each
+  read. Reads past the owner's current length abort with a bounds message rather
+  than reading freed memory.
+- A window is not `Transferable`: it points at a list the sender owns, so it
+  cannot cross a task or channel boundary.
 
 ---
 

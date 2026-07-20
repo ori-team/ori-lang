@@ -162,9 +162,6 @@ pub enum TokenKind {
     ResultKw,
     #[token("list")]
     List,
-    /// `array[T, size: N]` — fixed length, stored inline (unlike `list[T]`).
-    #[token("array")]
-    Array,
     #[token("map")]
     Map,
     #[token("set")]
@@ -407,7 +404,6 @@ impl TokenKind {
             TokenKind::Optional => "`optional`",
             TokenKind::ResultKw => "`result`",
             TokenKind::List => "`list`",
-            TokenKind::Array => "`array`",
             TokenKind::Map => "`map`",
             TokenKind::Set => "`set`",
             TokenKind::Range => "`range`",

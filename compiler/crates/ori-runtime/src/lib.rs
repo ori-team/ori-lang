@@ -2649,6 +2649,85 @@ pub unsafe extern "C" fn ori_list_get(list: *mut OriList, index: i64) -> i64 {
     *(*list).data.add(index as usize)
 }
 
+/// A read-only window over a `list`, as `(owner, start, len)`.
+///
+/// It stores the **list object**, not its element buffer. `ori_list_push` calls
+/// `list_ensure_capacity`, which can move `OriList::data`; a slice holding a
+/// raw `data + start` pointer would dangle after any push into the owner. Going
+/// through the owner on each read costs one extra indirection and cannot dangle.
+///
+/// The compiler registers an ARC edge from the slice to the owner, so the list
+/// outlives every window over it.
+#[repr(C)]
+pub struct OriSlice {
+    pub owner: *mut OriList,
+    pub start: i64,
+    pub len: i64,
+}
+
+/// Build a window over `list` covering `[start, end)`.
+///
+/// Bounds are checked once, here, against the owner's length at creation time.
+#[no_mangle]
+pub unsafe extern "C" fn ori_slice_new(list: *mut OriList, start: i64, end: i64) -> *mut u8 {
+    let owner_len = if list.is_null() { 0 } else { (*list).len };
+    if start < 0 || end < start || end > owner_len {
+        abort_bounds("ori slice bounds out of range");
+    }
+    let ptr = ori_alloc(std::mem::size_of::<OriSlice>(), None);
+    if ptr.is_null() {
+        return ptr;
+    }
+    let slice = ptr as *mut OriSlice;
+    (*slice).owner = list;
+    (*slice).start = start;
+    (*slice).len = end - start;
+    // The window must keep the list alive: without this edge the owner's last
+    // reference could drop while the window is still readable, and every read
+    // would touch freed memory. The edge retains the owner and is released
+    // when the slice itself is collected.
+    ori_arc_register_edge(ptr, list as *mut u8);
+    ptr
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ori_slice_len(slice: *mut u8) -> i64 {
+    if slice.is_null() {
+        return 0;
+    }
+    (*(slice as *mut OriSlice)).len
+}
+
+/// Read one element, resolving the owner's buffer on every access.
+///
+/// The index is relative to the window; the owner's length is re-checked
+/// because the list may have shrunk since the window was made.
+#[no_mangle]
+pub unsafe extern "C" fn ori_slice_get(slice: *mut u8, index: i64) -> i64 {
+    if slice.is_null() {
+        abort_bounds("ori slice index out of bounds");
+    }
+    let slice = slice as *mut OriSlice;
+    if index < 0 || index >= (*slice).len {
+        abort_bounds("ori slice index out of bounds");
+    }
+    let owner = (*slice).owner;
+    let absolute = (*slice).start + index;
+    if owner.is_null() || absolute < 0 || absolute >= (*owner).len {
+        abort_bounds("ori slice outlived the data it points at");
+    }
+    *(*owner).data.add(absolute as usize)
+}
+
+/// The owning list, so the compiler can register the ARC edge.
+#[no_mangle]
+pub unsafe extern "C" fn ori_slice_owner(slice: *mut u8) -> *mut u8 {
+    if slice.is_null() {
+        return std::ptr::null_mut();
+    }
+    (*(slice as *mut OriSlice)).owner as *mut u8
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ori_list_set(list: *mut OriList, index: i64, value: i64) {
     if list.is_null() || index < 0 || index >= (*list).len {

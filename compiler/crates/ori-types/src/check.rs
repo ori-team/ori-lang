@@ -4340,6 +4340,9 @@ impl<'a> Checker<'a> {
         });
         match (canonical_path, first_arg_ty.as_ref()) {
             ("ori.list.get", Some(Ty::List(elem))) => ret = *elem.clone(),
+            // A window carries the owner's element type.
+            ("ori.list.window", Some(Ty::List(elem))) => ret = Ty::Slice(elem.clone()),
+            ("ori.slice.get", Some(Ty::Slice(elem))) => ret = *elem.clone(),
             ("ori.list.pop", Some(Ty::List(elem))) => ret = *elem.clone(),
             ("ori.list.try_get" | "ori.list.try_pop", Some(Ty::List(elem))) => {
                 ret = Ty::Optional(elem.clone())
@@ -5788,6 +5791,10 @@ impl<'a> Checker<'a> {
             Ty::ConstInt(_, _) => true,
             // Elements live inline, so an array moves exactly when they do.
             Ty::Array(elem, _) => self.is_transferable_ty(elem),
+            // A slice points at a list owned by the sending side; letting it
+            // cross a task boundary would share that list without the receiver
+            // owning it.
+            Ty::Slice(_) => false,
             Ty::Bool
             | Ty::Int
             | Ty::Int8
@@ -6454,6 +6461,7 @@ impl<'a> Checker<'a> {
                 self.unify(ok1, ok2) && self.unify(err1, err2)
             }
             (List(x), List(y))
+            | (Slice(x), Slice(y))
             | (Set(x), Set(y))
             | (Range(x), Range(y))
             | (Lazy(x), Lazy(y))
