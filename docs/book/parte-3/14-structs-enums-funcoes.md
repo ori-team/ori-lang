@@ -39,6 +39,39 @@ Acessamos os campos usando a notação de ponto (`.`):
 const x_value = point_c.x
 ```
 
+### Pegando vários campos de uma vez (destructuring)
+
+Quando você precisa de dois ou três campos, repetir o nome da struct em cada
+linha cansa:
+
+```ori
+-- repetitivo
+const pos: Point = get_pos()
+const x = pos.x
+const y = pos.y
+```
+
+Dá para ligar tudo numa linha só:
+
+```ori
+const Point { x, y } = get_pos()
+```
+
+Variações:
+
+```ori
+const { x, y } = get_pos()          -- tipo inferido (mesma regra do const comum)
+const Point { x: px, y: py } = pos  -- renomeando na hora de ligar
+var { x, y } = get_pos()            -- bindings mutáveis
+```
+
+Depois disso, `x` e `y` são variáveis normais — a forma é só um atalho para
+"guarde o valor e leia estes campos".
+
+> **Só funciona com campos de struct**, não com tupla. É proposital: `const
+> (a, b) = ...` devolveria ao leitor a pergunta "o que era o campo 2 mesmo?",
+> que é exatamente o custo que essa forma existe para remover.
+
 ## Enums (Enumerações)
 
 Enums são usados quando um valor pode ser apenas *uma* de várias opções (escolhas exclusivas). No Ori, as variantes de um enum podem armazenar dados.

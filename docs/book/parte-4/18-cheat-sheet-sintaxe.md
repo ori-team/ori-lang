@@ -172,6 +172,10 @@ const p: Point = { x: 0, y: 0 }
 
 -- Atualização de struct (copia mudando alguns campos; NÃO tem 'end' de bloco extra)
 const user2 = user with { age: 31 } end
+
+-- Destructuring: liga vários campos de uma vez (só struct, não tupla)
+const User { name, age } = get_user()
+const { name: n } = get_user()   -- tipo inferido + renomeando
 ```
 
 ### Enums
