@@ -359,6 +359,8 @@ Regression tests: `check_rejects_recursion_with_no_escape`,
 |---|---|---|
 | `impl.missing_method` | error | `apply Type` / `use Trait` omits a required trait method |
 | `impl.mut_mismatch` | error | Trait method mutability does not match implementation |
+| `impl.trait_args_missing` | error | A generic trait was applied without its type arguments: write `use Container[int]`. Without them the trait's parameters stay unbound |
+| `impl.trait_arg_count_mismatch` | error | A generic trait was applied with the wrong number of type arguments |
 | `impl.trait_not_found` | error | Trait named in a `use Trait` section does not exist |
 | `impl.type_not_found` | error | Type named in an `apply Type` block does not exist |
 | `impl.wrong_signature` | error | Implemented method signature does not match the trait |

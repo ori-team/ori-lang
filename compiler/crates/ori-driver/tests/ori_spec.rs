@@ -6297,6 +6297,95 @@ end
     );
 }
 
+// ── Generic traits can be applied ──────────────────────────────────────────
+//
+// `trait Container[Item]` declared fine but could not be used: `use Container[int]`
+// did not parse, and bare `use Container` left `Item` unbound. Four layers were
+// missing — `ApplyUseSection.trait_args`, the parser, `TraitSig.type_params`,
+// and `ImplSig.trait_args` — plus substitution in the checker *and* in lowering.
+
+#[test]
+fn compile_runs_generic_trait_with_two_instantiations() {
+    let dir = TestDir::new("generic_trait_applied");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+trait Container[Item]
+    first(self) -> Item
+end
+
+struct IntBox
+    v: int
+end
+
+struct TextBox
+    s: string
+end
+
+apply IntBox use Container[int]
+    first(self) -> int
+        return self.v
+    end
+end
+
+apply TextBox use Container[string]
+    first(self) -> string
+        return self.s
+    end
+end
+
+main()
+    const a: IntBox = IntBox { v: 42 }
+    const b: TextBox = TextBox { s: "hi" }
+    io.println(f"{a.first()}")
+    io.println(b.first())
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "generic_trait_applied");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\nhi\n");
+}
+
+#[test]
+fn check_rejects_bad_generic_trait_applications() {
+    let header = "module app.main\n\ntrait Container[Item]\n    first(self) -> Item\nend\n\nstruct C\n    v: int\nend\n\n";
+    for (label, body, expected) in [
+        (
+            "no_arguments",
+            "apply C use Container\n    first(self) -> int\n        return self.v\n    end\nend\n",
+            "impl.trait_args_missing",
+        ),
+        (
+            "too_many_arguments",
+            "apply C use Container[int, string]\n    first(self) -> int\n        return self.v\n    end\nend\n",
+            "impl.trait_arg_count_mismatch",
+        ),
+        (
+            "argument_does_not_match_impl",
+            "apply C use Container[string]\n    first(self) -> int\n        return self.v\n    end\nend\n",
+            "impl.wrong_signature",
+        ),
+    ] {
+        let dir = TestDir::new(&format!("generic_trait_bad_{label}"));
+        dir.write("main.orl", &format!("{header}{body}\nmain()\nend\n"));
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(&expected),
+            "`{label}` should report `{expected}`: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
 // ── `Self` resolves to the implementing type ───────────────────────────────
 //
 // A trait signature carries `Self` as a stand-in for the trait's own DefId.

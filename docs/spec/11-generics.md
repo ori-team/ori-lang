@@ -92,9 +92,8 @@ trait Container[Item]
 end
 ```
 
-> **Declaration-only today.** No `apply` block can implement a generic trait —
-> `use Trait[Arg]` does not parse, and bare `use Trait` leaves the parameter
-> unbound. See "Not supported" at the end of this chapter.
+An `apply` binds the parameter positionally with `use Container[int]`; see
+chapter 08 for the rules.
 
 ---
 

@@ -15,4 +15,7 @@ pub use resolve::{
     resolve, EnumSig, EnumVariantSig, FuncSig, ImplMethodSig, ImplSig, ReExport, ResolvedModule,
     StructSig, TraitMethodSig, TraitSig, TypeAliasSig, ValueSig, WhereConstraintSig,
 };
-pub use ty::{expand_ty_aliases, normalize_ty_aliases, substitute_ty_params, OpaqueTy, Ty};
+pub use ty::{
+    expand_ty_aliases, normalize_ty_aliases, substitute_trait_self, substitute_ty_params,
+    OpaqueTy, Ty,
+};

@@ -756,3 +756,89 @@ pub fn erase_newtypes(
         }
     })
 }
+
+/// Replace a trait's `Self` stand-in with the implementing type.
+///
+/// A trait signature carries `Self` as `Named(trait_def_id, [])`. Both the
+/// checker (call sites and impl validation) and HIR lowering need to bind it,
+/// which is why this lives here rather than inside the checker.
+pub fn substitute_trait_self(ty: &Ty, trait_def_id: DefId, self_ty: &Ty) -> Ty {
+    match ty {
+        Ty::Named(id, args) if *id == trait_def_id && args.is_empty() => self_ty.clone(),
+        Ty::Named(id, args) => Ty::Named(
+            *id,
+            args.iter()
+                .map(|arg| substitute_trait_self(arg, trait_def_id, self_ty))
+                .collect(),
+        ),
+        Ty::Optional(inner) => Ty::Optional(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Result(ok, err) => Ty::Result(
+            Box::new(substitute_trait_self(ok, trait_def_id, self_ty)),
+            Box::new(substitute_trait_self(err, trait_def_id, self_ty)),
+        ),
+        Ty::List(inner) => Ty::List(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Map(key, value) => Ty::Map(
+            Box::new(substitute_trait_self(key, trait_def_id, self_ty)),
+            Box::new(substitute_trait_self(value, trait_def_id, self_ty)),
+        ),
+        Ty::Set(inner) => Ty::Set(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Range(inner) => Ty::Range(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Lazy(inner) => Ty::Lazy(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Future(inner) => Ty::Future(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::TaskJob(inner) => Ty::TaskJob(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Channel(inner) => Ty::Channel(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Opaque { kind, args } => Ty::Opaque {
+            kind: *kind,
+            args: args
+                .iter()
+                .map(|arg| substitute_trait_self(arg, trait_def_id, self_ty))
+                .collect(),
+        },
+        Ty::Tuple(items) => Ty::Tuple(
+            items
+                .iter()
+                .map(|item| substitute_trait_self(item, trait_def_id, self_ty))
+                .collect(),
+        ),
+        Ty::Func { params, ret } => Ty::Func {
+            params: params
+                .iter()
+                .map(|param| substitute_trait_self(param, trait_def_id, self_ty))
+                .collect(),
+            ret: Box::new(substitute_trait_self(ret, trait_def_id, self_ty)),
+        },
+        _ => ty.clone(),
+    }
+}

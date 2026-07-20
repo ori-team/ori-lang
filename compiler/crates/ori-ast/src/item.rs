@@ -236,6 +236,12 @@ pub enum ApplyMember {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApplyUseSection {
     pub trait_name: QualifiedName,
+    /// Type arguments for a generic trait: `use Container[int]`.
+    ///
+    /// Empty for a non-generic trait. These bind the trait's own type
+    /// parameters, which is what lets one type implement `Container[int]` while
+    /// another implements `Container[string]`.
+    pub trait_args: Vec<Type>,
     pub members: Vec<ApplyMember>,
     pub associated_types: Vec<(Name, Type)>,
     pub span: Span,

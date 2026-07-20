@@ -482,7 +482,7 @@ impl<'src> Parser<'src> {
         Some((args, end))
     }
 
-    fn parse_type_arg_list_free(&mut self) -> Option<(Vec<Type>, ori_diagnostics::Span)> {
+    pub(crate) fn parse_type_arg_list_free(&mut self) -> Option<(Vec<Type>, ori_diagnostics::Span)> {
         let open = match self.peek_kind() {
             Some(TokenKind::LBracket) => TokenKind::LBracket,
             Some(TokenKind::Lt) => {

@@ -1275,16 +1275,27 @@ impl<'a> Lowerer<'a> {
             let Some(method_sig) = trait_sig.methods.iter().find(|sig| sig.name == method) else {
                 continue;
             };
+            // Bind the trait's own parameters (`use Container[int]`) and then
+            // `Self`. Without this the lowered return type stays `Ty::Param`,
+            // and codegen fails on an unresolved `Item`.
+            let self_ty = Ty::Named(type_def_id, Vec::new());
+            let return_ty = if impl_sig.trait_args.is_empty() {
+                method_sig.return_ty.clone()
+            } else {
+                ori_types::substitute_ty_params(&method_sig.return_ty, &impl_sig.trait_args)
+            };
+            let return_ty =
+                ori_types::substitute_trait_self(&return_ty, impl_sig.trait_def_id, &self_ty);
             if let Some(impl_method) = impl_sig.methods.iter().find(|sig| sig.name == method) {
                 matches.push((
                     self.def_map.get(impl_method.func_def_id).path.clone(),
-                    method_sig.return_ty.clone(),
+                    return_ty,
                 ));
             } else if method_sig.has_default {
                 let trait_path = self.def_map.get(trait_sig.def_id).path.clone();
                 matches.push((
                     SmolStr::new(format!("{}.{}", trait_path, method_sig.name)),
-                    method_sig.return_ty.clone(),
+                    return_ty,
                 ));
             }
         }

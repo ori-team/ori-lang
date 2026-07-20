@@ -6,6 +6,7 @@ use ori_ast::item::{
     ItemWithAttrs, NamedField, NamespaceDecl, NewtypeDecl, Param, ParamKind, SourceFile,
     StructDecl, StructField, TopConst, TopVar, TraitDecl, TraitMember,
 };
+use ori_ast::ty::Type;
 use ori_diagnostics::Span;
 use ori_lexer::TokenKind;
 use std::collections::HashSet;
@@ -1177,6 +1178,7 @@ impl<'src> Parser<'src> {
                 free_members: Vec::new(),
                 uses: vec![ApplyUseSection {
                     trait_name: first_name,
+                    trait_args: Vec::new(),
                     members,
                     associated_types,
                     span: use_span,
@@ -1201,6 +1203,7 @@ impl<'src> Parser<'src> {
             let use_start = self.current_span();
             self.advance(); // use
             let trait_name = self.parse_qualified_name()?;
+            let trait_args = self.parse_trait_args_opt();
             let (members, associated_types) = self.parse_apply_use_body_members()?;
             let end = self.expect_block_end(start, "apply")?;
             return Some(ApplyDecl {
@@ -1210,6 +1213,7 @@ impl<'src> Parser<'src> {
                 free_members: Vec::new(),
                 uses: vec![ApplyUseSection {
                     trait_name,
+                    trait_args,
                     members,
                     associated_types,
                     span: use_start.cover(end),
@@ -1322,6 +1326,7 @@ impl<'src> Parser<'src> {
             free_members: Vec::new(),
             uses: vec![ApplyUseSection {
                 trait_name,
+                trait_args: Vec::new(),
                 members,
                 associated_types,
                 span: use_span,
@@ -1330,13 +1335,29 @@ impl<'src> Parser<'src> {
         })
     }
 
+    /// Optional type arguments after a trait name: `use Container[int]`.
+    ///
+    /// A generic trait binds its own parameters here, which is what lets one
+    /// type implement `Container[int]` and another `Container[string]`.
+    fn parse_trait_args_opt(&mut self) -> Vec<Type> {
+        if !self.at(&TokenKind::LBracket) {
+            return Vec::new();
+        }
+        match self.parse_type_arg_list_free() {
+            Some((args, _)) => args,
+            None => Vec::new(),
+        }
+    }
+
     fn parse_apply_use_section(&mut self) -> Option<ApplyUseSection> {
         let start = self.advance().unwrap().span; // use
         let trait_name = self.parse_qualified_name()?;
+        let trait_args = self.parse_trait_args_opt();
         let (members, associated_types) = self.parse_apply_use_body_members()?;
         let end = self.expect_block_end(start, "use")?;
         Some(ApplyUseSection {
             trait_name,
+            trait_args,
             members,
             associated_types,
             span: start.cover(end),

@@ -5,7 +5,7 @@ use crate::resolve::{
     import_aliases, DeprecatedSig, EnumSig, FuncSig, ImplSig, ReExport, StructSig, TraitSig,
     ValueSig, WhereConstraintSig,
 };
-use crate::ty::{expand_ty_aliases, substitute_ty_params};
+use crate::ty::{expand_ty_aliases, substitute_trait_self, substitute_ty_params};
 use crate::ty::{OpaqueTy, Ty};
 use ori_ast::common::{Attr, AttrArg, Name, QualifiedName, Visibility, WhereConstraint};
 use ori_ast::expr::{Arg, ArgValue, BinaryOp, ClosureBody, Expr, FStrPart, UnaryOp};
@@ -318,23 +318,29 @@ impl<'a> Checker<'a> {
             .iter()
             .filter(|sig| sig.type_def_id == type_def_id)
         {
-            if let Some(method_sig) = self
-                .trait_sig(impl_sig.trait_def_id)
-                .and_then(|trait_sig| trait_sig.methods.iter().find(|sig| sig.name == method))
-            {
+            let Some(trait_sig) = self.trait_sig(impl_sig.trait_def_id) else {
+                continue;
+            };
+            if let Some(method_sig) = trait_sig.methods.iter().find(|sig| sig.name == method) {
                 let mut method_sig = method_sig.clone();
-                method_sig.params = method_sig
-                    .params
-                    .iter()
-                    .map(|ty| substitute_trait_self(ty, impl_sig.trait_def_id, &self_ty))
-                    .collect();
-                method_sig.return_ty = substitute_trait_self(
-                    &method_sig.return_ty,
-                    impl_sig.trait_def_id,
-                    &self_ty,
-                );
+                // A generic trait's parameters are bound positionally by
+                // `use Container[int]`. Without this the method signature keeps
+                // `Ty::Param`, and the implementation's concrete type is
+                // reported as a mismatch.
+                let trait_args = &impl_sig.trait_args;
+                let bind = |ty: &Ty| {
+                    let ty = if trait_args.is_empty() {
+                        ty.clone()
+                    } else {
+                        substitute_ty_params(ty, trait_args)
+                    };
+                    substitute_trait_self(&ty, impl_sig.trait_def_id, &self_ty)
+                };
+                method_sig.params = method_sig.params.iter().map(&bind).collect();
+                method_sig.return_ty = bind(&method_sig.return_ty);
                 matches.push(method_sig);
             }
+
         }
         matches
     }
@@ -1120,6 +1126,59 @@ impl<'a> Checker<'a> {
         };
         let _ = type_def_id;
 
+        // `use Container[int]` binds the trait's own parameters positionally.
+        let trait_args: Vec<Ty> = use_sec
+            .trait_args
+            .iter()
+            .map(|ty| self.lower(ty, &[]))
+            .collect();
+        if !trait_args.is_empty() && trait_args.len() != trait_sig.type_params.len() {
+            self.sink.emit(
+                Diagnostic::error(
+                    "impl.trait_arg_count_mismatch",
+                    format!(
+                        "trait `{}` takes {} type argument(s), found {}",
+                        trait_name,
+                        trait_sig.type_params.len(),
+                        trait_args.len()
+                    ),
+                )
+                .with_label(Label::primary(
+                    self.file_id,
+                    use_sec.trait_name.span,
+                    "trait used here",
+                ))
+                .with_action("pass one type argument for each of the trait's parameters"),
+            );
+            return;
+        }
+        if trait_args.is_empty() && !trait_sig.type_params.is_empty() {
+            self.sink.emit(
+                Diagnostic::error(
+                    "impl.trait_args_missing",
+                    format!(
+                        "trait `{}` is generic and needs its type argument(s): `use {}[{}]`",
+                        trait_name,
+                        trait_name,
+                        trait_sig
+                            .type_params
+                            .iter()
+                            .map(|p| p.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                )
+                .with_label(Label::primary(
+                    self.file_id,
+                    use_sec.trait_name.span,
+                    "missing type arguments",
+                ))
+                .with_why("without them the trait's parameters stay unbound, so no implementation can match")
+                .with_action("write the argument, for example `use Container[int]`"),
+            );
+            return;
+        }
+
         for expected in trait_sig.methods {
             let provided = use_sec
                 .members
@@ -1179,10 +1238,10 @@ impl<'a> Checker<'a> {
                     let expected_params: Vec<Ty> = expected
                         .params
                         .iter()
-                        .map(|ty| substitute_trait_self(ty, trait_def_id, self_ty))
+                        .map(|ty| bind_trait_ty(ty, &trait_args, trait_def_id, self_ty))
                         .collect();
                     let expected_return =
-                        substitute_trait_self(&expected.return_ty, trait_def_id, self_ty);
+                        bind_trait_ty(&expected.return_ty, &trait_args, trait_def_id, self_ty);
                     if actual_params != expected_params || actual_return != expected_return {
                         self.sink.emit(
                             Diagnostic::error(
@@ -1228,10 +1287,10 @@ impl<'a> Checker<'a> {
                     let expected_params: Vec<Ty> = expected
                         .params
                         .iter()
-                        .map(|ty| substitute_trait_self(ty, trait_def_id, self_ty))
+                        .map(|ty| bind_trait_ty(ty, &trait_args, trait_def_id, self_ty))
                         .collect();
                     let expected_return =
-                        substitute_trait_self(&expected.return_ty, trait_def_id, self_ty);
+                        bind_trait_ty(&expected.return_ty, &trait_args, trait_def_id, self_ty);
                     if sig.params != expected_params || sig.return_ty != expected_return {
                         self.sink.emit(
                             Diagnostic::error(
@@ -7411,86 +7470,6 @@ fn has_explicit_self_param(params: &[Param]) -> bool {
         .is_some_and(|param| param.name.text.as_str() == "self")
 }
 
-fn substitute_trait_self(ty: &Ty, trait_def_id: DefId, self_ty: &Ty) -> Ty {
-    match ty {
-        Ty::Named(id, args) if *id == trait_def_id && args.is_empty() => self_ty.clone(),
-        Ty::Named(id, args) => Ty::Named(
-            *id,
-            args.iter()
-                .map(|arg| substitute_trait_self(arg, trait_def_id, self_ty))
-                .collect(),
-        ),
-        Ty::Optional(inner) => Ty::Optional(Box::new(substitute_trait_self(
-            inner,
-            trait_def_id,
-            self_ty,
-        ))),
-        Ty::Result(ok, err) => Ty::Result(
-            Box::new(substitute_trait_self(ok, trait_def_id, self_ty)),
-            Box::new(substitute_trait_self(err, trait_def_id, self_ty)),
-        ),
-        Ty::List(inner) => Ty::List(Box::new(substitute_trait_self(
-            inner,
-            trait_def_id,
-            self_ty,
-        ))),
-        Ty::Map(key, value) => Ty::Map(
-            Box::new(substitute_trait_self(key, trait_def_id, self_ty)),
-            Box::new(substitute_trait_self(value, trait_def_id, self_ty)),
-        ),
-        Ty::Set(inner) => Ty::Set(Box::new(substitute_trait_self(
-            inner,
-            trait_def_id,
-            self_ty,
-        ))),
-        Ty::Range(inner) => Ty::Range(Box::new(substitute_trait_self(
-            inner,
-            trait_def_id,
-            self_ty,
-        ))),
-        Ty::Lazy(inner) => Ty::Lazy(Box::new(substitute_trait_self(
-            inner,
-            trait_def_id,
-            self_ty,
-        ))),
-        Ty::Future(inner) => Ty::Future(Box::new(substitute_trait_self(
-            inner,
-            trait_def_id,
-            self_ty,
-        ))),
-        Ty::TaskJob(inner) => Ty::TaskJob(Box::new(substitute_trait_self(
-            inner,
-            trait_def_id,
-            self_ty,
-        ))),
-        Ty::Channel(inner) => Ty::Channel(Box::new(substitute_trait_self(
-            inner,
-            trait_def_id,
-            self_ty,
-        ))),
-        Ty::Opaque { kind, args } => Ty::Opaque {
-            kind: *kind,
-            args: args
-                .iter()
-                .map(|arg| substitute_trait_self(arg, trait_def_id, self_ty))
-                .collect(),
-        },
-        Ty::Tuple(items) => Ty::Tuple(
-            items
-                .iter()
-                .map(|item| substitute_trait_self(item, trait_def_id, self_ty))
-                .collect(),
-        ),
-        Ty::Func { params, ret } => Ty::Func {
-            params: params
-                .iter()
-                .map(|param| substitute_trait_self(param, trait_def_id, self_ty))
-                .collect(),
-            ret: Box::new(substitute_trait_self(ret, trait_def_id, self_ty)),
-        },
-        _ => ty.clone(),
-    }
-}
 
 fn contains_generic_param(ty: &Ty) -> bool {
     match ty {
@@ -7908,6 +7887,21 @@ fn min_required_arg_count(param_count: usize, param_defaults: &[bool]) -> usize 
         .rfind(|index| !param_defaults.get(*index).copied().unwrap_or(false))
         .map(|index| index + 1)
         .unwrap_or(0)
+}
+
+/// Bind a trait method type to one implementation.
+///
+/// Two substitutions, in order: the trait's own type parameters
+/// (`use Container[int]` binds `Item` to `int`), then `Self` to the
+/// implementing type. Both are needed for a generic trait; a non-generic one
+/// only needs the second.
+fn bind_trait_ty(ty: &Ty, trait_args: &[Ty], trait_def_id: DefId, self_ty: &Ty) -> Ty {
+    let bound = if trait_args.is_empty() {
+        ty.clone()
+    } else {
+        substitute_ty_params(ty, trait_args)
+    };
+    substitute_trait_self(&bound, trait_def_id, self_ty)
 }
 
 fn display_tys(types: &[Ty], def_map: &DefMap) -> String {

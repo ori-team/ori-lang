@@ -104,7 +104,6 @@ limitation of the current compiler, not a planned removal:
 
 | Gap | Detail |
 |---|---|
-| Generic traits | Declarable, not applicable — `use Trait[Arg]` does not parse ([08](08-traits.md)) |
 | Higher-kinded types | Declaration parses, no implementation can satisfy it; **out of scope** by decision ([11](11-generics.md)) |
 | `@c_export` aggregates | Structs, `list`, `map`, `optional`, `result` have no stable C layout; scalars and `string` do cross ([19](19-abi.md) §8.3b) |
 | Infinite recursion | Not detected at compile time (undecidable). At runtime the stack guard reports `stack overflow` instead of dying on a bare signal |

@@ -205,9 +205,6 @@ end
 `mut` on a trait method requires the applied method to also be `mut`. A method
 without `mut` cannot assign to a field of `self`.
 
-The trait here is concrete rather than generic (`Counter`, not `Counter[T]`)
-because a generic trait cannot currently be applied — see below.
-
 Note that collections have **no methods**: `list`, `map`, and `set` are
 manipulated through their modules (`lists.push(items, v)`), not
 `items.push(v)`. See chapter 12.
@@ -216,16 +213,42 @@ manipulated through their modules (`lists.push(items, v)`), not
 
 ## Generic Traits
 
-Traits may be **declared** generic over a type parameter (`trait Trait[T]`), but
-no `apply` block can implement one today:
+A trait may be generic over a type parameter, and an `apply` binds that
+parameter positionally:
 
-- `apply Type use Trait[int]` — `parse.expected_identifier`. The `use` clause
-  accepts a bare trait name only.
-- `apply Type use Trait` with concrete method types — `impl.wrong_signature`,
-  because `T` is never bound to anything.
+```ori
+trait Container[Item]
+    first(self) -> Item
+end
 
-Declare one concrete trait per element type until `use Trait[Arg]` lands.
-Bounds on generic *functions* (`for T: Trait`) do work — see chapter 11.
+apply IntBox use Container[int]
+    first(self) -> int
+        return self.v
+    end
+end
+
+apply TextBox use Container[string]
+    first(self) -> string
+        return self.s
+    end
+end
+```
+
+The same trait can therefore be implemented at several types in one program.
+
+Rules:
+
+- The arguments are **required**: `use Container` on a generic trait reports
+  `impl.trait_args_missing`, because the parameter would stay unbound and no
+  implementation could match.
+- The count must match the declaration — otherwise
+  `impl.trait_arg_count_mismatch`.
+- The implementation's signature is checked against the **bound** trait
+  signature: `use Container[string]` with `first(self) -> int` is
+  `impl.wrong_signature`.
+
+Bounds on generic *functions* (`for T: Trait`) are a separate mechanism — see
+chapter 11.
 
 ---
 

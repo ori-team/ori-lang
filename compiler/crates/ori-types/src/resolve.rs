@@ -71,6 +71,11 @@ pub struct TraitMethodSig {
 #[derive(Debug, Clone)]
 pub struct TraitSig {
     pub def_id: DefId,
+    /// The trait's own type parameters, in declaration order.
+    ///
+    /// `trait Container[Item]` records `["Item"]`. An `apply` binds them
+    /// positionally through `ImplSig::trait_args`.
+    pub type_params: Vec<SmolStr>,
     pub methods: Vec<TraitMethodSig>,
 }
 
@@ -84,6 +89,9 @@ pub struct ImplMethodSig {
 pub struct ImplSig {
     pub trait_def_id: DefId,
     pub type_def_id: DefId,
+    /// Arguments bound to the trait's type parameters: `use Container[int]`
+    /// records `[Int]`. Empty for a non-generic trait.
+    pub trait_args: Vec<Ty>,
     pub methods: Vec<ImplMethodSig>,
 }
 
@@ -486,9 +494,22 @@ pub fn resolve_many<S: Into<SmolStr>>(
                         }
                         if let (Some(trait_def_id), Some(type_def_id)) = (trait_def_id, type_def_id)
                         {
+                            // `use Container[int]` binds the trait's own
+                            // parameters. Lowered here so the checker can
+                            // substitute them into the method signatures.
+                            let trait_args: Vec<Ty> = use_sec
+                                .trait_args
+                                .iter()
+                                .map(|ty| {
+                                    lower_type_with_aliases(
+                                        ty, &namespace, &tp, &def_map, *file_id, sink, &aliases,
+                                    )
+                                })
+                                .collect();
                             impl_sigs.push(ImplSig {
                                 trait_def_id,
                                 type_def_id,
+                                trait_args,
                                 methods: impl_methods,
                             });
                         }
@@ -650,7 +671,15 @@ pub fn resolve_many<S: Into<SmolStr>>(
                         sink,
                     );
                     if let Some(def_id) = trait_def_id {
-                        trait_sigs.push(TraitSig { def_id, methods });
+                        trait_sigs.push(TraitSig {
+                            def_id,
+                            type_params: t
+                                .type_params
+                                .iter()
+                                .map(|p| p.name.text.clone())
+                                .collect(),
+                            methods,
+                        });
                     }
                 }
                 Item::Func(f) => {
@@ -1414,6 +1443,8 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
             };
             TraitSig {
                 def_id: *def_id,
+                // No core trait is generic today.
+                type_params: Vec::new(),
                 methods,
             }
         })
