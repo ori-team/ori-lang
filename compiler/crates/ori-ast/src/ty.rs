@@ -1,6 +1,18 @@
 use crate::common::{Name, QualifiedName};
 use ori_diagnostics::Span;
 
+/// The value behind a named const type argument (`size: 8`, `size: cap`).
+///
+/// A literal is the common case. A parameter name lets a generic type pass its
+/// own const parameter down: `struct InlineString[const cap: int]` can declare
+/// `bytes: array[byte, size: cap]`, which is the whole point of const generics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstArgValue {
+    Literal(i64),
+    /// Names a `const N: int` parameter in scope; resolved at monomorphization.
+    Param(Name),
+}
+
 /// Every type that can appear in an Ori program.
 ///
 /// Primitive types are explicit variants so the type checker can recognise them
@@ -37,7 +49,7 @@ pub enum Type {
     /// the same way call arguments and struct fields do.
     ConstArg {
         name: Name,
-        value: i64,
+        value: ConstArgValue,
         span: Span,
     },
 
@@ -45,6 +57,16 @@ pub enum Type {
     Optional(Box<Type>, Span),
     Result(Box<Type>, Box<Type>, Span),
     List(Box<Type>, Span),
+    /// `array[T, size: N]` — fixed length, part of the type.
+    ///
+    /// Distinct from `list[T]`: the length is known at compile time, so the
+    /// elements live inline instead of behind a heap pointer, and two arrays of
+    /// different lengths are different types.
+    Array {
+        elem: Box<Type>,
+        size: ConstArgValue,
+        span: Span,
+    },
     Map(Box<Type>, Box<Type>, Span),
     Set(Box<Type>, Span),
     Range(Box<Type>, Span),
@@ -93,6 +115,7 @@ impl Type {
             | Type::Void(s) => *s,
             Type::Named(q) => q.span,
             Type::ConstArg { span, .. } => *span,
+            Type::Array { span, .. } => *span,
             Type::Optional(_, s)
             | Type::List(_, s)
             | Type::Set(_, s)

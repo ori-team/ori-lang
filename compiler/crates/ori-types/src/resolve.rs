@@ -1387,6 +1387,25 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     has_default: false,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
+                // `Error` describes a failure value. Without this signature the
+                // trait was a name with no contract: `use core.Error` compiled
+                // but the method it provided was never registered, so calling
+                // it reported `type.no_such_field`.
+                "Error" => vec![TraitMethodSig {
+                    name: SmolStr::new("message"),
+                    params: vec![self_ty],
+                    return_ty: Ty::String,
+                    is_mut: false,
+                    has_default: false,
+                    span: ori_diagnostics::Span::DUMMY,
+                }],
+                // `Cloneable` and `Default` stay markers on purpose:
+                // - `clone(self) -> Self` needs `Self` substituted at the call
+                //   site. The stand-in used above resolves to the *trait* type,
+                //   so `a.clone()` would report `expected Config, found Cloneable`.
+                // - `default() -> Self` additionally needs a trait method with
+                //   no receiver, which the impl machinery does not support.
+                // Declare your own trait until those two land.
                 _ => Vec::new(),
             };
             TraitSig {

@@ -368,6 +368,15 @@ pub enum HirExprKind {
         elem_ty: Ty,
         elements: Vec<HirExpr>,
     },
+    /// `[1, 2, 3]` where the context expects `array[T, size: N]`.
+    ///
+    /// Distinct from `ListLit` because the storage is different: an array lives
+    /// inline in a stack slot (or inline inside the owning struct), with no
+    /// heap block, no length field, and no reference counting.
+    ArrayLit {
+        elem_ty: Ty,
+        elements: Vec<HirExpr>,
+    },
     ListSpreadLit {
         elem_ty: Ty,
         elements: Vec<HirListElement>,

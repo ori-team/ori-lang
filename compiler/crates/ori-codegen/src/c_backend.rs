@@ -3518,6 +3518,12 @@ impl CCodegen {
                 let elems: Vec<String> = bytes.iter().map(|b| format!("0x{:02x}", b)).collect();
                 format!("((uint8_t[]){{ {} }})", elems.join(", "))
             }
+            // Inline arrays are a native-backend feature. The C backend is a
+            // debug aid, not a semantic reference (spec 14), so it declines
+            // rather than emitting a heap list that would behave differently.
+            HirExprKind::ArrayLit { .. } => self.unsupported_expr(
+                "`array[T, size: N]` is native-backend only; the C debug backend has no inline-array lowering",
+            ),
             HirExprKind::ListLit { elem_ty, elements } => {
                 let c_elem_ty = ty_to_c(elem_ty);
                 if elements.is_empty() {

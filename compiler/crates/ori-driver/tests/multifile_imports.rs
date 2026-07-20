@@ -9959,6 +9959,161 @@ end
     assert!(out_so.is_file(), "expected shared library at {}", out_so.display());
 }
 
+// ── `@c_export` accepts `string` ───────────────────────────────────────────
+//
+// An Ori `string` value is already a NUL-terminated `const char*`, so it can
+// cross the C boundary directly. Only aggregates stay rejected.
+
+#[test]
+fn check_c_export_accepts_string_params_and_return() {
+    let dir = TestDir::new("c_export_string_ok");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.string = str
+
+@c_export
+public shout(name: string) -> string
+    return "hello, " + name
+end
+
+@c_export
+public name_len(name: string) -> int
+    return str.len(name)
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_c_export_still_rejects_aggregates() {
+    let dir = TestDir::new("c_export_aggregate");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Point
+    x: int
+    y: int
+end
+
+@c_export
+public make_point(x: int, y: int) -> Point
+    return Point { x: x, y: y }
+end
+
+@c_export
+public total(items: list[int]) -> int
+    return 0
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"attr.c_export_bad_type"),
+        "structs and lists have no stable C layout yet: {:?}",
+        out.diagnostics
+    );
+}
+
+/// End-to-end: a real C host loads the library, passes a `const char*`, reads
+/// the returned string, and frees it through `ori_arc_release`.
+#[test]
+fn compile_lib_c_export_string_round_trips_through_a_c_host() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    // Skip rather than fail when the box has no C compiler.
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let dir = TestDir::new("c_export_string_host");
+    dir.write(
+        "lib.orl",
+        r#"module app.lib_string_export
+
+import ori.string = str
+
+@c_export
+public shout(name: string) -> string
+    return "hello, " + name
+end
+
+@c_export
+public name_len(name: string) -> int
+    return str.len(name)
+end
+"#,
+    );
+
+    let out_so = dir.path("libstrexport.so");
+    let out = run_compile_with_options(
+        &dir.path("lib.orl"),
+        &out_so,
+        CompileOptions {
+            native_raw: false,
+            lib: true,
+        },
+    )
+    .expect("compile --lib");
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    dir.write(
+        "host.c",
+        r#"#include <stdio.h>
+#include <string.h>
+#include <dlfcn.h>
+
+int main(int argc, char **argv) {
+    void *h = dlopen(argv[1], RTLD_NOW);
+    if (!h) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 1; }
+    void (*rt_init)(void) = dlsym(h, "ori_rt_init");
+    if (rt_init) rt_init();
+    const char *(*shout)(const char *) = dlsym(h, "shout");
+    long (*name_len)(const char *) = dlsym(h, "name_len");
+    void (*release)(void *) = dlsym(h, "ori_arc_release");
+    if (!shout || !name_len || !release) { fprintf(stderr, "dlsym\n"); return 1; }
+
+    if (name_len("Ada") != 3) { fprintf(stderr, "len\n"); return 1; }
+
+    const char *s = shout("Ada");
+    if (strcmp(s, "hello, Ada") != 0) { fprintf(stderr, "got %s\n", s); return 1; }
+    release((void *) s);
+
+    printf("ok\n");
+    return 0;
+}
+"#,
+    );
+
+    let host_bin = dir.path("host");
+    let cc = Command::new("cc")
+        .arg("-o")
+        .arg(&host_bin)
+        .arg(dir.path("host.c"))
+        .arg("-ldl")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc failed: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+
+    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    assert!(
+        run.status.success(),
+        "C host failed: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "ok");
+}
+
 #[test]
 fn check_c_export_requires_public() {
     let dir = TestDir::new("c_export_not_public");
@@ -11572,10 +11727,13 @@ fn build_accepts_handle_type() {
     let dir = TestDir::new("handle_type");
     dir.write(
         "main.orl",
+        // `return_handle` used to satisfy its return type by calling itself,
+        // which `control.unconditional_recursion` now rejects. The test is
+        // about `handle[int]` in signatures, so it delegates instead.
         r#"module app.main
 
-return_handle() -> handle[int]
-    return return_handle()
+return_handle(seed: handle[int]) -> handle[int]
+    return use_handle(seed)
 end
 
 use_handle(h: handle[int]) -> handle[int]

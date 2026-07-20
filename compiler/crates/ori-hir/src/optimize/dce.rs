@@ -235,6 +235,7 @@ fn collect_expr_uses(expr: &HirExpr, used: &mut HashSet<SmolStr>) {
             }
         }
         HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {
@@ -315,7 +316,8 @@ fn expr_may_effect(expr: &HirExpr, contract_structs: &HashSet<DefId>) -> bool {
                         || expr_may_effect(&arm.body, contract_structs)
                 })
         }
-        HirExprKind::ListLit { elements, .. } | HirExprKind::TupleLit(elements) => elements
+        HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. } | HirExprKind::TupleLit(elements) => elements
             .iter()
             .any(|e| expr_may_effect(e, contract_structs)),
         // Building a struct whose type carries field contracts runs those

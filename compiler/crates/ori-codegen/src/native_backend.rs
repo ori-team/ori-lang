@@ -21,6 +21,15 @@ use string_collector::collect_all_strings;
 
 pub mod jit;
 
+/// Diagnostic codes for violated value contracts.
+///
+/// These are reported at **runtime** through `ori_panic`, not by the checker,
+/// so they are prefixed onto the panic message rather than carried by a
+/// `Diagnostic`. They stay named constants so the catalog parity test in
+/// `tests/diagnostic_catalog.rs` can see them.
+const CONTRACT_PARAM_VIOLATION: &str = "contract.param_violation";
+const CONTRACT_FIELD_VIOLATION: &str = "contract.field_violation";
+
 #[cfg(test)]
 const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_abort_concurrent_modification",
@@ -551,6 +560,12 @@ impl NativeHirValidator {
                     self.expr(value)?;
                 }
             }
+            HirExprKind::ArrayLit { elem_ty, elements } => {
+                self.reject_error_ty(elem_ty, "array element type", expr.span)?;
+                for element in elements {
+                    self.expr(element)?;
+                }
+            }
             HirExprKind::ListLit { elem_ty, elements } => {
                 self.reject_error_ty(elem_ty, "list element type", expr.span)?;
                 for element in elements {
@@ -936,6 +951,7 @@ fn expr_contains_await(expr: &HirExpr) -> bool {
             expr_contains_await(object) || expr_contains_await(index)
         }
         HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => elements.iter().any(expr_contains_await),
         HirExprKind::ListSpreadLit { elements, .. } => elements
@@ -1130,6 +1146,7 @@ fn expr_collect_var_uses(expr: &HirExpr, uses: &mut HashSet<SmolStr>) {
             }
         }
         HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for element in elements {
@@ -1480,6 +1497,17 @@ fn simple_async_lift_expr_awaits(
         }),
         HirExprKind::ListLit { elem_ty, elements } => Some(HirExpr {
             kind: HirExprKind::ListLit {
+                elem_ty: elem_ty.clone(),
+                elements: elements
+                    .iter()
+                    .map(|element| simple_async_lift_expr_awaits(element, awaits, first_index))
+                    .collect::<Option<Vec<_>>>()?,
+            },
+            ty: expr.ty.clone(),
+            span: expr.span,
+        }),
+        HirExprKind::ArrayLit { elem_ty, elements } => Some(HirExpr {
+            kind: HirExprKind::ArrayLit {
                 elem_ty: elem_ty.clone(),
                 elements: elements
                     .iter()
@@ -2382,6 +2410,7 @@ impl GeneralAsyncCollector {
                 self.collect_expr(index);
             }
             HirExprKind::ListLit { elements, .. }
+            | HirExprKind::ArrayLit { elements, .. }
             | HirExprKind::TupleLit(elements)
             | HirExprKind::SetLit { elements, .. } => {
                 for elem in elements {
@@ -2528,6 +2557,17 @@ impl StructLayout {
 }
 
 fn field_size_align(ty: &Ty, ptr_ty: types::Type) -> (u32, u8) {
+    // An array stores its elements inline, so it occupies `elem * len` bytes
+    // rather than one pointer. Without this branch the layout would silently
+    // reserve 8 bytes while `ori.mem.size_of` reported the real size.
+    if let Ty::Array(elem, size) = ty {
+        if let Ty::ConstInt(_, len) = &**size {
+            if *len >= 0 {
+                let (elem_size, elem_align) = field_size_align(elem, ptr_ty);
+                return (elem_size.saturating_mul(*len as u32), elem_align);
+            }
+        }
+    }
     let cl = cl_type(ty, ptr_ty).unwrap_or(ptr_ty);
     let bytes = cl.bytes() as u32;
     let align = bytes.min(8).max(1) as u8;
@@ -5129,7 +5169,7 @@ impl<'a> FuncCodegen<'a> {
         self.builder.switch_to_block(entry);
         self.builder.seal_block(entry);
 
-        self.emit_param_contracts(&f.params)?;
+        self.emit_param_contracts(&f.params, f.name.as_str())?;
 
         let pending_ref = *self
             .func_refs
@@ -5222,7 +5262,7 @@ impl<'a> FuncCodegen<'a> {
 
         self.emit_closure_capture_prologue(f)?;
 
-        self.emit_param_contracts(&f.params)?;
+        self.emit_param_contracts(&f.params, f.name.as_str())?;
         self.emit_block(&f.body)?;
 
         if !self.terminated {
@@ -5249,7 +5289,7 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
-    fn emit_param_contracts(&mut self, params: &[HirParam]) -> Result<(), String> {
+    fn emit_param_contracts(&mut self, params: &[HirParam], func_name: &str) -> Result<(), String> {
         for param in params {
             let Some(contract) = &param.contract else {
                 continue;
@@ -5258,7 +5298,11 @@ impl<'a> FuncCodegen<'a> {
                 continue;
             };
             let value = self.builder.use_var(var);
-            self.emit_value_contract(&ty, value, contract, 2, false)?;
+            let message = format!(
+                "{CONTRACT_PARAM_VIOLATION}: parameter `{}` of `{func_name}` broke its `if` contract",
+                param.name
+            );
+            self.emit_value_contract(&ty, value, contract, 2, false, Some(&message))?;
         }
         Ok(())
     }
@@ -5304,6 +5348,7 @@ impl<'a> FuncCodegen<'a> {
         contract: &HirExpr,
         trap_code: u8,
         run_cleanup: bool,
+        message: Option<&str>,
     ) -> Result<(), String> {
         let Some(cl_ty) = cl_type(ty, self.ptr_ty) else {
             return Ok(());
@@ -5318,7 +5363,7 @@ impl<'a> FuncCodegen<'a> {
         let condition = condition?;
         let trap = ir::TrapCode::user(trap_code)
             .ok_or_else(|| format!("invalid runtime contract trap code `{trap_code}`"))?;
-        self.emit_trap_unless(condition, trap, run_cleanup)
+        self.emit_trap_unless_with_message(condition, trap, run_cleanup, message)
     }
 
     fn emit_trap_unless(
@@ -5326,6 +5371,21 @@ impl<'a> FuncCodegen<'a> {
         condition: ir::Value,
         trap_code: ir::TrapCode,
         run_cleanup: bool,
+    ) -> Result<(), String> {
+        self.emit_trap_unless_with_message(condition, trap_code, run_cleanup, None)
+    }
+
+    /// Branch to a failure block when `condition` is false.
+    ///
+    /// With a `message`, the failure block calls `ori_panic` first so the user
+    /// sees what broke. A bare `trap` aborts with a signal and prints nothing,
+    /// which is useless for a violated value contract.
+    fn emit_trap_unless_with_message(
+        &mut self,
+        condition: ir::Value,
+        trap_code: ir::TrapCode,
+        run_cleanup: bool,
+        message: Option<&str>,
     ) -> Result<(), String> {
         let ok_blk = self.builder.create_block();
         let fail_blk = self.builder.create_block();
@@ -5336,6 +5396,12 @@ impl<'a> FuncCodegen<'a> {
         self.builder.switch_to_block(fail_blk);
         if run_cleanup {
             self.emit_scope_cleanup_calls_from(0, 0)?;
+        }
+        if let Some(message) = message {
+            if let Some(fref) = self.func_refs.get("ori_panic").copied() {
+                let text = self.bytes_ptr(message.as_bytes())?;
+                self.builder.ins().call(fref, &[text]);
+            }
         }
         self.builder.ins().trap(trap_code);
         self.builder.seal_block(ok_blk);
@@ -7999,13 +8065,68 @@ impl<'a> FuncCodegen<'a> {
                         if value_is_owned && is_managed_ty(&elem_ty) {
                             self.emit_arc_release_if_managed(&elem_ty, val)?;
                         }
+                    } else if let Ty::Array(elem_ty, _) = container_ty {
+                        // Inline storage: store straight at `base + i * stride`.
+                        // Elements are scalars (managed ones are rejected in the
+                        // checker), so there is no edge to update.
+                        let idx = self.emit_expr(index)?;
+                        let (elem_size, _) = field_size_align(&elem_ty, self.ptr_ty);
+                        let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
+                        let byte_offset = self.builder.ins().imul(idx, stride);
+                        let offset = if self.ptr_ty == types::I64 {
+                            byte_offset
+                        } else {
+                            self.builder.ins().ireduce(self.ptr_ty, byte_offset)
+                        };
+                        let addr = self.builder.ins().iadd(container, offset);
+                        self.builder.ins().store(MemFlags::new(), val, addr, 0);
+                    } else if let Ty::Map(key_ty, value_ty) = container_ty {
+                        // `m["k"] = v` used to fall through this chain and emit
+                        // nothing at all: the assignment silently did not happen.
+                        let key_value = self.emit_expr(index)?;
+                        let set_symbol = if matches!(&*key_ty, Ty::String) {
+                            "ori_map_set_string"
+                        } else {
+                            "ori_map_set"
+                        };
+                        let Some(&set_ref) = self.func_refs.get(set_symbol) else {
+                            return Err(format!("missing runtime function `{set_symbol}`"));
+                        };
+                        let kv = self.to_list_storage_value(key_value, &key_ty);
+                        let vv = self.to_list_storage_value(val, &value_ty);
+                        self.builder.ins().call(set_ref, &[container, kv, vv]);
+                        self.emit_arc_register_edge_if_managed(&key_ty, container, key_value)?;
+                        self.emit_arc_register_edge_if_managed(&value_ty, container, val)?;
+                        // The map edge owns the value's +1; drop an owned
+                        // temporary's own +1 so it does not leak.
+                        if value_is_owned && is_managed_ty(&value_ty) {
+                            self.emit_arc_release_if_managed(&value_ty, val)?;
+                        }
+                    } else {
+                        // Falling through used to emit nothing at all, so
+                        // `xs[i] = v` on an unsupported container silently did
+                        // nothing. Fail loudly instead.
+                        return Err(format!(
+                            "native index-assignment codegen is missing for type `{}`",
+                            container_ty.display()
+                        ));
                     }
                 } else if let HirLValue::Field { base, field } = lvalue {
                     let value_is_owned = Self::expr_produces_owned_ref(value);
                     let (addr, field_layout, owner) = self.emit_field_lvalue_addr(base, field)?;
                     let val = self.emit_expr_for_expected(value, &field_layout.ty)?;
                     if let Some(contract) = &field_layout.contract {
-                        self.emit_value_contract(&field_layout.ty, val, contract, 3, false)?;
+                        let message = format!(
+                            "{CONTRACT_FIELD_VIOLATION}: field `{field}` broke its `if` contract"
+                        );
+                        self.emit_value_contract(
+                            &field_layout.ty,
+                            val,
+                            contract,
+                            3,
+                            false,
+                            Some(&message),
+                        )?;
                     }
                     let cl_ty = cl_type(&field_layout.ty, self.ptr_ty)
                         .ok_or_else(|| format!("missing Cranelift type for field `{field}`"))?;
@@ -11246,9 +11367,56 @@ impl<'a> FuncCodegen<'a> {
                         let val = self.emit_expr(fexpr)?;
                         if let Some(fi) = layout.field(fname) {
                             if let Some(contract) = &fi.contract {
-                                self.emit_value_contract(&fi.ty, val, contract, 3, false)?;
+                                let message = format!(
+                                    "{CONTRACT_FIELD_VIOLATION}: field `{fname}` broke its `if` contract"
+                                );
+                                self.emit_value_contract(
+                                    &fi.ty,
+                                    val,
+                                    contract,
+                                    3,
+                                    false,
+                                    Some(&message),
+                                )?;
                             }
-                            if cl_type(&fi.ty, self.ptr_ty).is_some() {
+                            // An array field owns its bytes inline, so the value
+                            // (an address) has to be copied in, not stored as a
+                            // pointer. Elements are scalars, so a byte copy is
+                            // the whole job — no per-element ARC.
+                            if let Ty::Array(elem_ty, size) = &fi.ty {
+                                let len = match &**size {
+                                    Ty::ConstInt(_, n) if *n >= 0 => *n,
+                                    _ => {
+                                        return Err(format!(
+                                            "array field `{fname}` has no concrete length"
+                                        ))
+                                    }
+                                };
+                                let Some(elem_cl) = cl_type(elem_ty, self.ptr_ty) else {
+                                    return Err(format!(
+                                        "array field `{fname}` has no Cranelift element type"
+                                    ));
+                                };
+                                let (elem_size, _) = field_size_align(elem_ty, self.ptr_ty);
+                                // The length is a compile-time constant and the
+                                // elements are scalars, so an unrolled copy needs
+                                // no target config and no runtime call.
+                                for i in 0..len {
+                                    let byte = (i as u32).saturating_mul(elem_size) as i32;
+                                    let elem = self.builder.ins().load(
+                                        elem_cl,
+                                        MemFlags::new(),
+                                        val,
+                                        byte,
+                                    );
+                                    self.builder.ins().store(
+                                        MemFlags::new(),
+                                        elem,
+                                        base,
+                                        fi.offset as i32 + byte,
+                                    );
+                                }
+                            } else if cl_type(&fi.ty, self.ptr_ty).is_some() {
                                 self.builder.ins().store(
                                     MemFlags::new(),
                                     val,
@@ -11287,7 +11455,12 @@ impl<'a> FuncCodegen<'a> {
                 };
                 if let Some(layout) = layout_opt {
                     if let Some(fi) = layout.field(field) {
-                        if let Some(cl_ty) = cl_type(&fi.ty, self.ptr_ty) {
+                        // An array field *is* the bytes at that offset, not a
+                        // pointer stored there. Loading it would read the first
+                        // element and treat it as an address.
+                        if matches!(fi.ty, Ty::Array(_, _)) {
+                            self.builder.ins().iadd_imm(ptr, fi.offset as i64)
+                        } else if let Some(cl_ty) = cl_type(&fi.ty, self.ptr_ty) {
                             self.builder
                                 .ins()
                                 .load(cl_ty, MemFlags::new(), ptr, fi.offset as i32)
@@ -11309,6 +11482,26 @@ impl<'a> FuncCodegen<'a> {
                 let idx = self.emit_expr(index)?;
                 match &object.ty {
                     Ty::List(elem_ty) => self.emit_list_get_value(container, idx, elem_ty)?,
+                    // The elements sit inline, so indexing is address arithmetic
+                    // on the array's own storage — no runtime call.
+                    Ty::Array(elem_ty, _) => {
+                        let Some(cl) = cl_type(elem_ty, self.ptr_ty) else {
+                            return Err(format!(
+                                "native codegen cannot index `array` of `{}` yet",
+                                elem_ty.display()
+                            ));
+                        };
+                        let (elem_size, _) = field_size_align(elem_ty, self.ptr_ty);
+                        let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
+                        let byte_offset = self.builder.ins().imul(idx, stride);
+                        let offset = if self.ptr_ty == types::I64 {
+                            byte_offset
+                        } else {
+                            self.builder.ins().ireduce(self.ptr_ty, byte_offset)
+                        };
+                        let addr = self.builder.ins().iadd(container, offset);
+                        self.builder.ins().load(cl, MemFlags::new(), addr, 0)
+                    }
                     Ty::String => {
                         let slice_ref =
                             *self.func_refs.get("ori_string_slice").ok_or_else(|| {
@@ -11333,6 +11526,27 @@ impl<'a> FuncCodegen<'a> {
                         ))
                     }
                 }
+            }
+            // An array literal writes straight into a stack slot. No heap block,
+            // no length field, no reference counting — the length is in the type
+            // and the storage dies with the frame.
+            HirExprKind::ArrayLit { elem_ty, elements } => {
+                let (elem_size, align) = field_size_align(elem_ty, self.ptr_ty);
+                let total = elem_size.saturating_mul(elements.len() as u32).max(1);
+                let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
+                    ir::StackSlotKind::ExplicitSlot,
+                    total,
+                    align.trailing_zeros() as u8,
+                ));
+                let base = self.builder.ins().stack_addr(self.ptr_ty, slot, 0);
+                for (index, element) in elements.iter().enumerate() {
+                    let value = self.emit_expr(element)?;
+                    let offset = (index as u32).saturating_mul(elem_size) as i32;
+                    self.builder
+                        .ins()
+                        .store(MemFlags::new(), value, base, offset);
+                }
+                base
             }
             HirExprKind::ListLit { elem_ty, elements } => {
                 let list_ptr = self.emit_new_list()?;

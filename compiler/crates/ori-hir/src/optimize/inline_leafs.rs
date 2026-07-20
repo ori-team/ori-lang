@@ -195,6 +195,7 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
             }
         }
         HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {
@@ -310,6 +311,7 @@ fn subst_var(expr: &mut HirExpr, name: &str, replacement: &HirExpr) {
             }
         }
         HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {

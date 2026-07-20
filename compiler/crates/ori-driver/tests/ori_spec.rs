@@ -3032,40 +3032,11 @@ end
     );
 }
 
-#[test]
-fn generic_accepts_hkt() {
-    let dir = TestDir::new("generic_hkt");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-trait Functor[F[_]]
-    fmap[A, B](fa: F[A], f: func(A) -> B) -> F[B]
-end
-main()
-end
-"#,
-    );
-    let out = run_check(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-}
-
-#[test]
-fn generic_accepts_associated_type_in_trait() {
-    let dir = TestDir::new("generic_assoc_type");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-trait Container
-    type Item
-    get(self) -> Item
-end
-main()
-end
-"#,
-    );
-    let out = run_check(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-}
+// `generic_accepts_hkt` and `generic_accepts_associated_type_in_trait` were
+// removed here. Both asserted only that a *declaration* parsed, so they passed
+// while neither feature could actually be implemented: HKT is out of scope
+// (see docs/spec/11-generics.md) and associated types are `alias Name = Type`
+// inside a `use` section, covered by `compile_runs_associated_types_in_apply_use`.
 
 #[test]
 fn generic_accepts_const_generic_param() {
@@ -5725,6 +5696,706 @@ end
     assert!(
         diagnostic_codes(&out).contains(&"type.missing_return"),
         "an arm that falls through must still be reported: {:?}",
+        out.diagnostics
+    );
+}
+
+// ── Fixed-size arrays: type system ─────────────────────────────────────────
+//
+// `array[T, size: N]` carries its length in the type, so two lengths are two
+// types and a constant index can be bounds-checked at compile time. Codegen
+// does not store them inline yet — see the backend note in the backlog.
+
+#[test]
+fn check_accepts_array_types() {
+    let dir = TestDir::new("array_ok");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Grid
+    cells: array[int, size: 4]
+end
+
+struct InlineString[const cap: int]
+    data: array[u8, size: cap]
+    len: int
+end
+
+main()
+    const xs: array[int, size: 4] = [1, 2, 3, 4]
+    io.println(f"{xs[0]}")
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_rejects_bad_arrays() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "wrong_length",
+            "    const xs: array[int, size: 4] = [1, 2]\n",
+            "type.array_length_mismatch",
+        ),
+        (
+            "index_past_end",
+            "    const xs: array[int, size: 3] = [1, 2, 3]\n    const v: int = xs[7]\n",
+            "type.array_index_out_of_bounds",
+        ),
+        (
+            "negative_length",
+            "    const xs: array[int, size: -2] = [1]\n",
+            "type.negative_array_size",
+        ),
+        (
+            "unknown_const_param",
+            "    const xs: array[int, size: nope] = [1]\n",
+            "type.undefined_const_param",
+        ),
+        (
+            "wrong_arg_name",
+            "    const xs: array[int, len: 4] = [1, 2, 3, 4]\n",
+            "parse.expected_array_size",
+        ),
+    ];
+
+    for (label, body, expected) in cases {
+        let dir = TestDir::new(&format!("array_bad_{label}"));
+        dir.write("main.orl", &format!("module app.main\n\nmain()\n{body}end\n"));
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(expected),
+            "`{label}` should report `{expected}`: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+#[test]
+fn check_treats_array_lengths_as_distinct_types() {
+    let dir = TestDir::new("array_distinct");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+takes_four(a: array[int, size: 4]) -> int
+    return 0
+end
+
+main()
+    const eight: array[int, size: 8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    const n: int = takes_four(eight)
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.arg_type_mismatch"),
+        "size 8 must not satisfy size 4: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn compile_reports_array_size_inline_not_pointer() {
+    let dir = TestDir::new("array_size_of");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.mem = mem
+
+main()
+    const xs: array[int, size: 4] = [1, 2, 3, 4]
+    io.println(f"{mem.size_of(xs)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "array_size_of");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    // 4 elements x 8 bytes, not one pointer.
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "32\n");
+}
+
+// ── Arrays: inline storage, end to end ─────────────────────────────────────
+
+#[test]
+fn compile_runs_inline_arrays() {
+    let dir = TestDir::new("array_inline");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Grid
+    cells: array[int, size: 4]
+    label: string
+end
+
+total(g: Grid) -> int
+    var i: int = 0
+    var sum: int = 0
+    while i < 4
+        sum = sum + g.cells[i]
+        i = i + 1
+    end
+    return sum
+end
+
+main()
+    var xs: array[int, size: 3] = [1, 2, 3]
+    xs[1] = 99
+    io.println(f"{xs[1]}")
+
+    const g: Grid = Grid { cells: [10, 20, 30, 40], label: "grid" }
+    io.println(f"{g.cells[2]}")
+    io.println(f"{total(g)}")
+
+    const fs: array[float, size: 2] = [1.5, 2.5]
+    io.println(f"{fs[1]}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "array_inline");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "99\n30\n100\n2.5\n"
+    );
+}
+
+#[test]
+fn check_rejects_managed_array_elements() {
+    let dir = TestDir::new("array_managed_elem");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+main()
+    const xs: array[string, size: 2] = ["a", "b"]
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.array_element_not_inline"),
+        "inline storage has no ARC, so managed elements must be refused: {:?}",
+        out.diagnostics
+    );
+}
+
+// ── Index assignment actually stores ───────────────────────────────────────
+//
+// The codegen chain for `container[i] = v` handled only `list` and fell through
+// silently for everything else, so `m["k"] = v` on a map compiled fine and did
+// nothing. The fallthrough is now a hard error, and maps are implemented.
+
+#[test]
+fn compile_runs_map_index_assignment() {
+    let dir = TestDir::new("map_index_assign");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.map = maps
+
+main()
+    var m: map[string, int] = { "a": 1 }
+    m["a"] = 42
+    m["b"] = 7
+    const a: int = maps.get_or(m, "a", 0)
+    const b: int = maps.get_or(m, "b", 0)
+    io.println(f"{a} {b}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "map_index_assign");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42 7\n");
+}
+
+// ── Unconditional recursion is a compile error ─────────────────────────────
+//
+// The general case is the halting problem, so only one shape is rejected: every
+// path through the body reaches a call to the same function. The analysis must
+// stay conservative — a false positive rejects a working program, which is far
+// worse than leaving the runtime stack guard to report the overflow.
+
+#[test]
+fn check_rejects_recursion_with_no_escape() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "direct",
+            "forever(n: int) -> int\n    return forever(n + 1)\nend\n",
+        ),
+        (
+            "inside_arithmetic",
+            "forever(n: int) -> int\n    return 1 + forever(n)\nend\n",
+        ),
+        (
+            "both_branches",
+            "forever(n: int) -> int\n    if n > 0\n        return forever(n - 1)\n    else\n        return forever(n + 1)\n    end\nend\n",
+        ),
+        (
+            "before_any_return",
+            "forever(n: int) -> int\n    forever(n)\n    return 0\nend\n",
+        ),
+    ];
+
+    for (label, body) in cases {
+        let dir = TestDir::new(&format!("uncond_rec_{label}"));
+        dir.write("main.orl", &format!("module app.main\n\n{body}\nmain()\nend\n"));
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(&"control.unconditional_recursion"),
+            "`{label}` must be rejected: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+#[test]
+fn check_accepts_recursion_that_can_terminate() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "guard_then_recurse",
+            "countdown(n: int) -> int\n    if n <= 0\n        return 0\n    end\n    return 1 + countdown(n - 1)\nend\n",
+        ),
+        (
+            "two_recursive_calls",
+            "fib(n: int) -> int\n    if n < 2\n        return n\n    end\n    return fib(n - 1) + fib(n - 2)\nend\n",
+        ),
+        (
+            "one_branch_only",
+            "walk(n: int) -> int\n    if n > 0\n        return walk(n - 1)\n    else\n        return 0\n    end\nend\n",
+        ),
+        (
+            "inside_a_loop",
+            "retry(n: int) -> int\n    while n > 0\n        return retry(n - 1)\n    end\n    return 0\nend\n",
+        ),
+        (
+            "short_circuit",
+            "probe(n: int) -> bool\n    return n > 0 or probe(n + 1)\nend\n",
+        ),
+    ];
+
+    for (label, body) in cases {
+        let dir = TestDir::new(&format!("ok_rec_{label}"));
+        dir.write("main.orl", &format!("module app.main\n\n{body}\nmain()\nend\n"));
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            !diagnostic_codes(&out).contains(&"control.unconditional_recursion"),
+            "`{label}` can terminate and must be accepted: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+// ── Stack overflow says so ─────────────────────────────────────────────────
+//
+// Runaway recursion used to die with a bare SIGSEGV: exit 139 and no output at
+// all. The runtime now catches the guard-page fault and names the cause.
+
+#[test]
+fn compile_reports_stack_overflow_instead_of_segfaulting_silently() {
+    let dir = TestDir::new("stack_overflow");
+    // The base case exists but is never reached: `n` only grows. That is the
+    // half `control.unconditional_recursion` cannot catch — proving the two
+    // defences are complementary rather than redundant.
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+climb(n: int) -> int
+    if n < 0
+        return 0
+    end
+    return climb(n + 1)
+end
+
+main()
+    io.println(f"{climb(1)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "stack_overflow");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(!output.status.success(), "runaway recursion must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("stack overflow"),
+        "a stack overflow must name itself, got: {stderr:?}"
+    );
+}
+
+#[test]
+fn compile_runs_deep_but_bounded_recursion() {
+    let dir = TestDir::new("bounded_recursion");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+countdown(n: int) -> int
+    if n <= 0
+        return 0
+    end
+    return 1 + countdown(n - 1)
+end
+
+main()
+    io.println(f"{countdown(10000)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "bounded_recursion");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "10000\n");
+}
+
+// ── Diagnostics name types, never internal ids ─────────────────────────────
+//
+// Messages used to print `<def DefId(18)>` wherever a `Ty::Named` reached a
+// `format!` through `display()` instead of `display_in(def_map)`.
+
+#[test]
+fn check_diagnostics_print_type_names_not_def_ids() {
+    let dir = TestDir::new("diag_type_names");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct User
+    id: int
+end
+
+takes_list(items: list[User]) -> int
+    return 0
+end
+
+takes_tuple(pair: tuple[User, int]) -> int
+    return 0
+end
+
+takes_func(cb: func(User) -> User) -> int
+    return 0
+end
+
+main()
+    const a: int = takes_list(1)
+    const b: int = takes_tuple(1)
+    const c: int = takes_func(1)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let rendered = format!("{:?}", out.diagnostics);
+    assert!(
+        !rendered.contains("<def DefId"),
+        "diagnostics must not leak internal def ids: {rendered}"
+    );
+    assert!(
+        rendered.contains("list[User]")
+            && rendered.contains("tuple[User, int]")
+            && rendered.contains("func(User) -> User"),
+        "nested type names must survive: {rendered}"
+    );
+}
+
+// ── Value contracts report what broke ──────────────────────────────────────
+//
+// A violated `if` contract used to emit a bare Cranelift trap: the process died
+// with a signal and printed nothing at all.
+
+#[test]
+fn compile_reports_violated_param_contract() {
+    let dir = TestDir::new("contract_param");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+scaled(value: float if it >= 0.0) -> float
+    return value * 2.0
+end
+
+main()
+    io.println(f"{scaled(0.0 - 5.0)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "contract_param");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(!output.status.success(), "a broken contract must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("contract.param_violation") && stderr.contains("value"),
+        "the message must name the code and the parameter: {stderr}"
+    );
+}
+
+#[test]
+fn compile_reports_violated_field_contract() {
+    let dir = TestDir::new("contract_field");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct User
+    name: string
+    age: int if it >= 0
+end
+
+main()
+    const u: User = User { name: "Ada", age: 0 - 5 }
+    io.println(u.name)
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "contract_field");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(!output.status.success(), "a broken contract must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("contract.field_violation") && stderr.contains("age"),
+        "the message must name the code and the field: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_when_contracts_hold() {
+    let dir = TestDir::new("contract_ok");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+scaled(value: float if it >= 0.0) -> float
+    return value * 2.0
+end
+
+main()
+    io.println(f"{scaled(5.0)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "contract_ok");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "10\n");
+}
+
+// ── Closure parameter types come from the expected function type ───────────
+//
+// `(x) => x * 2` bound to a `func(int) -> int` used to leave `x` unresolved:
+// the checker reported `type.arithmetic_type_mismatch` on `x * 2`, and the
+// block form additionally failed in codegen with `expression type _#0`.
+
+#[test]
+fn compile_runs_closures_with_inferred_parameter_types() {
+    let dir = TestDir::new("closure_param_inference");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const double: func(int) -> int = (x) => x * 2
+    io.println(f"{double(3)}")
+
+    const label: func(int) -> string = (n)
+        return f"n={n}"
+    end
+    io.println(label(7))
+
+    const add: func(int, int) -> int = (a, b) => a + b
+    io.println(f"{add(2, 5)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "closure_param_inference");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "6\nn=7\n7\n");
+}
+
+#[test]
+fn check_still_rejects_closure_body_that_breaks_the_expected_type() {
+    let dir = TestDir::new("closure_param_inference_bad");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+main()
+    const f: func(int) -> string = (x) => x * 2
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.type_mismatch"),
+        "inferring `x` must not silence a wrong body type: {:?}",
+        out.diagnostics
+    );
+}
+
+// ── `ori.core.Error` carries a real contract ───────────────────────────────
+//
+// `Error` used to be a registered trait name with zero methods: `use core.Error`
+// compiled, but the `message` written inside was never registered, so calling
+// it reported `type.no_such_field`. These tests pin the contract down.
+
+#[test]
+fn compile_runs_core_error_message_method() {
+    let dir = TestDir::new("core_error_message");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+
+struct ValidationError
+    field: string
+end
+
+apply ValidationError use core.Error
+    message(self) -> string
+        return f"invalid: {self.field}"
+    end
+end
+
+main()
+    const e: ValidationError = ValidationError { field: "name" }
+    io.println(e.message())
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "core_error_message");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "invalid: name\n");
+}
+
+#[test]
+fn check_rejects_core_error_without_message() {
+    let dir = TestDir::new("core_error_missing");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+
+struct E
+    f: string
+end
+
+apply E use core.Error
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"impl.missing_method"),
+        "`use core.Error` must require `message`: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_core_error_with_wrong_message_signature() {
+    let dir = TestDir::new("core_error_wrong_sig");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+
+struct E
+    f: string
+end
+
+apply E use core.Error
+    message(self) -> int
+        return 1
+    end
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"impl.wrong_signature"),
+        "`message` must return `string`: {:?}",
         out.diagnostics
     );
 }

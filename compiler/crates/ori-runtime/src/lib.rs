@@ -43,13 +43,73 @@ struct ArcAllocation {
 
 const NOT_SUSPECT: usize = usize::MAX;
 
+/// Hasher for the ARC maps, whose keys are always payload addresses.
+///
+/// The standard library defaults to SipHash-1-3, which is the right choice for
+/// maps fed by untrusted input but costs more than the rest of a retain or
+/// release combined. These maps are keyed by pointers the runtime allocated
+/// itself, so collision-flooding is not a threat model here.
+///
+/// This is the multiply-xor-shift used by rustc's `FxHasher`: one multiply and
+/// one rotate per key. Addresses are poorly distributed in the low bits (all
+/// allocations are aligned), which the rotate fixes.
+#[derive(Default, Clone, Copy)]
+struct PtrHasher(u64);
+
+impl std::hash::Hasher for PtrHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        // Only the `usize` path below is used by these maps; this fallback
+        // keeps the impl correct if a different key type is ever inserted.
+        for byte in bytes {
+            self.write_u8(*byte);
+        }
+    }
+
+    #[inline]
+    fn write_u8(&mut self, value: u8) {
+        self.write_u64(u64::from(value));
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(SEED);
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+struct PtrHashBuilder;
+
+impl std::hash::BuildHasher for PtrHashBuilder {
+    type Hasher = PtrHasher;
+
+    #[inline]
+    fn build_hasher(&self) -> PtrHasher {
+        PtrHasher(0)
+    }
+}
+
+/// A `HashMap` keyed by payload address.
+type PtrMap<V> = HashMap<usize, V, PtrHashBuilder>;
+
 /// Ownership edges indexed both ways so edge registration/removal and the bulk
 /// lookups on free (`take_owned_edges`, `remove_incoming_edges`) cost
 /// O(degree) instead of a scan over every edge in the process.
 #[derive(Default)]
 struct ArcEdges {
-    by_owner: HashMap<usize, Vec<usize>>,
-    by_child: HashMap<usize, Vec<usize>>,
+    by_owner: PtrMap<Vec<usize>>,
+    by_child: PtrMap<Vec<usize>>,
 }
 
 impl ArcEdges {
@@ -95,7 +155,7 @@ impl ArcEdges {
     }
 }
 
-fn remove_one_edge_entry(index: &mut HashMap<usize, Vec<usize>>, key: usize, value: usize) -> bool {
+fn remove_one_edge_entry(index: &mut PtrMap<Vec<usize>>, key: usize, value: usize) -> bool {
     let Some(values) = index.get_mut(&key) else {
         return false;
     };
@@ -114,7 +174,7 @@ struct ArcState {
     /// Live managed allocations keyed by payload address. Keyed lookup keeps
     /// `ori_arc_retain`/`ori_arc_release` O(1); the previous linear registry
     /// made every retain/release O(live allocations) (LANG-PERF-3).
-    allocations: HashMap<usize, ArcAllocation>,
+    allocations: PtrMap<ArcAllocation>,
     edges: ArcEdges,
     /// Possible cycle roots (Bacon trial deletion): payloads whose refcount
     /// was decremented to a non-zero value while they owned outgoing edges.
@@ -422,26 +482,52 @@ pub unsafe extern "C" fn ori_arc_release(ptr: *mut u8) {
         return;
     }
     let payload = ptr as usize;
-    let old = {
+
+    // Everything that touches shared state happens in **one** critical section.
+    // The previous shape locked once to decrement, then `free_registered_object`
+    // locked three more times (unregister, take edges, remove incoming) plus a
+    // redundant `header_for_registered` — six acquisitions to drop one string,
+    // which dominated the cost of every managed temporary.
+    //
+    // The destructor and the recursive child releases stay **outside** the lock:
+    // a destructor releases its children and would re-enter this function.
+    let dead = {
         let mut state = arc_state().lock().unwrap_or_else(|e| e.into_inner());
         let Some(allocation) = state.allocations.get(&payload) else {
             return;
         };
         let header = allocation.header as *mut OriHeapHeader;
         let old = (*header).refcount.fetch_sub(1, Ordering::Release);
-        if old != 1 && state.edges.by_owner.contains_key(&payload) {
-            // Bacon possible root: a refcount decremented to non-zero on an
-            // object with outgoing edges may have disconnected a cycle.
-            state.mark_suspect(payload);
+        if old != 1 {
+            if state.edges.by_owner.contains_key(&payload) {
+                // Bacon possible root: a refcount decremented to non-zero on an
+                // object with outgoing edges may have disconnected a cycle.
+                state.mark_suspect(payload);
+            }
+            None
+        } else {
+            let children: Vec<*mut u8> = state
+                .edges
+                .take_children_of(payload)
+                .into_iter()
+                .map(|child| child as *mut u8)
+                .collect();
+            state.edges.remove_edges_to(payload);
+            state.remove_allocation(payload);
+            Some((header, children))
         }
-        old
     };
-    if old == 1 {
-        let Some(header) = header_for_registered(ptr) else {
-            return;
-        };
+
+    if let Some((header, children)) = dead {
         (*header).refcount.load(Ordering::Acquire); // synchronize
-        free_registered_object(ptr, true);
+        if let Some(dtor) = (*header).destructor {
+            dtor(ptr);
+        }
+        std::ptr::drop_in_place(&mut (*header).refcount);
+        libc::free(header as *mut libc::c_void);
+        for child in children {
+            ori_arc_release(child);
+        }
     }
 }
 
@@ -9459,6 +9545,8 @@ pub unsafe extern "C" fn ori_rt_init() -> i32 {
     }
     // Ensure ARC state exists (lazy on first alloc, but touch for predictability).
     let _ = ARC_STATE.get_or_init(|| Mutex::new(ArcState::default()));
+    // Embed hosts do not run our ELF constructor, so install the guard here too.
+    crate::stack_guard::install();
     0
 }
 
@@ -9472,6 +9560,7 @@ pub unsafe extern "C" fn ori_rt_shutdown() {
 }
 
 mod debug_agent;
+pub mod stack_guard;
 
 #[cfg(test)]
 mod tests;

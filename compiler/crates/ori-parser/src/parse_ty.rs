@@ -1,5 +1,5 @@
 use crate::parser::Parser;
-use ori_ast::ty::Type;
+use ori_ast::ty::{ConstArgValue, Type};
 use ori_lexer::TokenKind;
 
 macro_rules! primitive_type {
@@ -58,6 +58,7 @@ impl<'src> Parser<'src> {
             // ── Single-arg generic built-in types ─────────────────────────────
             TokenKind::Optional => single_bracket_type!(self, span, Optional),
             TokenKind::List => single_bracket_type!(self, span, List),
+            TokenKind::Array => self.parse_array_type(span),
             TokenKind::Set => single_bracket_type!(self, span, Set),
             TokenKind::Range => single_bracket_type!(self, span, Range),
             TokenKind::Lazy => single_bracket_type!(self, span, Lazy),
@@ -297,6 +298,24 @@ impl<'src> Parser<'src> {
         }
         let name = self.parse_name()?;
         self.expect(&TokenKind::Colon)?;
+        let (value, value_span) = self.parse_const_arg_value()?;
+        let span = name.span.cover(value_span);
+        Some(Type::ConstArg { name, value, span })
+    }
+
+    /// The value after `name:` in a const type argument, with its span.
+    ///
+    /// Either an integer literal (`size: 8`) or the name of a `const` parameter
+    /// in scope (`size: cap`), which lets a generic type pass its own const
+    /// parameter down to a nested type.
+    fn parse_const_arg_value(&mut self) -> Option<(ConstArgValue, ori_diagnostics::Span)> {
+        // A bare identifier names a const parameter.
+        if matches!(self.peek_kind(), Some(TokenKind::Ident)) {
+            let name = self.parse_name()?;
+            let span = name.span;
+            return Some((ConstArgValue::Param(name), span));
+        }
+
         let tok = self.peek()?.clone();
         let negative = tok.kind == TokenKind::Minus;
         if negative {
@@ -306,7 +325,7 @@ impl<'src> Parser<'src> {
             let span = self.current_span();
             self.error(
                 "parse.expected_const_arg_value",
-                "a named type argument takes an integer constant, e.g. `size: 8`",
+                "a named type argument takes an integer constant or a `const` parameter, e.g. `size: 8` or `size: cap`",
                 span,
             );
             return None;
@@ -324,11 +343,53 @@ impl<'src> Parser<'src> {
                 return None;
             }
         };
-        let span = name.span.cover(value_tok.span);
-        Some(Type::ConstArg {
-            name,
-            value: if negative { -value } else { value },
-            span,
+        Some((
+            ConstArgValue::Literal(if negative { -value } else { value }),
+            value_tok.span,
+        ))
+    }
+
+    /// `array[T, size: N]` — element type, then the length as a named const.
+    ///
+    /// The length is named for the same reason `Buffer[size: 8]` is: a bare
+    /// `array[int, 4]` puts a loose number between brackets, which reads as an
+    /// index everywhere else in Ori.
+    fn parse_array_type(&mut self, start: ori_diagnostics::Span) -> Option<Type> {
+        self.advance(); // `array`
+        self.expect(&TokenKind::LBracket)?;
+        let elem = self.parse_type()?;
+        self.expect(&TokenKind::Comma)?;
+
+        let size_span = self.current_span();
+        let Some(size_arg) = self.parse_named_const_arg() else {
+            self.error(
+                "parse.expected_array_size",
+                "`array` needs its length as a named const argument: `array[int, size: 4]`",
+                size_span,
+            );
+            return None;
+        };
+        let Type::ConstArg { name, value, .. } = size_arg else {
+            return None;
+        };
+        if name.text.as_str() != "size" {
+            self.error(
+                "parse.expected_array_size",
+                format!(
+                    "`array` names its length `size`, not `{}`: write `array[int, size: 4]`",
+                    name.text
+                ),
+                name.span,
+            );
+            return None;
+        }
+
+        let end = self.current_span();
+        self.expect(&TokenKind::RBracket)?;
+        Some(Type::Array {
+            elem: Box::new(elem),
+            size: value,
+            span: start.cover(end),
         })
     }
 

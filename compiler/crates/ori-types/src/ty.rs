@@ -91,6 +91,13 @@ pub enum Ty {
     Optional(Box<Ty>),
     Result(Box<Ty>, Box<Ty>),
     List(Box<Ty>),
+    /// `array[T, size: N]` — element type and length.
+    ///
+    /// The length is carried as a `Ty` so it reuses the const-generic
+    /// machinery: it is `ConstInt("size", n)` once known, or a `Param` while
+    /// still generic (`array[byte, size: cap]` inside `Buffer[const cap: int]`).
+    /// Two arrays of different length are different types.
+    Array(Box<Ty>, Box<Ty>),
     Map(Box<Ty>, Box<Ty>),
     Set(Box<Ty>),
     Range(Box<Ty>),
@@ -137,9 +144,9 @@ pub enum Ty {
     /// A compile-time constant standing in a type argument position:
     /// `Buffer[size: 8]` is `Named(Buffer, [ConstInt("size", 8)])`.
     ///
-    /// Purely a type-level tag today: two buffers with different sizes are
-    /// different types, and nothing about the value reaches runtime (fixed
-    /// size arrays, which would use it, do not exist yet).
+    /// Two buffers with different sizes are different types. `array[T, size: N]`
+    /// consumes the value for its layout; elsewhere it stays a compile-time tag
+    /// that never reaches runtime.
     ConstInt(SmolStr, i64),
 }
 
@@ -253,6 +260,7 @@ impl Ty {
             | Ty::Channel(t) => t.contains_infer(),
             Ty::Any(_) => false,
             Ty::Result(a, b) | Ty::Map(a, b) => a.contains_infer() || b.contains_infer(),
+            Ty::Array(elem, size) => elem.contains_infer() || size.contains_infer(),
             Ty::Opaque { args, .. } => args.iter().any(|arg| arg.contains_infer()),
             Ty::Tuple(ts) => ts.iter().any(|t| t.contains_infer()),
             Ty::Func { params, ret } => {
@@ -376,6 +384,18 @@ impl Ty {
     /// wherever a def map is in reach.
     pub fn display_in(&self, def_map: &DefMap) -> std::string::String {
         match self {
+            // An *applied* type parameter (`F[A]`) is encoded as a sentinel id
+            // that carries no name, so there is nothing to look up. Printing the
+            // raw id here is what produced `<def DefId(1073741824)>`. This shape
+            // only arises from higher-kinded syntax, which is out of scope.
+            Ty::Named(id, args) if (id.0 & 0x4000_0000) != 0 => {
+                let inner = args
+                    .iter()
+                    .map(|a| a.display_in(def_map))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("<type parameter>[{inner}]")
+            }
             Ty::Named(id, args) => {
                 let name = def_map.get(*id).name.clone();
                 let name = if name.is_empty() {
@@ -401,8 +421,47 @@ impl Ty {
                 err.display_in(def_map)
             ),
             Ty::List(inner) => format!("list[{}]", inner.display_in(def_map)),
+            Ty::Array(elem, size) => match &**size {
+                Ty::ConstInt(_, n) => format!("array[{}, size: {}]", elem.display_in(def_map), n),
+                other => format!(
+                    "array[{}, size: {}]",
+                    elem.display_in(def_map),
+                    other.display_in(def_map)
+                ),
+            },
             Ty::Set(inner) => format!("set[{}]", inner.display_in(def_map)),
             Ty::Map(k, v) => format!("map[{}, {}]", k.display_in(def_map), v.display_in(def_map)),
+            Ty::Range(inner) => format!("range[{}]", inner.display_in(def_map)),
+            Ty::Lazy(inner) => format!("lazy[{}]", inner.display_in(def_map)),
+            Ty::Handle(inner) => format!("handle[{}]", inner.display_in(def_map)),
+            Ty::Future(inner) => format!("future[{}]", inner.display_in(def_map)),
+            Ty::TaskJob(inner) => format!("task.Job[{}]", inner.display_in(def_map)),
+            Ty::Channel(inner) => format!("channel.Channel[{}]", inner.display_in(def_map)),
+            Ty::Tuple(items) => {
+                let inner = items
+                    .iter()
+                    .map(|t| t.display_in(def_map))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("tuple[{}]", inner)
+            }
+            Ty::Func { params, ret } => {
+                let ps = params
+                    .iter()
+                    .map(|p| p.display_in(def_map))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("func({}) -> {}", ps, ret.display_in(def_map))
+            }
+            Ty::Opaque { kind, args } if !args.is_empty() => {
+                let args = args
+                    .iter()
+                    .map(|arg| arg.display_in(def_map))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}[{}]", kind.display_name(), args)
+            }
+            // Remaining variants carry no nested type, so `display` is exact.
             _ => self.display(),
         }
     }
@@ -430,6 +489,10 @@ impl Ty {
             Ty::Optional(t) => format!("optional[{}]", t.display()),
             Ty::Result(ok, err) => format!("result[{}, {}]", ok.display(), err.display()),
             Ty::List(t) => format!("list[{}]", t.display()),
+            Ty::Array(elem, size) => match &**size {
+                Ty::ConstInt(_, n) => format!("array[{}, size: {}]", elem.display(), n),
+                other => format!("array[{}, size: {}]", elem.display(), other.display()),
+            },
             Ty::Map(k, v) => format!("map[{}, {}]", k.display(), v.display()),
             Ty::Set(t) => format!("set[{}]", t.display()),
             Ty::Range(t) => format!("range[{}]", t.display()),
@@ -524,6 +587,12 @@ pub fn substitute_ty_params(ty: &Ty, args: &[Ty]) -> Ty {
             Box::new(substitute_ty_params(err, args)),
         ),
         Ty::List(elem) => Ty::List(Box::new(substitute_ty_params(elem, args))),
+        // Substituting the length is the point: `array[byte, size: cap]` becomes
+        // `array[byte, size: 8]` once `cap` is bound.
+        Ty::Array(elem, size) => Ty::Array(
+            Box::new(substitute_ty_params(elem, args)),
+            Box::new(substitute_ty_params(size, args)),
+        ),
         Ty::Map(k, v) => Ty::Map(
             Box::new(substitute_ty_params(k, args)),
             Box::new(substitute_ty_params(v, args)),

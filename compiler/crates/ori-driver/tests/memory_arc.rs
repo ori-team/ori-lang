@@ -1970,3 +1970,114 @@ end
         "stderr: {stderr}"
     );
 }
+
+// ── Release consolidated into one critical section (LANG-MEM-10) ───────────
+//
+// `ori_arc_release` used to take the ARC mutex up to six times to drop a single
+// object: once to decrement, then again inside `free_registered_object` for
+// unregister, take-edges and remove-incoming, plus a redundant
+// `header_for_registered`. Dropping one string dominated the cost of every
+// managed temporary (~360 ns/iteration).
+//
+// The decrement, unregister and edge removal now share one lock; the destructor
+// and the recursive child releases stay outside it, because a destructor
+// re-enters `ori_arc_release`. These tests pin the behaviour that must survive
+// that restructuring: nested owners still cascade, and nothing leaks.
+
+#[test]
+fn compile_runs_nested_owners_cascade_on_release() {
+    let dir = TestDir::new("nested_cascade_release");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Inner
+    label: string
+end
+
+struct Outer
+    inner: Inner
+    name: string
+end
+
+build(n: int) -> Outer
+    return Outer {
+        inner: Inner { label: "deep" },
+        name: "outer"
+    }
+end
+
+main()
+    var i: int = 0
+    while i < 300
+        const o: Outer = build(i)
+        const joined: string = o.name + o.inner.label
+        i = i + 1
+    end
+    io.println("done")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "nested_cascade");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "done",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_managed_temporaries_in_a_hot_loop_without_leaking() {
+    let dir = TestDir::new("hot_loop_temporaries");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.string = str
+
+work(prefix: string) -> int
+    const full: string = prefix + "-x"
+    return str.len(full)
+end
+
+main()
+    var i: int = 0
+    var total: int = 0
+    while i < 2000
+        total = total + work("name")
+        i = i + 1
+    end
+    io.println(f"{total}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "hot_loop_temporaries");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "12000",
+        "stderr: {stderr}"
+    );
+}

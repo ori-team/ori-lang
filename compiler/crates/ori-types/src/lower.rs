@@ -77,7 +77,103 @@ pub fn lower_type_with_local_aliases(
     }
     match ast_ty {
         // `size: 8` — a named compile-time constant in argument position.
-        AstType::ConstArg { name, value, .. } => Ty::ConstInt(name.text.clone(), *value),
+        // `size: cap` names a `const` parameter instead, resolved by
+        // substitution at the use site.
+        AstType::ConstArg { name, value, span } => match value {
+            ori_ast::ty::ConstArgValue::Literal(v) => Ty::ConstInt(name.text.clone(), *v),
+            ori_ast::ty::ConstArgValue::Param(param) => {
+                match type_params.iter().position(|p| p == &param.text) {
+                    Some(index) => Ty::Param {
+                        index: index as u32,
+                        name: param.text.clone(),
+                    },
+                    None => {
+                        sink.emit(
+                            Diagnostic::error(
+                                "type.undefined_const_param",
+                                format!(
+                                    "`{}` is not a `const` parameter in scope",
+                                    param.text
+                                ),
+                            )
+                            .with_label(Label::primary(file_id, *span, "unknown const parameter"))
+                            .with_action(
+                                "declare it on the type, e.g. `struct Buffer[const size: int]`, or use a literal",
+                            ),
+                        );
+                        Ty::Error
+                    }
+                }
+            }
+        },
+        AstType::Array { elem, size, span } => {
+            let elem_ty = rec!(elem);
+            let size_ty = match size {
+                ori_ast::ty::ConstArgValue::Literal(v) => {
+                    if *v < 0 {
+                        sink.emit(
+                            Diagnostic::error(
+                                "type.negative_array_size",
+                                format!("array length must not be negative, found `{v}`"),
+                            )
+                            .with_label(Label::primary(file_id, *span, "array length"))
+                            .with_action("use a length of zero or more"),
+                        );
+                        Ty::Error
+                    } else {
+                        Ty::ConstInt(SmolStr::new("size"), *v)
+                    }
+                }
+                ori_ast::ty::ConstArgValue::Param(param) => {
+                    match type_params.iter().position(|p| p == &param.text) {
+                        Some(index) => Ty::Param {
+                            index: index as u32,
+                            name: param.text.clone(),
+                        },
+                        None => {
+                            sink.emit(
+                                Diagnostic::error(
+                                    "type.undefined_const_param",
+                                    format!(
+                                        "`{}` is not a `const` parameter in scope",
+                                        param.text
+                                    ),
+                                )
+                                .with_label(Label::primary(
+                                    file_id,
+                                    *span,
+                                    "unknown const parameter",
+                                ))
+                                .with_action(
+                                    "declare it on the type, e.g. `struct Buffer[const size: int]`, or use a literal",
+                                ),
+                            );
+                            Ty::Error
+                        }
+                    }
+                }
+            };
+            // Elements live inline with no reference counting, so a managed
+            // element would be stored without a retain and released by nobody.
+            // Reject that instead of producing a program that leaks or
+            // double-frees depending on the path.
+            if elem_ty.is_runtime_managed() && !elem_ty.is_error() {
+                sink.emit(
+                    Diagnostic::error(
+                        "type.array_element_not_inline",
+                        format!(
+                            "`array` elements are stored inline, so `{}` cannot be an element type",
+                            elem_ty.display()
+                        ),
+                    )
+                    .with_label(Label::primary(file_id, *span, "element type"))
+                    .with_why("inline storage has no reference counting, and this type is reference counted")
+                    .with_action("use a scalar element (`int`, `float`, `bool`, `u8`, …), or `list[T]` for managed values"),
+                );
+                return Ty::Error;
+            }
+            Ty::Array(Box::new(elem_ty), Box::new(size_ty))
+        }
         // Check local type aliases (e.g. associated types in implement blocks)
         AstType::Named(name)
             if name.is_single() && local_aliases.contains_key(name.last().as_str()) =>

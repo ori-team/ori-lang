@@ -57,6 +57,13 @@ fn ori_mem_size_of_ty(ty: &Ty) -> i64 {
         Ty::Void | Ty::Never => 0,
         // A const argument is a type-level tag; it occupies no storage.
         Ty::ConstInt(_, _) => 0,
+        // An array stores its elements inline, so its size is the whole block.
+        // A length that is still a generic parameter has no size until it is
+        // substituted; report 0 rather than guessing.
+        Ty::Array(elem, size) => match &**size {
+            Ty::ConstInt(_, n) if *n >= 0 => ori_mem_size_of_ty(elem) * n,
+            _ => 0,
+        },
         Ty::Error => 0,
         Ty::Infer(_) | Ty::Param { .. } => 8,
         Ty::String
@@ -2617,6 +2624,7 @@ fn insert_default_arguments_expr(
             }
         }
         HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
         | HirExprKind::SetLit { elements, .. }
         | HirExprKind::TupleLit(elements) => {
             for elem in elements {
@@ -2772,9 +2780,9 @@ impl<'a> Lowerer<'a> {
     fn lower_stmt(&mut self, stmt: &Stmt, tp: &[SmolStr]) -> Option<HirStmt> {
         match stmt {
             Stmt::Const(c) => {
-                let mut val = self.lower_expr(&c.value, tp);
-                let ty = if let Some(ast_ty) = &c.ty {
-                    let ty = self.lower_ast_ty(ast_ty, tp);
+                let annotated = c.ty.as_ref().map(|ast_ty| self.lower_ast_ty(ast_ty, tp));
+                let mut val = self.lower_expr_expecting(&c.value, tp, annotated.as_ref());
+                let ty = if let Some(ty) = annotated {
                     apply_expected_expr_ty(&mut val, &ty);
                     ty
                 } else {
@@ -2791,9 +2799,9 @@ impl<'a> Lowerer<'a> {
                 })
             }
             Stmt::Var(v) => {
-                let mut val = self.lower_expr(&v.value, tp);
-                let ty = if let Some(ast_ty) = &v.ty {
-                    let ty = self.lower_ast_ty(ast_ty, tp);
+                let annotated = v.ty.as_ref().map(|ast_ty| self.lower_ast_ty(ast_ty, tp));
+                let mut val = self.lower_expr_expecting(&v.value, tp, annotated.as_ref());
+                let ty = if let Some(ty) = annotated {
                     apply_expected_expr_ty(&mut val, &ty);
                     ty
                 } else {
@@ -4112,9 +4120,19 @@ impl<'a> Lowerer<'a> {
                     .resolve_def_id_with_kind(&type_name.to_string(), DefKind::Struct)
                     .unwrap_or(ori_types::DefId(u32::MAX));
                 let ty = Ty::Named(def_id, Vec::new());
+                // Each field value is lowered against its declared type. It
+                // matters for forms whose storage depends on context: `[1, 2]`
+                // is a heap list by default but must become an inline array
+                // when the field is `array[T, size: N]`.
                 let hfields: Vec<(SmolStr, HirExpr)> = fields
                     .iter()
-                    .map(|f| (f.name.text.clone(), self.lower_expr(&f.value, tp)))
+                    .map(|f| {
+                        let declared = self.struct_field_ty(def_id, f.name.text.as_str());
+                        (
+                            f.name.text.clone(),
+                            self.lower_expr_expecting(&f.value, tp, declared.as_ref()),
+                        )
+                    })
                     .collect();
                 HirExpr {
                     kind: HirExprKind::StructLit {
@@ -4296,22 +4314,78 @@ impl<'a> Lowerer<'a> {
                 }
             }
 
-            Expr::Closure(closure) => self.lower_closure_expr(closure, tp, span),
+            Expr::Closure(closure) => self.lower_closure_expr(closure, tp, span, None),
         }
     }
 
-    fn lower_closure_expr(&mut self, closure: &ClosureExpr, tp: &[SmolStr], span: Span) -> HirExpr {
+    /// Lower an expression, passing down the type the context expects.
+    ///
+    /// Only closures consume it today: their parameters may be unannotated, and
+    /// the type has to be known *before* the body is lowered. Everything else
+    /// keeps using the plain `lower_expr` path and is reconciled afterwards by
+    /// `apply_expected_expr_ty`.
+    fn lower_expr_expecting(
+        &mut self,
+        expr: &Expr,
+        tp: &[SmolStr],
+        expected: Option<&Ty>,
+    ) -> HirExpr {
+        match expr {
+            Expr::Closure(closure) => self.lower_closure_expr(closure, tp, expr.span(), expected),
+            // `[1, 2, 3]` builds a list unless the context asks for an array.
+            // The two have different storage, so the choice has to be made here
+            // rather than patched up afterwards.
+            Expr::List { elements, .. } if matches!(expected, Some(Ty::Array(_, _))) => {
+                let Some(array_ty @ Ty::Array(elem_ty, _)) = expected else {
+                    unreachable!("guarded by the match arm")
+                };
+                let elems: Vec<HirExpr> = elements
+                    .iter()
+                    .map(|e| self.lower_expr_expecting(e, tp, Some(elem_ty)))
+                    .collect();
+                HirExpr {
+                    kind: HirExprKind::ArrayLit {
+                        elem_ty: (**elem_ty).clone(),
+                        elements: elems,
+                    },
+                    ty: array_ty.clone(),
+                    span: expr.span(),
+                }
+            }
+            _ => self.lower_expr(expr, tp),
+        }
+    }
+
+    fn lower_closure_expr(
+        &mut self,
+        closure: &ClosureExpr,
+        tp: &[SmolStr],
+        span: Span,
+        expected: Option<&Ty>,
+    ) -> HirExpr {
         let func_name = self.next_closure_name();
+        // A parameter with no annotation takes its type from the function type
+        // the context expects. The checker does the same; lowering has to agree
+        // or the body is lowered against `Infer` and codegen fails later.
+        let expected_fn = match expected {
+            Some(Ty::Func { params, ret }) if params.len() == closure.params.len() => {
+                Some((params.clone(), (**ret).clone()))
+            }
+            _ => None,
+        };
         let user_params: Vec<HirParam> = closure
             .params
             .iter()
-            .map(|param| HirParam {
+            .enumerate()
+            .map(|(index, param)| HirParam {
                 name: param.name.text.clone(),
-                ty: param
-                    .ty
-                    .as_ref()
-                    .map(|ty| self.lower_ast_ty(ty, tp))
-                    .unwrap_or(Ty::Infer(0)),
+                ty: match param.ty.as_ref() {
+                    Some(ty) => self.lower_ast_ty(ty, tp),
+                    None => expected_fn
+                        .as_ref()
+                        .map(|(params, _)| params[index].clone())
+                        .unwrap_or(Ty::Infer(0)),
+                },
                 default: None,
                 contract: None,
                 variadic: false,
@@ -4329,10 +4403,10 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
 
-        let declared_ret = closure
-            .return_ty
-            .as_ref()
-            .map(|ty| self.lower_ast_ty(ty, tp));
+        let declared_ret = match closure.return_ty.as_ref() {
+            Some(ty) => Some(self.lower_ast_ty(ty, tp)),
+            None => expected_fn.as_ref().map(|(_, ret)| ret.clone()),
+        };
         let previous_ret = self.ret_ty.clone();
 
         self.push();
@@ -4945,7 +5019,7 @@ fn for_second_binding_ty(ty: &Ty) -> Ty {
 
 fn index_result_ty(ty: &Ty) -> Ty {
     match ty {
-        Ty::List(t) | Ty::Set(t) => *t.clone(),
+        Ty::List(t) | Ty::Set(t) | Ty::Array(t, _) => *t.clone(),
         Ty::Map(_, v) => *v.clone(),
         Ty::String => Ty::String,
         Ty::Tuple(elems) => elems.first().cloned().unwrap_or(Ty::Infer(0)),

@@ -20,6 +20,7 @@ use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 
 mod constraints;
+mod recursion;
 mod match_exhaustiveness;
 
 // ── Environment ───────────────────────────────────────────────────────────────
@@ -238,7 +239,7 @@ impl<'a> Checker<'a> {
                     "type.iterable_next_missing",
                     format!(
                         "`{}` implements `Iterable` but has no `next` method",
-                        ty.display()
+                        ty.display_in(self.def_map)
                     ),
                 )
                 .with_label(Label::primary(self.file_id, span, "iterated here"))
@@ -275,7 +276,7 @@ impl<'a> Checker<'a> {
                         "type.iterable_next_signature",
                         format!(
                             "`Iterable.next` must return `optional[T]`, found `{}`",
-                            other.display()
+                            other.display_in(self.def_map)
                         ),
                     )
                     .with_label(Label::primary(self.file_id, span, "iterated here"))
@@ -290,7 +291,7 @@ impl<'a> Checker<'a> {
         self.sink.emit(
             Diagnostic::error(
                 "type.not_iterable",
-                format!("`for` needs an iterable value, found `{}`", ty.display()),
+                format!("`for` needs an iterable value, found `{}`", ty.display_in(self.def_map)),
             )
             .with_label(Label::primary(self.file_id, span, "not iterable"))
             .with_action(
@@ -648,7 +649,7 @@ impl<'a> Checker<'a> {
         self.sink.emit(
             Diagnostic::error(
                 "extern.managed_type_in_ffi",
-                format!("{position} uses managed type `{}`", ty.display()),
+                format!("{position} uses managed type `{}`", ty.display_in(self.def_map)),
             )
             .with_label(Label::primary(self.file_id, span, "managed FFI type here"))
             .with_why("managed Ori values have ARC ownership and runtime layout that cannot cross raw FFI directly")
@@ -783,7 +784,7 @@ impl<'a> Checker<'a> {
                         format!(
                             "`@c_export` parameter `{}` has non-FFI-safe type `{}`",
                             param.name.text,
-                            ty.display()
+                            ty.display_in(self.def_map)
                         ),
                     )
                     .with_label(Label::primary(
@@ -792,7 +793,7 @@ impl<'a> Checker<'a> {
                         "parameter type",
                     ))
                     .with_action(
-                        "use `int`, `float`, `bool`, or `void` return; phase-2: ptr+len for strings",
+                        "`@c_export` accepts scalars and `string`; aggregates (struct, list, map, optional, result) have no stable C layout yet",
                     ),
                 );
             }
@@ -803,13 +804,40 @@ impl<'a> Checker<'a> {
                 self.sink.emit(
                     Diagnostic::error(
                         "attr.c_export_bad_type",
-                        format!("`@c_export` return type `{}` is not FFI-safe", ty.display()),
+                        format!("`@c_export` return type `{}` is not FFI-safe", ty.display_in(self.def_map)),
                     )
                     .with_label(Label::primary(self.file_id, ret.span(), "return type"))
-                    .with_action("use `int`, `float`, `bool`, or omit for void"),
+                    .with_action("return a scalar or `string`, or omit for void"),
                 );
             }
         }
+    }
+
+    /// Reject a function whose every path calls itself.
+    ///
+    /// The runtime stack guard already reports the overflow, but reporting it
+    /// at compile time is strictly better: no correct program has this shape,
+    /// so there is nothing to lose by refusing it. See `check/recursion.rs` for
+    /// what the analysis deliberately does *not* catch.
+    fn check_unconditional_recursion(&mut self, func: &FuncDecl) {
+        if !recursion::always_recurses(&func.body, &func.name.text) {
+            return;
+        }
+        self.sink.emit(
+            Diagnostic::error(
+                "control.unconditional_recursion",
+                format!(
+                    "`{}` always calls itself, so it can never return",
+                    func.name.text
+                ),
+            )
+            .with_label(Label::primary(
+                self.file_id,
+                func.name.span,
+                "every path through this function recurses",
+            ))
+            .with_action("add a branch that returns without calling this function"),
+        );
     }
 
     fn check_func(&mut self, func: &FuncDecl, outer_tp: &[SmolStr], implicit_self_ty: Option<Ty>) {
@@ -880,6 +908,7 @@ impl<'a> Checker<'a> {
             self.current_async_depth += 1;
         }
         self.check_block(&func.body, &expected_ret, &tp);
+        self.check_unconditional_recursion(func);
         self.current_async_depth = prev_async_depth;
         if expected_ret != Ty::Void
             && !block_definitely_returns(&func.body, &self.exhaustive_matches)
@@ -890,7 +919,7 @@ impl<'a> Checker<'a> {
                     format!(
                         "function `{}` may finish without returning `{}`",
                         func.name.text,
-                        expected_ret.display()
+                        expected_ret.display_in(self.def_map)
                     ),
                 )
                 .with_label(Label::primary(
@@ -1157,10 +1186,10 @@ impl<'a> Checker<'a> {
                             ))
                             .with_why(format!(
                                 "expected `({}) -> {}`, found `({}) -> {}`",
-                                display_tys(&expected_params),
-                                expected_return.display(),
-                                display_tys(&actual_params),
-                                actual_return.display(),
+                                display_tys(&expected_params, self.def_map),
+                                expected_return.display_in(self.def_map),
+                                display_tys(&actual_params, self.def_map),
+                                actual_return.display_in(self.def_map),
                             ))
                             .with_action(
                                 "change the implementation method signature to match the trait",
@@ -1202,10 +1231,10 @@ impl<'a> Checker<'a> {
                             ))
                             .with_why(format!(
                                 "expected `({}) -> {}`, found `({}) -> {}`",
-                                display_tys(&expected_params),
-                                expected_return.display(),
-                                display_tys(&sig.params),
-                                sig.return_ty.display(),
+                                display_tys(&expected_params, self.def_map),
+                                expected_return.display_in(self.def_map),
+                                display_tys(&sig.params, self.def_map),
+                                sig.return_ty.display_in(self.def_map),
                             ))
                             .with_action(
                                 "bind to a free function whose signature matches the trait method",
@@ -1324,7 +1353,7 @@ impl<'a> Checker<'a> {
                 value.span(),
                 &format!(
                     "inferred type `{}` is not obvious enough to omit the annotation",
-                    inferred.display()
+                    inferred.display_in(self.def_map)
                 ),
             );
             return Ty::Error;
@@ -1457,14 +1486,14 @@ impl<'a> Checker<'a> {
                             "type.return_mismatch",
                             format!(
                                 "return type `{}` does not match declared `{}`",
-                                ret_ty.display(),
-                                expected_ret.display()
+                                ret_ty.display_in(self.def_map),
+                                expected_ret.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, span, "returned here"))
                         .with_why(format!(
                             "function declares return type `{}`",
-                            expected_ret.display()
+                            expected_ret.display_in(self.def_map)
                         ))
                         .with_action("adjust the returned expression or the function return type"),
                     );
@@ -1521,7 +1550,7 @@ impl<'a> Checker<'a> {
                     self.sink.emit(
                         Diagnostic::error(
                             "type.repeat_count_not_int",
-                            format!("repeat count must be `int`, found `{}`", count_ty.display()),
+                            format!("repeat count must be `int`, found `{}`", count_ty.display_in(self.def_map)),
                         )
                         .with_label(Label::primary(
                             self.file_id,
@@ -1602,7 +1631,7 @@ impl<'a> Checker<'a> {
                                     "`{}` requires a `{}`, found `{}`",
                                     form,
                                     wanted,
-                                    val_ty.display()
+                                    val_ty.display_in(self.def_map)
                                 ),
                             )
                             .with_label(Label::primary(
@@ -1634,7 +1663,7 @@ impl<'a> Checker<'a> {
                                 "type.whilesome_not_optional",
                                 format!(
                                     "`while some` requires an `optional[T]`, found `{}`",
-                                    val_ty.display()
+                                    val_ty.display_in(self.def_map)
                                 ),
                             )
                             .with_label(Label::primary(
@@ -1722,8 +1751,133 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// Type a closure, optionally against the function type the context wants.
+    ///
+    /// A parameter without an annotation takes its type from `expected` when
+    /// that is a `func(...)` of the same arity. Without this, `(x) => x * 2`
+    /// bound to a `func(int) -> int` left `x` as an unresolved `Infer`, and the
+    /// body failed on an operator it could not type.
+    fn infer_closure(&mut self, closure: &ori_ast::expr::ClosureExpr, expected: Option<&Ty>) -> Ty {
+        let expected_fn = match expected {
+            Some(Ty::Func { params, ret }) if params.len() == closure.params.len() => {
+                Some((params.clone(), (**ret).clone()))
+            }
+            _ => None,
+        };
+
+        let param_tys: Vec<Ty> = closure
+            .params
+            .iter()
+            .enumerate()
+            .map(|(index, param)| match param.ty.as_ref() {
+                Some(ty) => self.lower(ty, &[]),
+                None => expected_fn
+                    .as_ref()
+                    .map(|(params, _)| params[index].clone())
+                    .unwrap_or(Ty::Infer(0)),
+            })
+            .collect();
+        let declared_ret = match closure.return_ty.as_ref() {
+            Some(ty) => Some(self.lower(ty, &[])),
+            // An expected return type only guides a block body, which needs a
+            // target to check `return` against. An expression body keeps
+            // inferring so the context can still report a precise mismatch.
+            None => expected_fn
+                .as_ref()
+                .filter(|_| matches!(closure.body, ClosureBody::Block(_)))
+                .map(|(_, ret)| ret.clone()),
+        };
+
+        self.push_scope();
+        let closure_scope_root = self.scopes.len() - 1;
+        self.closure_scope_roots.push(closure_scope_root);
+        for (param, ty) in closure.params.iter().zip(param_tys.iter()) {
+            self.bind_checked(&param.name, ty.clone(), false, false);
+        }
+
+        let prev_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let ret_ty = match &closure.body {
+            ClosureBody::Expr(expr) => {
+                let actual = self.infer_expr(expr);
+                if let Some(expected) = &declared_ret {
+                    self.expect_assignable(&actual, expected, expr.span());
+                    expected.clone()
+                } else {
+                    actual
+                }
+            }
+            ClosureBody::Block(block) => {
+                let expected = declared_ret.clone().unwrap_or(Ty::Void);
+                let prev_ret = self.current_return_ty.take();
+                self.current_return_ty = Some(expected.clone());
+                self.check_block(block, &expected, &[]);
+                if expected != Ty::Void && !block_definitely_returns(block, &self.exhaustive_matches)
+                {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "type.missing_return",
+                            format!(
+                                "closure may finish without returning `{}`",
+                                expected.display_in(self.def_map)
+                            ),
+                        )
+                        .with_label(Label::primary(
+                            self.file_id,
+                            block.span,
+                            "not all paths return",
+                        ))
+                        .with_action("return a value on every path"),
+                    );
+                }
+                self.current_return_ty = prev_ret;
+                expected
+            }
+        };
+        self.loop_depth = prev_loop_depth;
+        self.closure_scope_roots.pop();
+        self.pop_scope();
+
+        Ty::Func {
+            params: param_tys,
+            ret: Box::new(ret_ty),
+        }
+    }
+
     fn check_expr_assignable_to(&mut self, expr: &Expr, expected: &Ty) -> Ty {
         match expr {
+            // `[1, 2, 3]` builds a `list` by default. When the context wants an
+            // array, check it against the declared length instead — the literal
+            // is the only way to produce one.
+            Expr::List { elements, span } if matches!(expected, Ty::Array(_, _)) => {
+                let Ty::Array(elem_ty, size) = expected else {
+                    unreachable!("guarded by the match arm")
+                };
+                for element in elements {
+                    self.check_expr_assignable_to(element, elem_ty);
+                }
+                if let Ty::ConstInt(_, len) = &**size {
+                    if elements.len() as i64 != *len {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                "type.array_length_mismatch",
+                                format!(
+                                    "`{}` needs {len} elements, found {}",
+                                    expected.display_in(self.def_map),
+                                    elements.len()
+                                ),
+                            )
+                            .with_label(Label::primary(self.file_id, *span, "array literal"))
+                            .with_action(format!("write exactly {len} elements")),
+                        );
+                    }
+                }
+                expected.clone()
+            }
+            Expr::Closure(closure) => {
+                let actual = self.infer_closure(closure, Some(expected));
+                self.expect_assignable(&actual, expected, expr.span());
+                actual
+            }
             Expr::AnonStructLit { fields, span } => {
                 self.check_anon_struct_literal(fields, expected, *span)
             }
@@ -2011,7 +2165,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "shorthand enum variant `.{}` needs an expected enum type, found {}",
                     variant.text,
-                    expected.display()
+                    expected.display_in(self.def_map)
                 ),
             )
             .with_label(Label::primary(self.file_id, span, "enum variant here"))
@@ -2156,7 +2310,7 @@ impl<'a> Checker<'a> {
         let found = if expected.contains_infer() {
             "an unknown type".to_string()
         } else {
-            format!("`{}`", expected.display())
+            format!("`{}`", expected.display_in(self.def_map))
         };
         self.sink.emit(
             Diagnostic::error(
@@ -2199,7 +2353,7 @@ impl<'a> Checker<'a> {
                                     "type.arg_type_mismatch",
                                     format!(
                                         "`f-string` interpolation expects `int`, `float`, `bool`, `string`, or a `Displayable` value, found `{}`",
-                                        part_ty.display()
+                                        part_ty.display_in(self.def_map)
                                     ),
                                 )
                                 .with_label(Label::primary(
@@ -2311,8 +2465,8 @@ impl<'a> Checker<'a> {
                                     "type.list_element_mismatch",
                                     format!(
                                         "list element type `{}` does not match first element `{}`",
-                                        elem_ty.display(),
-                                        first_ty.display()
+                                        elem_ty.display_in(self.def_map),
+                                        first_ty.display_in(self.def_map)
                                     ),
                                 )
                                 .with_label(Label::primary(
@@ -2322,7 +2476,7 @@ impl<'a> Checker<'a> {
                                 ))
                                 .with_action(format!(
                                     "all list elements should be `{}`",
-                                    first_ty.display()
+                                    first_ty.display_in(self.def_map)
                                 )),
                             );
                         }
@@ -2350,8 +2504,8 @@ impl<'a> Checker<'a> {
                                     "type.map_key_mismatch",
                                     format!(
                                         "map key type `{}` does not match first key `{}`",
-                                        key_ty.display(),
-                                        first_key_ty.display()
+                                        key_ty.display_in(self.def_map),
+                                        first_key_ty.display_in(self.def_map)
                                     ),
                                 )
                                 .with_label(Label::primary(
@@ -2361,7 +2515,7 @@ impl<'a> Checker<'a> {
                                 ))
                                 .with_action(format!(
                                     "all map keys should be `{}`",
-                                    first_key_ty.display()
+                                    first_key_ty.display_in(self.def_map)
                                 )),
                             );
                         }
@@ -2377,8 +2531,8 @@ impl<'a> Checker<'a> {
                                     "type.map_value_mismatch",
                                     format!(
                                         "map value type `{}` does not match first value `{}`",
-                                        value_ty.display(),
-                                        first_value_ty.display()
+                                        value_ty.display_in(self.def_map),
+                                        first_value_ty.display_in(self.def_map)
                                     ),
                                 )
                                 .with_label(Label::primary(
@@ -2388,7 +2542,7 @@ impl<'a> Checker<'a> {
                                 ))
                                 .with_action(format!(
                                     "all map values should be `{}`",
-                                    first_value_ty.display()
+                                    first_value_ty.display_in(self.def_map)
                                 )),
                             );
                         }
@@ -2416,8 +2570,8 @@ impl<'a> Checker<'a> {
                                     "type.set_element_mismatch",
                                     format!(
                                         "set element type `{}` does not match first element `{}`",
-                                        elem_ty.display(),
-                                        first_ty.display()
+                                        elem_ty.display_in(self.def_map),
+                                        first_ty.display_in(self.def_map)
                                     ),
                                 )
                                 .with_label(Label::primary(
@@ -2427,7 +2581,7 @@ impl<'a> Checker<'a> {
                                 ))
                                 .with_action(format!(
                                     "all set elements should be `{}`",
-                                    first_ty.display()
+                                    first_ty.display_in(self.def_map)
                                 )),
                             );
                         }
@@ -2467,7 +2621,7 @@ impl<'a> Checker<'a> {
                                     "type.unary_neg_non_numeric",
                                     format!(
                                         "unary `-` applied to non-numeric type `{}`",
-                                        t.display()
+                                        t.display_in(self.def_map)
                                     ),
                                 )
                                 .with_label(Label::primary(
@@ -2522,7 +2676,7 @@ impl<'a> Checker<'a> {
                                     self.sink.emit(
                                         Diagnostic::error("type.type_mismatch",
                                             format!("`.or()` fallback type `{}` does not match optional inner type `{}`",
-                                                fallback_ty.display(), inner.display()))
+                                                fallback_ty.display_in(self.def_map), inner.display_in(self.def_map)))
                                         .with_label(Label::primary(self.file_id, *span, "fallback type mismatch")),
                                     );
                                 }
@@ -2533,7 +2687,7 @@ impl<'a> Checker<'a> {
                                     self.sink.emit(
                                         Diagnostic::error("type.type_mismatch",
                                             format!("`.or()` fallback type `{}` does not match result ok type `{}`",
-                                                fallback_ty.display(), ok.display()))
+                                                fallback_ty.display_in(self.def_map), ok.display_in(self.def_map)))
                                         .with_label(Label::primary(self.file_id, *span, "fallback type mismatch")),
                                     );
                                 }
@@ -2543,7 +2697,7 @@ impl<'a> Checker<'a> {
                                 self.sink.emit(
                                     Diagnostic::error("type.type_mismatch",
                                         format!("`.or()` can only be called on `optional[T]` or `result[T,E]`, got `{}`",
-                                            obj_ty.display()))
+                                            obj_ty.display_in(self.def_map)))
                                     .with_label(Label::primary(self.file_id, *span, "invalid `.or()` receiver")),
                                 );
                                 Ty::Error
@@ -2563,7 +2717,7 @@ impl<'a> Checker<'a> {
                                     "type.type_mismatch",
                                     format!(
                                         "`.or_wrap()` context must be `string`, got `{}`",
-                                        context_ty.display()
+                                        context_ty.display_in(self.def_map)
                                     ),
                                 )
                                 .with_label(Label::primary(
@@ -2581,7 +2735,7 @@ impl<'a> Checker<'a> {
                                         "type.type_mismatch",
                                         format!(
                                             "`.or_wrap()` currently requires `result[T, string]`, got error type `{}`",
-                                            err.display()
+                                            err.display_in(self.def_map)
                                         ),
                                     )
                                     .with_label(Label::primary(
@@ -2598,7 +2752,7 @@ impl<'a> Checker<'a> {
                                         "type.type_mismatch",
                                         format!(
                                             "`.or_wrap()` can only be called on `result[T, string]`, got `{}`",
-                                            obj_ty.display()
+                                            obj_ty.display_in(self.def_map)
                                         ),
                                     )
                                     .with_label(Label::primary(
@@ -2623,7 +2777,7 @@ impl<'a> Checker<'a> {
                                         self.sink.emit(
                                             Diagnostic::error("type.type_mismatch",
                                                 format!("`.or_return()` inner type `{}` does not match function's optional return inner type `{}`",
-                                                    inner.display(), ret_inner.display()))
+                                                    inner.display_in(self.def_map), ret_inner.display_in(self.def_map)))
                                             .with_label(Label::primary(self.file_id, *span, "type mismatch")),
                                         );
                                     }
@@ -2639,7 +2793,7 @@ impl<'a> Checker<'a> {
                                         self.sink.emit(
                                             Diagnostic::error("type.type_mismatch",
                                                 format!("`.or_return()` ok type `{}` does not match function's result ok type `{}`",
-                                                    ok.display(), ret_ok.display()))
+                                                    ok.display_in(self.def_map), ret_ok.display_in(self.def_map)))
                                             .with_label(Label::primary(self.file_id, *span, "type mismatch")),
                                         );
                                     }
@@ -2647,7 +2801,7 @@ impl<'a> Checker<'a> {
                                         self.sink.emit(
                                             Diagnostic::error("type.type_mismatch",
                                                 format!("`.or_return()` error type `{}` does not match function's result error type `{}`",
-                                                    err.display(), ret_err.display()))
+                                                    err.display_in(self.def_map), ret_err.display_in(self.def_map)))
                                             .with_label(Label::primary(self.file_id, *span, "error type mismatch")),
                                         );
                                     }
@@ -2658,7 +2812,7 @@ impl<'a> Checker<'a> {
                                 self.sink.emit(
                                     Diagnostic::error("type.type_mismatch",
                                         format!("`.or_return()` can only be called on `optional[T]` or `result[T,E]`, got `{}`",
-                                            obj_ty.display()))
+                                            obj_ty.display_in(self.def_map)))
                                     .with_label(Label::primary(self.file_id, *span, "invalid `.or_return()` receiver")),
                                 );
                                 Ty::Error
@@ -2741,7 +2895,7 @@ impl<'a> Checker<'a> {
                                         format!(
                                             "`{}` takes exactly one value of `{}`",
                                             path,
-                                            repr.display()
+                                            repr.display_in(self.def_map)
                                         ),
                                     )
                                     .with_label(Label::primary(
@@ -2845,13 +2999,13 @@ impl<'a> Checker<'a> {
                             if !err.is_assignable_to(cur_err) && !err.is_error() {
                                 self.sink.emit(Diagnostic::error(
                                     "type.propagate_err_mismatch",
-                                    format!("cannot propagate error type `{}` in a function that returns error type `{}`", err.display(), cur_err.display())
+                                    format!("cannot propagate error type `{}` in a function that returns error type `{}`", err.display_in(self.def_map), cur_err.display_in(self.def_map))
                                 ).with_label(Label::primary(self.file_id, *span, "propagated here")));
                             }
                         } else {
                             self.sink.emit(Diagnostic::error(
                                 "type.propagate_return_mismatch",
-                                format!("cannot use `try` propagation on a `result` in a function that returns `{}`", cur_ret.display())
+                                format!("cannot use `try` propagation on a `result` in a function that returns `{}`", cur_ret.display_in(self.def_map))
                             ).with_label(Label::primary(self.file_id, *span, "propagated here")));
                         }
                         *ok.clone()
@@ -2864,7 +3018,7 @@ impl<'a> Checker<'a> {
                         if !matches!(&cur_ret, Ty::Optional(_)) {
                             self.sink.emit(Diagnostic::error(
                                 "type.propagate_return_mismatch",
-                                format!("cannot use `try` propagation on an `optional` in a function that returns `{}`", cur_ret.display())
+                                format!("cannot use `try` propagation on an `optional` in a function that returns `{}`", cur_ret.display_in(self.def_map))
                             ).with_label(Label::primary(self.file_id, *span, "propagated here")));
                         }
                         *ok.clone()
@@ -2872,7 +3026,7 @@ impl<'a> Checker<'a> {
                     _ => {
                         self.sink.emit(Diagnostic::error(
                             "type.propagate_not_result_or_optional",
-                            format!("`try` propagation can only be applied to `result` or `optional`, found `{}`", inner.display())
+                            format!("`try` propagation can only be applied to `result` or `optional`, found `{}`", inner.display_in(self.def_map))
                         ).with_label(Label::primary(self.file_id, *span, "cannot propagate here")));
                         Ty::Error
                     }
@@ -2898,7 +3052,7 @@ impl<'a> Checker<'a> {
                         self.sink.emit(
                             Diagnostic::error(
                                 "async.await_non_future",
-                                format!("`await` expects `future[T]`, found `{}`", other.display()),
+                                format!("`await` expects `future[T]`, found `{}`", other.display_in(self.def_map)),
                             )
                             .with_label(Label::primary(self.file_id, expr.span(), "not a future"))
                             .with_action("await only expressions that return `future[T]`"),
@@ -2929,8 +3083,8 @@ impl<'a> Checker<'a> {
                             "type.if_branch_mismatch",
                             format!(
                                 "`if` branches have different types: `{}` vs `{}`",
-                                then_ty.display(),
-                                else_ty.display()
+                                then_ty.display_in(self.def_map),
+                                else_ty.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(
@@ -2979,8 +3133,8 @@ impl<'a> Checker<'a> {
                                     "type.match_arm_mismatch",
                                     format!(
                                         "`match` arms have different types: `{}` vs `{}`",
-                                        previous.display(),
-                                        arm_ty.display()
+                                        previous.display_in(self.def_map),
+                                        arm_ty.display_in(self.def_map)
                                     ),
                                 )
                                 .with_label(Label::primary(
@@ -3019,7 +3173,7 @@ impl<'a> Checker<'a> {
                                             "type.index_not_int",
                                             format!(
                                                 "list index must be `int`, found `{}`",
-                                                idx_ty.display()
+                                                idx_ty.display_in(self.def_map)
                                             ),
                                         )
                                         .with_label(Label::primary(
@@ -3032,6 +3186,54 @@ impl<'a> Checker<'a> {
                                 }
                                 *elem.clone()
                             }
+                            Ty::Array(elem, size) => {
+                                if !idx_ty.is_assignable_to(&Ty::Int) && !idx_ty.is_error() {
+                                    self.sink.emit(
+                                        Diagnostic::error(
+                                            "type.index_not_int",
+                                            format!(
+                                                "array index must be `int`, found `{}`",
+                                                idx_ty.display_in(self.def_map)
+                                            ),
+                                        )
+                                        .with_label(Label::primary(
+                                            self.file_id,
+                                            *span,
+                                            "index here",
+                                        ))
+                                        .with_action("use an integer index"),
+                                    );
+                                }
+                                // The length is part of the type, so a constant
+                                // index can be bounds-checked here instead of at
+                                // runtime.
+                                if let (Expr::IntLit { raw, .. }, Ty::ConstInt(_, len)) =
+                                    (idx_expr.as_ref(), &**size)
+                                {
+                                    if let Ok(i) = raw.parse::<i64>() {
+                                        if i >= *len {
+                                            self.sink.emit(
+                                                Diagnostic::error(
+                                                    "type.array_index_out_of_bounds",
+                                                    format!(
+                                                        "array has {len} elements, index {i} is out of bounds"
+                                                    ),
+                                                )
+                                                .with_label(Label::primary(
+                                                    self.file_id,
+                                                    *span,
+                                                    "out of bounds",
+                                                ))
+                                                .with_action(format!(
+                                                    "use an index between 0 and {}",
+                                                    len - 1
+                                                )),
+                                            );
+                                        }
+                                    }
+                                }
+                                *elem.clone()
+                            }
                             Ty::Map(key, val) => {
                                 if !idx_ty.is_assignable_to(key) && !idx_ty.is_error() {
                                     self.sink.emit(
@@ -3039,12 +3241,12 @@ impl<'a> Checker<'a> {
                                             "type.map_key_mismatch",
                                             format!(
                                                 "map key type is `{}`, found `{}`",
-                                                key.display(),
-                                                idx_ty.display()
+                                                key.display_in(self.def_map),
+                                                idx_ty.display_in(self.def_map)
                                             ),
                                         )
                                         .with_label(Label::primary(self.file_id, *span, "key here"))
-                                        .with_action(format!("use a `{}` key", key.display())),
+                                        .with_action(format!("use a `{}` key", key.display_in(self.def_map))),
                                     );
                                 }
                                 *val.clone()
@@ -3056,7 +3258,7 @@ impl<'a> Checker<'a> {
                                             "type.index_not_int",
                                             format!(
                                                 "string index must be `int`, found `{}`",
-                                                idx_ty.display()
+                                                idx_ty.display_in(self.def_map)
                                             ),
                                         )
                                         .with_label(Label::primary(
@@ -3093,7 +3295,7 @@ impl<'a> Checker<'a> {
                                         "type.not_indexable",
                                         format!(
                                             "type `{}` does not support indexing",
-                                            obj_ty.display()
+                                            obj_ty.display_in(self.def_map)
                                         ),
                                     )
                                     .with_label(Label::primary(self.file_id, *span, "indexed here"))
@@ -3122,7 +3324,7 @@ impl<'a> Checker<'a> {
                                         "type.not_sliceable",
                                         format!(
                                             "type `{}` does not support slicing",
-                                            obj_ty.display()
+                                            obj_ty.display_in(self.def_map)
                                         ),
                                     )
                                     .with_label(Label::primary(self.file_id, *span, "sliced here")),
@@ -3167,7 +3369,7 @@ impl<'a> Checker<'a> {
                     self.sink.emit(
                         Diagnostic::error(
                             "type.tuple_index_on_non_tuple",
-                            format!("cannot use tuple index on `{}`", obj_ty.display()),
+                            format!("cannot use tuple index on `{}`", obj_ty.display_in(self.def_map)),
                         )
                         .with_label(Label::primary(
                             self.file_id,
@@ -3183,75 +3385,7 @@ impl<'a> Checker<'a> {
                 self.check_is_target(ty, *span);
                 Ty::Bool
             }
-            Expr::Closure(closure) => {
-                let param_tys: Vec<Ty> = closure
-                    .params
-                    .iter()
-                    .map(|param| {
-                        param
-                            .ty
-                            .as_ref()
-                            .map(|ty| self.lower(ty, &[]))
-                            .unwrap_or(Ty::Infer(0))
-                    })
-                    .collect();
-                let declared_ret = closure.return_ty.as_ref().map(|ty| self.lower(ty, &[]));
-
-                self.push_scope();
-                let closure_scope_root = self.scopes.len() - 1;
-                self.closure_scope_roots.push(closure_scope_root);
-                for (param, ty) in closure.params.iter().zip(param_tys.iter()) {
-                    self.bind_checked(&param.name, ty.clone(), false, false);
-                }
-
-                let prev_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
-                let ret_ty = match &closure.body {
-                    ClosureBody::Expr(expr) => {
-                        let actual = self.infer_expr(expr);
-                        if let Some(expected) = &declared_ret {
-                            self.expect_assignable(&actual, expected, expr.span());
-                            expected.clone()
-                        } else {
-                            actual
-                        }
-                    }
-                    ClosureBody::Block(block) => {
-                        let expected = declared_ret.clone().unwrap_or(Ty::Void);
-                        let prev_ret = self.current_return_ty.take();
-                        self.current_return_ty = Some(expected.clone());
-                        self.check_block(block, &expected, &[]);
-                        if expected != Ty::Void
-                            && !block_definitely_returns(block, &self.exhaustive_matches)
-                        {
-                            self.sink.emit(
-                                Diagnostic::error(
-                                    "type.missing_return",
-                                    format!(
-                                        "closure may finish without returning `{}`",
-                                        expected.display()
-                                    ),
-                                )
-                                .with_label(Label::primary(
-                                    self.file_id,
-                                    block.span,
-                                    "not all paths return",
-                                ))
-                                .with_action("return a value on every path"),
-                            );
-                        }
-                        self.current_return_ty = prev_ret;
-                        expected
-                    }
-                };
-                self.loop_depth = prev_loop_depth;
-                self.closure_scope_roots.pop();
-                self.pop_scope();
-
-                Ty::Func {
-                    params: param_tys,
-                    ret: Box::new(ret_ty),
-                }
-            }
+            Expr::Closure(closure) => self.infer_closure(closure, None),
             // `value |> func` desugars to `func(value)` for typing (matches HIR lower).
             Expr::Pipe { value, func, span } => {
                 let call = Expr::Call {
@@ -3296,7 +3430,7 @@ impl<'a> Checker<'a> {
                             "type.arithmetic_type_mismatch",
                             format!(
                         "arithmetic operator requires matching numeric types, got `{}` and `{}`",
-                        lt.display(), rt.display()
+                        lt.display_in(self.def_map), rt.display_in(self.def_map)
                     ),
                         )
                         .with_label(Label::primary(
@@ -3517,7 +3651,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "field `{}` has type `{}` which does not support equality",
                     field,
-                    field_ty.display()
+                    field_ty.display_in(self.def_map)
                 ),
             )
             .with_label(Label::primary(
@@ -3554,8 +3688,8 @@ impl<'a> Checker<'a> {
                 "type.comparison_type_mismatch",
                 format!(
                     "comparison between `{}` and `{}`",
-                    lt.display(),
-                    rt.display()
+                    lt.display_in(self.def_map),
+                    rt.display_in(self.def_map)
                 ),
             )
             .with_label(Label::primary(self.file_id, span, "here")),
@@ -3576,7 +3710,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "operator `{}` is not supported for `{}`: {}",
                     op_text,
-                    ty.display(),
+                    ty.display_in(self.def_map),
                     reason
                 ),
             )
@@ -3920,8 +4054,8 @@ impl<'a> Checker<'a> {
                             format!(
                                 "variadic argument {} expects `{}`, found `{}`",
                                 index + 1,
-                                elem_ty.display(),
-                                actual.display(),
+                                elem_ty.display_in(self.def_map),
+                                actual.display_in(self.def_map),
                             ),
                         )
                         .with_label(Label::primary(self.file_id, arg.span, "this argument"))
@@ -3941,12 +4075,12 @@ impl<'a> Checker<'a> {
                             "type.arg_type_mismatch",
                             format!(
                                 "spread argument expects `{}`, found `{}`",
-                                expected.display(),
-                                actual.display(),
+                                expected.display_in(self.def_map),
+                                actual.display_in(self.def_map),
                             ),
                         )
                         .with_label(Label::primary(self.file_id, arg.span, "this argument"))
-                        .with_action(format!("spread a `{}` value", expected.display())),
+                        .with_action(format!("spread a `{}` value", expected.display_in(self.def_map))),
                     );
                 }
             }
@@ -4003,7 +4137,7 @@ impl<'a> Checker<'a> {
                     "type.arg_type_mismatch",
                     format!(
                         "qualified trait call expects a concrete receiver, found `{}`",
-                        self_ty.display()
+                        self_ty.display_in(self.def_map)
                     ),
                 )
                 .with_label(Label::primary(
@@ -4022,7 +4156,7 @@ impl<'a> Checker<'a> {
                     "generic.constraint_not_satisfied",
                     format!(
                         "`{}` does not implement `{}`",
-                        self_ty.display(),
+                        self_ty.display_in(self.def_map),
                         self.def_map.get(trait_def_id).path
                     ),
                 )
@@ -4601,7 +4735,7 @@ impl<'a> Checker<'a> {
                         "type.arg_type_mismatch",
                         format!(
                             "`task.spawn` expects `func() -> T`, found `{}`",
-                            other.display()
+                            other.display_in(self.def_map)
                         ),
                     )
                     .with_label(Label::primary(self.file_id, arg.span, "work value here"))
@@ -4783,7 +4917,7 @@ impl<'a> Checker<'a> {
                             "type.hash_key_not_supported",
                             format!(
                                 "`iter.group_by` keys currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
-                                key_ty.display()
+                                key_ty.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, closure_span, "key produced here"))
@@ -5018,7 +5152,7 @@ impl<'a> Checker<'a> {
                             "contract.ok_void_mismatch",
                             format!(
                                 "`ok()` is only valid for `result[void, E]`, found ok type `{}`",
-                                ok_ty.display()
+                                ok_ty.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, span, "`ok()` used here"))
@@ -5162,7 +5296,7 @@ impl<'a> Checker<'a> {
                     "`{}` expects {}, found `{}`",
                     path,
                     expected_text,
-                    display_tys(&arg_tys)
+                    display_tys(&arg_tys, self.def_map)
                 ),
             )
             .with_label(Label::primary(self.file_id, span, "math call here"))
@@ -5490,7 +5624,7 @@ impl<'a> Checker<'a> {
         self.sink.emit(
             Diagnostic::error(
                 "parse.invalid_range",
-                format!("range {endpoint} must be `int`, found `{}`", ty.display()),
+                format!("range {endpoint} must be `int`, found `{}`", ty.display_in(self.def_map)),
             )
             .with_label(Label::primary(self.file_id, span, "expected `int` here"))
             .with_action(format!(
@@ -5539,7 +5673,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "closure passed to `task.spawn` cannot capture `{}` of type `{}`",
                     name,
-                    ty.display()
+                    ty.display_in(self.def_map)
                 ),
             )
             .with_label(Label::primary(
@@ -5561,7 +5695,7 @@ impl<'a> Checker<'a> {
         self.sink.emit(
             Diagnostic::error(
                 "concurrency.not_transferable",
-                format!("`{}` cannot cross a task or channel boundary", ty.display()),
+                format!("`{}` cannot cross a task or channel boundary", ty.display_in(self.def_map)),
             )
             .with_label(Label::primary(self.file_id, span, "value crosses boundary here"))
             .with_why("tasks and channels require values that can move safely between threads")
@@ -5575,6 +5709,8 @@ impl<'a> Checker<'a> {
         match ty {
             // A const argument is a compile-time tag, never runtime data.
             Ty::ConstInt(_, _) => true,
+            // Elements live inline, so an array moves exactly when they do.
+            Ty::Array(elem, _) => self.is_transferable_ty(elem),
             Ty::Bool
             | Ty::Int
             | Ty::Int8
@@ -5659,7 +5795,7 @@ impl<'a> Checker<'a> {
                         format!(
                             "method `{}` is provided by more than one trait for `{}`",
                             field.text,
-                            obj_ty.display()
+                            obj_ty.display_in(self.def_map)
                         ),
                     )
                     .with_label(Label::primary(self.file_id, field.span, "ambiguous method"))
@@ -5689,7 +5825,7 @@ impl<'a> Checker<'a> {
                     "type.no_such_field",
                     format!(
                         "type `{}` has no field or method `{}`",
-                        obj_ty.display(),
+                        obj_ty.display_in(self.def_map),
                         field.text
                     ),
                 )
@@ -5732,7 +5868,7 @@ impl<'a> Checker<'a> {
                     format!(
                         "`{}` is not a method declared by `{}`",
                         field.text,
-                        obj_ty.display()
+                        obj_ty.display_in(self.def_map)
                     ),
                 )
                 .with_label(Label::primary(
@@ -5825,7 +5961,7 @@ impl<'a> Checker<'a> {
                     format!(
                         "cannot access field `{}` on `{}`",
                         field.text,
-                        obj_ty.display()
+                        obj_ty.display_in(self.def_map)
                     ),
                 )
                 .with_label(Label::primary(
@@ -5928,7 +6064,7 @@ impl<'a> Checker<'a> {
             self.sink.emit(
                 Diagnostic::error(
                     "type.expected_bool",
-                    format!("expected `bool`, found `{}`", ty.display()),
+                    format!("expected `bool`, found `{}`", ty.display_in(self.def_map)),
                 )
                 .with_label(Label::primary(self.file_id, span, "this expression"))
                 .with_action("use a boolean expression here"),
@@ -5953,7 +6089,7 @@ impl<'a> Checker<'a> {
                 .with_label(Label::primary(self.file_id, span, "this expression"))
                 .with_action(format!(
                     "change the expression to produce `{}`",
-                    to.display()
+                    to.display_in(self.def_map)
                 )),
             );
         }
@@ -5964,10 +6100,10 @@ impl<'a> Checker<'a> {
             self.sink.emit(
                 Diagnostic::warning(
                     "type.unused_result",
-                    format!("result value of type `{}` is discarded", ty.display()),
+                    format!("result value of type `{}` is discarded", ty.display_in(self.def_map)),
                 )
                 .with_label(Label::primary(self.file_id, span, "result discarded here"))
-                .with_action("handle the result, propagate it with `?`, or bind it explicitly"),
+                .with_action("handle the result, propagate it with `try`, or bind it explicitly"),
             );
         }
     }
@@ -5984,7 +6120,7 @@ impl<'a> Checker<'a> {
                             "type.collection_hash_unsupported",
                             format!(
                                 "`map` keys currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
-                                key.display()
+                                key.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, span, "map type here"))
@@ -6003,7 +6139,7 @@ impl<'a> Checker<'a> {
                             "type.collection_hash_unsupported",
                             format!(
                                 "`set` elements currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
-                                elem.display()
+                                elem.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, span, "set type here"))
@@ -6027,7 +6163,7 @@ impl<'a> Checker<'a> {
                             "type.collection_hash_unsupported",
                             format!(
                                 "`hash_table` keys currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
-                                key.display()
+                                key.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, span, "hash_table type here"))
@@ -6051,7 +6187,7 @@ impl<'a> Checker<'a> {
                             "type.collection_hash_unsupported",
                             format!(
                                 "`graph` nodes currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
-                                node.display()
+                                node.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, span, "graph type here"))
@@ -6074,7 +6210,7 @@ impl<'a> Checker<'a> {
                             "type.collection_comparable_unsupported",
                             format!(
                                 "`heap` elements currently require `int`, `string`, or a type implementing `Comparable`, found `{}`",
-                                elem.display()
+                                elem.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, span, "heap type here"))
@@ -6435,12 +6571,12 @@ impl<'a> Checker<'a> {
                             "type.pattern_mismatch",
                             format!(
                                 "pattern type `{}` does not match scrutinee `{}`",
-                                lit_ty.display(),
-                                scr_ty.display()
+                                lit_ty.display_in(self.def_map),
+                                scr_ty.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, expr.span(), "pattern here"))
-                        .with_action(format!("expected pattern of type `{}`", scr_ty.display())),
+                        .with_action(format!("expected pattern of type `{}`", scr_ty.display_in(self.def_map))),
                     );
                 }
             }
@@ -6567,7 +6703,7 @@ impl<'a> Checker<'a> {
             self.sink.emit(
                 Diagnostic::error(
                     "type.pattern_mismatch",
-                    format!("enum variant pattern cannot match `{}`", scr_ty.display()),
+                    format!("enum variant pattern cannot match `{}`", scr_ty.display_in(self.def_map)),
                 )
                 .with_label(Label::primary(
                     self.file_id,
@@ -6813,7 +6949,7 @@ impl<'a> Checker<'a> {
         self.sink.emit(
             Diagnostic::error(
                 "using.not_disposable",
-                format!("type `{}` cannot be used with `using`", ty.display()),
+                format!("type `{}` cannot be used with `using`", ty.display_in(self.def_map)),
             )
             .with_label(Label::primary(self.file_id, span, "not disposable"))
             .with_action("implement `Disposable` for this type before using it with `using`"),
@@ -7135,6 +7271,13 @@ fn attr_arg_action(name: &str) -> &'static str {
 }
 
 /// Phase-1 `@c_export` surface: scalar types only (`int`/`float`/`bool`/`void`).
+/// Types that may cross the `@c_export` boundary.
+///
+/// Scalars map one-to-one onto their C counterparts. `string` is included
+/// because an Ori string value *is* a NUL-terminated `const char*` at the ABI
+/// level — see `docs/spec/19-abi.md` for the ownership rules that come with it.
+/// Aggregates (structs, `list`, `map`, `optional`, `result`) are still rejected:
+/// they have no stable C layout yet.
 fn is_c_export_ffi_ty(ty: &Ty) -> bool {
     matches!(
         ty,
@@ -7151,6 +7294,7 @@ fn is_c_export_ffi_ty(ty: &Ty) -> bool {
             | Ty::Float32
             | Ty::Float64
             | Ty::Bool
+            | Ty::String
             | Ty::Void
     )
 }
@@ -7748,10 +7892,10 @@ fn min_required_arg_count(param_count: usize, param_defaults: &[bool]) -> usize 
         .unwrap_or(0)
 }
 
-fn display_tys(types: &[Ty]) -> String {
+fn display_tys(types: &[Ty], def_map: &DefMap) -> String {
     types
         .iter()
-        .map(|ty| ty.display())
+        .map(|ty| ty.display_in(def_map))
         .collect::<Vec<_>>()
         .join(", ")
 }

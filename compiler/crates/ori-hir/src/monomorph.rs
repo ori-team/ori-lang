@@ -380,7 +380,8 @@ fn rewrite_expr_calls(expr: &mut HirExpr, state: &mut MonoState) {
                 rewrite_expr_calls(value, state);
             }
         }
-        HirExprKind::ListLit { elements, .. } | HirExprKind::SetLit { elements, .. } => {
+        HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. } | HirExprKind::SetLit { elements, .. } => {
             for element in elements {
                 rewrite_expr_calls(element, state);
             }
@@ -634,7 +635,9 @@ fn substitute_expr(expr: &mut HirExpr, subst: &HashMap<u32, Ty>) {
                 substitute_expr(value, subst);
             }
         }
-        HirExprKind::ListLit { elem_ty, elements } | HirExprKind::SetLit { elem_ty, elements } => {
+        HirExprKind::ListLit { elem_ty, elements }
+        | HirExprKind::ArrayLit { elem_ty, elements }
+        | HirExprKind::SetLit { elem_ty, elements } => {
             *elem_ty = substitute_ty(elem_ty, subst);
             for element in elements {
                 substitute_expr(element, subst);
@@ -918,6 +921,7 @@ fn expr_has_generic_param(expr: &HirExpr) -> bool {
                     .any(|(_, value)| expr_has_generic_param(value))
             }
             HirExprKind::ListLit { elem_ty, elements }
+            | HirExprKind::ArrayLit { elem_ty, elements }
             | HirExprKind::SetLit { elem_ty, elements } => {
                 ty_has_generic_param(elem_ty) || elements.iter().any(expr_has_generic_param)
             }
