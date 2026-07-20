@@ -1333,6 +1333,86 @@ impl<'a> Checker<'a> {
                 let ty = self.resolve_local_binding_ty(&v.name, v.ty.as_ref(), &v.value, tp);
                 self.bind_checked(&v.name, ty, true, false);
             }
+            Stmt::Destructure(d) => {
+                // The struct type comes from the annotation when written, and
+                // from the value otherwise (same rule as option-B inference).
+                let value_ty = self.infer_expr(&d.value);
+                let struct_ty = match &d.type_name {
+                    Some(name) => {
+                        let annotated = match self.resolve_def_id(&name.to_string()) {
+                            Some(def_id) => Ty::Named(def_id, Vec::new()),
+                            None => {
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        "type.undefined_name",
+                                        format!("undefined type `{}`", name),
+                                    )
+                                    .with_label(
+                                        Label::primary(self.file_id, name.span, "type used here"),
+                                    ),
+                                );
+                                Ty::Error
+                            }
+                        };
+                        if !annotated.is_error() && !value_ty.is_error() {
+                            self.expect_assignable(&value_ty, &annotated, d.value.span());
+                        }
+                        annotated
+                    }
+                    None => value_ty,
+                };
+
+                let fields = self.expected_struct_fields(&struct_ty);
+                if fields.is_none() && !struct_ty.is_error() {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "type.destructure_not_struct",
+                            format!(
+                                "destructuring requires a struct, found `{}`",
+                                struct_ty.display_in(self.def_map)
+                            ),
+                        )
+                        .with_label(Label::primary(
+                            self.file_id,
+                            d.value.span(),
+                            "this value is not a struct",
+                        ))
+                        .with_action(
+                            "destructure a struct value, or bind it with `const name = …`",
+                        ),
+                    );
+                }
+
+                for (field, binding) in &d.fields {
+                    let field_ty = fields
+                        .as_ref()
+                        .and_then(|known| {
+                            known
+                                .iter()
+                                .find(|(name, _)| name == &field.text)
+                                .map(|(_, ty)| ty.clone())
+                        })
+                        .unwrap_or_else(|| {
+                            if fields.is_some() {
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        "type.unknown_field",
+                                        format!(
+                                            "`{}` has no field `{}`",
+                                            struct_ty.display_in(self.def_map),
+                                            field.text
+                                        ),
+                                    )
+                                    .with_label(
+                                        Label::primary(self.file_id, field.span, "unknown field"),
+                                    ),
+                                );
+                            }
+                            Ty::Error
+                        });
+                    self.bind_checked(binding, field_ty, d.is_mutable, false);
+                }
+            }
             Stmt::Return(r) => {
                 let ret_ty = r.value.as_ref().map_or(Ty::Void, |e| {
                     if expr_needs_expected_context(e) {
@@ -5831,8 +5911,8 @@ impl<'a> Checker<'a> {
                     "type.type_mismatch",
                     format!(
                         "type mismatch: expected `{}`, found `{}`",
-                        to.display(),
-                        from.display()
+                        to.display_in(self.def_map),
+                        from.display_in(self.def_map)
                     ),
                 )
                 .with_label(Label::primary(self.file_id, span, "this expression"))

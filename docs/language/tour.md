@@ -80,6 +80,16 @@ const maybe: optional[int] = none
 const file: result[string, string] = err("missing")
 ```
 
+Bind several struct fields at once with a destructuring binding:
+
+```ori
+const Point { x, y } = get_pos()   -- type written
+const { x, y } = get_pos()         -- type inferred
+const Point { x: px } = get_pos()  -- renamed
+```
+
+Struct fields only — tuples are not destructured.
+
 ### Local inference (option B)
 
 You may omit the type on a **local** `const`/`var` when the right-hand side is:

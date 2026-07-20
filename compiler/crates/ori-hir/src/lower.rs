@@ -2674,16 +2674,87 @@ fn insert_default_arguments_expr(
 impl<'a> Lowerer<'a> {
     fn lower_block(&mut self, block: &Block, tp: &[SmolStr]) -> HirBlock {
         self.push();
-        let stmts = block
-            .stmts
-            .iter()
-            .filter_map(|s| self.lower_stmt(s, tp))
-            .collect();
+        let stmts = self.lower_stmts(&block.stmts, tp);
         self.pop();
         HirBlock {
             stmts,
             span: block.span,
         }
+    }
+
+    /// Lower a statement list. A single source statement may produce several
+    /// HIR statements — `const Point { x, y } = …` becomes a temporary plus
+    /// one field binding per name.
+    fn lower_stmts(&mut self, stmts: &[Stmt], tp: &[SmolStr]) -> Vec<HirStmt> {
+        let mut out = Vec::with_capacity(stmts.len());
+        for stmt in stmts {
+            if let Stmt::Destructure(d) = stmt {
+                out.extend(self.lower_destructure(d, tp));
+                continue;
+            }
+            if let Some(lowered) = self.lower_stmt(stmt, tp) {
+                out.push(lowered);
+            }
+        }
+        out
+    }
+
+    /// `const Point { x, y: py } = expr` desugars to
+    /// `const .__destructure_N = expr; const x = tmp.x; const py = tmp.y`.
+    ///
+    /// Field access is already ARC-correct, so this needs no new HIR node and
+    /// no codegen support at all.
+    fn lower_destructure(
+        &mut self,
+        d: &ori_ast::stmt::LocalDestructure,
+        tp: &[SmolStr],
+    ) -> Vec<HirStmt> {
+        let value = self.lower_expr(&d.value, tp);
+        let struct_ty = value.ty.clone();
+        let tmp_name = SmolStr::new(format!(".__destructure_{}", self.closure_counter));
+        self.closure_counter += 1;
+
+        let mut out = Vec::with_capacity(d.fields.len() + 1);
+        self.bind(tmp_name.clone(), struct_ty.clone());
+        out.push(HirStmt::Let {
+            name: tmp_name.clone(),
+            ty: struct_ty.clone(),
+            value,
+            mutable: false,
+            span: d.span,
+        });
+
+        for (field, binding) in &d.fields {
+            // The checker has already reported unknown fields; `Ty::Error`
+            // here just keeps lowering going.
+            let field_ty = match &struct_ty {
+                Ty::Named(def_id, _) => self
+                    .struct_field_ty(*def_id, field.text.as_str())
+                    .unwrap_or(Ty::Error),
+                _ => Ty::Error,
+            };
+            let access = HirExpr {
+                kind: HirExprKind::Field {
+                    object: Box::new(HirExpr {
+                        kind: HirExprKind::Var(tmp_name.clone()),
+                        ty: struct_ty.clone(),
+                        span: d.span,
+                    }),
+                    field: field.text.clone(),
+                },
+                ty: field_ty.clone(),
+                span: field.span,
+            };
+            self.bind(binding.text.clone(), field_ty.clone());
+            out.push(HirStmt::Let {
+                name: binding.text.clone(),
+                ty: field_ty,
+                value: access,
+                mutable: d.is_mutable,
+                span: d.span,
+            });
+        }
+        out
     }
 
     fn lower_stmt(&mut self, stmt: &Stmt, tp: &[SmolStr]) -> Option<HirStmt> {
@@ -2890,6 +2961,8 @@ impl<'a> Lowerer<'a> {
                     span: u.span,
                 })
             }
+            // Handled by `lower_stmts`, which can emit several statements.
+            Stmt::Destructure(_) => None,
             Stmt::Check(c) => {
                 let cond = self.lower_expr(&c.condition, tp);
                 Some(HirStmt::Check {
@@ -2916,7 +2989,7 @@ impl<'a> Lowerer<'a> {
                 // The guard is lowered inside the pattern scope: `case n if
                 // n >= 90:` reads `n` from the arm's own bindings.
                 let guard = guard.as_ref().map(|g| self.lower_expr(g, tp));
-                let stmts = body.iter().filter_map(|s| self.lower_stmt(s, tp)).collect();
+                let stmts = self.lower_stmts(body, tp);
                 self.pop();
                 HirArm {
                     pattern: pat,
@@ -2927,7 +3000,7 @@ impl<'a> Lowerer<'a> {
             }
             MatchCase::Else { body, span } => {
                 self.push();
-                let stmts = body.iter().filter_map(|s| self.lower_stmt(s, tp)).collect();
+                let stmts = self.lower_stmts(body, tp);
                 self.pop();
                 HirArm {
                     pattern: HirPattern::Wildcard,
@@ -4345,6 +4418,12 @@ fn collect_free_names_stmt(stmt: &Stmt, bound: &mut HashSet<SmolStr>, names: &mu
         Stmt::Var(local) => {
             collect_free_names_expr(&local.value, bound, names);
             bound.insert(local.name.text.clone());
+        }
+        Stmt::Destructure(d) => {
+            collect_free_names_expr(&d.value, bound, names);
+            for (_, binding) in &d.fields {
+                bound.insert(binding.text.clone());
+            }
         }
         Stmt::Assign(assign) => {
             collect_free_names_lvalue(&assign.lvalue, bound, names);

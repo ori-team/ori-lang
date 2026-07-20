@@ -3,8 +3,8 @@ use ori_ast::common::Name;
 use ori_ast::expr::Expr;
 use ori_ast::stmt::{
     AssignStmt, Block, CheckStmt, CompoundAssignStmt, CompoundOp, ForStmt, IfSomeStmt, IfStmt,
-    LValue, LocalConst, LocalVar, LoopStmt, MatchCase, MatchStmt, RepeatStmt, ReturnStmt, Stmt,
-    UnwrapKind, UsingStmt, WhileSomeStmt, WhileStmt,
+    LValue, LocalConst, LocalDestructure, LocalVar, LoopStmt, MatchCase, MatchStmt, RepeatStmt,
+    ReturnStmt, Stmt, UnwrapKind, UsingStmt, WhileSomeStmt, WhileStmt,
 };
 use ori_ast::ty::Type;
 use ori_diagnostics::Span;
@@ -43,6 +43,9 @@ impl<'src> Parser<'src> {
 
     pub fn parse_stmt(&mut self) -> Option<Stmt> {
         match self.peek_kind()? {
+            TokenKind::Const | TokenKind::Var if self.at_destructure_binding() => {
+                self.parse_local_destructure()
+            }
             TokenKind::Const => self.parse_local_const(),
             TokenKind::Var => self.parse_local_var(),
             TokenKind::Return => self.parse_return(),
@@ -94,6 +97,77 @@ impl<'src> Parser<'src> {
                 Some(Stmt::Expr(Box::new(expr)))
             }
         }
+    }
+
+    /// Lookahead for `const {` / `const Type {` (a destructuring binding)
+    /// versus the ordinary `const name …`.
+    fn at_destructure_binding(&self) -> bool {
+        match self.peek_nth_kind(1) {
+            // `const { x, y } = …`
+            Some(TokenKind::LBrace) => true,
+            // `const Point { x, y } = …` — a type name followed by `{`.
+            // A plain `const name = …` has `=` there instead, and
+            // `const name: T = …` has `:`, so this stays unambiguous.
+            Some(TokenKind::Ident) => {
+                let mut index = 2;
+                // Skip the dotted parts of a qualified name.
+                while matches!(self.peek_nth_kind(index), Some(TokenKind::Dot)) {
+                    index += 2;
+                }
+                matches!(self.peek_nth_kind(index), Some(TokenKind::LBrace))
+            }
+            _ => false,
+        }
+    }
+
+    /// `const Point { x, y: py } = expr` / `var { x } = expr`.
+    fn parse_local_destructure(&mut self) -> Option<Stmt> {
+        let start = self.current_span();
+        let is_mutable = matches!(self.peek_kind(), Some(TokenKind::Var));
+        self.advance(); // const / var
+
+        let type_name = if self.at(&TokenKind::LBrace) {
+            None
+        } else {
+            Some(self.parse_qualified_name()?)
+        };
+
+        self.expect(&TokenKind::LBrace)?;
+        let mut fields = Vec::new();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let field = self.parse_name()?;
+            // `x` binds as `x`; `x: px` binds the field `x` under `px`.
+            let binding = if self.eat(&TokenKind::Colon) {
+                self.parse_name()?
+            } else {
+                field.clone()
+            };
+            fields.push((field, binding));
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBrace)?;
+
+        if fields.is_empty() {
+            self.error(
+                "parse.empty_destructure",
+                "a destructuring binding must name at least one field",
+                start,
+            );
+            return None;
+        }
+
+        self.expect(&TokenKind::Eq)?;
+        let value = self.parse_expr()?;
+        let span = start.cover(value.span());
+        Some(Stmt::Destructure(LocalDestructure {
+            is_mutable,
+            type_name,
+            fields,
+            value: Box::new(value),
+            span,
+        }))
     }
 
     fn parse_local_const(&mut self) -> Option<Stmt> {
@@ -502,6 +576,7 @@ fn stmt_span(s: &Stmt) -> Span {
         Stmt::Break(sp) | Stmt::Continue(sp) => *sp,
         Stmt::Const(c) => c.span,
         Stmt::Var(v) => v.span,
+        Stmt::Destructure(d) => d.span,
         Stmt::Assign(a) => a.span,
         Stmt::CompoundAssign(c) => c.span,
         Stmt::Return(r) => r.span,

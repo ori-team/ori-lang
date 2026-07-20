@@ -5463,3 +5463,146 @@ end
     );
     assert!(!out.has_errors, "{:?}", out.diagnostics);
 }
+
+// ── Struct destructuring (0.4 surface) ─────────────────────────────────────
+//
+// Struct fields only. Ori has tuples, but binding them positionally would make
+// the reader carry "what was field 2 again?" — the cost this form removes.
+
+#[test]
+fn compile_runs_struct_destructuring() {
+    let dir = TestDir::new("destructure_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Point
+    x: int
+    y: int
+end
+
+get_pos() -> Point
+    return Point { x: 3, y: 4 }
+end
+
+main()
+    const Point { x, y } = get_pos()
+    io.println(f"{x},{y}")
+
+    const { x: ax, y: ay } = get_pos()
+    io.println(f"{ax},{ay}")
+
+    const Point { x: px } = get_pos()
+    io.println(f"{px}")
+
+    var { x: mx, y: my } = get_pos()
+    mx = mx + 10
+    io.println(f"{mx},{my}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "destructure");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "3,4\n3,4\n3\n13,4\n"
+    );
+}
+
+#[test]
+fn check_rejects_destructuring_unknown_field() {
+    let dir = TestDir::new("destructure_unknown_field");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Point
+    x: int
+end
+
+main()
+    const Point { x, z } = Point { x: 1 }
+    io.println(f"{x}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.unknown_field"),
+        "expected unknown-field rejection: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_destructuring_a_non_struct() {
+    let dir = TestDir::new("destructure_non_struct");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const { x, y } = 42
+    io.println(f"{x}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.destructure_not_struct"),
+        "expected non-struct rejection: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_destructuring_with_a_mismatched_annotation() {
+    let dir = TestDir::new("destructure_wrong_annotation");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Point
+    x: int
+end
+
+struct Other
+    x: int
+end
+
+main()
+    const Other { x } = Point { x: 1 }
+    io.println(f"{x}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let messages: Vec<&str> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.type_mismatch"),
+        "expected annotation mismatch: {:?}",
+        out.diagnostics
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Other") && m.contains("Point")),
+        "diagnostic should name both structs: {messages:?}"
+    );
+}

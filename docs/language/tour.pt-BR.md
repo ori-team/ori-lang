@@ -72,6 +72,16 @@ alias UserMap = map[int, string]   -- intercambiável com o alvo
 newtype UserId = int               -- NÃO é int: UserId(7) entra, int(id) sai
 ```
 
+Ligue vários campos de uma struct de uma vez:
+
+```ori
+const Point { x, y } = get_pos()   -- tipo escrito
+const { x, y } = get_pos()         -- tipo inferido
+const Point { x: px } = get_pos()  -- renomeando
+```
+
+Só campos de struct — tuplas não são desestruturadas.
+
 ### Inferência local (opção B)
 
 Em `const`/`var` **locais**, pode omitir o tipo se o lado direito for campo,

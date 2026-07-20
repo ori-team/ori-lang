@@ -398,6 +398,10 @@ impl ProjectSemanticIndex {
                     out.insert(c.name.text.to_string(), tn);
                 }
             }
+            // `const Point { x, y } = …` — field types need the struct's
+            // signature, which this index does not carry; the bindings are
+            // still known to exist, just not their types.
+            Stmt::Destructure(_) => {}
             Stmt::Var(v) => {
                 if let Some(ast_ty) = &v.ty {
                     if let Some(tn) = named_type_simple_name(ast_ty) {

@@ -1921,3 +1921,52 @@ end
         "stderr: {stderr}"
     );
 }
+
+/// Destructuring managed fields binds each one exactly once: the desugared
+/// temporary plus field reads must not leak.
+#[test]
+fn compile_runs_destructuring_managed_fields_no_leak() {
+    let dir = TestDir::new("destructure_managed_no_leak");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct User
+    name: string
+    tag: string
+end
+
+make() -> User
+    return User { name: "alice", tag: "admin" }
+end
+
+main()
+    var i: int = 0
+    while i < 200
+        const User { name, tag } = make()
+        const joined: string = name + tag
+        i = i + 1
+    end
+    io.println("done")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "destructure_managed");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "done",
+        "stderr: {stderr}"
+    );
+}

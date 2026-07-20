@@ -1,4 +1,4 @@
-use crate::common::Name;
+use crate::common::{Name, QualifiedName};
 use crate::expr::Expr;
 use crate::pattern::Pattern;
 use crate::ty::Type;
@@ -17,6 +17,8 @@ pub struct Block {
 pub enum Stmt {
     Const(LocalConst),
     Var(LocalVar),
+    /// `const Point { x, y } = expr` / `var { x, y } = expr`
+    Destructure(LocalDestructure),
     Assign(AssignStmt),
     CompoundAssign(CompoundAssignStmt),
     Return(ReturnStmt),
@@ -43,6 +45,25 @@ pub struct LocalConst {
     pub name: Name,
     /// Explicit type, or `None` when omitted for local Nim-style inference (`0.3.1`).
     pub ty: Option<Type>,
+    pub value: Box<Expr>,
+    pub span: Span,
+}
+
+/// `const Point { x, y } = get_pos()` — bind several struct fields at once.
+///
+/// Only struct fields: Ori has tuples, but binding them positionally
+/// (`.0`, `.1`) would make the reader carry "what was field 2 again?", which
+/// is exactly the cost this form is meant to remove.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalDestructure {
+    /// `false` for `const`, `true` for `var`.
+    pub is_mutable: bool,
+    /// `Point` in `const Point { … }`; `None` when the type is left to
+    /// inference (allowed under the same rule as option-B local inference).
+    pub type_name: Option<QualifiedName>,
+    /// `(field, bound name)` — equal when written in shorthand (`x`), and
+    /// different when renamed (`x: px`).
+    pub fields: Vec<(Name, Name)>,
     pub value: Box<Expr>,
     pub span: Span,
 }

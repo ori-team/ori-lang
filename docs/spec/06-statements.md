@@ -122,6 +122,31 @@ Inline if-expression (expression context, not a statement) keeps the Ori form
 
 ---
 
+## Destructuring Bindings
+
+Bind several struct fields in one statement:
+
+```ori
+const Point { x, y } = get_pos()      -- type written
+const { x, y } = get_pos()            -- type inferred from the value
+const Point { x: px, y: py } = pos    -- renamed while binding
+var { x, y } = get_pos()              -- mutable bindings
+```
+
+- **Struct fields only.** Tuples exist but are not destructured: binding them
+  positionally would put "what was field 2?" back on the reader, which is the
+  cost this form removes.
+- The type name is optional under the same rule as option-B local inference:
+  omit it when the value's type is obvious (call, field, index, pipe).
+- Naming a field the struct does not have is `type.unknown_field`; applying it
+  to a non-struct is `type.destructure_not_struct`.
+- `const` binds immutably, `var` mutably — as with ordinary bindings.
+
+Each binding is an ordinary local afterwards; the form is shorthand for one
+temporary plus one field read per name.
+
+---
+
 ## `if some` — Optional Binding
 
 ```ori

@@ -125,6 +125,8 @@ when the compiler starts producing it.
 | `type.if_branch_mismatch` | error | `if` branches produce incompatible types |
 | `type.match_arm_mismatch` | error | `match` used as an expression has arms producing incompatible types |
 | `type.ifsome_not_optional` | error | `if some` was used on a non-optional value |
+| `type.destructure_not_struct` | error | A destructuring binding was applied to a value that is not a struct |
+| `parse.empty_destructure` | error | A destructuring binding names no fields (`const { } = …`) |
 | `type.ifok_not_result` | error | `if ok` was used on a value that is not a `result[T, E]` |
 | `type.iferr_not_result` | error | `if err` was used on a value that is not a `result[T, E]` |
 | `type.index_not_int` | error | Index expression must have type `int` |
@@ -161,6 +163,7 @@ when the compiler starts producing it.
 | `type.unused_result` | warning | `result[T, E]` expression value is discarded |
 | `type.unary_neg_non_numeric` | error | Unary `-` was used on a non-numeric value |
 | `type.undefined_name` | error | Type name is not defined |
+| `type.unknown_field` | error | A destructuring binding names a field the struct does not have |
 | `type.unknown_arg_label` | error | Named argument does not match any parameter |
 | `type.unknown_enum_variant` | error | Enum variant does not exist |
 | `type.whilesome_not_optional` | error | `while some` was used on a non-optional value |
