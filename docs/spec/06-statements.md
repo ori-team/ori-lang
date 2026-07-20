@@ -260,6 +260,46 @@ Custom iterable contract:
 - the `for` binding has type `T`;
 - the second binding is the zero-based `int` index.
 
+### This is how lazy iteration is written
+
+`next` is called once per step, so values are produced **on demand** — nothing
+is materialised up front, and the sequence may be unbounded or expensive:
+
+```ori
+import ori.core = core
+import ori.io = io
+
+struct Counter
+    current: int
+    stop: int
+end
+
+apply Counter use core.Iterable
+    mut next(self) -> optional[int]
+        if self.current >= self.stop
+            return none
+        end
+        const value: int = self.current
+        self.current = self.current + 1
+        return some(value)
+    end
+end
+
+main()
+    var c: Counter = Counter { current: 0, stop: 4 }
+    for n in c
+        io.println(f"{n}")
+    end
+end
+```
+
+This matters because `ori.iter` is **eager**: `iter.map`, `iter.filter` and the
+rest take a `list[T]` and return a fully built `list[R]` (chapter 12). They are
+convenient, not lazy. When the point is to avoid building the whole sequence, a
+type implementing `Iterable` is the mechanism.
+
+Ori has no `yield`: a generator is written as the state struct above.
+
 **With index:**
 
 ```ori

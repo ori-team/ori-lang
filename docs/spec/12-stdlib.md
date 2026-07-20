@@ -240,7 +240,7 @@ calling it reports `type.no_such_field`:
 
 | Trait | Effect today |
 |---|---|
-| `Iterable` | Recognized by `for` when the type exposes `mut next() -> optional[T]` — checked structurally, not through the trait table (`type.iterable_next_missing`) |
+| `Iterable` | Recognized by `for` when the type exposes `mut next() -> optional[T]` — checked structurally, not through the trait table (`type.iterable_next_missing`). **This is the lazy-iteration mechanism**; see chapter 06 |
 | `Transferable` | Enforced for values crossing task or channel boundaries (`concurrency.not_transferable`) |
 | `Hashable` | Checked structurally for `map` keys and `set` elements |
 | `Default` | **Inert.** `default() -> Self` needs a trait method with **no receiver**, which the impl machinery does not support. Unlike `Cloneable`, this is not a `Self` problem |
