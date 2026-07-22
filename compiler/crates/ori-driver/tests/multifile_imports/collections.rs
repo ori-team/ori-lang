@@ -1558,7 +1558,7 @@ struct Countdown
 end
 
 apply Countdown use core.Iterable
-    mut next() -> optional[int]
+    mut next(self) -> optional[int]
         if self.current < self.min
             return none
         end

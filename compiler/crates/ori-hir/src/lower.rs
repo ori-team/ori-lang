@@ -1210,13 +1210,16 @@ impl<'a> Lowerer<'a> {
         SmolStr::new(name)
     }
     fn resolve_def_path(&self, name: &str) -> Option<SmolStr> {
+        // Return the def's canonical path, not the alias that reached it:
+        // `User.default` may be an alias for `User.Default.default`, and the
+        // emitted function symbol carries the canonical name.
         let expanded = self.expand_alias(name);
-        if self.def_map.lookup(&expanded).is_some() {
-            return Some(expanded);
+        if let Some(id) = self.def_map.lookup(&expanded) {
+            return Some(self.def_map.get(id).path.clone());
         }
         let local = SmolStr::new(format!("{}.{}", self.namespace, expanded));
-        if self.def_map.lookup(&local).is_some() {
-            return Some(local);
+        if let Some(id) = self.def_map.lookup(&local) {
+            return Some(self.def_map.get(id).path.clone());
         }
         None
     }
@@ -1687,24 +1690,12 @@ impl<'a> Lowerer<'a> {
         &mut self,
         params: &[ori_ast::item::Param],
         tp: &[SmolStr],
-        self_ty: Ty,
-        span: Span,
+        _self_ty: Ty,
+        _span: Span,
     ) -> Vec<HirParam> {
-        let mut lowered = self.lower_params(params, tp);
-        if !has_explicit_self_param(params) {
-            lowered.insert(
-                0,
-                HirParam {
-                    name: SmolStr::new("self"),
-                    ty: self_ty,
-                    default: None,
-                    contract: None,
-                    variadic: false,
-                    span,
-                },
-            );
-        }
-        lowered
+        // No explicit `self` = associated function: nothing is injected.
+        // Instance methods carry their declared `self` like any parameter.
+        self.lower_params(params, tp)
     }
 }
 

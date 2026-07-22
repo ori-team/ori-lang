@@ -8253,7 +8253,7 @@ import ori.io = io
 struct Counter
     value: int
 
-    mut increment()
+    mut increment(self)
         self.value = self.value + 1
     end
 end

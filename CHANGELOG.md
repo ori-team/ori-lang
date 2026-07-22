@@ -24,6 +24,17 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `async`. Contratos de parâmetro (`stop: int if it > 0`) atravessam o
   inlining via `check` sintetizado no ponto de bind. Specs 02/03/06/07/13 +
   tour atualizados; 6 testes e2e novos.
+- **Funções associadas: método sem `self` = sem receptor (destrava `core.Default`).**
+  A regra agora é explícita: `self` declarado = método de instância; sem
+  `self` = função associada, chamada como `User.default()`. `core.Default`
+  virou trait real (`default() -> Self`), validado por `impl.missing_method`
+  / `impl.wrong_signature`. Chamar associada numa instância dá
+  `type.assoc_fn_instance_call`; `self` dentro de associada dá
+  `bind.self_outside_method`. **Quebra intencional pré-freeze:** o `self`
+  implícito (corpo de `greet()` lendo `self.name` sem declarar) foi
+  removido — contradizia todos os exemplos da spec; 6 testes internos
+  atualizados para `self` explícito. Binds (`compare = compare_points`)
+  inalterados. Specs 08/12/13/18 atualizadas; 4 testes e2e novos.
 - **`check` que falha agora imprime o motivo.** Uma asserção violada gerava
   trap silencioso (SIGILL, exit 132, zero output). Agora o backend nativo
   roteia a falha por `ori_panic`: `ori panic: check failed: <mensagem>`

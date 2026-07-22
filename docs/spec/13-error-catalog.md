@@ -187,6 +187,7 @@ when the compiler starts producing it.
 | `type.iter_generic_unsupported` | error | A `for` consumes a generic iterator; not supported yet |
 | `type.iter_variadic_unsupported` | error | A `for` consumes a variadic iterator; not supported yet |
 | `type.iter_recursive_unsupported` | error | An iterator consumes itself (directly or mutually); inlining cannot terminate |
+| `type.assoc_fn_instance_call` | error | An associated function (no `self`) was called on a value; call it as `Type.method(...)` |
 
 ### `concurrency`
 

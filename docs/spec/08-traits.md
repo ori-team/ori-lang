@@ -160,6 +160,43 @@ end
 `apply Type` may contain only free methods/binds (no `use`). Those methods are
 available as inherent methods on the type.
 
+### Associated functions (no `self`)
+
+**An explicit `self` parameter is what makes a method an instance method.**
+A method declared without `self` — in an `apply` block or in a trait — is an
+*associated function*: it has no receiver and is called through the type name:
+
+```ori
+apply User use core.Default
+    default() -> User
+        return User { name: "?", age: 0 }
+    end
+end
+
+apply User
+    make_empty() -> User          -- inherent associated function
+        return User { name: "", age: 0 }
+    end
+end
+
+const a: User = User.default()
+const b: User = User.make_empty()
+```
+
+Rules:
+
+- `self` inside an associated function is `bind.self_outside_method`.
+- Calling one on a value (`u.default()`) is `type.assoc_fn_instance_call` —
+  there is no receiver to pass.
+- Associated trait functions are excluded from `any[Trait]` dispatch: dynamic
+  dispatch needs a receiver's vtable.
+- Bind slots (`compare = compare_points`) are unchanged: the bound free
+  function receives the value as its first argument.
+
+There is no implicit `self`: a body that uses `self` without declaring it does
+not compile. (Earlier drafts tolerated `greet()` reading `self.name`; that
+leniency was removed when associated functions landed.)
+
 ### Rules
 
 - `apply Type` — the type receiving methods/traits.

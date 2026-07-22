@@ -68,6 +68,9 @@ pub struct TraitMethodSig {
     pub return_ty: Ty,
     pub is_mut: bool,
     pub has_default: bool,
+    /// Declared with an explicit `self` receiver. `false` marks an associated
+    /// function (`default() -> Self`), called as `Type.method(...)`.
+    pub has_self: bool,
     pub span: ori_diagnostics::Span,
 }
 
@@ -263,9 +266,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                     )
                                 })
                                 .collect();
-                            if !has_explicit_self_param(&m.params) {
-                                params.insert(0, Ty::Named(def_id, Vec::new()));
-                            }
                             let return_ty = m
                                 .return_ty
                                 .as_ref()
@@ -547,12 +547,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         )
                                     })
                                     .collect();
-                                if !has_explicit_self_param(&sig.params) {
-                                    let self_ty = trait_def_id
-                                        .map(|def_id| Ty::Named(def_id, Vec::new()))
-                                        .unwrap_or(Ty::Infer(0));
-                                    params.insert(0, self_ty);
-                                }
                                 let return_ty = sig
                                     .return_ty
                                     .as_ref()
@@ -570,6 +564,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                     return_ty: return_ty.clone(),
                                     is_mut: sig.is_mut,
                                     has_default: false,
+                                    has_self: has_explicit_self_param(&sig.params),
                                     span: sig.span,
                                 });
                                 let m_path =
@@ -613,12 +608,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         )
                                     })
                                     .collect();
-                                if !has_explicit_self_param(&func.params) {
-                                    let self_ty = trait_def_id
-                                        .map(|def_id| Ty::Named(def_id, Vec::new()))
-                                        .unwrap_or(Ty::Infer(0));
-                                    params.insert(0, self_ty);
-                                }
                                 let return_ty = func
                                     .return_ty
                                     .as_ref()
@@ -636,6 +625,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                     return_ty: return_ty.clone(),
                                     is_mut: func.is_mut,
                                     has_default: true,
+                                    has_self: has_explicit_self_param(&func.params),
                                     span: func.span,
                                 });
                                 let m_path =
@@ -1130,9 +1120,6 @@ fn resolve_apply_method_func_sig(
             )
         })
         .collect();
-    if !has_explicit_self_param(&m.params) {
-        params.insert(0, self_ty);
-    }
     let return_ty = m
         .return_ty
         .as_ref()
@@ -1185,28 +1172,19 @@ fn has_explicit_self_param(params: &[Param]) -> bool {
         .is_some_and(|param| param.name.text.as_str() == "self")
 }
 
+// A method without an explicit `self` parameter is an *associated function*
+// (`Type.method(...)`): its signature is exactly what was declared. Explicit
+// `self` is what makes a method an instance method.
 fn method_param_names(params: &[Param]) -> Vec<SmolStr> {
-    let mut names = param_names(params);
-    if !has_explicit_self_param(params) {
-        names.insert(0, SmolStr::new("self"));
-    }
-    names
+    param_names(params)
 }
 
 fn method_param_default_flags(params: &[Param]) -> Vec<bool> {
-    let mut flags = param_default_flags(params);
-    if !has_explicit_self_param(params) {
-        flags.insert(0, false);
-    }
-    flags
+    param_default_flags(params)
 }
 
 fn method_param_variadic_flags(params: &[Param]) -> Vec<bool> {
-    let mut flags = param_variadic_flags(params);
-    if !has_explicit_self_param(params) {
-        flags.insert(0, false);
-    }
-    flags
+    param_variadic_flags(params)
 }
 
 fn resolve_qualified_def_id(
@@ -1367,6 +1345,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: self_ty,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Subtractable" => vec![TraitMethodSig {
@@ -1375,6 +1354,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: self_ty,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Multiplicable" => vec![TraitMethodSig {
@@ -1383,6 +1363,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: self_ty,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Divisible" => vec![TraitMethodSig {
@@ -1391,6 +1372,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: self_ty,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Equatable" => vec![TraitMethodSig {
@@ -1399,6 +1381,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::Bool,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Comparable" => vec![TraitMethodSig {
@@ -1407,6 +1390,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::Int,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Disposable" => vec![TraitMethodSig {
@@ -1415,6 +1399,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::Void,
                     is_mut: true,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Displayable" => vec![TraitMethodSig {
@@ -1423,6 +1408,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::String,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 // `Error` describes a failure value. Without this signature the
@@ -1435,6 +1421,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::String,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Cloneable" => vec![TraitMethodSig {
@@ -1443,11 +1430,21 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: self_ty,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
-                // `Default` stays a marker: `default() -> Self` needs a trait
-                // method with **no receiver**, which the impl machinery does not
-                // support. Unlike `Cloneable`, that is not a `Self` problem.
+                // `default() -> Self` is an *associated function*: no `self`
+                // parameter, called as `Type.default()`. The empty param list
+                // is what marks it receiver-less.
+                "Default" => vec![TraitMethodSig {
+                    name: SmolStr::new("default"),
+                    params: Vec::new(),
+                    return_ty: self_ty,
+                    is_mut: false,
+                    has_default: false,
+                    has_self: false,
+                    span: ori_diagnostics::Span::DUMMY,
+                }],
                 _ => Vec::new(),
             };
             TraitSig {
@@ -1754,6 +1751,38 @@ fn register_item(
                             file_id,
                             sink,
                         );
+                        // An associated function (no `self`) is called as
+                        // `Type.method(...)`, so it also answers at the
+                        // type-scoped path, like a free member.
+                        if !has_explicit_self_param(&m.params) {
+                            let short = SmolStr::new(format!(
+                                "{}.{}.{}",
+                                ns, type_name, m.name.text
+                            ));
+                            let full =
+                                SmolStr::new(format!("{}.{}", ns, m_name));
+                            if def_map.lookup(&short).is_some() {
+                                sink.emit(
+                                    Diagnostic::error(
+                                        "name.duplicate",
+                                        format!(
+                                            "duplicate definition `{}.{}`",
+                                            type_name, m.name.text
+                                        ),
+                                    )
+                                    .with_label(Label::primary(
+                                        file_id,
+                                        m.span,
+                                        "defined again here",
+                                    ))
+                                    .with_action(
+                                        "rename or remove one of the definitions",
+                                    ),
+                                );
+                            } else if let Some(target) = def_map.lookup(&full) {
+                                def_map.alias_path(short, target);
+                            }
+                        }
                     }
                 }
             }

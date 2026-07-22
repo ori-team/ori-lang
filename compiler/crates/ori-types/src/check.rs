@@ -953,12 +953,9 @@ impl<'a> Checker<'a> {
             );
         }
         self.push_scope();
-        if !has_explicit_self_param(&func.params) {
-            if let Some(self_ty) = implicit_self_ty {
-                let self_name = Name::new("self", func.name.span);
-                self.bind_checked(&self_name, self_ty, func.is_mut, false);
-            }
-        }
+        // `self` exists only when declared: a method without an explicit
+        // `self` parameter is an associated function and has no receiver.
+        // (Explicit `self` params are bound below like any other parameter.)
         let param_tys: Vec<Ty> = func
             .params
             .iter()
@@ -1465,13 +1462,8 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|p| self.lower(&p.ty, &tp))
             .collect();
-        if !has_explicit_self_param(&method.params) {
-            let self_ty = self
-                .resolve_def_id(&apply.for_type.to_string())
-                .map(|def_id| Ty::Named(def_id, Vec::new()))
-                .unwrap_or(Ty::Infer(0));
-            params.insert(0, self_ty);
-        }
+        // No explicit `self` = associated function: the signature is exactly
+        // what was declared (`default() -> Self` has zero parameters).
         let return_ty = method
             .return_ty
             .as_ref()
@@ -6069,6 +6061,22 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn emit_assoc_fn_instance_call(&mut self, obj_ty: &Ty, field: &Name) {
+        let type_name = obj_ty.display_in(self.def_map);
+        self.sink.emit(
+            Diagnostic::error(
+                "type.assoc_fn_instance_call",
+                format!(
+                    "`{}` is an associated function of `{}`, not a method",
+                    field.text, type_name
+                ),
+            )
+            .with_label(Label::primary(self.file_id, field.span, "called on a value"))
+            .with_why("it has no `self` parameter, so there is no receiver".to_string())
+            .with_action(format!("call it as `{}.{}(...)`", type_name, field.text)),
+        );
+    }
+
     fn infer_field_access(&mut self, receiver_root: Option<&Name>, obj_ty: Ty, field: &Name) -> Ty {
         if let Ty::Named(def_id, _) = &obj_ty {
             if let Some(ty) = self.struct_field_ty(*def_id, field.as_str()) {
@@ -6080,6 +6088,24 @@ impl<'a> Checker<'a> {
             let method_path = format!("{}.{}", def.path, field.text);
             if let Some(m_def_id) = self.def_map.lookup(&method_path) {
                 if let Some(sig) = self.func_sig(m_def_id) {
+                    // Three shapes answer at `ns.Type.name`:
+                    //  - instance method: first param is the declared `self`;
+                    //  - bind slot: a free function whose first param is the
+                    //    receiver by convention (`compare = compare_points`);
+                    //  - associated function: no receiver at all — only
+                    //    callable as `Type.name(...)`.
+                    let m_def_path = self.def_map.get(m_def_id).path.clone();
+                    let is_type_scoped = self.def_visibility_namespace(&m_def_path)
+                        != Self::def_namespace(&m_def_path);
+                    let takes_receiver = sig
+                        .param_names
+                        .first()
+                        .is_some_and(|n| n == "self")
+                        || !is_type_scoped;
+                    if !takes_receiver {
+                        self.emit_assoc_fn_instance_call(&obj_ty, field);
+                        return Ty::Error;
+                    }
                     if sig.is_mut {
                         if let Some(root) = receiver_root {
                             self.check_mut_method_receiver_root(root, field);
@@ -6114,6 +6140,10 @@ impl<'a> Checker<'a> {
             }
 
             if let Some(method) = trait_methods.into_iter().next() {
+                if !method.has_self {
+                    self.emit_assoc_fn_instance_call(&obj_ty, field);
+                    return Ty::Error;
+                }
                 if method.is_mut {
                     if let Some(root) = receiver_root {
                         self.check_mut_method_receiver_root(root, field);
@@ -6155,6 +6185,12 @@ impl<'a> Checker<'a> {
                     .find(|m| m.name == field.text)
                     .cloned()
                 {
+                    // `any[Trait]` dispatches through the receiver's vtable;
+                    // an associated function has no receiver to dispatch on.
+                    if !method.has_self {
+                        self.emit_assoc_fn_instance_call(&obj_ty, field);
+                        return Ty::Error;
+                    }
                     if method.is_mut {
                         if let Some(root) = receiver_root {
                             self.check_mut_method_receiver_root(root, field);
@@ -6334,11 +6370,37 @@ impl<'a> Checker<'a> {
         path.rfind('.').map(|i| &path[..i]).unwrap_or(path)
     }
 
+    /// The namespace that owns `path` for visibility purposes. A type-scoped
+    /// member (`ns.Type.method` or `ns.Type.Trait.method`, from an `apply`
+    /// block) belongs to the module `ns`, not to a pseudo-namespace under the
+    /// type. Found by walking prefixes until one names a type-like def.
+    fn def_visibility_namespace<'p>(&self, path: &'p str) -> &'p str {
+        let ns = Self::def_namespace(path);
+        let mut ends: Vec<usize> = ns.match_indices('.').map(|(i, _)| i).collect();
+        ends.push(ns.len());
+        for (k, &end) in ends.iter().enumerate() {
+            let prefix = &ns[..end];
+            if let Some(owner_id) = self.def_map.lookup(prefix) {
+                if matches!(
+                    self.def_map.get(owner_id).kind,
+                    DefKind::Struct | DefKind::Enum | DefKind::Newtype | DefKind::Trait
+                ) {
+                    if k == 0 {
+                        return ns;
+                    }
+                    return &ns[..ends[k - 1]];
+                }
+            }
+        }
+        ns
+    }
+
     /// Emit a diagnostic if `def_id` refers to a private item in a different namespace.
     fn check_visibility(&mut self, def_id: DefId, span: ori_diagnostics::Span) {
         let def = self.def_map.get(def_id);
         if !def.is_public {
-            let def_ns = Self::def_namespace(&def.path);
+            let def_ns = self.def_visibility_namespace(&def.path).to_owned();
+            let def_ns = def_ns.as_str();
             if def_ns != self.namespace {
                 self.sink.emit(
                     Diagnostic::error(

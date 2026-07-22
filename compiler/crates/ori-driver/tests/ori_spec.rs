@@ -1971,7 +1971,7 @@ fn func_rejects_const_receiver_on_mut_func() {
         r#"module app.main
 struct Counter
     value: int
-    mut increment()
+    mut increment(self)
         self.value = self.value + 1
     end
 end
@@ -1998,7 +1998,7 @@ fn func_rejects_self_field_mutation_in_non_mut_method() {
         r#"module app.main
 struct Counter
     value: int
-    increment()
+    increment(self)
         self.value = self.value + 1
     end
 end
@@ -2214,7 +2214,7 @@ fn trait_default_accepts_labeled_end_function() {
         r#"module app.main
 import ori.io = io
 trait Greetable
-    greet() -> string
+    greet(self) -> string
         return "hi"
     end function
 end
@@ -2222,7 +2222,7 @@ struct Person
     name: string
 end
 apply Person use Greetable
-    greet() -> string
+    greet(self) -> string
         return self.name
     end
 end
@@ -2245,12 +2245,12 @@ fn trait_default_accepts_fat_arrow_body() {
         r#"module app.main
 import ori.io = io
 trait Doubler
-    double(x: int) -> int => x * 2
+    double(self, x: int) -> int => x * 2
 end
 struct S
 end
 apply S use Doubler
-    double(x: int) -> int => x * 2
+    double(self, x: int) -> int => x * 2
 end
 main()
     const s: S = S {}
@@ -7278,4 +7278,169 @@ end
         stderr.contains("check failed: n must be positive"),
         "stderr must carry the check message, got: {stderr:?}"
     );
+}
+
+// ── associated functions (no `self`) ─────────────────────────────────────────
+
+/// `core.Default` is a real trait now: `default() -> Self` has no receiver
+/// and is called as `Type.default()`.
+#[test]
+fn compile_runs_core_default_associated_function() {
+    let dir = TestDir::new("core_default_assoc_fn");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.core = core
+
+struct User
+    name: string
+    age: int
+end
+
+apply User use core.Default
+    default() -> User
+        return User { name: "?", age: 0 }
+    end
+end
+
+main()
+    const u: User = User.default()
+    io.println(f"{u.name} {u.age}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "core_default_assoc_fn");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["? 0"]);
+}
+
+/// An inherent method without `self` is an associated function on the type:
+/// `User.make_empty()` works, and visibility follows the module (not a
+/// pseudo-namespace `app.main.User`).
+#[test]
+fn compile_runs_inherent_associated_function() {
+    let dir = TestDir::new("inherent_assoc_fn");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct User
+    name: string
+    age: int
+end
+
+apply User
+    make_empty() -> User
+        return User { name: "", age: 0 }
+    end
+end
+
+main()
+    const u: User = User.make_empty()
+    io.println(f"[{u.name}] {u.age}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "inherent_assoc_fn");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["[] 0"]);
+}
+
+/// Misuse has dedicated codes: `self` inside an associated function, and
+/// calling one on a value instead of the type.
+#[test]
+fn check_rejects_associated_function_misuse() {
+    let dir = TestDir::new("assoc_fn_misuse");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+
+struct User
+    age: int
+end
+
+apply User use core.Default
+    default() -> User
+        return User { age: 7 }
+    end
+end
+
+apply User
+    broken() -> int
+        return self.age
+    end
+end
+
+main()
+    const u: User = User.default()
+    const v: User = u.default()
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    for expected in ["bind.self_outside_method", "type.assoc_fn_instance_call"] {
+        assert!(
+            codes.contains(&expected),
+            "missing {expected}: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+/// The trait contract is enforced: omitting `default` or giving it a `self`
+/// receiver both fail with the impl diagnostics.
+#[test]
+fn check_rejects_wrong_default_impls() {
+    let dir = TestDir::new("default_wrong_impls");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+
+struct Missing
+    age: int
+end
+
+apply Missing use core.Default
+end
+
+struct WithSelf
+    age: int
+end
+
+apply WithSelf use core.Default
+    default(self) -> WithSelf
+        return WithSelf { age: 0 }
+    end
+end
+
+main()
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    for expected in ["impl.missing_method", "impl.wrong_signature"] {
+        assert!(
+            codes.contains(&expected),
+            "missing {expected}: {:?}",
+            out.diagnostics
+        );
+    }
 }
