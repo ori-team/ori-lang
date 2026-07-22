@@ -7245,3 +7245,37 @@ end
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["0", "1", "done"]);
 }
+
+/// A failed `check` must say so on stderr before dying — a silent SIGILL
+/// trap tells the user nothing. With a message the message is included;
+/// without one, at least the fact that a `check` failed is.
+#[test]
+fn compile_runs_check_failure_prints_message() {
+    let dir = TestDir::new("check_failure_message");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const n: int = 0 - 1
+    io.println("before")
+    check n > 0, "n must be positive"
+    io.println("unreachable")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "check_failure_message");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["before"]);
+    assert!(
+        stderr.contains("check failed: n must be positive"),
+        "stderr must carry the check message, got: {stderr:?}"
+    );
+}

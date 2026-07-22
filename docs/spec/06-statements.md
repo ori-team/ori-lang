@@ -540,6 +540,12 @@ A failed `check` is a non-recoverable panic — it is not meant for business
 logic error handling.
 
 The optional second argument is a message string for the panic message.
+On failure the program prints to stderr and aborts:
+
+```text
+ori panic: check failed: index out of expected range
+ori panic: check failed                                 -- no message given
+```
 
 Use `result[T, E]` for expected, recoverable failures.
 

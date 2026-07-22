@@ -8266,11 +8266,18 @@ impl<'a> FuncCodegen<'a> {
                     self.store_async_local_if_any(name, val)?;
                 }
             }
-            HirStmt::Check { condition, .. } => {
+            HirStmt::Check { condition, message, .. } => {
                 let cv = self.emit_expr(condition)?;
                 let trap = ir::TrapCode::user(1)
                     .ok_or_else(|| "invalid runtime check trap code `1`".to_string())?;
-                self.emit_trap_unless(cv, trap, true)?;
+                // A silent trap (SIGILL, no output) is useless to whoever hit
+                // it: route the failure through `ori_panic` so the message —
+                // or at least the fact that a `check` failed — reaches stderr.
+                let text = match message {
+                    Some(m) => format!("check failed: {m}"),
+                    None => "check failed".to_string(),
+                };
+                self.emit_trap_unless_with_message(cv, trap, true, Some(&text))?;
             }
             HirStmt::Repeat { count, body, .. } => {
                 let has_await = self.async_frame.is_some() && stmt_contains_await(stmt);

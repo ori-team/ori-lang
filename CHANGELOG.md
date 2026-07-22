@@ -24,6 +24,11 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `async`. Contratos de parâmetro (`stop: int if it > 0`) atravessam o
   inlining via `check` sintetizado no ponto de bind. Specs 02/03/06/07/13 +
   tour atualizados; 6 testes e2e novos.
+- **`check` que falha agora imprime o motivo.** Uma asserção violada gerava
+  trap silencioso (SIGILL, exit 132, zero output). Agora o backend nativo
+  roteia a falha por `ori_panic`: `ori panic: check failed: <mensagem>`
+  no stderr (ou `check failed` sem mensagem) e aborta. `ori test` passa a
+  mostrar o motivo da asserção que derrubou o teste.
 - **Driver: erro de lowering não grava mais binário.** `ori compile` e
   `ori emit c` prosseguiam para codegen/link mesmo com diagnóstico emitido
   no lowering (ex.: iterador recursivo), deixando um binário órfão com

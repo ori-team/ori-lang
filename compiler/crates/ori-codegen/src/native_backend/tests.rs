@@ -101,6 +101,11 @@ const NATIVE_EXPR_COVERAGE: &[NativeHirCoverage] = &[
         note: "ori.list runtime",
     },
     NativeHirCoverage {
+        variant: "ArrayLit",
+        evidence: &["HirExprKind::ArrayLit"],
+        note: "stack slot inline; elementos escalares copiados campo a campo",
+    },
+    NativeHirCoverage {
         variant: "ListSpreadLit",
         evidence: &["HirExprKind::ListSpreadLit"],
         note: "ori.list runtime com spread",
@@ -2024,10 +2029,17 @@ fn managed_assignment_updates_arc_before_overwrite() {
         "self.emit_arc_update_edge_if_managed(&elem_ty, container, old, val)?;",
         ".get(\"ori_list_set\")",
     );
-    assert_order(
+    // The array element path stores earlier in the arm with the same store
+    // shape (scalars, no ARC edge), so anchor on the field path: the store
+    // must sit between the edge update and the owned-temporary release.
+    let field_store_tail = source_section(
         assign,
         "self.emit_arc_update_edge_if_managed(&field_layout.ty, owner, old, val)?;",
-        ".store(MemFlags::new(), val, addr, 0);",
+        "value_is_owned && is_managed_ty(&field_layout.ty)",
+    );
+    assert!(
+        field_store_tail.contains(".store(MemFlags::new(), val, addr, 0);"),
+        "field assignment must store only after the ARC edge update"
     );
 }
 
