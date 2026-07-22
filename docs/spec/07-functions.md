@@ -71,6 +71,26 @@ Implementation status:
 
 ---
 
+## Iterator Functions (`iter`)
+
+```ori
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i
+        i = i + 1
+    end
+end
+```
+
+`iter name(...) -> T` declares a generator: `T` is the **element** type, the
+body produces values with `suspend`, and the only consumer is a `for` loop.
+The body is inlined at the loop site — there is no callable value and no
+runtime cost. Full semantics, diagnostics, and current limits: chapter 06,
+"`iter` functions — generators".
+
+---
+
 ## Parameters
 
 ### Required Parameters

@@ -22,6 +22,9 @@ pub enum Stmt {
     Assign(AssignStmt),
     CompoundAssign(CompoundAssignStmt),
     Return(ReturnStmt),
+    /// `suspend expr` — produce one value from an `iter` function and resume
+    /// on the next step.
+    Suspend(SuspendStmt),
     Break(Span),
     Continue(Span),
     If(IfStmt),
@@ -123,6 +126,12 @@ pub enum CompoundOp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReturnStmt {
     pub value: Option<Box<Expr>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuspendStmt {
+    pub value: Box<Expr>,
     pub span: Span,
 }
 

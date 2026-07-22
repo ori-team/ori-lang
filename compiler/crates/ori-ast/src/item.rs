@@ -86,6 +86,9 @@ impl Item {
 pub struct FuncDecl {
     pub visibility: Visibility,
     pub is_async: bool,
+    /// `iter name(...) -> T` — a generator. `return_ty` is the *element* type,
+    /// and the body produces values with `suspend`.
+    pub is_iter: bool,
     pub is_mut: bool,
     pub name: Name,
     pub type_params: TypeParams,
@@ -101,6 +104,7 @@ pub struct FuncDecl {
 pub struct FuncSignature {
     pub visibility: Visibility,
     pub is_async: bool,
+    pub is_iter: bool,
     pub is_mut: bool,
     pub name: Name,
     pub type_params: TypeParams,

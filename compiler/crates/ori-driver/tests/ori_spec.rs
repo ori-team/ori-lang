@@ -6986,3 +6986,262 @@ end
         out.diagnostics
     );
 }
+
+// ── iterator functions (`iter` + `suspend`) ──────────────────────────────────
+
+/// Basic generator: the body is inlined at the `for` site — the program must
+/// print the sequence with no callable `counter` function involved.
+#[test]
+fn compile_runs_iter_function_inline_basic() {
+    let dir = TestDir::new("iter_inline_basic");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i
+        i = i + 1
+    end
+end
+
+main()
+    for n, idx in counter(4)
+        io.println(f"{idx}:{n}")
+    end
+end
+"#,
+    );
+    let exe = exe_path(&dir, "iter_inline_basic");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        ["0:0", "1:1", "2:2", "3:3"]
+    );
+}
+
+/// Control flow across the inlining: user `break` exits the whole `for` from
+/// inside the iterator's nested loops, `continue` resumes the iterator, and a
+/// `suspend` after the iterator's loop must not run once the user broke.
+#[test]
+fn compile_runs_iter_function_break_continue_and_tail() {
+    let dir = TestDir::new("iter_break_continue_tail");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+iter pairs(n: int) -> int
+    var a: int = 0
+    while a < n
+        var b: int = 0
+        while b < n
+            suspend a * 10 + b
+            b = b + 1
+        end
+        a = a + 1
+    end
+    suspend 99
+end
+
+main()
+    for p in pairs(3)
+        if p == 1
+            continue
+        end
+        if p == 11
+            break
+        end
+        io.println(f"{p}")
+    end
+    io.println("---")
+    for p in pairs(1)
+        io.println(f"{p}")
+    end
+end
+"#,
+    );
+    let exe = exe_path(&dir, "iter_break_continue_tail");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    // break at 11 skips the rest of pairs(3) INCLUDING the tail suspend 99;
+    // full consumption of pairs(1) reaches it.
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        ["0", "2", "10", "---", "0", "99"]
+    );
+}
+
+/// An iterator consuming another iterator: the outer expansion becomes the
+/// user body of the inner one, and early `return` ends the sequence.
+#[test]
+fn compile_runs_iter_function_nested_and_early_return() {
+    let dir = TestDir::new("iter_nested_early_return");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+iter base(stop: int) -> int
+    var i: int = 0
+    loop
+        if i >= stop
+            return
+        end
+        suspend i
+        i = i + 1
+    end
+end
+
+iter doubled(stop: int) -> int
+    for x in base(stop)
+        suspend x * 2
+    end
+end
+
+run() -> int
+    for n in doubled(5)
+        if n == 4
+            return n
+        end
+        io.println(f"{n}")
+    end
+    return -1
+end
+
+main()
+    io.println(f"got {run()}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "iter_nested_early_return");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["0", "2", "got 4"]);
+}
+
+/// Each misuse has its own diagnostic: `suspend` outside `iter`, `return v`
+/// inside one, calling an iterator outside a `for`, and self-recursion.
+#[test]
+fn check_rejects_iter_misuse_with_dedicated_codes() {
+    let dir = TestDir::new("iter_misuse_codes");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+plain() -> int
+    suspend 3
+    return 1
+end
+
+iter bad_return() -> int
+    return 5
+end
+
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i
+        i = i + 1
+    end
+end
+
+iter echo(n: int) -> int
+    for x in echo(n)
+        suspend x
+    end
+end
+
+main()
+    const x: int = counter(4)
+    io.println(f"{x}")
+    for v in echo(1)
+        io.println(f"{v}")
+    end
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    for expected in [
+        "type.suspend_outside_iter",
+        "type.iter_return_value",
+        "type.iter_call_outside_for",
+    ] {
+        assert!(
+            codes.contains(&expected),
+            "missing {expected}: {:?}",
+            out.diagnostics
+        );
+    }
+    // Recursion is caught at lowering; compiling must fail with the dedicated
+    // code instead of hanging — and must NOT leave a binary behind (a failed
+    // lowering used to fall through to codegen + link).
+    let exe = exe_path(&dir, "iter_misuse_codes");
+    let compile = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(compile.has_errors);
+    assert!(
+        !Path::new(&exe).exists(),
+        "a failed compile must not write a binary"
+    );
+}
+
+/// Parameter contracts survive the inlining: a real call checks
+/// `stop: int if it > 0` at the call site; the inlined form synthesizes a
+/// `check`, so a violating argument still panics instead of passing silently.
+#[test]
+fn compile_runs_iter_function_param_contract() {
+    let dir = TestDir::new("iter_param_contract");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+iter counter(stop: int if it > 0) -> int
+    var i: int = 0
+    while i < stop
+        suspend i
+        i = i + 1
+    end
+end
+
+main()
+    for n in counter(2)
+        io.println(f"{n}")
+    end
+    io.println("done")
+    for n in counter(0 - 1)
+        io.println(f"{n}")
+    end
+    io.println("unreachable")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "iter_param_contract");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    // The second loop violates the contract: the program must trap there,
+    // after the valid loop ran to completion.
+    assert!(!output.status.success(), "contract violation must panic");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["0", "1", "done"]);
+}

@@ -164,6 +164,8 @@ remain usable as ordinary identifiers elsewhere:
 | `imports` | Opens the multi-import block: `imports … end` |
 | `array` | Names a type in type position: `array[int, size: 4]` |
 | `slice` | Names a type in type position: `slice[int]` |
+| `iter` | Before a function declaration: `iter counter(stop: int) -> int` — a generator (chapter 06). Elsewhere (e.g. the module alias `iter.map(...)`) it is an ordinary identifier |
+| `suspend` | Statement start inside an `iter` function: `suspend value`. Followed by `=`, `+=`, `.`, `(`, or `[` it is an ordinary identifier |
 
 ---
 

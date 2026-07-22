@@ -1,8 +1,10 @@
 use crate::hir::*;
-use ori_ast::common::{Attr, AttrArg, Visibility};
+use ori_ast::common::{Attr, AttrArg, Name, Visibility};
 use ori_ast::expr::{Arg, BinaryOp, ClosureBody, ClosureExpr, Expr, FStrPart, UnaryOp};
 use ori_ast::item::{Item, SourceFile};
-use ori_ast::stmt::{Block, MatchCase, Stmt};
+use ori_ast::stmt::{
+    AssignStmt, Block, ForStmt, IfStmt, LValue, LocalConst, LocalVar, LoopStmt, MatchCase, Stmt,
+};
 use ori_diagnostics::{DiagnosticSink, FileId, Span};
 use ori_types::literal::{parse_float_literal, parse_int_literal};
 use ori_types::{
@@ -971,6 +973,14 @@ struct Lowerer<'a> {
     /// every type that reaches the HIR.
     newtype_map: HashMap<DefId, Ty>,
     local_type_aliases: HashMap<SmolStr, ori_ast::ty::Type>,
+    /// `iter` functions of the current module, kept as AST templates: they are
+    /// never lowered as callable functions — each `for x in name(...)` inlines
+    /// the body at the loop site (chapter 06, generators).
+    iter_fns: HashMap<SmolStr, ori_ast::item::FuncDecl>,
+    /// Fresh-name counter for inlined iterator scaffolding (`__iter_done_N`).
+    iter_inline_counter: usize,
+    /// Iterators currently being inlined, to reject (mutual) recursion.
+    iter_inline_stack: Vec<SmolStr>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -1019,6 +1029,9 @@ impl<'a> Lowerer<'a> {
             type_alias_map,
             newtype_map,
             local_type_aliases: HashMap::new(),
+            iter_fns: HashMap::new(),
+            iter_inline_counter: 0,
+            iter_inline_stack: Vec::new(),
         }
     }
 
@@ -1919,6 +1932,15 @@ pub fn lower(
 
     // Build alias map from imports: `import ori.io = io` → `io → ori.io`
     l.aliases = ori_types::resolve::import_aliases(file, reexports);
+    // Iterator templates first: a `for` earlier in the file may consume an
+    // `iter` function declared later.
+    for item in &file.items {
+        if let Item::Func(f) = &item.item {
+            if f.is_iter {
+                l.iter_fns.insert(f.name.text.clone(), f.clone());
+            }
+        }
+    }
     let mut structs = builtin_stdlib_structs(def_map);
     let mut enums = Vec::new();
     let traits = lower_trait_sigs(def_map, trait_sigs);
@@ -2148,6 +2170,11 @@ pub fn lower(
                 }
             }
             Item::Func(f) => {
+                // Iterators are inlining templates, not callable functions:
+                // no standalone symbol is emitted for them.
+                if f.is_iter {
+                    continue;
+                }
                 let tp: Vec<SmolStr> = f.type_params.iter().map(|p| p.name.text.clone()).collect();
                 let params = l.lower_params(&f.params, &tp);
                 let body_ret_ty = f
@@ -2803,6 +2830,66 @@ impl<'a> Lowerer<'a> {
         out
     }
 
+    /// `for x in counter(...)` over a local `iter` function: splice the
+    /// iterator body here instead of emitting a call (Nim-style inline
+    /// iterators). Returns `None` when the head is not an iterator call, so
+    /// the ordinary `for` lowering runs.
+    ///
+    /// Shape of the splice — one loop that runs once, so `break` means
+    /// "the whole for statement is over" from any nesting depth:
+    ///
+    /// ```text
+    /// loop                                   -- construct scope
+    ///     const <param> = <arg> ...          -- iterator params
+    ///     var __iter_done_N = false
+    ///     <iterator body, where>
+    ///        suspend e   =>  loop            -- runs once
+    ///                            const x = e
+    ///                            <user body> -- break → done=true + break
+    ///                            break       -- continue → break
+    ///                        end
+    ///                        if __iter_done_N break end
+    ///        return      =>  done=true + break (cascades out)
+    ///     break                              -- normal completion
+    /// end
+    /// ```
+    ///
+    /// After every iterator-owned loop that can set the flag, an
+    /// `if __iter_done_N break end` re-breaks, cascading the exit outward
+    /// without labeled breaks.
+    fn try_inline_iter_for(&mut self, f: &ForStmt, tp: &[SmolStr]) -> Option<HirStmt> {
+        let Expr::Call { callee, args, .. } = f.iterable.as_ref() else {
+            return None;
+        };
+        let Expr::QualifiedIdent(q) = callee.as_ref() else {
+            return None;
+        };
+        let decl = self.iter_fns.get(q.last().text.as_str())?.clone();
+        if self.iter_inline_stack.contains(&decl.name.text) {
+            self.sink.emit(
+                ori_diagnostics::Diagnostic::error(
+                    "type.iter_recursive_unsupported",
+                    format!(
+                        "iterator `{}` consumes itself; recursive iterators are not supported",
+                        decl.name.text
+                    ),
+                )
+                .with_label(ori_diagnostics::Label::primary(
+                    self.file_id,
+                    f.iterable.span(),
+                    "recursive use here",
+                )),
+            );
+            return Some(HirStmt::Break(f.span));
+        }
+        self.iter_inline_stack.push(decl.name.text.clone());
+        self.iter_inline_counter += 1;
+        let synth = build_iter_inline_construct(f, &decl, args, self.iter_inline_counter);
+        let lowered = self.lower_stmt(&synth, tp);
+        self.iter_inline_stack.pop();
+        lowered
+    }
+
     fn lower_stmt(&mut self, stmt: &Stmt, tp: &[SmolStr]) -> Option<HirStmt> {
         match stmt {
             Stmt::Const(c) => {
@@ -2851,6 +2938,11 @@ impl<'a> Lowerer<'a> {
                 });
                 Some(HirStmt::Return(val, r.span))
             }
+            // `suspend` only exists inside `iter` bodies, and those are lowered
+            // exclusively through the for-site inlining path, which rewrites
+            // each `suspend` itself. Reaching here means the checker let a
+            // stray `suspend` through; drop it rather than crash.
+            Stmt::Suspend(_) => None,
             Stmt::Break(sp) => Some(HirStmt::Break(*sp)),
             Stmt::Continue(sp) => Some(HirStmt::Continue(*sp)),
             Stmt::Expr(e) => Some(HirStmt::Expr(self.lower_expr(e, tp))),
@@ -2881,6 +2973,9 @@ impl<'a> Lowerer<'a> {
                 })
             }
             Stmt::For(f) => {
+                if let Some(inlined) = self.try_inline_iter_for(f, tp) {
+                    return Some(inlined);
+                }
                 let iterable = self.lower_expr(&f.iterable, tp);
                 let elem_ty = self.iterable_element_ty(&iterable.ty);
                 let second_ty = for_second_binding_ty(&iterable.ty);
@@ -4518,6 +4613,422 @@ fn collect_closure_free_names(closure: &ClosureExpr, params: &[SmolStr]) -> Vec<
     names
 }
 
+// ── iterator inlining (AST → AST) ────────────────────────────────────────────
+//
+// Pure syntax transform: `for x in counter(a)` becomes a one-shot `loop` whose
+// body is the iterator's body with every `suspend e` replaced by the user's
+// loop body. `try_inline_iter_for` documents the full shape.
+
+struct IterInlineCtx<'x> {
+    /// `__iter_done_N` — set when the user body breaks or the iterator returns.
+    done: &'x Name,
+    /// `__iter_idx_N` — present only when the `for` has a second binding.
+    idx: Option<&'x Name>,
+    binding: &'x Name,
+    second: Option<&'x Name>,
+    user_body: &'x Block,
+}
+
+fn build_iter_inline_construct(
+    f: &ForStmt,
+    decl: &ori_ast::item::FuncDecl,
+    args: &[Arg],
+    n: usize,
+) -> Stmt {
+    let sp = f.span;
+    let done = Name::new(&format!("__iter_done_{n}"), sp);
+    let idx = f
+        .second_binding
+        .as_ref()
+        .map(|_| Name::new(&format!("__iter_idx_{n}"), sp));
+
+    let mut body = bind_iter_params(decl, args, sp);
+    body.push(Stmt::Var(LocalVar {
+        name: done.clone(),
+        ty: None,
+        value: Box::new(Expr::BoolLit(false, sp)),
+        span: sp,
+    }));
+    if let Some(idx) = &idx {
+        body.push(Stmt::Var(LocalVar {
+            name: idx.clone(),
+            ty: None,
+            value: Box::new(Expr::IntLit {
+                raw: SmolStr::new("0"),
+                span: sp,
+            }),
+            span: sp,
+        }));
+    }
+    let ctx = IterInlineCtx {
+        done: &done,
+        idx: idx.as_ref(),
+        binding: &f.binding,
+        second: f.second_binding.as_ref(),
+        user_body: &f.body,
+    };
+    body.extend(transform_iter_block(&decl.body.stmts, &ctx));
+    body.push(Stmt::Break(sp));
+    Stmt::Loop(LoopStmt {
+        body: Block { stmts: body, span: sp },
+        span: sp,
+    })
+}
+
+/// One `const <param> = <arg>` per iterator parameter, honoring named args
+/// and declared defaults. The checker already validated arity and types.
+fn bind_iter_params(decl: &ori_ast::item::FuncDecl, args: &[Arg], sp: Span) -> Vec<Stmt> {
+    let mut positional = args.iter().filter(|a| a.label.is_none());
+    let mut out = Vec::new();
+    for p in &decl.params {
+        let named = args
+            .iter()
+            .find(|a| a.label.as_ref().is_some_and(|l| l.text == p.name.text));
+        let value = if let Some(a) = named.or_else(|| positional.next()) {
+            match &a.value {
+                ori_ast::expr::ArgValue::Expr(e) | ori_ast::expr::ArgValue::Spread(e) => {
+                    (**e).clone()
+                }
+            }
+        } else if let Some(d) = iter_param_default(p) {
+            (**d).clone()
+        } else {
+            continue; // checker reported the missing argument already
+        };
+        out.push(Stmt::Const(LocalConst {
+            name: p.name.clone(),
+            ty: Some(p.ty.clone()),
+            value: Box::new(value),
+            span: sp,
+        }));
+        // A real call enforces `stop: int if it > 0` at the call site; the
+        // inlined form has no call, so the contract becomes a `check`. The
+        // one-shot loop scopes the `it` binding the contract refers to.
+        if let Some(contract) = iter_param_contract(p) {
+            out.push(Stmt::Loop(LoopStmt {
+                body: Block {
+                    stmts: vec![
+                        Stmt::Const(LocalConst {
+                            name: Name::new("it", sp),
+                            ty: Some(p.ty.clone()),
+                            value: Box::new(Expr::Ident(p.name.clone())),
+                            span: sp,
+                        }),
+                        Stmt::Check(ori_ast::stmt::CheckStmt {
+                            condition: Box::new((**contract).clone()),
+                            message: Some(SmolStr::new(format!(
+                                "iterator parameter `{}` violates its contract",
+                                p.name.text
+                            ))),
+                            span: sp,
+                        }),
+                        Stmt::Break(sp),
+                    ],
+                    span: sp,
+                },
+                span: sp,
+            }));
+        }
+    }
+    out
+}
+
+fn iter_param_default(p: &ori_ast::item::Param) -> Option<&Box<Expr>> {
+    match &p.kind {
+        ori_ast::item::ParamKind::Default(e)
+        | ori_ast::item::ParamKind::DefaultAndContract(e, _) => Some(e),
+        _ => None,
+    }
+}
+
+fn iter_param_contract(p: &ori_ast::item::Param) -> Option<&Box<Expr>> {
+    match &p.kind {
+        ori_ast::item::ParamKind::Contract(e)
+        | ori_ast::item::ParamKind::DefaultAndContract(_, e) => Some(e),
+        _ => None,
+    }
+}
+
+fn transform_iter_block(stmts: &[Stmt], ctx: &IterInlineCtx) -> Vec<Stmt> {
+    let mut out = Vec::new();
+    for s in stmts {
+        out.extend(transform_iter_stmt(s, ctx));
+    }
+    out
+}
+
+fn transform_iter_stmt(s: &Stmt, ctx: &IterInlineCtx) -> Vec<Stmt> {
+    match s {
+        Stmt::Suspend(sus) => expand_suspend(&sus.value, sus.span, ctx),
+        // Bare `return` = end of sequence (the checker rejected `return v`).
+        // From any nesting depth: raise the flag and let the cascade exit.
+        Stmt::Return(r) => vec![set_iter_done(ctx.done, r.span), Stmt::Break(r.span)],
+        Stmt::For(inner) => {
+            let mut c = inner.clone();
+            c.body = transform_iter_block_wrap(&inner.body, ctx);
+            with_iter_cascade(Stmt::For(c), &inner.body, ctx, inner.span)
+        }
+        Stmt::While(inner) => {
+            let mut c = inner.clone();
+            c.body = transform_iter_block_wrap(&inner.body, ctx);
+            with_iter_cascade(Stmt::While(c), &inner.body, ctx, inner.span)
+        }
+        Stmt::WhileSome(inner) => {
+            let mut c = inner.clone();
+            c.body = transform_iter_block_wrap(&inner.body, ctx);
+            with_iter_cascade(Stmt::WhileSome(c), &inner.body, ctx, inner.span)
+        }
+        Stmt::Loop(inner) => {
+            let mut c = inner.clone();
+            c.body = transform_iter_block_wrap(&inner.body, ctx);
+            with_iter_cascade(Stmt::Loop(c), &inner.body, ctx, inner.span)
+        }
+        Stmt::Repeat(inner) => {
+            let mut c = inner.clone();
+            c.body = transform_iter_block_wrap(&inner.body, ctx);
+            with_iter_cascade(Stmt::Repeat(c), &inner.body, ctx, inner.span)
+        }
+        Stmt::If(i) => {
+            let mut c = i.clone();
+            c.then_block = transform_iter_block_wrap(&i.then_block, ctx);
+            c.else_ifs = i
+                .else_ifs
+                .iter()
+                .map(|(cond, b)| (cond.clone(), transform_iter_block_wrap(b, ctx)))
+                .collect();
+            c.else_block = i
+                .else_block
+                .as_ref()
+                .map(|b| transform_iter_block_wrap(b, ctx));
+            vec![Stmt::If(c)]
+        }
+        Stmt::IfSome(i) => {
+            let mut c = i.clone();
+            c.then_block = transform_iter_block_wrap(&i.then_block, ctx);
+            c.else_block = i
+                .else_block
+                .as_ref()
+                .map(|b| transform_iter_block_wrap(b, ctx));
+            vec![Stmt::IfSome(c)]
+        }
+        Stmt::Match(m) => {
+            let mut c = m.clone();
+            for case in &mut c.cases {
+                match case {
+                    MatchCase::Pattern { body, .. } | MatchCase::Else { body, .. } => {
+                        *body = transform_iter_block(body, ctx);
+                    }
+                }
+            }
+            vec![Stmt::Match(c)]
+        }
+        other => vec![other.clone()],
+    }
+}
+
+fn transform_iter_block_wrap(b: &Block, ctx: &IterInlineCtx) -> Block {
+    Block {
+        stmts: transform_iter_block(&b.stmts, ctx),
+        span: b.span,
+    }
+}
+
+/// After an iterator-owned loop whose body may raise the done flag, re-break
+/// so the exit cascades outward to the construct loop.
+fn with_iter_cascade(stmt: Stmt, body: &Block, ctx: &IterInlineCtx, sp: Span) -> Vec<Stmt> {
+    if block_raises_iter_flag(&body.stmts) {
+        vec![stmt, iter_done_break(ctx.done, sp)]
+    } else {
+        vec![stmt]
+    }
+}
+
+fn expand_suspend(value: &Expr, sp: Span, ctx: &IterInlineCtx) -> Vec<Stmt> {
+    let mut one_shot: Vec<Stmt> = vec![Stmt::Const(LocalConst {
+        name: ctx.binding.clone(),
+        ty: None,
+        value: Box::new(value.clone()),
+        span: sp,
+    })];
+    if let (Some(second), Some(idx)) = (ctx.second, ctx.idx) {
+        one_shot.push(Stmt::Const(LocalConst {
+            name: second.clone(),
+            ty: None,
+            value: Box::new(Expr::Ident(idx.clone())),
+            span: sp,
+        }));
+        one_shot.push(Stmt::Assign(AssignStmt {
+            lvalue: LValue::Ident(idx.clone()),
+            value: Box::new(Expr::Binary {
+                op: BinaryOp::Add,
+                lhs: Box::new(Expr::Ident(idx.clone())),
+                rhs: Box::new(Expr::IntLit {
+                    raw: SmolStr::new("1"),
+                    span: sp,
+                }),
+                span: sp,
+            }),
+            span: sp,
+        }));
+    }
+    one_shot.extend(rewrite_user_block(&ctx.user_body.stmts, 0, ctx.done));
+    one_shot.push(Stmt::Break(sp));
+    vec![
+        Stmt::Loop(LoopStmt {
+            body: Block {
+                stmts: one_shot,
+                span: sp,
+            },
+            span: sp,
+        }),
+        iter_done_break(ctx.done, sp),
+    ]
+}
+
+/// Rewrite the user's loop body for splicing inside the one-shot loop:
+/// `break` of the `for` → raise flag + break; `continue` → break (resume the
+/// iterator). Depth tracks the user's own loops, whose break/continue stay.
+fn rewrite_user_block(stmts: &[Stmt], depth: usize, done: &Name) -> Vec<Stmt> {
+    let mut out = Vec::new();
+    for s in stmts {
+        out.extend(rewrite_user_stmt(s, depth, done));
+    }
+    out
+}
+
+fn rewrite_user_block_wrap(b: &Block, depth: usize, done: &Name) -> Block {
+    Block {
+        stmts: rewrite_user_block(&b.stmts, depth, done),
+        span: b.span,
+    }
+}
+
+fn rewrite_user_stmt(s: &Stmt, depth: usize, done: &Name) -> Vec<Stmt> {
+    match s {
+        Stmt::Break(sp) if depth == 0 => vec![set_iter_done(done, *sp), Stmt::Break(*sp)],
+        Stmt::Continue(sp) if depth == 0 => vec![Stmt::Break(*sp)],
+        Stmt::If(i) => {
+            let mut c = i.clone();
+            c.then_block = rewrite_user_block_wrap(&i.then_block, depth, done);
+            c.else_ifs = i
+                .else_ifs
+                .iter()
+                .map(|(cond, b)| (cond.clone(), rewrite_user_block_wrap(b, depth, done)))
+                .collect();
+            c.else_block = i
+                .else_block
+                .as_ref()
+                .map(|b| rewrite_user_block_wrap(b, depth, done));
+            vec![Stmt::If(c)]
+        }
+        Stmt::IfSome(i) => {
+            let mut c = i.clone();
+            c.then_block = rewrite_user_block_wrap(&i.then_block, depth, done);
+            c.else_block = i
+                .else_block
+                .as_ref()
+                .map(|b| rewrite_user_block_wrap(b, depth, done));
+            vec![Stmt::IfSome(c)]
+        }
+        Stmt::Match(m) => {
+            let mut c = m.clone();
+            for case in &mut c.cases {
+                match case {
+                    MatchCase::Pattern { body, .. } | MatchCase::Else { body, .. } => {
+                        *body = rewrite_user_block(body, depth, done);
+                    }
+                }
+            }
+            vec![Stmt::Match(c)]
+        }
+        Stmt::For(x) => {
+            let mut c = x.clone();
+            c.body = rewrite_user_block_wrap(&x.body, depth + 1, done);
+            vec![Stmt::For(c)]
+        }
+        Stmt::While(x) => {
+            let mut c = x.clone();
+            c.body = rewrite_user_block_wrap(&x.body, depth + 1, done);
+            vec![Stmt::While(c)]
+        }
+        Stmt::WhileSome(x) => {
+            let mut c = x.clone();
+            c.body = rewrite_user_block_wrap(&x.body, depth + 1, done);
+            vec![Stmt::WhileSome(c)]
+        }
+        Stmt::Loop(x) => {
+            let mut c = x.clone();
+            c.body = rewrite_user_block_wrap(&x.body, depth + 1, done);
+            vec![Stmt::Loop(c)]
+        }
+        Stmt::Repeat(x) => {
+            let mut c = x.clone();
+            c.body = rewrite_user_block_wrap(&x.body, depth + 1, done);
+            vec![Stmt::Repeat(c)]
+        }
+        other => vec![other.clone()],
+    }
+}
+
+fn set_iter_done(done: &Name, sp: Span) -> Stmt {
+    Stmt::Assign(AssignStmt {
+        lvalue: LValue::Ident(done.clone()),
+        value: Box::new(Expr::BoolLit(true, sp)),
+        span: sp,
+    })
+}
+
+fn iter_done_break(done: &Name, sp: Span) -> Stmt {
+    Stmt::If(IfStmt {
+        condition: Box::new(Expr::Ident(done.clone())),
+        then_block: Block {
+            stmts: vec![Stmt::Break(sp)],
+            span: sp,
+        },
+        else_ifs: Vec::new(),
+        else_block: None,
+        span: sp,
+    })
+}
+
+/// Whether lowering this block can raise the done flag: it contains a
+/// `suspend` (user body may break) or an iterator-level `return`.
+fn block_raises_iter_flag(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_raises_iter_flag)
+}
+
+fn stmt_raises_iter_flag(s: &Stmt) -> bool {
+    match s {
+        Stmt::Suspend(_) | Stmt::Return(_) => true,
+        Stmt::For(x) => block_raises_iter_flag(&x.body.stmts),
+        Stmt::While(x) => block_raises_iter_flag(&x.body.stmts),
+        Stmt::WhileSome(x) => block_raises_iter_flag(&x.body.stmts),
+        Stmt::Loop(x) => block_raises_iter_flag(&x.body.stmts),
+        Stmt::Repeat(x) => block_raises_iter_flag(&x.body.stmts),
+        Stmt::If(i) => {
+            block_raises_iter_flag(&i.then_block.stmts)
+                || i.else_ifs
+                    .iter()
+                    .any(|(_, b)| block_raises_iter_flag(&b.stmts))
+                || i.else_block
+                    .as_ref()
+                    .is_some_and(|b| block_raises_iter_flag(&b.stmts))
+        }
+        Stmt::IfSome(i) => {
+            block_raises_iter_flag(&i.then_block.stmts)
+                || i.else_block
+                    .as_ref()
+                    .is_some_and(|b| block_raises_iter_flag(&b.stmts))
+        }
+        Stmt::Match(m) => m.cases.iter().any(|case| match case {
+            MatchCase::Pattern { body, .. } | MatchCase::Else { body, .. } => {
+                block_raises_iter_flag(body)
+            }
+        }),
+        _ => false,
+    }
+}
+
 fn push_free_name(name: &SmolStr, bound: &HashSet<SmolStr>, names: &mut Vec<SmolStr>) {
     if !bound.contains(name) && !names.contains(name) {
         names.push(name.clone());
@@ -4559,6 +5070,7 @@ fn collect_free_names_stmt(stmt: &Stmt, bound: &mut HashSet<SmolStr>, names: &mu
                 collect_free_names_expr(value, bound, names);
             }
         }
+        Stmt::Suspend(s) => collect_free_names_expr(&s.value, bound, names),
         Stmt::Expr(expr) => collect_free_names_expr(expr, bound, names),
         Stmt::If(if_stmt) => {
             collect_free_names_expr(&if_stmt.condition, bound, names);

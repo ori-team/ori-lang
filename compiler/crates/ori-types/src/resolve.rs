@@ -18,6 +18,9 @@ pub struct FuncSig {
     pub where_constraints: Vec<WhereConstraintSig>,
     pub return_ty: Ty,
     pub is_mut: bool,
+    /// `iter name(...) -> T`: `return_ty` is the element type and the function
+    /// may only be consumed by a `for` loop (inlined at the loop site).
+    pub is_iter: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -295,6 +298,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                     where_constraints,
                                     return_ty,
                                     is_mut: m.is_mut,
+                                    is_iter: m.is_iter,
                                 });
                             }
                         }
@@ -590,6 +594,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         where_constraints,
                                         return_ty,
                                         is_mut: sig.is_mut,
+                                        is_iter: sig.is_iter,
                                     });
                                 }
                             }
@@ -655,6 +660,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         where_constraints,
                                         return_ty,
                                         is_mut: func.is_mut,
+                                        is_iter: func.is_iter,
                                     });
                                 }
                             }
@@ -724,6 +730,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                             where_constraints,
                             return_ty,
                             is_mut: f.is_mut,
+                            is_iter: f.is_iter,
                         });
                     }
                 }
@@ -805,6 +812,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         where_constraints: Vec::new(),
                                         return_ty: resolved_return_ty,
                                         is_mut: false,
+                                        is_iter: false,
                                     });
                                 }
                             }
@@ -1166,6 +1174,7 @@ fn resolve_apply_method_func_sig(
             where_constraints,
             return_ty,
             is_mut: m.is_mut,
+            is_iter: m.is_iter,
         });
     }
 }

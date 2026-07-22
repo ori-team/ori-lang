@@ -87,6 +87,9 @@ pub struct Checker<'a> {
     current_func_def_id: Option<DefId>,
     current_func_is_generic: bool,
     current_async_depth: usize,
+    /// Element type of the enclosing `iter` function; `None` outside iterators.
+    /// `suspend e` checks `e` against this, and `return v` is rejected.
+    current_iter_elem_ty: Option<Ty>,
     loop_depth: usize,
     closure_scope_roots: Vec<usize>,
     transferable_closure_depth: usize,
@@ -153,6 +156,7 @@ impl<'a> Checker<'a> {
             current_func_def_id: None,
             current_func_is_generic: false,
             current_async_depth: 0,
+            current_iter_elem_ty: None,
             loop_depth: 0,
             closure_scope_roots: Vec::new(),
             transferable_closure_depth: 0,
@@ -175,6 +179,76 @@ impl<'a> Checker<'a> {
 
     fn func_sig(&self, def_id: DefId) -> Option<FuncSig> {
         self.func_sigs.iter().find(|s| s.def_id == def_id).cloned()
+    }
+
+    /// `for x in call(...)` where `call` names an `iter` function: check the
+    /// call's arguments here and hand back the element type. Returns `None`
+    /// when the head is not a direct call to an iterator, so the caller falls
+    /// through to ordinary iterable inference.
+    fn check_iter_call_in_for_head(&mut self, iterable: &Expr) -> Option<Ty> {
+        let Expr::Call { callee, args, .. } = iterable else {
+            return None;
+        };
+        let Expr::QualifiedIdent(q) = callee.as_ref() else {
+            return None;
+        };
+        let def_id = self.resolve_def_id(&q.to_string())?;
+        let sig = self.func_sig(def_id)?;
+        if !sig.is_iter {
+            return None;
+        }
+        self.check_visibility(def_id, q.span);
+        // Inlining needs the iterator's AST, which lowering only has for the
+        // current module.
+        let def_path = self.def_map.get(def_id).path.as_str();
+        let is_local = def_path
+            .strip_prefix(self.namespace)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .is_some_and(|rest| !rest.contains('.'));
+        if !is_local {
+            self.sink.emit(
+                Diagnostic::error(
+                    "type.iter_cross_module_unsupported",
+                    "iterators from another module are not supported yet",
+                )
+                .with_label(Label::primary(self.file_id, iterable.span(), "consumed here"))
+                .with_action("define the iterator in this module"),
+            );
+            return Some(Ty::Error);
+        }
+        if sig.params.iter().any(contains_generic_param)
+            || contains_generic_param(&sig.return_ty)
+        {
+            self.sink.emit(
+                Diagnostic::error(
+                    "type.iter_generic_unsupported",
+                    "generic iterators are not supported yet",
+                )
+                .with_label(Label::primary(self.file_id, iterable.span(), "called here"))
+                .with_action("give the iterator concrete parameter and element types"),
+            );
+            return Some(Ty::Error);
+        }
+        if sig.param_variadic.iter().any(|v| *v) {
+            self.sink.emit(
+                Diagnostic::error(
+                    "type.iter_variadic_unsupported",
+                    "variadic iterators are not supported yet",
+                )
+                .with_label(Label::primary(self.file_id, iterable.span(), "called here"))
+                .with_action("give the iterator a fixed parameter list"),
+            );
+            return Some(Ty::Error);
+        }
+        self.check_call_args_with_defaults(
+            args,
+            &sig.params,
+            &sig.param_names,
+            &sig.param_defaults,
+            &sig.param_variadic,
+            iterable.span(),
+        );
+        Some(sig.return_ty)
     }
 
     fn value_ty(&self, def_id: DefId) -> Option<Ty> {
@@ -868,6 +942,16 @@ impl<'a> Checker<'a> {
         let mut tp = outer_tp.to_vec();
         tp.extend(func.type_params.iter().map(|p| p.name.text.clone()));
         let has_implicit_self = implicit_self_ty.is_some();
+        if func.is_iter && (has_implicit_self || has_explicit_self_param(&func.params)) {
+            self.sink.emit(
+                Diagnostic::error(
+                    "type.iter_method_unsupported",
+                    "`iter` methods are not supported yet; only free functions can be iterators",
+                )
+                .with_label(Label::primary(self.file_id, func.name.span, "declared here"))
+                .with_action("move the iterator out of the `apply` block as a free function"),
+            );
+        }
         self.push_scope();
         if !has_explicit_self_param(&func.params) {
             if let Some(self_ty) = implicit_self_ty {
@@ -904,14 +988,38 @@ impl<'a> Checker<'a> {
                 self.pop_scope();
             }
         }
-        let expected_ret = func
+        let declared_ret = func
             .return_ty
             .as_ref()
             .map(|t| self.lower(t, &tp))
             .unwrap_or(Ty::Void);
         if let Some(return_ty) = &func.return_ty {
-            self.check_collection_runtime_limits(&expected_ret, return_ty.span());
+            self.check_collection_runtime_limits(&declared_ret, return_ty.span());
         }
+        // In an `iter` function the declared type is the *element* type: the
+        // body produces values with `suspend` and only ever `return`s bare.
+        let expected_ret = if func.is_iter {
+            if func.return_ty.is_none() {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "type.iter_missing_element_type",
+                        format!(
+                            "iterator `{}` must declare the type it produces",
+                            func.name.text
+                        ),
+                    )
+                    .with_label(Label::primary(self.file_id, func.name.span, "declared here"))
+                    .with_action("write `iter name(...) -> T` where `T` is the element type"),
+                );
+            }
+            Ty::Void
+        } else {
+            declared_ret.clone()
+        };
+        let prev_iter_elem_ty = std::mem::replace(
+            &mut self.current_iter_elem_ty,
+            func.is_iter.then(|| declared_ret.clone()),
+        );
         let prev_ret_ty = self.current_return_ty.take();
         let prev_func_def_id = self.current_func_def_id;
         let prev_func_is_generic = self.current_func_is_generic;
@@ -955,6 +1063,7 @@ impl<'a> Checker<'a> {
             );
         }
         self.current_return_ty = prev_ret_ty;
+        self.current_iter_elem_ty = prev_iter_elem_ty;
         self.current_func_def_id = prev_func_def_id;
         self.current_func_is_generic = prev_func_is_generic;
         self.current_where_constraints = prev_where_constraints;
@@ -1549,6 +1658,29 @@ impl<'a> Checker<'a> {
                 }
             }
             Stmt::Return(r) => {
+                // Inside `iter`, `return` may only end the sequence early;
+                // values leave through `suspend`.
+                if self.current_iter_elem_ty.is_some() {
+                    if let Some(value) = &r.value {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                "type.iter_return_value",
+                                "an iterator produces values with `suspend`, not `return`",
+                            )
+                            .with_label(Label::primary(
+                                self.file_id,
+                                value.span(),
+                                "value returned here",
+                            ))
+                            .with_why(
+                                "inside `iter`, `return` only ends the sequence early"
+                                    .to_string(),
+                            )
+                            .with_action("write `suspend value` to produce it, or bare `return` to stop"),
+                        );
+                    }
+                    return;
+                }
                 let ret_ty = r.value.as_ref().map_or(Ty::Void, |e| {
                     if expr_needs_expected_context(e) {
                         self.check_expr_assignable_to(e, expected_ret)
@@ -1576,6 +1708,54 @@ impl<'a> Checker<'a> {
                     );
                 }
             }
+            Stmt::Suspend(s) => match self.current_iter_elem_ty.clone() {
+                Some(elem_ty) => {
+                    let actual = if expr_needs_expected_context(&s.value) {
+                        self.check_expr_assignable_to(&s.value, &elem_ty)
+                    } else {
+                        self.infer_expr(&s.value)
+                    };
+                    if !self.unify(&actual, &elem_ty) {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                "type.suspend_mismatch",
+                                format!(
+                                    "`suspend` produces `{}` but the iterator declares `{}`",
+                                    actual.display_in(self.def_map),
+                                    elem_ty.display_in(self.def_map)
+                                ),
+                            )
+                            .with_label(Label::primary(
+                                self.file_id,
+                                s.value.span(),
+                                "produced here",
+                            ))
+                            .with_action(
+                                "adjust the value or the iterator's declared element type",
+                            ),
+                        );
+                    }
+                }
+                None => {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "type.suspend_outside_iter",
+                            "`suspend` is only valid inside an `iter` function",
+                        )
+                        .with_label(Label::primary(self.file_id, s.span, "used here"))
+                        .with_why(
+                            "`suspend` hands a value to the consuming `for` loop; \
+                             only `iter` functions have one"
+                                .to_string(),
+                        )
+                        .with_action(
+                            "declare the function as `iter name(...) -> T`, \
+                             or use `return` for a single value",
+                        ),
+                    );
+                    self.infer_expr(&s.value);
+                }
+            },
             Stmt::If(i) => {
                 let cond_ty = self.infer_expr(&i.condition);
                 self.expect_bool(&cond_ty, i.condition.span());
@@ -1597,14 +1777,24 @@ impl<'a> Checker<'a> {
                 self.loop_depth -= 1;
             }
             Stmt::For(f) => {
-                let iter_ty = self.infer_expr(&f.iterable);
-                let elem_ty = self
-                    .iterable_element_ty(&iter_ty, f.iterable.span())
-                    .unwrap_or(Ty::Error);
-                let second_ty = if elem_of(&iter_ty).is_none() && !elem_ty.is_error() {
-                    Ty::Int
+                // `for x in counter(n)` over an `iter` function: the call is
+                // consumed here (inlined at lowering), so it never goes through
+                // normal call inference — its "return type" is the element.
+                let (elem_ty, second_ty) = if let Some(elem) =
+                    self.check_iter_call_in_for_head(&f.iterable)
+                {
+                    (elem, Ty::Int)
                 } else {
-                    for_second_binding_ty(&iter_ty)
+                    let iter_ty = self.infer_expr(&f.iterable);
+                    let elem_ty = self
+                        .iterable_element_ty(&iter_ty, f.iterable.span())
+                        .unwrap_or(Ty::Error);
+                    let second_ty = if elem_of(&iter_ty).is_none() && !elem_ty.is_error() {
+                        Ty::Int
+                    } else {
+                        for_second_binding_ty(&iter_ty)
+                    };
+                    (elem_ty, second_ty)
                 };
                 self.push_scope();
                 self.bind_checked(&f.binding, elem_ty, false, false);
@@ -1886,6 +2076,9 @@ impl<'a> Checker<'a> {
             ClosureBody::Block(block) => {
                 let expected = declared_ret.clone().unwrap_or(Ty::Void);
                 let prev_ret = self.current_return_ty.take();
+                // A closure body is its own function: `suspend` from the
+                // enclosing iterator cannot cross it.
+                let prev_iter_elem = self.current_iter_elem_ty.take();
                 self.current_return_ty = Some(expected.clone());
                 self.check_block(block, &expected, &[]);
                 if expected != Ty::Void && !block_definitely_returns(block, &self.exhaustive_matches)
@@ -1907,6 +2100,7 @@ impl<'a> Checker<'a> {
                     );
                 }
                 self.current_return_ty = prev_ret;
+                self.current_iter_elem_ty = prev_iter_elem;
                 expected
             }
         };
@@ -2922,6 +3116,37 @@ impl<'a> Checker<'a> {
                         let def = self.def_map.get(def_id);
                         if def.kind == DefKind::Func || def.kind == DefKind::Extern {
                             if let Some(sig) = self.func_sig(def_id) {
+                                // An iterator has no callable value: it only
+                                // exists inlined inside a `for` head.
+                                if sig.is_iter {
+                                    self.sink.emit(
+                                        Diagnostic::error(
+                                            "type.iter_call_outside_for",
+                                            format!(
+                                                "iterator `{}` can only be consumed by a `for` loop",
+                                                path
+                                            ),
+                                        )
+                                        .with_label(Label::primary(
+                                            self.file_id,
+                                            expr.span(),
+                                            "called here",
+                                        ))
+                                        .with_why(
+                                            "`iter` functions produce a sequence of values, \
+                                             not a single result"
+                                                .to_string(),
+                                        )
+                                        .with_action(format!(
+                                            "write `for x in {}(...)` to consume it",
+                                            path
+                                        )),
+                                    );
+                                    for a in args {
+                                        self.infer_call_arg(a);
+                                    }
+                                    return Ty::Error;
+                                }
                                 let mut params = sig.params.clone();
                                 let mut ret = self
                                     .func_return_ty(def_id)

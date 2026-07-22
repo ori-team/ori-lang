@@ -103,6 +103,8 @@ when the compiler starts producing it.
 | `parse.unterminated_string` | error | String literal starts but is not closed |
 | `parse.unexpected_token` | error | Parser found a token that is not valid here |
 | `parse.variadic_not_last` | error | Variadic parameter is not the last parameter |
+| `parse.suspend_missing_value` | error | `suspend` has no value; write `suspend expr` |
+| `parse.async_iter_unsupported` | error | A function is declared both `async` and `iter`; iterators do not await |
 
 ### `type`
 
@@ -175,6 +177,16 @@ when the compiler starts producing it.
 | `type.unknown_arg_label` | error | Named argument does not match any parameter |
 | `type.unknown_enum_variant` | error | Enum variant does not exist |
 | `type.whilesome_not_optional` | error | `while some` was used on a non-optional value |
+| `type.suspend_outside_iter` | error | `suspend` was used outside an `iter` function |
+| `type.suspend_mismatch` | error | `suspend` value type does not match the iterator's declared element type |
+| `type.iter_missing_element_type` | error | An `iter` function does not declare the element type it produces |
+| `type.iter_return_value` | error | `return value` inside an `iter` function; values leave through `suspend`, bare `return` ends the sequence |
+| `type.iter_call_outside_for` | error | An iterator was called as an ordinary function; it can only be consumed by a `for` loop |
+| `type.iter_method_unsupported` | error | `iter` on a method; only free functions can be iterators for now |
+| `type.iter_cross_module_unsupported` | error | A `for` consumes an iterator defined in another module; inlining needs the local AST |
+| `type.iter_generic_unsupported` | error | A `for` consumes a generic iterator; not supported yet |
+| `type.iter_variadic_unsupported` | error | A `for` consumes a variadic iterator; not supported yet |
+| `type.iter_recursive_unsupported` | error | An iterator consumes itself (directly or mutually); inlining cannot terminate |
 
 ### `concurrency`
 

@@ -451,6 +451,7 @@ impl ProjectSemanticIndex {
             | Stmt::Assign(_)
             | Stmt::CompoundAssign(_)
             | Stmt::Return(_)
+            | Stmt::Suspend(_)
             | Stmt::Break(_)
             | Stmt::Continue(_)
             | Stmt::Check(_) => {}
@@ -535,6 +536,12 @@ fn ty_to_str(ty: &Ty, resolved: &ResolvedModule) -> String {
             )
         }
         Ty::List(inner) => format!("list[{}]", ty_to_str(inner, resolved)),
+        Ty::Slice(inner) => format!("slice[{}]", ty_to_str(inner, resolved)),
+        Ty::Array(inner, len) => format!(
+            "array[{}, size: {}]",
+            ty_to_str(inner, resolved),
+            ty_to_str(len, resolved)
+        ),
         Ty::Map(k, v) => format!(
             "map[{}, {}]",
             ty_to_str(k, resolved),

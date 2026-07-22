@@ -270,6 +270,26 @@ double(n: int) -> int => n * 2
 - One-argument poetic call on the same line is allowed for readability; nested
   poetic calls are rejected.
 
+Generators — `iter` + `suspend`:
+
+```ori
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i        -- hand one value to the loop, resume here next step
+        i = i + 1
+    end
+end
+
+for n in counter(4)
+    io.println(f"{n}")   -- 0, 1, 2, 3
+end
+```
+
+The body is inlined into the `for` — no allocation, no state machine. An
+iterator can only be consumed by a `for` loop (free functions, same module,
+no generics for now).
+
 ---
 
 ## 8. Generics

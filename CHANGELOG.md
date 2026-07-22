@@ -11,6 +11,24 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Adicionado
+- **Geradores: `iter` + `suspend` (inline, estilo Nim).** `iter counter(stop: int) -> int`
+  declara um gerador; `suspend v` entrega um valor ao `for` consumidor e retoma
+  no próximo passo. O corpo é **colado no laço** (transform AST→AST em
+  `ori-hir/lower.rs`): zero função, zero alocação, zero máquina de estados —
+  `break`/`continue`/`return` do corpo consumidor atravessam o inlining com a
+  semântica de um `for` comum (cascata via flag, sem labeled breaks). Bench:
+  cadeia `iter.map`+`iter.filter` ansiosa 330 ms vs gerador 24 ms (200k × 20).
+  `iter` e `suspend` são contextuais (`import ori.iter = iter` e variáveis
+  chamadas `suspend` seguem válidos). Limites B1 com diagnóstico dedicado:
+  só funções livres, mesmo módulo, sem genéricos/variádicos/recursão, não
+  `async`. Contratos de parâmetro (`stop: int if it > 0`) atravessam o
+  inlining via `check` sintetizado no ponto de bind. Specs 02/03/06/07/13 +
+  tour atualizados; 6 testes e2e novos.
+- **Driver: erro de lowering não grava mais binário.** `ori compile` e
+  `ori emit c` prosseguiam para codegen/link mesmo com diagnóstico emitido
+  no lowering (ex.: iterador recursivo), deixando um binário órfão com
+  exit code 1. Agora o gate `sink.has_errors()` é reavaliado após o
+  lowering, como o JIT e o `ori test` já faziam.
 - **Livro Ori (rascunho `0.3.x-book.2`).** Narrativa + processo + prática +
   consulta em português sob [`docs/book/`](docs/book/README.md) (22 capítulos,
   apêndices, template e mapa de exemplos). Índices

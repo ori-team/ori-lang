@@ -216,6 +216,26 @@ Em closures o tipo do parâmetro pode ser omitido quando uma anotação fornece 
 tipo da função: `const double: func(int) -> int = (x) => x * 2`. Sem contexto,
 escreva o tipo: `(x: int) => x + 1`.
 
+Geradores — `iter` + `suspend`:
+
+```ori
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i        -- entrega um valor ao laço e retoma daqui no próximo passo
+        i = i + 1
+    end
+end
+
+for n in counter(4)
+    io.println(f"{n}")   -- 0, 1, 2, 3
+end
+```
+
+O corpo é colado dentro do `for` — sem alocação, sem máquina de estados. Um
+iterador só pode ser consumido por um `for` (funções livres, mesmo módulo,
+sem genéricos por enquanto).
+
 ---
 
 ## 8. Genéricos

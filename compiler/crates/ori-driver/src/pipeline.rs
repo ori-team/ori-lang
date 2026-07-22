@@ -371,35 +371,39 @@ pub fn run_compile_with_options(
 
     if !sink.has_errors() {
         let mut hir = lower_loaded_sources(&loaded, &resolved, &mut sink);
-        // LANG-PERF-2: HIR mid-end before native lower (ORI_OPT=none|default|aggressive).
-        ori_hir::optimize_module(&mut hir, ori_hir::OptLevel::from_env());
-        let obj_path = output.with_extension("o");
-        let mut runtime_link = find_native_runtime_link()?;
-        let target = native_target_triple();
-        for lib in import_context.native_libs {
-            let lib_name = native_lib_static_name(&target, &lib.name);
-            let lib_path = lib.package_root.join("lib").join(&target).join(lib_name);
-            runtime_link
-                .native_static_libs
-                .push(lib_path.to_string_lossy().to_string());
-        }
+        // Lowering can also reject the program (e.g. recursive iterators);
+        // never write an object or a binary once anything failed.
+        if !sink.has_errors() {
+            // LANG-PERF-2: HIR mid-end before native lower (ORI_OPT=none|default|aggressive).
+            ori_hir::optimize_module(&mut hir, ori_hir::OptLevel::from_env());
+            let obj_path = output.with_extension("o");
+            let mut runtime_link = find_native_runtime_link()?;
+            let target = native_target_triple();
+            for lib in import_context.native_libs {
+                let lib_name = native_lib_static_name(&target, &lib.name);
+                let lib_path = lib.package_root.join("lib").join(&target).join(lib_name);
+                runtime_link
+                    .native_static_libs
+                    .push(lib_path.to_string_lossy().to_string());
+            }
 
-        ori_codegen::emit_native_with_options(
-            &hir,
-            &obj_path,
-            ori_codegen::NativeEmitOptions { lib: options.lib },
-        )?;
-        let extra = runtime_link.link_args_for(options.lib);
-        ori_codegen::link_with_options(
-            &obj_path,
-            output,
-            &extra,
-            ori_codegen::NativeLinkOptions {
-                raw_diagnostics: options.native_raw,
-                shared: options.lib,
-            },
-        )?;
-        let _ = std::fs::remove_file(&obj_path);
+            ori_codegen::emit_native_with_options(
+                &hir,
+                &obj_path,
+                ori_codegen::NativeEmitOptions { lib: options.lib },
+            )?;
+            let extra = runtime_link.link_args_for(options.lib);
+            ori_codegen::link_with_options(
+                &obj_path,
+                output,
+                &extra,
+                ori_codegen::NativeLinkOptions {
+                    raw_diagnostics: options.native_raw,
+                    shared: options.lib,
+                },
+            )?;
+            let _ = std::fs::remove_file(&obj_path);
+        }
     }
 
     let has_errors = sink.has_errors();
@@ -1554,24 +1558,29 @@ pub fn run_emit_c(path: &Path) -> Result<BuildOutput, String> {
 
     let c_source = if !sink.has_errors() {
         let mut hir = lower_loaded_sources(&loaded, &resolved, &mut sink);
-        ori_hir::optimize_module(&mut hir, ori_hir::OptLevel::from_env());
-        match ori_codegen::emit_c(&hir) {
-            Ok(source) => source,
-            Err(error) => {
-                sink.emit(
-                    Diagnostic::error(
-                        "backend.c_unsupported",
-                        "the C debug backend cannot generate this program correctly",
-                    )
-                    .with_why(
-                        "the C backend is a secondary debug/transpile route with partial feature parity",
-                    )
-                    .with_action(
-                        "use `ori compile` for the native backend, or remove the unsupported feature before generating C",
-                    )
-                    .with_note(error),
-                );
-                String::new()
+        if sink.has_errors() {
+            // Lowering itself rejected the program; emit no C at all.
+            String::new()
+        } else {
+            ori_hir::optimize_module(&mut hir, ori_hir::OptLevel::from_env());
+            match ori_codegen::emit_c(&hir) {
+                Ok(source) => source,
+                Err(error) => {
+                    sink.emit(
+                        Diagnostic::error(
+                            "backend.c_unsupported",
+                            "the C debug backend cannot generate this program correctly",
+                        )
+                        .with_why(
+                            "the C backend is a secondary debug/transpile route with partial feature parity",
+                        )
+                        .with_action(
+                            "use `ori compile` for the native backend, or remove the unsupported feature before generating C",
+                        )
+                        .with_note(error),
+                    );
+                    String::new()
+                }
             }
         }
     } else {

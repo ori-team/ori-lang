@@ -127,6 +127,7 @@ fn declaration_line_without_modifiers(mut line: &str) -> &str {
         let next = line
             .strip_prefix("public ")
             .or_else(|| line.strip_prefix("async "))
+            .or_else(|| line.strip_prefix("iter "))
             .or_else(|| line.strip_prefix("mut "));
         let Some(next) = next else {
             return line;
