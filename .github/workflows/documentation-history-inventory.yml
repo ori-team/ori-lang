@@ -29,12 +29,13 @@ jobs:
       - name: Commit inventory when changed
         shell: bash
         run: |
-          if [[ -z "$(git status --porcelain .ai/generated/documentation-history-inventory.json)" ]]; then
+          if [[ -z "$(git status --porcelain .ai/generated/documentation-history-inventory.*)" ]]; then
             echo "Inventory already current."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f .ai/generated/documentation-history-inventory.json
+          git add -f .ai/generated/documentation-history-inventory.tsv
           git commit -m "docs: inventory historical documentation"
           git push origin HEAD:agent/documentation-framework-refactor
