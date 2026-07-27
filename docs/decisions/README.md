@@ -2,6 +2,15 @@
 
 This directory is the canonical home for durable Architecture Decision Records (ADRs).
 
+## Decision index
+
+| ID | Title | Status | Date | Supersedes |
+|---|---|---|---|---|
+| [ADR-0001](adr/0001-s3-language-surface.md) | Adopt the S3 language surface | accepted | 2026-07-12 | — |
+| [ADR-0002](adr/0002-arc-single-cascade-owner.md) | Registered ARC edges are the single cascade owner | accepted | 2026-07-17 | — |
+| [ADR-0003](adr/0003-defer-copy-on-write-collections.md) | Defer copy-on-write collection semantics | accepted | 2026-07-18 | — |
+| [ADR-0004](adr/0004-repository-and-project-layout.md) | Keep the Cargo workspace under `compiler/` and use root-first Ori projects | accepted | 2026-07-13 | — |
+
 ## What belongs in an ADR
 
 Use an ADR when a decision:
@@ -19,15 +28,23 @@ Do not use an ADR for ordinary implementation steps, task tracking, meeting note
 
 ```text
 docs/decisions/
-  README.md
-  TEMPLATE.md
-  adr/
-    0001-short-title.md
+├── README.md
+├── TEMPLATE.md
+└── adr/
+    ├── 0001-s3-language-surface.md
+    ├── 0002-arc-single-cascade-owner.md
+    ├── 0003-defer-copy-on-write-collections.md
+    └── 0004-repository-and-project-layout.md
 ```
 
-Existing ADR-like files under `docs/planning/` should be migrated without rewriting their historical rationale. Add front matter, assign a number, update links, and mark the old path as moved or archive it.
+Existing accepted decisions still located under `docs/planning/` should be migrated by:
 
-Initial migration candidates include the accepted S3 surface decision and ARC ownership decisions.
+1. preserving the actual historical context and rationale;
+2. adding normalized metadata;
+3. assigning the next ADR number;
+4. connecting current architecture/specification;
+5. replacing the former path with a compatibility pointer;
+6. updating inbound links and this index.
 
 ## Status values
 
@@ -39,16 +56,24 @@ Initial migration candidates include the accepted S3 surface decision and ARC ow
 
 A superseded ADR remains in the repository and links to its replacement.
 
+A decision to defer or reject a design may still use `accepted` when the accepted decision is explicitly “do not adopt under the current conditions.” The title and consequences must make that clear.
+
 ## Required content
 
 - context;
-- decision;
+- decision drivers;
 - alternatives considered;
+- decision;
 - consequences;
+- invariants established;
 - affected contracts and code;
 - validation/evidence;
+- compatibility/migration;
 - status and date;
+- reconsideration criteria;
 - superseding/superseded relationships.
+
+Use [`TEMPLATE.md`](TEMPLATE.md).
 
 ## ADR versus architecture
 
@@ -58,14 +83,12 @@ When implementation evolves without changing the decision, update architecture o
 
 ## ADR versus RFC
 
-An RFC evaluates a significant public proposal. An ADR records a durable system decision. A language RFC may result in ADRs for parser, runtime, or ABI design.
+An RFC evaluates a significant public proposal. An ADR records a durable system decision. A language RFC may result in ADRs for parser, runtime, ABI, or repository design.
+
+## ADR versus plan
+
+An ADR establishes a durable choice. An ExecPlan sequences implementation. Completing a plan does not make the plan an ADR.
 
 ## Index policy
 
-Every ADR should be listed here after migration:
-
-| ID | Title | Status | Date | Supersedes |
-|---|---|---|---|---|
-| — | Migration pending for existing accepted decisions | — | — | — |
-
-The index must be updated in the same PR that adds or changes an ADR status.
+The index must be updated in the same PR that adds, supersedes, rejects, or deprecates an ADR.
