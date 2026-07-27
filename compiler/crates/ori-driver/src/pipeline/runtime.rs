@@ -570,6 +570,7 @@ pub(super) fn native_static_libs_for_target(target: &str) -> &'static [&'static 
     if target.contains("windows-msvc") {
         &[
             "legacy_stdio_definitions.lib",
+            "bcrypt.lib",
             "kernel32.lib",
             "ntdll.lib",
             "userenv.lib",

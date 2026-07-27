@@ -5117,7 +5117,10 @@ impl<M: Module> NativeBackend<M> {
             let sig = self.make_closure_wrapper_sig(f);
             let id = self
                 .module
-                .declare_function(&native_func_wrapper_symbol(&f.name), Linkage::Local, &sig)
+                // Split native modules call wrappers across object files. The
+                // wrapper therefore needs external linkage even when the
+                // underlying Ori function is private to its module.
+                .declare_function(&native_func_wrapper_symbol(&f.name), Linkage::Export, &sig)
                 .map_err(|e| format!("declare closure wrapper '{}': {e}", f.name))?;
             self.func_wrapper_ids.insert(f.name.clone(), id);
         }

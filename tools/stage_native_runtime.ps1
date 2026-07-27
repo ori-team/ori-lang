@@ -112,6 +112,7 @@ function Get-FallbackNativeStaticLibs([string]$TargetTriple) {
     if ($TargetTriple -like "*windows-msvc*") {
         return @(
             "legacy_stdio_definitions.lib",
+            "bcrypt.lib",
             "kernel32.lib",
             "ntdll.lib",
             "userenv.lib",

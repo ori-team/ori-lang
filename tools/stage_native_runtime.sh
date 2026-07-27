@@ -134,7 +134,7 @@ fallback_native_static_libs() {
     case "$1" in
         *linux*) printf '%s\n' "-lpthread -ldl -lm -no-pie" ;;
         *apple-darwin*) printf '%s\n' "System" ;;
-        *windows-msvc*) printf '%s\n' "legacy_stdio_definitions.lib kernel32.lib ntdll.lib userenv.lib ws2_32.lib dbghelp.lib /defaultlib:msvcrt" ;;
+        *windows-msvc*) printf '%s\n' "legacy_stdio_definitions.lib bcrypt.lib kernel32.lib ntdll.lib userenv.lib ws2_32.lib dbghelp.lib /defaultlib:msvcrt" ;;
         *) printf '\n' ;;
     esac
 }

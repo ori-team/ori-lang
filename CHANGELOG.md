@@ -18,6 +18,10 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   allocators. The Linux-only stack-overflow guard is now isolated behind its
   platform boundary, so Windows and macOS builds keep their native crash
   behavior without compiling unavailable `libc` signal APIs.
+- **Windows split-module linking.** Generated function-pointer wrappers now
+  use external object linkage, and the MSVC runtime fallback includes
+  `bcrypt.lib` for Rust's system randomness dependency. Versioned runtime
+  metadata no longer contains a machine-specific raylib path.
 - **Driver modularization.** Native runtime discovery, ABI metadata validation,
   platform artifact naming, and linker argument construction now live in a
   dedicated driver pipeline module. The compile, run, test, and doctor routes
