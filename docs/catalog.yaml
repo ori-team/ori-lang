@@ -38,6 +38,13 @@ canonical_documents:
     audience: [user, contributor, maintainer, agent]
     owns: [documentation-map, canonical-source-routing, change-impact-routing]
 
+  - id: product.index
+    path: docs/product/README.md
+    domain: product
+    status: current
+    audience: [user, contributor, maintainer]
+    owns: [product-documentation-routing]
+
   - id: product.status
     path: docs/product/status.md
     domain: product
@@ -61,6 +68,13 @@ canonical_documents:
     status: current
     audience: [designer, contributor, maintainer]
     owns: [accessibility-principles, cognitive-load-policy]
+
+  - id: architecture.index
+    path: docs/architecture/README.md
+    domain: architecture
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [architecture-documentation-routing]
 
   - id: architecture.overview
     path: docs/architecture/overview.md
@@ -117,6 +131,24 @@ canonical_documents:
       - compiler/crates/ori-types/src/stdlib.rs
       - stdlib
 
+  - id: architecture.repository-layout
+    path: docs/architecture/repository-and-project-layout.md
+    domain: architecture
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [repository-layout, user-project-layout, generated-content-policy]
+    related_code:
+      - compiler/Cargo.toml
+      - compiler/crates/ori-driver
+      - tools
+
+  - id: implementation.index
+    path: docs/implementation/README.md
+    domain: implementation
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [implementation-documentation-routing]
+
   - id: implementation.standards
     path: docs/implementation/standards.md
     domain: implementation
@@ -130,6 +162,20 @@ canonical_documents:
     status: current
     audience: [contributor, maintainer, agent]
     owns: [vertical-feature-checklist, evidence-requirements]
+
+  - id: implementation.adding-syntax
+    path: docs/implementation/compiler/adding-syntax.md
+    domain: implementation
+    status: current
+    audience: [compiler-contributor, language-designer, agent]
+    owns: [syntax-change-path, cross-toolchain-syntax-checklist]
+
+  - id: quality.index
+    path: docs/quality/README.md
+    domain: quality
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [quality-documentation-routing]
 
   - id: quality.test-strategy
     path: docs/quality/test-strategy.md
@@ -165,6 +211,13 @@ canonical_documents:
     audience: [contributor, maintainer]
     owns: [benchmark-method, regression-thresholds, performance-evidence]
 
+  - id: security.index
+    path: docs/security/README.md
+    domain: security
+    status: current
+    audience: [security-reviewer, contributor, maintainer]
+    owns: [security-documentation-routing]
+
   - id: security.threat-model
     path: docs/security/threat-model.md
     domain: security
@@ -178,6 +231,13 @@ canonical_documents:
     status: current
     audience: [runtime-contributor, backend-contributor, reviewer]
     owns: [unsafe-rules, ffi-preconditions, safety-comments]
+
+  - id: governance.index
+    path: docs/governance/README.md
+    domain: governance
+    status: current
+    audience: [maintainer, contributor]
+    owns: [governance-documentation-routing]
 
   - id: governance.language-evolution
     path: docs/governance/language-evolution.md
@@ -207,6 +267,13 @@ canonical_documents:
     audience: [contributor, maintainer, agent]
     owns: [planning-policy, execplan-policy, archive-rules]
 
+  - id: operations.index
+    path: docs/operations/README.md
+    domain: operations
+    status: current
+    audience: [contributor, maintainer]
+    owns: [operations-documentation-routing]
+
   - id: operations.development
     path: docs/operations/development.md
     domain: operations
@@ -220,6 +287,13 @@ canonical_documents:
     status: current
     audience: [maintainer, release-manager]
     owns: [release-process, artifact-validation, provenance]
+
+  - id: archive.index
+    path: docs/archive/README.md
+    domain: archive
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [archive-policy, historical-migration-routing]
 
 normative_roots:
   - path: docs/spec
@@ -240,6 +314,6 @@ validation_expectations:
   catalog_entry_required_for_canonical_docs: true
   active_docs_must_not_depend_on_archive: true
   public_version: 0.3.8
-  forbidden_active_identity_terms:
+  forbidden_identity_terms:
     - zenith
     - zenithlang
