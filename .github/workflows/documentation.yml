@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -30,34 +30,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Validate Python tools
         run: python -m py_compile tools/docs/check_docs.py
 
       - name: Validate documentation
         run: python tools/docs/check_docs.py
-
-      - name: Inventory repository branches
-        if: github.event_name == 'pull_request' && github.head_ref == 'agent/documentation-framework-refactor'
-        shell: bash
-        run: |
-          mkdir -p .ai/generated
-          git ls-remote --heads origin \
-            | awk '{sha=$1; sub("refs/heads/", "", $2); print $2 "\t" sha}' \
-            | sort > .ai/generated/branch-inventory.tsv
-
-      - name: Commit branch inventory
-        if: github.event_name == 'pull_request' && github.head_ref == 'agent/documentation-framework-refactor'
-        shell: bash
-        run: |
-          if [[ -z "$(git status --porcelain .ai/generated/branch-inventory.tsv)" ]]; then
-            echo "Branch inventory already current."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f .ai/generated/branch-inventory.tsv
-          git commit -m "chore: inventory repository branches"
-          git push origin HEAD:agent/documentation-framework-refactor
