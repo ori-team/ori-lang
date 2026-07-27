@@ -39,15 +39,18 @@ docs/
 ├── language/                user-facing language learning
 ├── guides/                  task-oriented user guides
 ├── book/                    long-form Portuguese book
-└── archive/                 historical evidence, not current instruction
+└── archive/                 categorized historical evidence
 ```
 
-The existing `docs/planning/` tree is being migrated. During migration:
+The historical documentation migration is complete:
 
-- `docs/planning/BACKLOG.md` remains the open-work list;
-- accepted decisions should move to `docs/decisions/adr/`;
-- completed plans and investigations should move to `docs/archive/`;
-- planning documents never override the normative specification.
+- `docs/planning/BACKLOG.md` is the canonical open-work list;
+- accepted decisions live in `docs/decisions/adr/`;
+- completed plans and investigations live in categorized directories under `docs/archive/`;
+- the former `docs/planning/historico/` root has been removed;
+- the complete move map is in [`archive/MIGRATION_REPORT.md`](archive/MIGRATION_REPORT.md).
+
+Planning documents never override the normative specification.
 
 ## Canonical-source rules
 
