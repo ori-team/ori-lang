@@ -113,12 +113,25 @@ function Get-FallbackNativeStaticLibs([string]$TargetTriple) {
         return @(
             "legacy_stdio_definitions.lib",
             "bcrypt.lib",
+            "advapi32.lib",
             "kernel32.lib",
             "ntdll.lib",
             "userenv.lib",
             "ws2_32.lib",
             "dbghelp.lib",
             "/defaultlib:msvcrt"
+        )
+    }
+
+    if ($TargetTriple -like "*windows-gnu*") {
+        return @(
+            "-lbcrypt",
+            "-ladvapi32",
+            "-lkernel32",
+            "-lntdll",
+            "-luserenv",
+            "-lws2_32",
+            "-ldbghelp"
         )
     }
 

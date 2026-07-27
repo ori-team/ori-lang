@@ -8,6 +8,7 @@
     "native_static_libs":  [
                                "legacy_stdio_definitions.lib",
                                "bcrypt.lib",
+                               "advapi32.lib",
                                "kernel32.lib",
                                "ntdll.lib",
                                "userenv.lib",

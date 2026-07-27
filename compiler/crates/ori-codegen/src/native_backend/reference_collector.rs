@@ -278,22 +278,6 @@ pub(super) fn collect_function_references(function: &HirFunc) -> FunctionReferen
     references
 }
 
-pub(super) fn collect_module_wrapper_names(module: &HirModule) -> HashSet<SmolStr> {
-    let mut wrapper_names = HashSet::new();
-
-    for function in &module.funcs {
-        wrapper_names.extend(collect_function_references(function).wrappers);
-    }
-
-    for constant in &module.consts {
-        let mut references = FunctionReferences::default();
-        references.collect_expr(&constant.value);
-        wrapper_names.extend(references.wrappers);
-    }
-
-    wrapper_names
-}
-
 fn is_runtime_scalar_type(ty: &Ty) -> bool {
     matches!(
         ty,

@@ -571,12 +571,23 @@ pub(super) fn native_static_libs_for_target(target: &str) -> &'static [&'static 
         &[
             "legacy_stdio_definitions.lib",
             "bcrypt.lib",
+            "advapi32.lib",
             "kernel32.lib",
             "ntdll.lib",
             "userenv.lib",
             "ws2_32.lib",
             "dbghelp.lib",
             "/defaultlib:msvcrt",
+        ]
+    } else if target.contains("windows-gnu") {
+        &[
+            "-lbcrypt",
+            "-ladvapi32",
+            "-lkernel32",
+            "-lntdll",
+            "-luserenv",
+            "-lws2_32",
+            "-ldbghelp",
         ]
     } else if target.contains("linux") {
         &["-lpthread", "-ldl", "-lm", "-no-pie"]

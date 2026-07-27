@@ -20,7 +20,7 @@ mod string_collector;
 use string_collector::collect_all_strings;
 
 mod reference_collector;
-use reference_collector::{collect_function_references, collect_module_wrapper_names};
+use reference_collector::collect_function_references;
 
 pub mod jit;
 
@@ -5109,11 +5109,14 @@ impl<M: Module> NativeBackend<M> {
                 self.func_ids.insert(step_name, id);
             }
         }
-        let required_wrapper_names = collect_module_wrapper_names(hir);
         for f in &hir.funcs {
-            if is_synthetic_closure_func(f) || !required_wrapper_names.contains(&f.name) {
+            if is_synthetic_closure_func(f) {
                 continue;
             }
+            // A split module can pass any public function to a callback in a
+            // different object, so local reference collection cannot know all
+            // wrappers needed at this boundary. Emit every concrete wrapper so
+            // a cross-module function value always has a definition to link.
             let sig = self.make_closure_wrapper_sig(f);
             let id = self
                 .module
