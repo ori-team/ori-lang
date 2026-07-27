@@ -1,10 +1,10 @@
 # Ori implementation backlog
 
-> Canonical open-work list during planning-directory migration  
+> Canonical open-work list  
 > Current project version: **0.3.8**  
 > Last consolidated: **2026-07-27**
 
-This file contains only work that remains open, in progress, or deliberately deferred. Completed implementation history moved to the changelog, ADRs, architecture, tests, and [`../archive/plans/backlog-snapshot-2026-07-26.md`](../archive/plans/backlog-snapshot-2026-07-26.md).
+This file contains only work that remains open, in progress, or deliberately deferred. Completed implementation history belongs in the changelog, ADRs, architecture, tests, and [`../archive/`](../archive/README.md).
 
 Planning policy: [`../plans/README.md`](../plans/README.md).
 
