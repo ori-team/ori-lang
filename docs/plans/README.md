@@ -11,11 +11,22 @@ docs/plans/
     <feature-or-refactor>-exec-plan.md
 ```
 
-During migration, `docs/planning/BACKLOG.md` remains the current open-work list. The target is to keep one concise backlog and move completed detail into the archive.
+[`../planning/BACKLOG.md`](../planning/BACKLOG.md) is the canonical open-work list. Completed detail belongs in the archive, changelog, architecture, decisions, or tests—not in the active backlog.
+
+## Active plans
+
+There are currently no active ExecPlans.
+
+The completed documentation-history migration is preserved at:
+
+- [`../archive/plans/documentation-history-migration.md`](../archive/plans/documentation-history-migration.md)
+- [`../archive/MIGRATION_REPORT.md`](../archive/MIGRATION_REPORT.md)
+
+Add a plan here only when complex accepted work actually begins.
 
 ## Backlog policy
 
-The backlog contains only work that remains open.
+The backlog contains only work that remains open or deliberately deferred.
 
 Each item should include:
 
@@ -84,7 +95,7 @@ The former `docs/planning/historico/` tree was migrated into `docs/archive/` by 
 - session/resume notes → `archive/sessions/`;
 - obsolete product identity and experiments → `archive/legacy/`.
 
-Moving a file must update inbound links. Do not duplicate the full file in both locations.
+The migration moved 51 documents, archived its ExecPlan, rewrote relative links, generated category indexes, and removed the transitional historical root. See the [migration report](../archive/MIGRATION_REPORT.md).
 
 ## Relationship to issues and PRs
 
