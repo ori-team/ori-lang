@@ -522,6 +522,7 @@
       "suggested_category": "investigations",
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/plano-arc-nim-2026-07-16.md",
         "docs/planning/prompt-analisar-nim-para-ori.md"
@@ -536,6 +537,7 @@
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/freeze-and-abi-gates.md",
         "docs/planning/historico/design-close-backlog-linux-2026-07-13.md"
@@ -568,6 +570,7 @@
       "suggested_category": "investigations",
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/web-templates-discussion-roadmap.md"
       ]
     },
@@ -580,6 +583,7 @@
       "suggested_category": "investigations",
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/guides/performance.md",
         "docs/guides/performance.pt-BR.md",
@@ -665,7 +669,9 @@
       "sha256": "0472098cc44fa954647a2408d52cc618b76892b0df0cd71e402fbf84584bf50c",
       "suggested_category": "investigations",
       "classification_reason": "investigation/experiment terminology",
-      "inbound_references": []
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json"
+      ]
     },
     {
       "path": "docs/planning/stdlib-merge-policy.md",
@@ -676,6 +682,7 @@
       "suggested_category": "investigations",
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "compiler/crates/ori-lsp/src/handlers/completion.rs",
         "docs/planning/historico/design-close-backlog-linux-2026-07-13.md",
