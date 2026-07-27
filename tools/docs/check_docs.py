@@ -19,6 +19,7 @@ RETIRED_REPOSITORY = RETIRED_NAME + "lang"
 REQUIRED_FILES = [
     "README.md",
     "README.pt-BR.md",
+    "README.ja.md",
     "PROJECT_START.md",
     "AGENTS.md",
     "CONTRIBUTING.md",
@@ -32,14 +33,17 @@ REQUIRED_FILES = [
 CURRENT_VERSION_DOCS = [
     "README.md",
     "README.pt-BR.md",
+    "README.ja.md",
     "PROJECT_START.md",
     "AGENTS.md",
     "docs/README.md",
     "docs/README.pt-BR.md",
     "docs/product/status.md",
     "docs/product/versioning.md",
+    "docs/product/support-matrix.md",
     "docs/spec/README.md",
     "docs/spec/01-overview.md",
+    "docs/spec/15-stdlib-maintenance.md",
     "docs/spec/18-stability-and-compatibility.md",
 ]
 
