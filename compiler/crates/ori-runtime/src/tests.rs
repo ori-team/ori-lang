@@ -756,6 +756,33 @@ fn runtime_created_collection_snapshots_keep_managed_elements_alive() {
 }
 
 #[test]
+fn map_set_owns_managed_key_and_value_without_manual_registration() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    arc_state().lock().unwrap().allocations.clear();
+    arc_state().lock().unwrap().edges.clear();
+
+    unsafe {
+        let map = ori_map_new();
+        let key = cstring_from_str("status");
+        let value = cstring_from_str("0");
+        ori_map_set_string(map, key, value as i64);
+
+        // The map must retain both temporaries after their producer releases
+        // its references. This is the same ownership pattern used by process
+        // capture results and exposes allocator-dependent use-after-free bugs.
+        ori_arc_release(key);
+        ori_arc_release(value);
+
+        let lookup = cstring_from_str("status");
+        let stored = ori_map_get_string(map, lookup);
+        assert_eq!(cstr_str(stored as *mut u8), "0");
+        ori_arc_release(lookup);
+        ori_arc_release(map as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
 fn list_reserve_and_with_capacity_grow_once() {
     unsafe {
         let list = ori_list_with_capacity(1000);

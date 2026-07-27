@@ -5108,6 +5108,10 @@ unsafe fn ori_map_set_raw(map: *mut OriMap, key: i64, value: i64, key_kind: u8) 
     *(*map).keys.add(dense_idx) = key;
     *(*map).values.add(dense_idx) = value;
     (*map).len += 1;
+    // The map owns managed keys and values. Register both edges before any
+    // caller releases its temporary references (for example, process capture
+    // fields are freshly allocated strings).
+    ori_map_register_borrowed_key_value_maybe_managed(map, key, value);
     let slot = ht_find_insert_slot_map(map, key);
     *(*map).ht.add(slot) = dense_idx as i64;
     (*map).version += 1;

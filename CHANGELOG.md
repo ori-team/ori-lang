@@ -12,6 +12,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Cross-platform runtime ownership.** String-keyed maps now retain newly
+  inserted managed keys and values before producers release their temporaries,
+  fixing process-capture fields that could disappear on macOS and other
+  allocators. The Linux-only stack-overflow guard is now isolated behind its
+  platform boundary, so Windows and macOS builds keep their native crash
+  behavior without compiling unavailable `libc` signal APIs.
 - **Driver modularization.** Native runtime discovery, ABI metadata validation,
   platform artifact naming, and linker argument construction now live in a
   dedicated driver pipeline module. The compile, run, test, and doctor routes

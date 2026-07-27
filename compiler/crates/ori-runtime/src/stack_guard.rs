@@ -14,17 +14,23 @@
 //! Everything inside the handler is async-signal-safe: a direct `write(2)` and
 //! `_exit(2)`, no allocation and no formatting.
 
+#[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Low address of the current thread stack, and the guard size below it.
+#[cfg(target_os = "linux")]
 static STACK_LOW: AtomicUsize = AtomicUsize::new(0);
+#[cfg(target_os = "linux")]
 static GUARD_SIZE: AtomicUsize = AtomicUsize::new(0);
+#[cfg(target_os = "linux")]
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(target_os = "linux")]
 const MESSAGE: &[u8] = b"ori: stack overflow -- a function recursed until the stack ran out.\nori: check for recursion without a base case, or move large local data to the heap.\n";
 
 /// Exit code for a stack overflow. Mirrors the shell convention for a fatal
 /// signal (128 + SIGSEGV) so scripts that inspect `$?` keep working.
+#[cfg(target_os = "linux")]
 const STACK_OVERFLOW_EXIT: i32 = 128 + libc::SIGSEGV;
 
 #[cfg(target_os = "linux")]
@@ -57,6 +63,7 @@ unsafe fn current_stack_bounds() -> Option<(usize, usize)> {
     None
 }
 
+#[cfg(target_os = "linux")]
 fn page_size() -> usize {
     let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     if size > 0 {
@@ -67,6 +74,7 @@ fn page_size() -> usize {
 }
 
 /// True when `addr` sits in the guard region immediately below the stack.
+#[cfg(target_os = "linux")]
 fn is_stack_overflow(addr: usize) -> bool {
     let low = STACK_LOW.load(Ordering::Relaxed);
     let guard = GUARD_SIZE.load(Ordering::Relaxed);
@@ -81,6 +89,7 @@ fn is_stack_overflow(addr: usize) -> bool {
     addr >= bottom && addr < top
 }
 
+#[cfg(target_os = "linux")]
 unsafe extern "C" fn handler(
     signal: libc::c_int,
     info: *mut libc::siginfo_t,
@@ -115,6 +124,7 @@ unsafe extern "C" fn handler(
 ///
 /// Idempotent and best-effort: if any step fails the program keeps its previous
 /// behaviour (a plain crash) rather than refusing to start.
+#[cfg(target_os = "linux")]
 pub(super) unsafe fn install() {
     if INSTALLED.swap(true, Ordering::SeqCst) {
         return;
@@ -154,6 +164,12 @@ pub(super) unsafe fn install() {
     libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
     libc::sigaction(libc::SIGBUS, &action, std::ptr::null_mut());
 }
+
+/// Stack guards are currently implemented for Linux only. Other platforms
+/// keep the runtime entry point available, but retain their native crash
+/// behaviour until an equivalent alternate-stack API is implemented.
+#[cfg(not(target_os = "linux"))]
+pub(super) unsafe fn install() {}
 
 /// C entry point so generated `main` can install the guard explicitly.
 #[no_mangle]
