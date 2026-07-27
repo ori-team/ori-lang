@@ -1,66 +1,107 @@
-# Specs
+# Ori language specification
 
-> Audience: maintainer, contributor  
-> Status: **current (2026-07-20)** — swept against the compiler at `0.3.x` HEAD  
-> Surface: **S3** (`0.3.0`) + local inference **`0.3.1` / option B** + pipe `|>`  
-> Post-FREEZE-1 additions: `newtype`, match expressions, or-patterns, `if ok` /
-> `if err`, destructuring bindings, associated type aliases, const generics with
-> named arguments  
-> Milestones closed: **M2** stdlib · **M3** ABI · **M1** Rust-free install path  
-> QA: skill **`ori-lang-qa`** · stages `tools/qa/` · matrix [`../planning/qa/test-matrix-ori.md`](../planning/qa/test-matrix-ori.md)
+> Status: **normative for the implemented 0.3.8 language and native runtime contracts**  
+> Language surface: **S3**  
+> Native ABI: **`ori-native-abi-1`**  
+> Audience: language designers, compiler/runtime implementers, tooling contributors
 
-This directory contains **normative** implementation-facing specifications for
-Ori. Chapters 01–19 are **English only** (single source of truth).
-[`00-manifesto.md`](00-manifesto.md) is the one deliberate exception: it states
-identity and purpose for a Brazilian project and stays in Portuguese.
+This directory defines behavior accepted by the current Ori implementation. It must not contain aspirational features presented as current behavior.
 
-User tutorials live under [../guides/](../guides/) and
-[../language/](../language/) (EN + PT).
+## Normative role
 
-Product docs index: [../README.md](../README.md).
+The specification owns:
 
-### Living product facts (keep in sync)
+- source syntax and semantics;
+- modules, visibility, and declarations;
+- types, expressions, statements, traits, and generics;
+- errors, memory, and standard-library contracts;
+- backend support boundaries;
+- runtime FFI safety;
+- project and documentation formats;
+- stability and compatibility;
+- native ABI layouts and symbols.
 
-| Fact | Value |
-|------|--------|
-| Canonical surface | S3: `module`, `public`, `import path = alias`, `list[T]`, `end` blocks, `apply`/`use` |
-| Identifiers | **snake_case** functions/modules; **PascalCase** types (not camelCase product default) |
-| Visibility | **`public`** (not `pub`) |
-| Memory | ARC + cooperative cycle collection |
-| Execution | AOT native primary; `ori run` may JIT when cdylib staged |
-| Freeze | FREEZE-1 on **0.3.x** — additive/fix only without freeze exit |
-| ABI | `ori-native-abi-1` — [`19-abi.md`](19-abi.md) |
-| Residuals | [`14-backend-support.md`](14-backend-support.md) · [`../planning/historico/lang-res-closure.md`](../planning/historico/lang-res-closure.md) |
+Architecture explains how these contracts are implemented. RFCs describe proposals. Planning documents sequence accepted work.
 
-Use:
+## Chapters
 
-- [`00-manifesto.md`](00-manifesto.md) for identity and purpose (**study**,
-  **AI-assisted programming**, **ND readability**). **Ori is not market
-  competition.**
-- `01-overview.md` through `13-error-catalog.md` for the language contract
-  under the **S3** surface (plus inference B and pipe as living features).
-  **There is no chapter 03** — a standalone EBNF grammar was planned and never
-  written; chapters 02 and 04–08 define the grammar between them.
-- `04-types.md` / `05-expressions.md` / `06-statements.md` for local inference
-  rules and the pipe operator.
-- `13-error-catalog.md` for **emitted** diagnostics, including pre-S3 form
-  rejections (`parse.*_removed`, `parse.poetic_call_nested`, …) and **message quality**.
-- `14-backend-support.md` for the feature × backend matrix.
-- `15-stdlib-maintenance.md` for the stdlib update flow.
-- `16-runtime-ffi-safety.md` for runtime FFI safety contracts.
-- `17-project-and-docs.md` for `ori.proj` and `.oridoc`.
-- `18-stability-and-compatibility.md` for pre-1.0 stability rules.
-- `19-abi.md` for the **native ABI contract** (`ori-native-abi-1`, M3): layouts,
-  ARC header, mangling, link versioning.
+| Chapter | Subject |
+|---|---|
+| [`00-manifesto.md`](00-manifesto.md) | Identity and purpose |
+| [`01-overview.md`](01-overview.md) | Language overview and core model |
+| `02-*` | Modules, declarations, and grammar foundations |
+| [`04-types.md`](04-types.md) | Type system and representations visible to the language |
+| [`05-expressions.md`](05-expressions.md) | Expressions and evaluation |
+| [`06-statements.md`](06-statements.md) | Statements and control flow |
+| [`07-functions.md`](07-functions.md) | Functions and callable behavior |
+| [`08-traits.md`](08-traits.md) | Traits, applications, and dispatch |
+| [`09-errors.md`](09-errors.md) | Error, optional, result, and propagation model |
+| [`10-memory.md`](10-memory.md) | ARC, cycle collection, cleanup, and destruction |
+| [`11-generics.md`](11-generics.md) | Generics, constraints, and const arguments |
+| [`12-stdlib.md`](12-stdlib.md) | Public standard-library contract |
+| [`13-error-catalog.md`](13-error-catalog.md) | Emitted diagnostic-code catalog |
+| [`14-backend-support.md`](14-backend-support.md) | Feature support by native, JIT, and C/debug routes |
+| [`15-stdlib-maintenance.md`](15-stdlib-maintenance.md) | Normative maintenance and parity requirements |
+| [`16-runtime-ffi-safety.md`](16-runtime-ffi-safety.md) | Runtime FFI safety contract |
+| [`17-project-and-docs.md`](17-project-and-docs.md) | Project, package-adjacent, and documentation formats |
+| [`18-stability-and-compatibility.md`](18-stability-and-compatibility.md) | Public versus experimental contracts |
+| [`19-abi.md`](19-abi.md) | Native ABI `ori-native-abi-1` |
 
-Surface S3 product decisions and ADR:
+There is no standalone Chapter 03. Grammar is currently distributed across the syntax chapters. A future consolidated grammar must be generated or validated against those chapters rather than becoming a competing source.
 
-- [`docs/planning/ori-surface-s3-auk9.md`](../planning/ori-surface-s3-auk9.md)
-- [`docs/planning/adr-ori-surface-s3-auk9.md`](../planning/adr-ori-surface-s3-auk9.md)
-- [`docs/planning/pr-plan-ori-surface-s3.md`](../planning/historico/pr-plan-ori-surface-s3.md)
+## Current product facts
 
-Breaking list: repository root [`CHANGELOG.md`](../../CHANGELOG.md) section
-`[0.3.0]`. Migration helper: `ori migrate-syntax`.
+| Fact | Current contract |
+|---|---|
+| Project/compiler version | `0.3.8` |
+| Surface | S3 |
+| Function/module naming | `snake_case` |
+| Type naming | `PascalCase` |
+| Visibility | `public` |
+| Absence | `optional[T]` |
+| Recoverable failure | `result[T, E]` |
+| Propagation | `try expression` |
+| Traits | `apply Type` + `use Trait` |
+| Memory | ARC plus cooperative cycle collection |
+| Semantic reference | Cranelift native backend |
+| Run route | JIT when compatible runtime cdylib is available; AOT otherwise/when selected |
+| Native ABI | `ori-native-abi-1` |
 
-Do not place public tutorials here. User-facing tutorials may live under
-`docs/guides/`. Implementation docs stay in `docs/spec/` and `docs/planning/`.
+Historical introduction versions belong in the changelog or an explicit “introduced in” note. They must not replace `0.3.8` as the current version.
+
+## Specification writing rules
+
+1. Describe implemented behavior today.
+2. Use current S3 syntax in active examples.
+3. Separate normative requirements from explanatory notes.
+4. Name invalid and unsupported behavior explicitly.
+5. Link diagnostic codes to Chapter 13.
+6. Link backend limitations to Chapter 14.
+7. Link memory and FFI requirements to Chapters 10, 16, and 19.
+8. Include compatibility and migration consequences for changed contracts.
+9. Add conformance evidence for significant normative rules.
+10. Keep the specification English-only as the single normative language source.
+
+## Change requirements
+
+A normative behavior change must update, as applicable:
+
+- specification chapter;
+- conformance mapping and tests;
+- diagnostic catalog;
+- formatter and LSP behavior;
+- AOT/JIT and C/debug support classification;
+- runtime/ABI contract;
+- user examples and maintained translations;
+- compatibility/versioning policy;
+- changelog;
+- accepted RFC/ADR and implementation plan.
+
+## Related navigation
+
+- Documentation ATLAS: [`../ATLAS.md`](../ATLAS.md)
+- Product status: [`../product/status.md`](../product/status.md)
+- Compiler architecture: [`../architecture/compiler-pipeline.md`](../architecture/compiler-pipeline.md)
+- Implementation standards: [`../implementation/standards.md`](../implementation/standards.md)
+- Conformance: [`../quality/language-conformance.md`](../quality/language-conformance.md)
+- Language evolution: [`../governance/language-evolution.md`](../governance/language-evolution.md)
