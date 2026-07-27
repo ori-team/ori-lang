@@ -1,52 +1,52 @@
 path	category	title	lines	inbound_references
-docs/archive/analise-profunda-implementacao-linguagem.md	investigations	Analise profunda da implementacao da linguagem Ori	764	5
-docs/archive/auditoria-profunda-implementacao-2026-05-17.md	audits	Auditoria Profunda da Implementação da Linguagem Ori	528	2
-docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md	audits	Auditoria profunda da implementacao da linguagem Ori	619	2
-docs/archive/plano-correcao-implementacao-linguagem.md	audits	Plano de correcao da implementacao da linguagem Ori	1075	5
-docs/archive/relatorio-fechamento-correcao-implementacao-linguagem.md	audits	Relatorio de fechamento - correcao da implementacao da linguagem	50	2
-docs/archive/relatorio-fechamento-nova-rodada.md	audits	Relatorio de fechamento da nova rodada	111	2
-docs/planning/IMPLEMENTADOS.md	plans	Recursos Implementados e Resolvidos — Ori Language	197	3
-docs/planning/PLANO-CDYLIB-EMBED.md	plans	Plano: `ori compile --lib` — shared library embarcável (cdylib)	117	4
-docs/planning/eco-game-imgui-raylib3d-plan.md	plans	Plano ECO — pacotes de jogo Ori (stack code-first)	651	1
-docs/planning/freeze-and-abi-gates.md	legacy	Freeze and ABI gates (FREEZE-1 / ABI-1)	137	5
-docs/planning/historico/PLANO-MATURIDADE-COMPLETO.md	legacy	Maturity plan — archived	19	6
-docs/planning/historico/bugcheck-native-ori-ide-2026-07-18.md	sessions	Verificação dos 4 bugs reportados pelo native-ori-ide (Ori 0.3.5)	78	3
-docs/planning/historico/c-backend-redefinition.md	investigations	Redefinicao do C Backend	110	3
-docs/planning/historico/design-close-backlog-linux-2026-07-13.md	audits	Design: Close remaining backlog (Linux-only product path)	125	2
-docs/planning/historico/ideias-programas-avancados.md	investigations	Ideias de Programas Avançados para Validar a Linguagem Ori	54	1
-docs/planning/historico/io-streams-design.md	plans	I/O streams design	56	2
-docs/planning/historico/issue-ffi-dispatch-large-binary-2026-07-16.md	plans	Issue LANG-PERF-3 — custo de chamada FFI explode em binário grande	155	3
-docs/planning/historico/lang-mem-9-runtime-wrappers-2026-07-18.md	sessions	LANG-MEM-9 — wrappers result/optional do runtime nativo sob ARC	66	1
-docs/planning/historico/lang-res-closure.md	audits	LANG-RES closure (native residuals)	56	5
-docs/planning/historico/net-v2-design.md	plans	Rede v2 — TLS, servidor TCP, UDP e I/O blocking	73	4
-docs/planning/historico/nim-study-2026-07-16-c0.md	sessions	Nota Nim → Ori	222	3
-docs/planning/historico/nim-study-2026-07-17-c1.md	sessions	Nota Nim → Ori — C1: paridade de destrutores e cascata	163	2
-docs/planning/historico/nim-study-2026-07-17-c2.md	sessions	Nota Nim → Ori — C2: completude de edges e contabilidade de temporários	131	2
-docs/planning/historico/nim-study-2026-07-17-c3.md	sessions	Nota Nim → Ori — C3: collector incremental (suspeitos + threshold adaptativo)	95	2
-docs/planning/historico/nim-study-2026-07-17-c4-c7.md	sessions	Nota Nim → Ori — C7 (`ORI_DUMP_ARC`) + C4 início (elisão de RC)	75	2
-docs/planning/historico/perf-runtime-midend-plan.md	investigations	Plan: runtime / mid-end performance (LANG-PERF-2)	429	4
-docs/planning/historico/plano-correcao-bugs-2026-05-17.md	audits	Plano de Correção — Bugs Remanescentes da Implementação Ori	273	1
-docs/planning/historico/plano-implementacao-lsp-avancado.md	investigations	Plano de Implementação Avançada do Ori LSP	613	3
-docs/planning/historico/porting-raylib-sqlite-cimgui.md	investigations	Plano Estratégico: Port de Bibliotecas Nativas (Raylib, SQLite, cimgui)	86	1
-docs/planning/historico/pr-plan-ori-surface-s3.md	investigations	PR Plan — Ori Surface S3 (Auk9-inspired)	271	4
-docs/planning/historico/registry-v2.md	plans	Ori Package Registry (v2 backlog)	95	4
-docs/planning/historico/result-ctors-ok-err.md	plans	M2.result-ctors — `success`/`error` → `ok`/`err`	95	1
-docs/planning/historico/rust-independence.md	plans	Estratégia de Independência do Rust — Ori Language	140	1
-docs/planning/historico/security-performance-testing.md	investigations	Testes de seguranca e performance	133	3
-docs/planning/historico/sessao-nim-arc-2026-07-16.md	sessions	Sessão 2026-07-16 — estudo Nim→Ori (C0) + plano ARC + LANG-PERF-3	75	1
-docs/planning/historico/stdlib-gap-parity.md	audits	Stdlib Gap Parity — Referência `std.*` vs Ori `ori.*`	170	2
-docs/planning/language-direction-decisions-2026-06-30.md	investigations	Decisoes de Direcao da Linguagem	326	4
-docs/planning/manifest-schema.md	plans	Manifest schema freeze (PKG-4)	88	4
-docs/planning/ori-surface-s3-auk9.md	sessions	Ori Surface S3 — sintaxe Auk9-inspired	638	7
-docs/planning/package-ecosystem-guidelines.md	investigations	Ori Package Ecosystem Guidelines	46	2
-docs/planning/perf-baseline-2026-07-13.md	investigations	Performance baseline (LANG-PERF)	302	5
-docs/planning/plano-arc-nim-2026-07-16.md	sessions	Plano ARC/ORC — implementação e correção a partir do estudo Nim	323	3
-docs/planning/prompt-analisar-nim-para-ori.md	sessions	Prompt: analisar Nim para evoluir a Ori	445	3
-docs/planning/qa/residual-cleanup-2026-07-13.md	audits	Residual cleanup snapshot — 2026-07-13	46	2
-docs/planning/registry-v1.md	investigations	Ori package registry (v1 — PKG-3)	90	6
-docs/planning/roadmap-maturidade-v0.4-v0.5.md	audits	Visão de Maturidade e Evolução (v0.4.x / v0.5.x)	147	2
-docs/planning/roadtov1.md	investigations	Roadmap de Execução Detalhado para a v1.0 (Ori Language)	92	1
-docs/planning/stdlib-merge-policy.md	investigations	Política de mesclagem da stdlib (M2 + STDLIB-1)	138	6
-docs/planning/uso-real-pequeno-medio.md	audits	Plano de uso real — projetos pequenos e médios	375	3
-docs/planning/web-framework-learning-course.md	sessions	Curso: construir um framework web e um site (HTML-first) com Ori	392	2
-docs/planning/web-templates-discussion-roadmap.md	sessions	Roadmap de discussão — ori-templates / ori-web / HTML-first	1935	3
+docs/archive/analise-profunda-implementacao-linguagem.md	investigations	Analise profunda da implementacao da linguagem Ori	764	7
+docs/archive/auditoria-profunda-implementacao-2026-05-17.md	audits	Auditoria Profunda da Implementação da Linguagem Ori	528	4
+docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md	audits	Auditoria profunda da implementacao da linguagem Ori	619	4
+docs/archive/plano-correcao-implementacao-linguagem.md	audits	Plano de correcao da implementacao da linguagem Ori	1075	7
+docs/archive/relatorio-fechamento-correcao-implementacao-linguagem.md	audits	Relatorio de fechamento - correcao da implementacao da linguagem	50	4
+docs/archive/relatorio-fechamento-nova-rodada.md	audits	Relatorio de fechamento da nova rodada	111	4
+docs/planning/IMPLEMENTADOS.md	plans	Recursos Implementados e Resolvidos — Ori Language	197	5
+docs/planning/PLANO-CDYLIB-EMBED.md	plans	Plano: `ori compile --lib` — shared library embarcável (cdylib)	117	6
+docs/planning/eco-game-imgui-raylib3d-plan.md	plans	Plano ECO — pacotes de jogo Ori (stack code-first)	651	3
+docs/planning/freeze-and-abi-gates.md	legacy	Freeze and ABI gates (FREEZE-1 / ABI-1)	137	7
+docs/planning/historico/PLANO-MATURIDADE-COMPLETO.md	legacy	Maturity plan — archived	19	8
+docs/planning/historico/bugcheck-native-ori-ide-2026-07-18.md	sessions	Verificação dos 4 bugs reportados pelo native-ori-ide (Ori 0.3.5)	78	5
+docs/planning/historico/c-backend-redefinition.md	investigations	Redefinicao do C Backend	110	5
+docs/planning/historico/design-close-backlog-linux-2026-07-13.md	audits	Design: Close remaining backlog (Linux-only product path)	125	4
+docs/planning/historico/ideias-programas-avancados.md	investigations	Ideias de Programas Avançados para Validar a Linguagem Ori	54	3
+docs/planning/historico/io-streams-design.md	plans	I/O streams design	56	4
+docs/planning/historico/issue-ffi-dispatch-large-binary-2026-07-16.md	plans	Issue LANG-PERF-3 — custo de chamada FFI explode em binário grande	155	5
+docs/planning/historico/lang-mem-9-runtime-wrappers-2026-07-18.md	sessions	LANG-MEM-9 — wrappers result/optional do runtime nativo sob ARC	66	3
+docs/planning/historico/lang-res-closure.md	audits	LANG-RES closure (native residuals)	56	7
+docs/planning/historico/net-v2-design.md	plans	Rede v2 — TLS, servidor TCP, UDP e I/O blocking	73	6
+docs/planning/historico/nim-study-2026-07-16-c0.md	sessions	Nota Nim → Ori	222	5
+docs/planning/historico/nim-study-2026-07-17-c1.md	sessions	Nota Nim → Ori — C1: paridade de destrutores e cascata	163	4
+docs/planning/historico/nim-study-2026-07-17-c2.md	sessions	Nota Nim → Ori — C2: completude de edges e contabilidade de temporários	131	4
+docs/planning/historico/nim-study-2026-07-17-c3.md	sessions	Nota Nim → Ori — C3: collector incremental (suspeitos + threshold adaptativo)	95	4
+docs/planning/historico/nim-study-2026-07-17-c4-c7.md	sessions	Nota Nim → Ori — C7 (`ORI_DUMP_ARC`) + C4 início (elisão de RC)	75	4
+docs/planning/historico/perf-runtime-midend-plan.md	investigations	Plan: runtime / mid-end performance (LANG-PERF-2)	429	6
+docs/planning/historico/plano-correcao-bugs-2026-05-17.md	audits	Plano de Correção — Bugs Remanescentes da Implementação Ori	273	3
+docs/planning/historico/plano-implementacao-lsp-avancado.md	investigations	Plano de Implementação Avançada do Ori LSP	613	5
+docs/planning/historico/porting-raylib-sqlite-cimgui.md	investigations	Plano Estratégico: Port de Bibliotecas Nativas (Raylib, SQLite, cimgui)	86	3
+docs/planning/historico/pr-plan-ori-surface-s3.md	investigations	PR Plan — Ori Surface S3 (Auk9-inspired)	271	6
+docs/planning/historico/registry-v2.md	plans	Ori Package Registry (v2 backlog)	95	6
+docs/planning/historico/result-ctors-ok-err.md	plans	M2.result-ctors — `success`/`error` → `ok`/`err`	95	3
+docs/planning/historico/rust-independence.md	plans	Estratégia de Independência do Rust — Ori Language	140	3
+docs/planning/historico/security-performance-testing.md	investigations	Testes de seguranca e performance	133	5
+docs/planning/historico/sessao-nim-arc-2026-07-16.md	sessions	Sessão 2026-07-16 — estudo Nim→Ori (C0) + plano ARC + LANG-PERF-3	75	3
+docs/planning/historico/stdlib-gap-parity.md	audits	Stdlib Gap Parity — Referência `std.*` vs Ori `ori.*`	170	4
+docs/planning/language-direction-decisions-2026-06-30.md	investigations	Decisoes de Direcao da Linguagem	326	6
+docs/planning/manifest-schema.md	plans	Manifest schema freeze (PKG-4)	88	6
+docs/planning/ori-surface-s3-auk9.md	sessions	Ori Surface S3 — sintaxe Auk9-inspired	638	9
+docs/planning/package-ecosystem-guidelines.md	investigations	Ori Package Ecosystem Guidelines	46	4
+docs/planning/perf-baseline-2026-07-13.md	investigations	Performance baseline (LANG-PERF)	302	7
+docs/planning/plano-arc-nim-2026-07-16.md	sessions	Plano ARC/ORC — implementação e correção a partir do estudo Nim	323	5
+docs/planning/prompt-analisar-nim-para-ori.md	sessions	Prompt: analisar Nim para evoluir a Ori	445	5
+docs/planning/qa/residual-cleanup-2026-07-13.md	audits	Residual cleanup snapshot — 2026-07-13	46	4
+docs/planning/registry-v1.md	investigations	Ori package registry (v1 — PKG-3)	90	8
+docs/planning/roadmap-maturidade-v0.4-v0.5.md	audits	Visão de Maturidade e Evolução (v0.4.x / v0.5.x)	147	4
+docs/planning/roadtov1.md	investigations	Roadmap de Execução Detalhado para a v1.0 (Ori Language)	92	3
+docs/planning/stdlib-merge-policy.md	investigations	Política de mesclagem da stdlib (M2 + STDLIB-1)	138	8
+docs/planning/uso-real-pequeno-medio.md	audits	Plano de uso real — projetos pequenos e médios	375	5
+docs/planning/web-framework-learning-course.md	sessions	Curso: construir um framework web e um site (HTML-first) com Ori	392	4
+docs/planning/web-templates-discussion-roadmap.md	sessions	Roadmap de discussão — ori-templates / ori-web / HTML-first	1935	5

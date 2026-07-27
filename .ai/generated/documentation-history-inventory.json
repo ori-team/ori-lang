@@ -30,10 +30,12 @@
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md",
         "docs/archive/plano-correcao-implementacao-linguagem.md",
         "docs/archive/relatorio-fechamento-nova-rodada.md",
-        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -46,7 +48,9 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -59,7 +63,9 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -72,10 +78,12 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md",
         "docs/archive/relatorio-fechamento-nova-rodada.md",
-        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -88,7 +96,9 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -101,7 +111,9 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -114,8 +126,10 @@
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
-        "docs/archive/plans/maturity-plan-2026-06.md"
+        "docs/archive/plans/maturity-plan-2026-06.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -128,9 +142,11 @@
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "examples/embed/README.md",
-        "examples/embed/godot/README.md"
+        "examples/embed/godot/README.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -142,7 +158,9 @@
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
-        ".ai/generated/documentation-history-inventory.json"
+        ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -155,10 +173,12 @@
       "classification_reason": "legacy/superseded terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/planning/historico/design-close-backlog-linux-2026-07-13.md",
         "docs/planning/roadmap-maturidade-v0.4-v0.5.md",
-        "docs/spec/19-abi.md"
+        "docs/spec/19-abi.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -171,11 +191,13 @@
       "classification_reason": "legacy/superseded terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/planning/IMPLEMENTADOS.md",
         "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
         "docs/planning/historico/plano-implementacao-lsp-avancado.md",
-        "docs/planning/uso-real-pequeno-medio.md"
+        "docs/planning/uso-real-pequeno-medio.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -188,8 +210,10 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
-        "docs/planning/historico/lang-mem-9-runtime-wrappers-2026-07-18.md"
+        "docs/planning/historico/lang-mem-9-runtime-wrappers-2026-07-18.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -202,8 +226,10 @@
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
-        "docs/planning/uso-real-pequeno-medio.md"
+        "docs/planning/uso-real-pequeno-medio.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -216,7 +242,9 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "CHANGELOG.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "CHANGELOG.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -228,7 +256,9 @@
       "suggested_category": "investigations",
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
-        ".ai/generated/documentation-history-inventory.json"
+        ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -241,7 +271,9 @@
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/planning/uso-real-pequeno-medio.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/planning/uso-real-pequeno-medio.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -254,8 +286,10 @@
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
-        "docs/planning/historico/sessao-nim-arc-2026-07-16.md"
+        "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -267,7 +301,9 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
-        ".ai/generated/documentation-history-inventory.json"
+        ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -280,9 +316,11 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/planning/qa/residual-cleanup-2026-07-13.md",
         "docs/spec/14-backend-support.md",
+        "tools/docs/apply_history_migration.py",
         "tools/qa/residual_audit.sh"
       ]
     },
@@ -296,9 +334,11 @@
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "docs/planning/historico/io-streams-design.md",
         "docs/planning/historico/stdlib-gap-parity.md",
-        "docs/planning/uso-real-pequeno-medio.md"
+        "docs/planning/uso-real-pequeno-medio.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -311,8 +351,10 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
-        "docs/planning/plano-arc-nim-2026-07-16.md"
+        "docs/planning/plano-arc-nim-2026-07-16.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -325,7 +367,9 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "compiler/crates/ori-driver/tests/memory_arc.rs"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "compiler/crates/ori-driver/tests/memory_arc.rs",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -338,7 +382,9 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "CHANGELOG.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "CHANGELOG.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -351,7 +397,9 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "CHANGELOG.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "CHANGELOG.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -364,7 +412,9 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/planning/roadmap-maturidade-v0.4-v0.5.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/planning/roadmap-maturidade-v0.4-v0.5.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -377,9 +427,11 @@
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/guides/performance.md",
-        "docs/guides/performance.pt-BR.md"
+        "docs/guides/performance.pt-BR.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -391,7 +443,9 @@
       "suggested_category": "audits",
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
-        ".ai/generated/documentation-history-inventory.json"
+        ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -404,8 +458,10 @@
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
-        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -417,7 +473,9 @@
       "suggested_category": "investigations",
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
-        ".ai/generated/documentation-history-inventory.json"
+        ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -430,9 +488,11 @@
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/planning/ori-surface-s3-auk9.md",
-        "docs/spec/00-manifesto.md"
+        "docs/spec/00-manifesto.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -445,9 +505,11 @@
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/planning/historico/stdlib-gap-parity.md",
-        "docs/planning/registry-v1.md"
+        "docs/planning/registry-v1.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -459,7 +521,9 @@
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
-        ".ai/generated/documentation-history-inventory.json"
+        ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -471,7 +535,9 @@
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
-        ".ai/generated/documentation-history-inventory.json"
+        ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -484,8 +550,10 @@
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
-        "docs/guides/testing.pt-BR.md"
+        "docs/guides/testing.pt-BR.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -497,7 +565,9 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
-        ".ai/generated/documentation-history-inventory.json"
+        ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -510,7 +580,9 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "CHANGELOG.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "CHANGELOG.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -523,9 +595,11 @@
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/planning/plano-arc-nim-2026-07-16.md",
-        "docs/planning/prompt-analisar-nim-para-ori.md"
+        "docs/planning/prompt-analisar-nim-para-ori.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -538,9 +612,11 @@
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/planning/freeze-and-abi-gates.md",
-        "docs/planning/historico/design-close-backlog-linux-2026-07-13.md"
+        "docs/planning/historico/design-close-backlog-linux-2026-07-13.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -553,11 +629,13 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/planning/historico/pr-plan-ori-surface-s3.md",
         "docs/planning/language-direction-decisions-2026-06-30.md",
         "docs/spec/00-manifesto.md",
         "docs/spec/03-grammar.ebnf",
+        "tools/docs/apply_history_migration.py",
         "tools/docs/inventory_history.py"
       ]
     },
@@ -571,7 +649,9 @@
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/planning/web-templates-discussion-roadmap.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/planning/web-templates-discussion-roadmap.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -584,10 +664,12 @@
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/guides/performance.md",
         "docs/guides/performance.pt-BR.md",
-        "docs/planning/historico/perf-runtime-midend-plan.md"
+        "docs/planning/historico/perf-runtime-midend-plan.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -600,8 +682,10 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
-        "docs/planning/roadmap-maturidade-v0.4-v0.5.md"
+        "docs/planning/roadmap-maturidade-v0.4-v0.5.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -614,8 +698,10 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
-        "docs/planning/plano-arc-nim-2026-07-16.md"
+        "docs/planning/plano-arc-nim-2026-07-16.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -628,7 +714,9 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/spec/14-backend-support.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/spec/14-backend-support.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -641,11 +729,13 @@
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "docs/guides/first-project.md",
         "docs/guides/first-project.pt-BR.md",
         "docs/planning/historico/registry-v2.md",
-        "docs/planning/manifest-schema.md"
+        "docs/planning/manifest-schema.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -658,7 +748,9 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/planning/freeze-and-abi-gates.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/planning/freeze-and-abi-gates.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -670,7 +762,9 @@
       "suggested_category": "investigations",
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
-        ".ai/generated/documentation-history-inventory.json"
+        ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -683,11 +777,13 @@
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
         "compiler/crates/ori-lsp/src/handlers/completion.rs",
         "docs/planning/historico/design-close-backlog-linux-2026-07-13.md",
         "docs/spec/12-stdlib.md",
-        "stdlib/README.md"
+        "stdlib/README.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -700,8 +796,10 @@
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
-        "docs/planning/historico/rust-independence.md"
+        "docs/planning/historico/rust-independence.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -714,7 +812,9 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
-        "docs/planning/web-templates-discussion-roadmap.md"
+        ".ai/generated/documentation-history-inventory.tsv",
+        "docs/planning/web-templates-discussion-roadmap.md",
+        "tools/docs/apply_history_migration.py"
       ]
     },
     {
@@ -727,8 +827,10 @@
       "classification_reason": "session/resume terminology",
       "inbound_references": [
         ".ai/generated/documentation-history-inventory.json",
+        ".ai/generated/documentation-history-inventory.tsv",
         "CHANGELOG.md",
-        "docs/planning/web-framework-learning-course.md"
+        "docs/planning/web-framework-learning-course.md",
+        "tools/docs/apply_history_migration.py"
       ]
     }
   ]
