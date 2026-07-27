@@ -1,0 +1,245 @@
+schema_version: 1
+project:
+  name: Ori
+  version: 0.3.8
+  repository: raillen/ori-lang
+  default_branch: master
+  language_surface: S3
+  native_abi: ori-native-abi-1
+
+status_values:
+  - current
+  - draft
+  - proposed
+  - accepted
+  - deprecated
+  - superseded
+  - archived
+
+canonical_documents:
+  - id: project.start
+    path: PROJECT_START.md
+    domain: project
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [project-entry, navigation-order]
+
+  - id: project.agents
+    path: AGENTS.md
+    domain: project
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [operational-rules, validation-gates, pr-policy]
+
+  - id: docs.atlas
+    path: docs/ATLAS.md
+    domain: documentation
+    status: current
+    audience: [user, contributor, maintainer, agent]
+    owns: [documentation-map, canonical-source-routing, change-impact-routing]
+
+  - id: product.status
+    path: docs/product/status.md
+    domain: product
+    status: current
+    audience: [user, contributor, maintainer]
+    owns: [current-version, maturity, supported-paths, current-limitations]
+    verified_by:
+      - compiler/Cargo.toml
+      - CHANGELOG.md
+
+  - id: product.versioning
+    path: docs/product/versioning.md
+    domain: product
+    status: current
+    audience: [maintainer, contributor]
+    owns: [version-model, compatibility-classes, release-number-policy]
+
+  - id: product.accessibility
+    path: docs/product/accessibility-principles.md
+    domain: product
+    status: current
+    audience: [designer, contributor, maintainer]
+    owns: [accessibility-principles, cognitive-load-policy]
+
+  - id: architecture.overview
+    path: docs/architecture/overview.md
+    domain: architecture
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [system-boundaries, component-map]
+    related_code:
+      - compiler/crates
+      - stdlib
+      - runtime
+
+  - id: architecture.pipeline
+    path: docs/architecture/compiler-pipeline.md
+    domain: architecture
+    status: current
+    audience: [compiler-contributor, maintainer, agent]
+    owns: [compiler-phases, phase-contracts, cross-stage-flow]
+    related_code:
+      - compiler/crates/ori-lexer
+      - compiler/crates/ori-parser
+      - compiler/crates/ori-types
+      - compiler/crates/ori-hir
+      - compiler/crates/ori-codegen
+      - compiler/crates/ori-driver
+
+  - id: architecture.invariants
+    path: docs/architecture/invariants.md
+    domain: architecture
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [cross-cutting-invariants]
+
+  - id: architecture.runtime-memory
+    path: docs/architecture/runtime-and-memory.md
+    domain: architecture
+    status: current
+    audience: [runtime-contributor, maintainer, security-reviewer]
+    owns: [runtime-boundaries, arc-model, cycle-collection, ffi-memory-contract]
+    related_code:
+      - compiler/crates/ori-runtime
+      - compiler/crates/ori-codegen
+    verified_by:
+      - compiler/crates/ori-driver/tests/memory_arc.rs
+      - compiler/crates/ori-runtime/src/tests.rs
+
+  - id: architecture.stdlib
+    path: docs/architecture/stdlib.md
+    domain: architecture
+    status: current
+    audience: [stdlib-contributor, compiler-contributor, maintainer]
+    owns: [stdlib-layers, manifest-flow, source-discovery]
+    related_code:
+      - compiler/crates/ori-types/src/stdlib.rs
+      - stdlib
+
+  - id: implementation.standards
+    path: docs/implementation/standards.md
+    domain: implementation
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [implementation-patterns, module-boundaries, error-policy, unsafe-boundary-policy]
+
+  - id: implementation.feature-delivery
+    path: docs/implementation/feature-delivery.md
+    domain: implementation
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [vertical-feature-checklist, evidence-requirements]
+
+  - id: quality.test-strategy
+    path: docs/quality/test-strategy.md
+    domain: quality
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [test-layers, required-gates, regression-policy]
+    related_code:
+      - tools/qa
+      - compiler/crates/ori-driver/tests
+
+  - id: quality.conformance
+    path: docs/quality/language-conformance.md
+    domain: quality
+    status: current
+    audience: [language-designer, contributor, maintainer]
+    owns: [spec-to-test-traceability, conformance-identifiers]
+
+  - id: quality.diagnostics
+    path: docs/quality/diagnostic-design.md
+    domain: quality
+    status: current
+    audience: [compiler-contributor, lsp-contributor, maintainer]
+    owns: [diagnostic-design, code-stability, message-accessibility]
+    related_code:
+      - compiler/crates/ori-diagnostics
+      - docs/spec/13-error-catalog.md
+
+  - id: quality.performance
+    path: docs/quality/performance-policy.md
+    domain: quality
+    status: current
+    audience: [contributor, maintainer]
+    owns: [benchmark-method, regression-thresholds, performance-evidence]
+
+  - id: security.threat-model
+    path: docs/security/threat-model.md
+    domain: security
+    status: current
+    audience: [security-reviewer, contributor, maintainer]
+    owns: [assets, trust-boundaries, threat-scenarios, mitigations]
+
+  - id: security.unsafe-code
+    path: docs/security/unsafe-code-policy.md
+    domain: security
+    status: current
+    audience: [runtime-contributor, backend-contributor, reviewer]
+    owns: [unsafe-rules, ffi-preconditions, safety-comments]
+
+  - id: governance.language-evolution
+    path: docs/governance/language-evolution.md
+    domain: governance
+    status: current
+    audience: [language-designer, maintainer, contributor]
+    owns: [language-change-process, compatibility-review, decision-routing]
+
+  - id: governance.rfc-process
+    path: docs/governance/rfc-process.md
+    domain: governance
+    status: current
+    audience: [maintainer, contributor]
+    owns: [rfc-lifecycle, proposal-template, acceptance-criteria]
+
+  - id: decisions.index
+    path: docs/decisions/README.md
+    domain: decisions
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [adr-index, decision-status-policy]
+
+  - id: plans.index
+    path: docs/plans/README.md
+    domain: planning
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [planning-policy, execplan-policy, archive-rules]
+
+  - id: operations.development
+    path: docs/operations/development.md
+    domain: operations
+    status: current
+    audience: [contributor, maintainer]
+    owns: [local-development, validation-commands, runtime-staging]
+
+  - id: operations.release
+    path: docs/operations/release.md
+    domain: operations
+    status: current
+    audience: [maintainer, release-manager]
+    owns: [release-process, artifact-validation, provenance]
+
+normative_roots:
+  - path: docs/spec
+    rule: implemented-current-contract-only
+  - path: docs/spec/13-error-catalog.md
+    rule: emitted-diagnostic-source-of-truth
+  - path: docs/spec/19-abi.md
+    rule: native-abi-contract
+
+historical_roots:
+  - path: docs/archive
+  - path: docs/planning/historico
+    migration_target: docs/archive
+
+validation_expectations:
+  unique_canonical_owner: true
+  atlas_entry_required: true
+  catalog_entry_required_for_canonical_docs: true
+  active_docs_must_not_depend_on_archive: true
+  public_version: 0.3.8
+  forbidden_active_identity_terms:
+    - zenith
+    - zenithlang
