@@ -1,9 +1,9 @@
 name: One-time documentation changelog update
 
 on:
-  push:
-    branches:
-      - agent/documentation-framework-refactor
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -14,9 +14,10 @@ concurrency:
 
 jobs:
   update:
+    if: github.head_ref == 'agent/documentation-framework-refactor'
     runs-on: ubuntu-latest
     steps:
-      - name: Check out branch
+      - name: Check out PR branch
         uses: actions/checkout@v4
         with:
           ref: agent/documentation-framework-refactor
