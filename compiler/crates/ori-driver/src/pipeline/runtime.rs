@@ -419,15 +419,22 @@ pub(crate) fn native_target_triple() -> String {
 
 fn default_native_target_triple() -> String {
     if cfg!(all(windows, target_env = "msvc")) {
-        "x86_64-pc-windows-msvc".to_string()
+        format!("{}-pc-windows-msvc", native_target_arch())
     } else if cfg!(all(windows, target_env = "gnu")) {
-        "x86_64-pc-windows-gnu".to_string()
+        format!("{}-pc-windows-gnu", native_target_arch())
     } else if cfg!(target_os = "linux") {
-        "x86_64-unknown-linux-gnu".to_string()
+        format!("{}-unknown-linux-gnu", native_target_arch())
     } else if cfg!(target_os = "macos") {
-        "x86_64-apple-darwin".to_string()
+        format!("{}-apple-darwin", native_target_arch())
     } else {
         format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
+    }
+}
+
+fn native_target_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86" => "i686",
+        arch => arch,
     }
 }
 
@@ -599,6 +606,20 @@ pub(super) fn native_static_libs_for_target(target: &str) -> &'static [&'static 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_native_target_uses_the_compiled_architecture() {
+        let expected_arch = match std::env::consts::ARCH {
+            "x86" => "i686",
+            arch => arch,
+        };
+        let target = default_native_target_triple();
+
+        assert!(
+            target.starts_with(&format!("{expected_arch}-")),
+            "target `{target}` does not match host architecture `{expected_arch}`"
+        );
+    }
 
     #[test]
     fn shared_link_args_prefer_a_runtime_cdylib_when_present() {

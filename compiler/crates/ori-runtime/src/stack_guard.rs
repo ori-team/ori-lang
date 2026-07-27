@@ -58,11 +58,6 @@ unsafe fn current_stack_bounds() -> Option<(usize, usize)> {
     Some((base as usize, guard))
 }
 
-#[cfg(not(target_os = "linux"))]
-unsafe fn current_stack_bounds() -> Option<(usize, usize)> {
-    None
-}
-
 #[cfg(target_os = "linux")]
 fn page_size() -> usize {
     let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };

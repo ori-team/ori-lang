@@ -23,6 +23,9 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   can cross source-file boundaries. Portable Windows fallback metadata now
   includes the system randomness libraries for both MSVC and GNU targets.
   Versioned runtime metadata no longer contains a machine-specific raylib path.
+- **Native target selection.** Release packages now select the host
+  architecture for Linux, Windows, and macOS instead of assuming x86_64;
+  macOS Apple Silicon packages therefore find their staged `aarch64` runtime.
 - **Driver modularization.** Native runtime discovery, ABI metadata validation,
   platform artifact naming, and linker argument construction now live in a
   dedicated driver pipeline module. The compile, run, test, and doctor routes
