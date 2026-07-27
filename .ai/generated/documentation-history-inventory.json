@@ -1,13 +1,23 @@
 {
   "schema_version": 1,
   "generated_for": "DOC-MIGRATE-1",
-  "candidate_count": 39,
+  "candidate_count": 51,
+  "excluded_current_paths": [
+    "docs/planning/BACKLOG.md",
+    "docs/planning/PENDENTES.md",
+    "docs/planning/README.md",
+    "docs/planning/adr-arc-cow-collections.md",
+    "docs/planning/adr-arc-single-cascade-owner.md",
+    "docs/planning/adr-ori-surface-s3-auk9.md",
+    "docs/planning/qa/test-matrix-ori.md",
+    "docs/planning/repo-and-project-layout.md"
+  ],
   "categories": {
-    "audits": 7,
-    "investigations": 10,
-    "legacy": 0,
-    "plans": 11,
-    "sessions": 11
+    "audits": 12,
+    "investigations": 14,
+    "legacy": 2,
+    "plans": 10,
+    "sessions": 13
   },
   "records": [
     {
@@ -19,6 +29,7 @@
       "suggested_category": "investigations",
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md",
         "docs/archive/plano-correcao-implementacao-linguagem.md",
         "docs/archive/relatorio-fechamento-nova-rodada.md",
@@ -34,6 +45,7 @@
       "suggested_category": "audits",
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
       ]
     },
@@ -46,6 +58,7 @@
       "suggested_category": "audits",
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
       ]
     },
@@ -58,6 +71,7 @@
       "suggested_category": "audits",
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md",
         "docs/archive/relatorio-fechamento-nova-rodada.md",
@@ -73,6 +87,7 @@
       "suggested_category": "audits",
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
       ]
     },
@@ -82,9 +97,10 @@
       "lines": 111,
       "bytes": 6328,
       "sha256": "fa654b46fbf844d6d8db698ac4d4be583493e59b60233759e69c6eb9ec2d87a7",
-      "suggested_category": "investigations",
-      "classification_reason": "investigation/experiment terminology",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
       ]
     },
@@ -97,6 +113,7 @@
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/archive/plans/maturity-plan-2026-06.md"
       ]
@@ -110,6 +127,7 @@
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "examples/embed/README.md",
         "examples/embed/godot/README.md"
@@ -123,7 +141,25 @@
       "sha256": "877f4554e0f99817c95e3e05c2a445a22f6505539172f698747507e3ab8df272",
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
-      "inbound_references": []
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json"
+      ]
+    },
+    {
+      "path": "docs/planning/freeze-and-abi-gates.md",
+      "title": "Freeze and ABI gates (FREEZE-1 / ABI-1)",
+      "lines": 137,
+      "bytes": 5514,
+      "sha256": "36a7d3fe63268fe9f30fce00a37f7e2b5a22f3a0c0ff772606380e3d0a0abf6b",
+      "suggested_category": "legacy",
+      "classification_reason": "legacy/superseded terminology",
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
+        "CHANGELOG.md",
+        "docs/planning/historico/design-close-backlog-linux-2026-07-13.md",
+        "docs/planning/roadmap-maturidade-v0.4-v0.5.md",
+        "docs/spec/19-abi.md"
+      ]
     },
     {
       "path": "docs/planning/historico/PLANO-MATURIDADE-COMPLETO.md",
@@ -131,9 +167,10 @@
       "lines": 19,
       "bytes": 750,
       "sha256": "ab24d9a7baf95a05d6d667008e90ffad69c1c7cb2928a46bd72c6e53834c451f",
-      "suggested_category": "plans",
-      "classification_reason": "plan/implementation terminology",
+      "suggested_category": "legacy",
+      "classification_reason": "legacy/superseded terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/IMPLEMENTADOS.md",
         "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
@@ -150,6 +187,7 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/historico/lang-mem-9-runtime-wrappers-2026-07-18.md"
       ]
@@ -163,6 +201,7 @@
       "suggested_category": "investigations",
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/uso-real-pequeno-medio.md"
       ]
@@ -173,9 +212,10 @@
       "lines": 125,
       "bytes": 7788,
       "sha256": "ff695045f651f3541ca899e295323e166687dc8f5996de8fbe9e9893cbcd46c9",
-      "suggested_category": "plans",
-      "classification_reason": "plan/implementation terminology",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md"
       ]
     },
@@ -186,8 +226,10 @@
       "bytes": 3685,
       "sha256": "419e3e70826967ea15602b1140fe661e7fa55f09e2346aa150475425aafb3be0",
       "suggested_category": "investigations",
-      "classification_reason": "default historical evidence classification",
-      "inbound_references": []
+      "classification_reason": "investigation/experiment terminology",
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json"
+      ]
     },
     {
       "path": "docs/planning/historico/io-streams-design.md",
@@ -198,6 +240,7 @@
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/uso-real-pequeno-medio.md"
       ]
     },
@@ -207,9 +250,10 @@
       "lines": 155,
       "bytes": 7653,
       "sha256": "b027a8b8d8ecc190a56ecda3793a8191c5239473b3b0a6ea4b218266d0fb73df",
-      "suggested_category": "investigations",
-      "classification_reason": "default historical evidence classification",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/historico/sessao-nim-arc-2026-07-16.md"
       ]
@@ -222,7 +266,9 @@
       "sha256": "aeedfbf7945372752b8a0887d98299a5f7c772860a93b623676a62b94449ab38",
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
-      "inbound_references": []
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json"
+      ]
     },
     {
       "path": "docs/planning/historico/lang-res-closure.md",
@@ -233,6 +279,7 @@
       "suggested_category": "audits",
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/qa/residual-cleanup-2026-07-13.md",
         "docs/spec/14-backend-support.md",
@@ -245,9 +292,10 @@
       "lines": 73,
       "bytes": 3038,
       "sha256": "b303a0ae7b37031540d5ebb2b6a3c2657aad8a59ab90cdbaab30b51ee930a3f6",
-      "suggested_category": "investigations",
-      "classification_reason": "default historical evidence classification",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/historico/io-streams-design.md",
         "docs/planning/historico/stdlib-gap-parity.md",
         "docs/planning/uso-real-pequeno-medio.md"
@@ -262,6 +310,7 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
         "docs/planning/plano-arc-nim-2026-07-16.md"
       ]
@@ -275,6 +324,7 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "compiler/crates/ori-driver/tests/memory_arc.rs"
       ]
     },
@@ -287,6 +337,7 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md"
       ]
     },
@@ -299,6 +350,7 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md"
       ]
     },
@@ -311,6 +363,7 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/roadmap-maturidade-v0.4-v0.5.md"
       ]
     },
@@ -320,9 +373,10 @@
       "lines": 429,
       "bytes": 18411,
       "sha256": "513021aea64dd98786ba5b7ed579a8aa91dd39cbb9a7d2e500db024c5a19289a",
-      "suggested_category": "plans",
-      "classification_reason": "plan/implementation terminology",
+      "suggested_category": "investigations",
+      "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/guides/performance.md",
         "docs/guides/performance.pt-BR.md"
@@ -336,7 +390,9 @@
       "sha256": "773f5e2b0b1afad987483fd31678c2bdde878d4227cd7003993fdadeebaf4d22",
       "suggested_category": "audits",
       "classification_reason": "audit/assessment terminology",
-      "inbound_references": []
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json"
+      ]
     },
     {
       "path": "docs/planning/historico/plano-implementacao-lsp-avancado.md",
@@ -347,6 +403,7 @@
       "suggested_category": "investigations",
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
       ]
@@ -357,9 +414,11 @@
       "lines": 86,
       "bytes": 4167,
       "sha256": "4404587a69c96d551ba649accfaf69190d1f57abd1f487c30ea1eaae348fc9ef",
-      "suggested_category": "plans",
-      "classification_reason": "plan/implementation terminology",
-      "inbound_references": []
+      "suggested_category": "investigations",
+      "classification_reason": "investigation/experiment terminology",
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json"
+      ]
     },
     {
       "path": "docs/planning/historico/pr-plan-ori-surface-s3.md",
@@ -370,6 +429,7 @@
       "suggested_category": "investigations",
       "classification_reason": "investigation/experiment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/ori-surface-s3-auk9.md",
         "docs/spec/00-manifesto.md"
@@ -384,6 +444,7 @@
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/historico/stdlib-gap-parity.md",
         "docs/planning/registry-v1.md"
@@ -397,7 +458,9 @@
       "sha256": "98f5bf20e0b822345c57d4a06d7e53864f7e8b7282735d8ae4014adf474c9b11",
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
-      "inbound_references": []
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json"
+      ]
     },
     {
       "path": "docs/planning/historico/rust-independence.md",
@@ -407,7 +470,9 @@
       "sha256": "c9d4e88bf31043c341724f2b60de880d7237d621420d99257f631d089564e894",
       "suggested_category": "plans",
       "classification_reason": "plan/implementation terminology",
-      "inbound_references": []
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json"
+      ]
     },
     {
       "path": "docs/planning/historico/security-performance-testing.md",
@@ -418,6 +483,7 @@
       "suggested_category": "investigations",
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/guides/testing.pt-BR.md"
       ]
@@ -430,7 +496,9 @@
       "sha256": "9e88ba67fe383a45bb7aaff18ec8a7782b597a28025225c0924806570a64090e",
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
-      "inbound_references": []
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json"
+      ]
     },
     {
       "path": "docs/planning/historico/stdlib-gap-parity.md",
@@ -438,10 +506,84 @@
       "lines": 170,
       "bytes": 8519,
       "sha256": "44f431fe5033e6f816e00ff363dd279f7b8c47121cc20a2cec47d7fe74a135e1",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
+        "CHANGELOG.md"
+      ]
+    },
+    {
+      "path": "docs/planning/language-direction-decisions-2026-06-30.md",
+      "title": "Decisoes de Direcao da Linguagem",
+      "lines": 326,
+      "bytes": 9860,
+      "sha256": "4176837304c52736f763c9eb2b10b6c11b9a4d6edbfbefc95828e691c22f8ea8",
+      "suggested_category": "investigations",
+      "classification_reason": "investigation/experiment terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/plano-arc-nim-2026-07-16.md",
+        "docs/planning/prompt-analisar-nim-para-ori.md"
+      ]
+    },
+    {
+      "path": "docs/planning/manifest-schema.md",
+      "title": "Manifest schema freeze (PKG-4)",
+      "lines": 88,
+      "bytes": 2855,
+      "sha256": "134a7b32de583a39c7196a0db0f062499da44addeba8e72714388a81e6960e40",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/freeze-and-abi-gates.md",
+        "docs/planning/historico/design-close-backlog-linux-2026-07-13.md"
+      ]
+    },
+    {
+      "path": "docs/planning/ori-surface-s3-auk9.md",
+      "title": "Ori Surface S3 — sintaxe Auk9-inspired",
+      "lines": 638,
+      "bytes": 21884,
+      "sha256": "0cd001965af0be040ea668e6ddf3bc82cb02b2f00c6fecb0b891938a95168077",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
+        "CHANGELOG.md",
+        "docs/planning/historico/pr-plan-ori-surface-s3.md",
+        "docs/planning/language-direction-decisions-2026-06-30.md",
+        "docs/spec/00-manifesto.md",
+        "docs/spec/03-grammar.ebnf",
+        "tools/docs/inventory_history.py"
+      ]
+    },
+    {
+      "path": "docs/planning/package-ecosystem-guidelines.md",
+      "title": "Ori Package Ecosystem Guidelines",
+      "lines": 46,
+      "bytes": 3017,
+      "sha256": "3df950769921cf91a0ea621116605f5344b3b3be63c6346f9c2dcca3e11fd3a8",
       "suggested_category": "investigations",
       "classification_reason": "default historical evidence classification",
       "inbound_references": [
-        "CHANGELOG.md"
+        "docs/planning/web-templates-discussion-roadmap.md"
+      ]
+    },
+    {
+      "path": "docs/planning/perf-baseline-2026-07-13.md",
+      "title": "Performance baseline (LANG-PERF)",
+      "lines": 302,
+      "bytes": 12237,
+      "sha256": "261aba0a976dbb504781dbcfb610fa4b8f0bad691e23f750810b4124879f4fa4",
+      "suggested_category": "investigations",
+      "classification_reason": "default historical evidence classification",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/guides/performance.md",
+        "docs/guides/performance.pt-BR.md",
+        "docs/planning/historico/perf-runtime-midend-plan.md"
       ]
     },
     {
@@ -453,6 +595,7 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
         "docs/planning/roadmap-maturidade-v0.4-v0.5.md"
       ]
@@ -466,8 +609,39 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
         "docs/planning/plano-arc-nim-2026-07-16.md"
+      ]
+    },
+    {
+      "path": "docs/planning/qa/residual-cleanup-2026-07-13.md",
+      "title": "Residual cleanup snapshot — 2026-07-13",
+      "lines": 46,
+      "bytes": 1665,
+      "sha256": "2ac2a6209b307e4d585e39430ce9acd86284a2501a982625b0701327482c1171",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
+        "docs/spec/14-backend-support.md"
+      ]
+    },
+    {
+      "path": "docs/planning/registry-v1.md",
+      "title": "Ori package registry (v1 — PKG-3)",
+      "lines": 90,
+      "bytes": 2781,
+      "sha256": "e9c67879629c983d5a893cbdf0be179c085decc505b883420b91174d725c85f3",
+      "suggested_category": "investigations",
+      "classification_reason": "default historical evidence classification",
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
+        "CHANGELOG.md",
+        "docs/guides/first-project.md",
+        "docs/guides/first-project.pt-BR.md",
+        "docs/planning/historico/registry-v2.md",
+        "docs/planning/manifest-schema.md"
       ]
     },
     {
@@ -479,7 +653,61 @@
       "suggested_category": "audits",
       "classification_reason": "audit/assessment terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "docs/planning/freeze-and-abi-gates.md"
+      ]
+    },
+    {
+      "path": "docs/planning/roadtov1.md",
+      "title": "Roadmap de Execução Detalhado para a v1.0 (Ori Language)",
+      "lines": 92,
+      "bytes": 5822,
+      "sha256": "0472098cc44fa954647a2408d52cc618b76892b0df0cd71e402fbf84584bf50c",
+      "suggested_category": "investigations",
+      "classification_reason": "investigation/experiment terminology",
+      "inbound_references": []
+    },
+    {
+      "path": "docs/planning/stdlib-merge-policy.md",
+      "title": "Política de mesclagem da stdlib (M2 + STDLIB-1)",
+      "lines": 138,
+      "bytes": 5515,
+      "sha256": "f8115778f84dff2270ff392eab4bb29b812edf512027464e3b4f69dd31d07330",
+      "suggested_category": "investigations",
+      "classification_reason": "default historical evidence classification",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "compiler/crates/ori-lsp/src/handlers/completion.rs",
+        "docs/planning/historico/design-close-backlog-linux-2026-07-13.md",
+        "docs/spec/12-stdlib.md",
+        "stdlib/README.md"
+      ]
+    },
+    {
+      "path": "docs/planning/uso-real-pequeno-medio.md",
+      "title": "Plano de uso real — projetos pequenos e médios",
+      "lines": 375,
+      "bytes": 18086,
+      "sha256": "6debdefdd71b6b31385124b788f16dfbc43426b85cff99d389401fe2d2f88774",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
+        "CHANGELOG.md",
+        "docs/planning/historico/rust-independence.md"
+      ]
+    },
+    {
+      "path": "docs/planning/web-framework-learning-course.md",
+      "title": "Curso: construir um framework web e um site (HTML-first) com Ori",
+      "lines": 392,
+      "bytes": 12880,
+      "sha256": "9cbbd284373030b6088ae3b26bcfe3234d4a89675bf457ee811c1b68eba2d076",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
+        "docs/planning/web-templates-discussion-roadmap.md"
       ]
     },
     {
@@ -491,6 +719,7 @@
       "suggested_category": "sessions",
       "classification_reason": "session/resume terminology",
       "inbound_references": [
+        ".ai/generated/documentation-history-inventory.json",
         "CHANGELOG.md",
         "docs/planning/web-framework-learning-course.md"
       ]
