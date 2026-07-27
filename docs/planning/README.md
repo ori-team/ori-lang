@@ -1,13 +1,13 @@
-# Legacy planning index
+# Planning compatibility index
 
-> Status: **transitional**  
+> Status: **current compatibility router**  
 > Current project version: **0.3.8**
 
-The canonical planning policy now lives in [`../plans/README.md`](../plans/README.md).
+The canonical planning policy lives in [`../plans/README.md`](../plans/README.md).
 
 ## Current open work
 
-[`BACKLOG.md`](BACKLOG.md) remains the existing open-work list while its historical sections are being reduced and migrated.
+[`BACKLOG.md`](BACKLOG.md) is the canonical open-work list.
 
 Do not create a second backlog or treat completed plans as current work.
 
@@ -25,12 +25,15 @@ Do not create a second backlog or treat completed plans as current work.
 | Session/resume note | `../archive/sessions/` |
 | Retired identity or obsolete design | `../archive/legacy/` |
 
-## Transitional files
+## Compatibility files retained here
 
-- [`BACKLOG.md`](BACKLOG.md) — current open-work list during migration.
+- [`BACKLOG.md`](BACKLOG.md) — current open-work list.
 - [`PENDENTES.md`](PENDENTES.md) — retired compatibility pointer; not a backlog.
-- The former `historico/` tree has been migrated into categorized directories under `docs/archive/`.
-- ADR files in this directory — pending migration into `docs/decisions/adr/`.
+- `adr-*.md` — concise pointers to numbered ADRs under `docs/decisions/adr/`.
+- [`repo-and-project-layout.md`](repo-and-project-layout.md) — pointer to current architecture and ADR.
+- [`qa/test-matrix-ori.md`](qa/test-matrix-ori.md) — transitional detailed quality matrix.
+
+The former `historico/` tree was fully migrated. See [`../archive/MIGRATION_REPORT.md`](../archive/MIGRATION_REPORT.md).
 
 ## Rules
 
