@@ -1,0 +1,38 @@
+name: Documentation framework
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - "**/*.yaml"
+      - "**/*.yml"
+      - "compiler/Cargo.toml"
+      - "tools/docs/**"
+      - ".github/workflows/documentation.yml"
+  push:
+    branches: [master]
+    paths:
+      - "**/*.md"
+      - "**/*.yaml"
+      - "**/*.yml"
+      - "compiler/Cargo.toml"
+      - "tools/docs/**"
+      - ".github/workflows/documentation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate canonical docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Python tools
+        run: python -m py_compile tools/docs/check_docs.py
+
+      - name: Validate documentation
+        run: python tools/docs/check_docs.py
