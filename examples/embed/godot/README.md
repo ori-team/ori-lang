@@ -1,7 +1,7 @@
 # P4 sketch — Godot 4.x + Ori cdylib (GDExtension)
 
 This directory documents the **P4** acceptance path from
-[`PLANO-CDYLIB-EMBED.md`](../../../docs/planning/PLANO-CDYLIB-EMBED.md).
+[`PLANO-CDYLIB-EMBED.md`](../../../docs/archive/plans/PLANO-CDYLIB-EMBED.md).
 
 Full GDExtension C++ registration is **host-side** (Godot 4.x headers). Ori
 supplies the **logic library** built with:

@@ -1,170 +1,193 @@
-# Contributing to Ori Language
+# Contributing to Ori
 
-Obrigado por contribuir com o compilador Ori.
+Thank you for contributing to Ori. The current canonical project version is **0.3.8**.
 
-Este arquivo cobre:
+## Before you begin
 
-1. Como enviar contribuição
-2. Gates de qualidade (build, testes, catálogo, formatter)
-3. Política de runtime empacotado e artefatos pre-built
-4. Licenciamento de contribuições
-5. Regras para código de terceiros
+Read:
 
-## 1) Fluxo curto
+1. [`PROJECT_START.md`](PROJECT_START.md)
+2. [`AGENTS.md`](AGENTS.md)
+3. [`docs/ATLAS.md`](docs/ATLAS.md)
+4. the canonical documents for the component you will change
 
-1. Abra issue (bug/feature) com contexto mínimo.
-2. Faça branch com foco único.
-3. Adicione testes obrigatórios:
-   - bugfix: teste de regressão em `compiler/crates/ori-driver/tests/`;
-   - feature: teste positivo e teste negativo.
-4. Rode os gates do projeto antes de abrir PR.
-5. Atualize docs no mesmo PR quando houver mudança de comportamento
-   (spec em `docs/spec/`, planejamento em `docs/planning/`, `CHANGELOG.md`).
-6. Abra PR com descrição curta e objetiva.
+Search existing issues and the current backlog before creating parallel work.
 
-## 2) Gates de qualidade
+## Choose the correct artifact
 
-Gate mínimo oficial (local), rodar a partir da raiz do workspace:
+- **Issue:** bug, bounded feature, or concrete maintenance task.
+- **ADR:** durable architecture or implementation decision.
+- **RFC:** significant language, ABI, project/package, stdlib-direction, or ecosystem proposal.
+- **ExecPlan:** complex accepted work spanning several PRs or a risky staged migration.
+
+Small changes should not require heavyweight planning.
+
+## Contribution flow
+
+1. Describe the problem and current behavior.
+2. Create a focused branch.
+3. Identify the owning phase, component, and canonical documents.
+4. Add or update tests that reproduce the required behavior.
+5. Implement one coherent vertical change.
+6. Update diagnostics, specifications, architecture, examples, and changelog as applicable.
+7. Run relevant focused and broad gates.
+8. Open a PR with exact validation evidence and residual risks.
+
+## Implementation expectations
+
+Follow [`docs/implementation/standards.md`](docs/implementation/standards.md).
+
+Important rules:
+
+- fix invalid behavior in the earliest informed phase;
+- keep the driver and other façades small;
+- avoid competing sources of truth;
+- preserve native symbols and ABI layouts during refactoring;
+- isolate and document `unsafe` code;
+- keep AOT and JIT behavior aligned;
+- explicitly classify C/debug support;
+- do not combine broad refactoring with unrelated language changes;
+- do not add external product ecosystems to the core repository without a decision.
+
+## Tests
+
+Every bug fix needs a regression test.
+
+Every user-visible feature needs evidence appropriate to its path, which may include:
+
+- positive and negative semantic tests;
+- diagnostic catalog coverage;
+- formatter tests;
+- AOT and JIT execution;
+- C/debug support or explicit rejection;
+- multifile, stdlib, or package tests;
+- runtime/ARC tests;
+- LSP tests;
+- isolated package smoke tests;
+- benchmarks or security tests.
+
+Use [`docs/quality/test-strategy.md`](docs/quality/test-strategy.md) and [`docs/implementation/feature-delivery.md`](docs/implementation/feature-delivery.md).
+
+## Validation commands
+
+Run from repository root:
 
 ```bash
-cargo check --workspace
-cargo test --workspace
-cargo test -p ori-driver --test diagnostic_catalog
-cargo test -p ori-lsp
+cargo --manifest-path compiler/Cargo.toml check --workspace
+cargo --manifest-path compiler/Cargo.toml test --workspace
+cargo --manifest-path compiler/Cargo.toml test -p ori-driver --test diagnostic_catalog
+cargo --manifest-path compiler/Cargo.toml test -p ori-lsp
 ```
 
-Para mudanças que afetam a stdlib, rode também os testes de paridade do manifesto:
+Fast gate:
 
 ```bash
-cargo test -p ori-types --lib stdlib
+sh tools/qa/daily_fast.sh
 ```
 
-Para mudanças que afetam o runtime nativo, re-stage o runtime local antes de rodar
-testes `compile_runs` (senão o `OnceLock` cache pode reter um runtime quebrado):
+Runtime changes may require staging:
 
 ```bash
-cargo build -p ori-runtime --lib
-cp target/debug/libori_runtime.a runtime/x86_64-unknown-linux-gnu/
-# Windows MSVC:
+sh tools/stage_native_runtime.sh
+```
+
+Windows:
+
+```powershell
 .\tools\stage_native_runtime.ps1
 ```
 
-### Regras contínuas obrigatórias
+State all commands actually run. Do not claim a full gate when only a focused test passed.
 
-- Todo bug novo deve incluir teste de regressão.
-- Toda feature nova deve incluir teste positivo e negativo.
-- Toda mudança de comportamento deve atualizar docs no mesmo PR.
-- Regressão crítica de performance bloqueia merge sem override documentado.
-- Divergência spec × código deve ser classificada em P0/P1/P2.
-- Códigos de diagnóstico novos devem ser registrados em
-  `docs/spec/13-error-catalog.md` e o teste `diagnostic_catalog` deve continuar
-  passando (consistência bidirecional emitted ↔ catálogo).
+## Documentation
 
-### Evidência mínima de fechamento
+Update documentation in the same PR when behavior or extension paths change.
 
-Todo PR de fechamento deve registrar:
+- Product/status: `docs/product/`
+- Architecture: `docs/architecture/`
+- Normative contract: `docs/spec/`
+- Implementation guidance: `docs/implementation/`
+- Quality/security/operations: corresponding domains
+- User docs: `docs/language/`, `docs/guides/`, examples
+- Decisions/proposals: `docs/decisions/`, `docs/rfcs/`
+- Changelog: user-visible behavior
 
-- comando executado + resultado;
-- arquivo de teste novo ou alterado;
-- commit/PR de fechamento;
-- risco residual (se houver).
+Maintain EN/PT user-facing siblings where the repository already maintains a parallel version.
 
-## 3) Runtime empacotado e artefatos pre-built
+New canonical documents must be added to `docs/ATLAS.md` and `docs/catalog.yaml`.
 
-O runtime nativo (`libori_runtime.a` / `ori_runtime.lib`) é gerado a partir de
-`compiler/crates/ori-runtime` via `tools/stage_native_runtime.{ps1,sh}`.
+## Diagnostics
 
-### Triples versionados vs gerados em CI
+A new diagnostic must include:
 
-| Triple | Versionado em git? | Gerado em CI? |
-|---|---|---|
-| `x86_64-pc-windows-msvc` | sim | sim |
-| `x86_64-unknown-linux-gnu` | sim | sim |
-| `x86_64-pc-windows-gnu` | não | sim |
-| `x86_64-apple-darwin` | não | sim |
-| `aarch64-apple-darwin` | não | sim |
+- stable code;
+- clear primary message;
+- actionable source span;
+- explanation/action when useful;
+- catalog entry in `docs/spec/13-error-catalog.md`;
+- negative test;
+- LSP review when applicable.
 
-**Política:** apenas os dois triples de desenvolvimento canônicos (Windows MSVC
-e Linux GNU) são versionados em git como baseline. Os outros três são staging
-apenas em CI e em release packages; **não commit** artefatos pre-built para
-esses triples — o `.gitignore` os ignora e eles devem ser regenerados a cada
-release via `tools/stage_native_runtime.{ps1,sh}` com o `-Target` apropriado.
+## Runtime and FFI
 
-### Release package
+Runtime changes must preserve:
 
-Um release package deve conter:
+- documented header/layout contracts;
+- ownership and single-cascade rules;
+- exported symbol names;
+- staticlib/cdylib parity;
+- AOT/JIT semantics;
+- panic containment across FFI;
+- target-specific behavior.
 
-```text
-ori.exe                         # ou `ori` no Unix
-runtime/
-  {target-triple}/
-    {runtime-artifact}
-    runtime-link.json
-examples/
-README.md
-```
+Read [`docs/security/unsafe-code-policy.md`](docs/security/unsafe-code-policy.md) before changing `unsafe` or exported native code.
 
-Para validar um release package localmente:
+## Performance
 
-```bash
-# Windows
-.\tools\smoke_native_release.ps1
-# Unix
-sh tools/smoke_native_release.sh
-```
+Measure before optimizing. Include workload, build mode, target, sample method, baseline, and trade-offs. See [`docs/quality/performance-policy.md`](docs/quality/performance-policy.md).
 
-O smoke roda com `ORI_REQUIRE_PACKAGED_RUNTIME=1` para garantir que não haja
-fallback silencioso para o runtime do workspace.
+## Pull requests
 
-## 4) Licença de contribuições
+A PR description should state:
 
-Ao enviar código para este repositório, você concorda que sua contribuição é
-licenciada como:
+- problem and outcome;
+- scope and exclusions;
+- implementation approach;
+- tests and commands;
+- compatibility/migration;
+- runtime/ABI/target impact;
+- security/performance impact;
+- documentation changes;
+- residual risk and deferred work.
+
+Keep PRs focused. Avoid unrelated formatting or cleanup that hides the behavior change.
+
+## Third-party code and licenses
+
+Before copying or porting code:
+
+- verify license compatibility with Apache-2.0 OR MIT;
+- preserve required notices;
+- cite origin in the PR;
+- document modifications;
+- do not include code with incompatible or unclear terms.
+
+## Contribution license
+
+Unless explicitly stated otherwise, intentional contributions are licensed under:
 
 - Apache-2.0 OR MIT
 
-Regra padrão (inspirada no ecossistema Rust):
+A DCO-style sign-off is recommended:
 
-- A menos que você declare o contrário explicitamente,
-- toda contribuição submetida intencionalmente para o projeto,
-- entra no projeto sob licença dupla Apache-2.0 OR MIT,
-- sem termos adicionais.
-
-## 5) Regras para código de terceiros
-
-Antes de copiar/portar código de outro projeto:
-
-- confirme compatibilidade de licença com Apache-2.0 OR MIT;
-- preserve avisos de copyright exigidos;
-- cite a origem no PR;
-- evite qualquer código sob licença incompatível.
-
-Não enviar:
-
-- código GPL que exija relicenciamento do Ori;
-- conteúdo sem autorização clara;
-- código com termos adicionais restritivos.
-
-## 6) Sign-off (DCO simples)
-
-Recomendado em commits de contribuição:
-
+```text
+Signed-off-by: Your Name <your-email@example.com>
 ```
-Signed-off-by: Seu Nome <seu-email>
-```
-
-Exemplo de comando:
 
 ```bash
-git commit -s -m "fix: corrigir parser edge case"
+git commit -s -m "fix: describe the focused change"
 ```
 
-## 7) Checklist de PR
+## Definition of done
 
-- [ ] problema está claro
-- [ ] testes adicionados/atualizados
-- [ ] documentação atualizada se houve mudança de comportamento
-- [ ] sem regressão nos comandos de gate
-- [ ] origem/licença de código externo validada
-- [ ] se mudou stdlib: manifesto `stdlib.rs` + parity tests verdes
-- [ ] se mudou diagnósticos: catálogo `13-error-catalog.md` + `diagnostic_catalog` verde
+A contribution is complete when implementation, tests, diagnostics, specification, architecture, user documentation, compatibility, security, performance, operations, changelog, and planning state agree for its scope.

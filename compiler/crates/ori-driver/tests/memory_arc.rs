@@ -785,7 +785,7 @@ end
 }
 
 // ── C1 — single cascade owner (dtor × edges overlap) ───────────────────────
-// Regression tests from docs/planning/historico/nim-study-2026-07-17-c1.md.
+// Regression tests from docs/archive/investigations/nim-study-2026-07-17-c1.md.
 // Before the fix, composite owners released managed fields twice (generated
 // __dtor_* plus the registered ARC edge), so a child shared with a live
 // binding was freed prematurely; list element slots leaked the owned temp +1.

@@ -5,7 +5,7 @@
 > **STDLIB-1:** nested `ori.X.utils` / `ori.X.algorithms` are **deprecated as public
 > surface** — still compile as **silent compat** (do not teach in new docs/examples).
 
-Policy: [`docs/planning/stdlib-merge-policy.md`](../docs/planning/stdlib-merge-policy.md).
+Policy: [`docs/archive/legacy/stdlib-merge-policy.md`](../docs/archive/legacy/stdlib-merge-policy.md).
 
 ---
 

@@ -119,5 +119,5 @@ Fontes em `tools/bench/polyglot/{ori,python,rust_*,c,go,javascript,typescript,ru
 | [tools/bench/polyglot/README.md](../../tools/bench/polyglot/README.md) | Layout do harness |
 | [results/LATEST.md](../../tools/bench/polyglot/results/LATEST.md) | Relatório completo |
 | [language-comparison.md](language-comparison.md) | Suite PowerShell antiga (histórico) |
-| [../planning/perf-baseline-2026-07-13.md](../planning/perf-baseline-2026-07-13.md) | Baseline LANG-PERF do compilador |
-| [../planning/historico/perf-runtime-midend-plan.md](../planning/historico/perf-runtime-midend-plan.md) | Plano mid-end LANG-PERF-2 |
+| [../planning/perf-baseline-2026-07-13.md](../archive/audits/perf-baseline-2026-07-13.md) | Baseline LANG-PERF do compilador |
+| [../planning/historico/perf-runtime-midend-plan.md](../archive/plans/perf-runtime-midend-plan.md) | Plano mid-end LANG-PERF-2 |

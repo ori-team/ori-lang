@@ -307,7 +307,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ×1,5 quando não; bounds 64–65 536; `ORI_COOPERATIVE_COLLECT_THRESHOLD`
   pina o valor). `ori.test.collect_cycles`/`assert_no_leaks` e o símbolo
   `ori_arc_collect_cycles` mantêm o full scan. Spec 10 atualizado; nota:
-  [`docs/planning/historico/nim-study-2026-07-17-c3.md`](docs/planning/historico/nim-study-2026-07-17-c3.md).
+  [`docs/archive/investigations/nim-study-2026-07-17-c3.md`](docs/archive/investigations/nim-study-2026-07-17-c3.md).
 
 ### Corrigido
 - **ARC de payloads gerenciados em `optional`.** O wrapper nativo registrava o
@@ -392,7 +392,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   léxico correto. Afetava `match`, `let`, `using`, `if some`/`while some`.
   Regressão: `memory_arc.rs` (`nested_match_same_binding_name_*`).
   Verificação completa dos 4 bugs reportados pelo projeto native-ori-ide:
-  [`docs/planning/historico/bugcheck-native-ori-ide-2026-07-18.md`](docs/planning/historico/bugcheck-native-ori-ide-2026-07-18.md).
+  [`docs/archive/investigations/bugcheck-native-ori-ide-2026-07-18.md`](docs/archive/investigations/bugcheck-native-ori-ide-2026-07-18.md).
 - **ABI nativa: zero-extension de argumentos de 8/16 bits para símbolos
   externos.** O Cranelift passava um `bool` (I8, ex. resultado de `sete`)
   com lixo nos bits altos do registrador; o runtime Rust (LLVM assume
@@ -420,7 +420,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   args owned após a chamada e a interpolação libera intermediários e
   partes conforme consumidos (bindings borrowed preservados). Regressão:
   `memory_arc.rs` (`print_string_temps`, `fstring_intermediates`). Nota:
-  [`docs/planning/historico/nim-study-2026-07-17-c2.md`](docs/planning/historico/nim-study-2026-07-17-c2.md).
+  [`docs/archive/investigations/nim-study-2026-07-17-c2.md`](docs/archive/investigations/nim-study-2026-07-17-c2.md).
 - **ARC: dono único da cascata (native backend).** Structs/enums/tuples
   liberavam campos managed **duas vezes** no free do dono (dtor gerado
   `__dtor_*` + edge ARC registrada): um filho compartilhado com um binding
@@ -447,7 +447,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `@c_export("name")` (`int`/`float`/`bool`/void). Runtime boot:
   `ori_rt_init` / `ori_rt_shutdown`; module globals via `__ori_module_init`.
   Links against staged `libori_runtime.so` (Linux). Plan:
-  [`docs/planning/PLANO-CDYLIB-EMBED.md`](docs/planning/PLANO-CDYLIB-EMBED.md).
+  [`docs/archive/plans/PLANO-CDYLIB-EMBED.md`](docs/archive/plans/PLANO-CDYLIB-EMBED.md).
   Smoke: `tools/qa/embed_smoke.sh`, example `examples/embed/`.
 - **Web stack (packages):** templates (S8 trim), `ori-web` (A/B/C + SEC8 +
   nested JSON + middleware + upload + keep-alive + B7 + custom sessions),
@@ -496,7 +496,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`packages/ori-templates` (MVP):** server-side HTML templates for Ori —
   delimiters `@{ }`, comments `@{-- --}`, escape default, `|> raw` last-stage only,
   `if`/`elif`/`else`/`for`/`include`/`layout`/`assign`, path jail, `.orix` files.
-  Design: [`docs/planning/web-templates-discussion-roadmap.md`](docs/planning/web-templates-discussion-roadmap.md)
+  Design: [`docs/archive/investigations/web-templates-discussion-roadmap.md`](docs/archive/investigations/web-templates-discussion-roadmap.md)
   (D3–D28). Smoke: `packages/ori-templates/examples/smoke`.
 - **`packages/ori-web` (MVP):** minimal HTTP Library layer — router
   (`get`/`post`/… + `:id`), static jail, in-memory session (`ori_sid` HttpOnly),
@@ -541,8 +541,8 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Performance docs:** [docs/guides/performance.md](docs/guides/performance.md)
   + [performance.pt-BR.md](docs/guides/performance.pt-BR.md); snapshot section on
   root [README.md](README.md) / [README.pt-BR.md](README.pt-BR.md); planning note
-  in [docs/planning/perf-baseline-2026-07-13.md](docs/planning/perf-baseline-2026-07-13.md).
-- **LANG-PERF-2 plan:** [docs/planning/historico/perf-runtime-midend-plan.md](docs/planning/historico/perf-runtime-midend-plan.md)
+  in [docs/archive/audits/perf-baseline-2026-07-13.md](docs/archive/audits/perf-baseline-2026-07-13.md).
+- **LANG-PERF-2 plan:** [docs/archive/plans/perf-runtime-midend-plan.md](docs/archive/plans/perf-runtime-midend-plan.md)
   — mid-end HIR opts, loop hygiene, strength reduction, inlining; ORC/LLVM deferred.
 - **LANG-PERF-2-0/1/2/3/4 mid-end land:**
   - HIR mid-end `ori_hir::optimize` — const fold + DCE + pure-loop **strength
@@ -577,7 +577,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   O(n²). Synthetic repro (extern call + managed temp per iteration, 10k live
   strings): 226µs → **1.5µs per iteration**, flat up to 100k live allocations.
   Regression guard: `performance_guard::run_ffi_boundary_cost_stays_flat_with_many_live_allocations`.
-  Issue: [`docs/planning/historico/issue-ffi-dispatch-large-binary-2026-07-16.md`](docs/planning/historico/issue-ffi-dispatch-large-binary-2026-07-16.md).
+  Issue: [`docs/archive/investigations/issue-ffi-dispatch-large-binary-2026-07-16.md`](docs/archive/investigations/issue-ffi-dispatch-large-binary-2026-07-16.md).
 - **LANG-MEM-3 partial — function-root cycle collect is amortized** (residual of
   LANG-PERF-3 lab: large live heap still ~2fps). Sync function roots and post-
   `await` dead-frame cleanup call `ori_arc_maybe_collect_cycles` instead of
@@ -634,7 +634,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Notas
 - Language-first implementation queue **closed** (LANG-DOC/PERF/RES done).
-- **FREEZE-1** remains open on `0.3.x` (readiness: `docs/planning/freeze-and-abi-gates.md`).
+- **FREEZE-1** remains open on `0.3.x` (readiness: `docs/archive/plans/freeze-and-abi-gates.md`).
 - Linux release assets: **`.tar.gz` + `.deb`**.
 
 ### Adicionado (distribuição Linux)
@@ -646,7 +646,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Install docs:** deb path in `docs/install.md`.
 - **Package smoke:** does not bundle non-portable `rust-lld` (needs libLLVM);
   AOT uses **SystemLinker**. BundledRustLld only if `rust-lld --version` runs.
-- **Freeze readiness:** `docs/planning/freeze-and-abi-gates.md` (FREEZE-1 process
+- **Freeze readiness:** `docs/archive/plans/freeze-and-abi-gates.md` (FREEZE-1 process
   finalized; window remains open on 0.3.x).
 
 ### Adicionado (editor DX local)
@@ -682,7 +682,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   examples AOT-compile; regression
   `compile_runs_lang_res_product_surface_native` (for list/map/string/bytes/
   range, index assign, async await, using+dispose, spawn/join).
-- Closure: `docs/planning/historico/lang-res-closure.md`. Reopen only with a concrete
+- Closure: `docs/archive/audits/lang-res-closure.md`. Reopen only with a concrete
   product program that hits `backend.native_unsupported`.
 
 ### Performance (LANG-PERF)
@@ -699,7 +699,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Microbench:** `tools/microbench_lang_perf.sh` (check/run/compile samples).
 - **ARC bench:** `tools/bench/arc_list_churn.orl` (list push + nested lists).
 - **LANG-PERF closed** in `BACKLOG.md` (further JIT lower = living/Cranelift-bound).
-- Numbers: `docs/planning/perf-baseline-2026-07-13.md`.
+- Numbers: `docs/archive/audits/perf-baseline-2026-07-13.md`.
 
 ### Documentação (LANG-DOC — fechado como onda)
 - Tour EN/PT: trait `Displayable` com `import ori.core`, `string(value)`, seção
@@ -716,12 +716,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Linux-only distribution:** `release.yml` packages/publishes
   `x86_64-unknown-linux-gnu` only; Windows/macOS smoke jobs deferred
   (`if: false` on multi-OS smoke). Policy in `BACKLOG.md` + `docs/install.md`.
-- **PKG-4:** `docs/planning/manifest-schema.md` + edge tests
+- **PKG-4:** `docs/archive/plans/manifest-schema.md` + edge tests
   (`package_manifest_rejects_git_and_path_together`,
   `package_manifest_rejects_invalid_version`).
 - **FREEZE-1 / ABI-1:** freeze window opened 2026-07-13; ABI enforcement in
   force (`ori-native-abi-1`, spec 19). Criteria:
-  `docs/planning/freeze-and-abi-gates.md`.
+  `docs/archive/plans/freeze-and-abi-gates.md`.
 - **STDLIB-4 MVP:** file async via L1 `fs.read_text_async` /
   `write_text_async` (`compile_runs_async_fs_read_and_write_native`);
   net offload via `*_in_background` + `task.run_blocking`.
@@ -743,7 +743,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   C async remains **wontfix v1** (LANG-3).
 - **STDLIB-5:** closed as wontfix — no mass L1→.orl ports (Layer 1 by design).
 - **DOC-1:** `install.md` / `install.pt-BR.md` + tour links Linux-primary.
-- Design: `docs/planning/historico/design-close-backlog-linux-2026-07-13.md`.
+- Design: `docs/archive/plans/design-close-backlog-linux-2026-07-13.md`.
 
 ### Adicionado (packages / language)
 - **PKG-1 / PKG-2 git dependencies:** declare
@@ -758,7 +758,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   file layout `packages/{name}/{version}/` + `versions.json` + tarball;
   `ori publish <path> [--registry] [--force] [--token]`; `ori install name[@ver]`
   from registry; version pins fetch on cache miss. Contract:
-  `docs/planning/registry-v1.md`. Tests: `package_registry_publish_install_and_resolve_on_check`,
+  `docs/archive/plans/registry-v1.md`. Tests: `package_registry_publish_install_and_resolve_on_check`,
   `package_publish_refuses_overwrite_without_force`.
 - **LANG-1 async honesty:** promised native async subset treated as closed
   (coverage in `concurrency_async.rs`). Spec `14-backend-support.md` documents
@@ -781,7 +781,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   arity / monomorphization). True L2 lifts that remain: e.g.
   `ori.bytes.compare_lex` / `is_prefix_of` (from algorithms). Gate:
   `compile_runs_stdlib_parent_canonical_no_utils_import`. Policy:
-  `docs/planning/stdlib-merge-policy.md`, `stdlib/README.md`.
+  `docs/archive/legacy/stdlib-merge-policy.md`, `stdlib/README.md`.
 
 ### Documentação
 - **Reorganização e padronização:** `docs/README.md` + `docs/README.pt-BR.md`
@@ -830,10 +830,10 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Stdlib/.oridoc (Layer 2/3):** criados **40 arquivos `.oridoc` sidecar** ao lado de todos os módulos `.orl` da stdlib (`stdlib/string.oridoc`, `stdlib/list.oridoc`, `stdlib/map.oridoc`, `stdlib/path.oridoc`, `stdlib/validate.oridoc`, `stdlib/time.oridoc`, `stdlib/fs.oridoc`, `stdlib/io.oridoc`, `stdlib/net.oridoc`, `stdlib/args.oridoc`, `stdlib/config.oridoc`, `stdlib/log.oridoc`, e os submódulos `*/utils.oridoc`/`*/algorithms.oridoc` de `bytes`, `concurrent`, `convert`, `deque`, `doubly_linked_list`, `format`, `fs`, `graph`, `hash_table`, `heap`, `io`, `iter`, `json`, `linked_list`, `math`, `net`, `os`, `process`, `queue`, `random`, `set`, `stack`, `test`, `time`, `tree`). Cada `.oridoc` documenta o módulo (`doc module self`) e todas as funções públicas (`doc func`) com `summary`/`param`/`returns` em inglês, seguindo a filosofia sidecar-first da spec `docs/spec/17-project-and-docs.md`. Todos validam com `ori doc check` (exit 0, zero `doc.symbol_not_found`). Os sidecars são empacotados nos releases (`stdlib/*.oridoc`) e disponíveis ao LSP hover. Layer 1 (runtime Rust, sem `.orl`) permanece coberta pela spec 12 + `ori doc export`.
 - **Pacotes de distribuição:** gerados os artefatos de release `target/dist/ori-0.2.0-x86_64-pc-windows-msvc.zip` (Windows MSVC, ~46 MB) e `target/dist/ori-0.2.0-x86_64-unknown-linux-gnu.tar.gz` (Linux GNU, ~25 MB), ambos com smoke validado (`ori compile` + `ori test` + `ori run` JIT + `ori doctor`) em package isolado com runtime empacotado e stdlib incluindo os `.oridoc`.
 - **Rede v2 / docs drift:** `stdlib-gap-parity.md`, `uso-real-pequeno-medio.md`, `PLANO-MATURIDADE-COMPLETO.md` (Apêndice C), `AGENTS.md`, `stdlib/README.md`, `docs/spec/12-stdlib.md` e `docs/spec/14-backend-support.md` sincronizados com TLS/UDP/servidor TCP síncronos entregues; backlog remanescente = rede async nativa.
-- **Planejamento:** adicionado `docs/planning/uso-real-pequeno-medio.md` como plano ativo para levar Ori a 100% de usabilidade em projetos pequenos e médios; `PENDENTES.md`, `PLANO-MATURIDADE-COMPLETO.md` e o índice de planejamento agora apontam o plano mestre `0.2.0` como histórico/referência.
+- **Planejamento:** adicionado `docs/archive/plans/uso-real-pequeno-medio.md` como plano ativo para levar Ori a 100% de usabilidade em projetos pequenos e médios; `PENDENTES.md`, `PLANO-MATURIDADE-COMPLETO.md` e o índice de planejamento agora apontam o plano mestre `0.2.0` como histórico/referência.
 - **README:** reescrito o README principal em inglês com menu, overview completo, quick start, CLI, arquitetura, stdlib, tooling, release layout, limitações e roadmap; adicionadas traduções completas em português (`README.pt-BR.md`) e japonês (`README.ja.md`).
 - **README:** removido o bloco de logo do topo das versões em inglês, português e japonês para evitar associação visual incorreta.
-- **Linguagem/Planejamento:** adicionados `docs/planning/language-direction-decisions-2026-06-30.md` e `docs/planning/c-backend-redefinition.md`, registrando decisões sobre `try`, ARC + ciclos, mutabilidade, concorrência, FFI, pacotes, referências de linguagem, monomorfização e redefinição futura do C backend/`ori build`.
+- **Linguagem/Planejamento:** adicionados `docs/archive/legacy/language-direction-decisions-2026-06-30.md` e `docs/planning/c-backend-redefinition.md`, registrando decisões sobre `try`, ARC + ciclos, mutabilidade, concorrência, FFI, pacotes, referências de linguagem, monomorfização e redefinição futura do C backend/`ori build`.
 - **CLI:** `ori build` agora usa a rota nativa/Cranelift para construir arquivo ou projeto; a emissao C parcial foi movida para `ori emit c`.
 - **CLI:** adicionado `ori new <path>` para criar um projeto app ou lib com `ori.proj`, `src/` e `docs/api/`.
 - **CLI:** adicionado `ori repl`, um REPL inicial apoiado no JIT para imports, bindings simples, chamadas e expressoes curtas.
@@ -933,7 +933,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 **Breaking release of language surface.** Ori absorbs the Auk9-inspired **S3**
 syntax. Pre-S3 forms are **hard errors** (no dual acceptance). Product purpose
 and identity: [`docs/spec/00-manifesto.md`](docs/spec/00-manifesto.md). Decision
-log: [`docs/planning/ori-surface-s3-auk9.md`](docs/planning/ori-surface-s3-auk9.md).
+log: [`docs/archive/legacy/ori-surface-s3-auk9.md`](docs/archive/legacy/ori-surface-s3-auk9.md).
 ADR: [`docs/planning/adr-ori-surface-s3-auk9.md`](docs/planning/adr-ori-surface-s3-auk9.md).
 
 **Versioning note:** language surface **`0.3.0`**; workspace Cargo **`0.3.1`**
@@ -1010,7 +1010,7 @@ Etapa 9 (Release e Publicação) do `docs/planning/PLANO-MATURIDADE-COMPLETO.md`
 - **Arquitetura/Monolitos (Etapa 8.3):** Refatoração incremental de monolitos com uma extração por arquivo: (1) `pipeline.rs` → `pipeline/fmt.rs` — `format_source_text` + 3 helpers (~70 linhas) extraídos como submódulo; API pública `ori_driver::pipeline::format_source_text` preservada via wrapper. (2) `native_backend.rs` → `native_backend/string_collector.rs` — `StringCollector` + 6 funções de travessia HIR (~255 linhas) extraídas; `pub(super) fn collect_all_strings` re-exportado via `use`. (3) `ori-runtime/lib.rs` → `test_harness.rs` — 13 funções `ori_test_*` (~125 linhas) extraídas; delegam para `super::cstr_str`/`super::ori_arc_*`. Testes `native_string_collectors_are_exhaustive_over_hir_shapes` e `native_codegen_unsupported_errors_are_coded` atualizados para ler de `string_collector.rs`; `rust_runtime_exports_manifest_native_symbols` atualizado para incluir `test_harness.rs`.
 - **Workspace/Infra (Etapa 8.4):** `libc` e `serde_json` centralizados em `[workspace.dependencies]` — `ori-runtime` e `ori-lsp` agora usam `{ workspace = true }` para ambos. `rust-toolchain.toml` criado fixando `channel = "1.95.0"` + componentes `rustfmt`/`clippy`. Menção a `vendor/` em `AGENTS.md` esclarecida como slot reservado futuro (diretório não existe).
 - **Docs/Stdlib (Etapa 8.1):** Cap. 15 (`15-stdlib-maintenance.md`) reescrito com arquitetura SSOT (Single Source of Truth), `STDLIB_MODULE_ONLY_PATHS`, funções derivadas (`is_implemented_stdlib_module`, `implemented_stdlib_modules`, `stdlib_runtime_symbol`), testes de paridade completos e seção `.orl` futura. Cap. 12 mantém a visão de contrato público com a seção "Implementation Architecture (v1.x)".
-- **Docs/Runtime (Etapa 8.2):** `runtime/README.md` atualizado com tabela de staging para os 5 triples do CI (windows-msvc, windows-gnu, linux-gnu, macos-x86_64, macos-aarch64) + comando de staging para cada. `CONTRIBUTING.md` reescrito (era stale "Zenith"): política de triples versionados vs gerados em CI, layout do release package, gates de qualidade, smoke com `ORI_REQUIRE_PACKAGED_RUNTIME=1`, checklist de PR para mudanças stdlib/diagnósticos.
+- **Docs/Runtime (Etapa 8.2):** `runtime/README.md` atualizado com tabela de staging para os 5 triples do CI (windows-msvc, windows-gnu, linux-gnu, macos-x86_64, macos-aarch64) + comando de staging para cada. `CONTRIBUTING.md` reescrito (era stale "retired predecessor project"): política de triples versionados vs gerados em CI, layout do release package, gates de qualidade, smoke com `ORI_REQUIRE_PACKAGED_RUNTIME=1`, checklist de PR para mudanças stdlib/diagnósticos.
 - **Docs/Tests (Etapa 8.5):** `tests/README.md` reescrito com tabela de 7 suites de teste (ori_spec, multifile_imports, concurrency_async, memory_arc, method_resolution, diagnostic_catalog, LSP E2E) + caminhos + cobertura + instruções para adicionar novos testes. `tests/run/bytes_stdlib.orl` deletado (sintaxe obsoleta + redundante com `multifile_imports.rs`); diretório `tests/run/` vazio removido.
 - **Docs/Dedup (Etapa 8.6):** `docs/plano-correcao-implementacao-linguagem.md` deletado (duplicata stale sem banner; `docs/archive/` já contém a versão completa de 44882 chars). `PENDENTES.md` Etapa 5 (Diagnósticos) atualizada para refletir a auditoria da Etapa 7: todos os 14 códigos marcados `[x]` (4 emitidos na Etapa 6.5 + 1 reserved alias + 9 removidos com justificativa); critério de passagem atualizado.
 

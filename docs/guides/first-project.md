@@ -139,7 +139,7 @@ ori publish . --registry /path/to/registry
 ori install other.pkg@0.1.0
 ```
 
-See [registry-v1.md](../planning/registry-v1.md) for layout (planning; not a
+See [registry-v1.md](../archive/plans/registry-v1.md) for layout (planning; not a
 marketplace product push).
 
 ## After upgrading Ori

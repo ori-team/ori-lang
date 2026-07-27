@@ -1,71 +1,113 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
-| Version / Branch | Supported |
-| --- | --- |
-| `master` (current development branch) | Yes |
-| Latest pre-release (`0.3.x-alpha`) | Best effort |
-| Older releases and snapshots | No |
+| Version / branch | Support |
+|---|---|
+| `master` and current `0.3.8` development line | Active security maintenance |
+| Latest published 0.3.x release | Best effort |
+| Older snapshots and archived builds | Not supported |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Please do **not** open public issues for security reports.
+Do **not** open a public issue for a suspected vulnerability.
 
-Use GitHub private reporting:
+Use GitHub private vulnerability reporting for this repository:
 
-- <https://github.com/raillen/zenithlang/security/advisories/new>
+- open the repository **Security** tab;
+- choose **Report a vulnerability**;
+- submit a private advisory report.
 
-If the link is unavailable, use the repository Security tab and submit a private report there.
+Repository: `raillen/ori-lang`.
 
-## What To Include In The Report
+If private reporting is unavailable, contact the repository owner through a private channel listed on the owner's GitHub profile. Do not include exploit details in a public discussion.
 
-Please include:
+## What to include
 
-- affected version, branch, or commit
-- impact summary (what can happen)
-- clear reproduction steps
-- proof of concept (minimal)
-- suggested fix (if available)
+Provide, when possible:
 
-## Response Targets
+- affected version, branch, or commit;
+- affected platform and target triple;
+- impact summary;
+- clear reproduction steps;
+- minimal proof of concept;
+- whether the issue affects compiler, runtime, package flow, LSP, installer, or release artifacts;
+- suggested mitigation or fix, when available;
+- whether public disclosure is already occurring elsewhere.
 
-Current targets (best effort):
+Remove real secrets, personal data, and unrelated private source from the report.
 
-- acknowledgment: within 72 hours
-- initial triage: within 7 days
-- status updates: every 7 days for confirmed issues
+## Response targets
 
-## Disclosure Process
+Best-effort targets:
 
-- A fix is prepared and validated.
-- Security release notes are published when appropriate.
-- Public disclosure happens after a fix is available (or risk is accepted and documented).
+- acknowledgement within 72 hours;
+- initial triage within 7 days;
+- periodic status updates for confirmed issues;
+- coordinated disclosure after a validated fix or documented risk decision.
+
+These targets are not a paid support or bug-bounty agreement.
+
+## Disclosure process
+
+1. The report is acknowledged privately.
+2. Impact and affected versions are validated.
+3. A fix and regression test are prepared.
+4. Relevant supported targets and release artifacts are tested.
+5. Security release notes and upgrade guidance are prepared when needed.
+6. Public disclosure occurs after a fix is available or a disclosure plan is agreed.
 
 ## Scope
 
 In scope:
 
-- compiler (`compiler/`)
-- runtime (`runtime/`)
-- standard library (`stdlib/`)
-- build and automation files in this repository
+- compiler and CLI under `compiler/`;
+- runtime source and staged artifacts;
+- standard library;
+- package, registry, lockfile, updater, installer, and release workflows;
+- LSP and repository editor integrations;
+- build, CI, documentation generation, and automation in this repository.
+
+Examples of relevant issues:
+
+- compiler or LSP memory-safety problems;
+- runtime double release, use-after-free, invalid layout, or ABI mismatch;
+- package archive path traversal;
+- command or linker injection;
+- registry token leakage;
+- malicious project causing unintended filesystem access;
+- update or installer integrity failure;
+- denial of service with significant practical impact;
+- release artifact substitution or metadata mismatch.
 
 Out of scope:
 
-- unrelated third-party systems and services
-- code outside this repository
-- `zenith-website/` (excluded from the language repository)
+- unrelated third-party services;
+- code outside this repository;
+- vulnerabilities requiring an already compromised host with no additional impact;
+- social engineering or physical attacks;
+- normal behavior of an intentionally executed program using documented OS capabilities.
 
-## Safe Harbor
+## Safe harbor
 
 Good-faith security research is welcome.
 
-Please avoid:
+Please:
 
-- privacy violations
-- data destruction
-- service disruption
-- social engineering, phishing, or physical attacks
+- avoid privacy violations and unnecessary data access;
+- avoid destructive testing and service disruption;
+- use minimal proofs of concept;
+- stop when unintended impact is observed;
+- give maintainers reasonable time to investigate and remediate;
+- do not use phishing, social engineering, or credential theft.
 
-This project currently does not offer a bug bounty program.
+The project currently offers no bug bounty.
+
+## Security engineering documentation
+
+See:
+
+- [`docs/security/threat-model.md`](docs/security/threat-model.md);
+- [`docs/security/unsafe-code-policy.md`](docs/security/unsafe-code-policy.md);
+- [`docs/spec/16-runtime-ffi-safety.md`](docs/spec/16-runtime-ffi-safety.md);
+- [`docs/spec/19-abi.md`](docs/spec/19-abi.md).

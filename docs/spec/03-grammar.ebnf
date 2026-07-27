@@ -3,7 +3,7 @@
    Chapter 03 of the Ori Language Specification
 
    Surface cutover: 0.3.0 (Auk9-inspired S3)
-   Product decisions: docs/planning/ori-surface-s3-auk9.md
+   Product decisions: docs/archive/legacy/ori-surface-s3-auk9.md
 
    Notation: Extended Backus-Naur Form (EBNF)
      A = B C        -- A is B followed by C

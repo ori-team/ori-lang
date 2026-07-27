@@ -67,7 +67,7 @@ ori publish . --registry /caminho/registry
 ori install outro.pkg@0.1.0
 ```
 
-Contrato: [registry-v1.md](../planning/registry-v1.md) (planejamento; sem push
+Contrato: [registry-v1.md](../archive/plans/registry-v1.md) (planejamento; sem push
 de loja).
 
 ## Após atualizar o Ori
