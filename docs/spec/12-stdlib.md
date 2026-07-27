@@ -23,7 +23,7 @@ import ori.string = str
 Prefer that form in all new code and examples. Nested historical paths
 `ori.X.utils` and `ori.X.algorithms` remain accepted as **silent compatibility**
 aliases while the on-disk merge completes — they are not the preferred API.
-Product decision: `docs/planning/stdlib-merge-policy.md`.
+Product decision: `docs/archive/legacy/stdlib-merge-policy.md`.
 
 The stdlib is small and layered:
 - **Core types** (`optional`, `result`, `list`, etc.) — always available, no import.

@@ -5,7 +5,7 @@
 > Surface: **S3** (`0.3.0`) + inference **`0.3.1`** + package **`0.3.2`**  
 > Revision tag: **`ori-native-abi-1`** (`ORI_ABI_VERSION` in `ori-runtime`)  
 > Source of truth: `compiler/crates/ori-runtime/src/lib.rs` + `ori-codegen` native backend  
-> Process: [freeze-and-abi-gates.md](../planning/freeze-and-abi-gates.md)  
+> Process: [freeze-and-abi-gates.md](../archive/plans/freeze-and-abi-gates.md)  
 > Related: [10-memory.md](10-memory.md), [16-runtime-ffi-safety.md](16-runtime-ffi-safety.md), [18-stability-and-compatibility.md](18-stability-and-compatibility.md)
 
 ---
