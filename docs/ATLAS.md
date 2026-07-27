@@ -55,7 +55,7 @@ The ATLAS is the canonical navigation map for humans and AI agents. It identifie
 | [`architecture/invariants.md`](architecture/invariants.md) | Cross-cutting | Conformance, catalog, ABI and runtime tests |
 | [`architecture/runtime-and-memory.md`](architecture/runtime-and-memory.md) | `ori-runtime`, native backend | `memory_arc`, runtime tests, Spec 10/16/19 |
 | [`architecture/stdlib.md`](architecture/stdlib.md) | `ori-types/src/stdlib.rs`, `stdlib/`, runtime | stdlib parity and multifile tests |
-| [`planning/repo-and-project-layout.md`](planning/repo-and-project-layout.md) | Repository and Ori project layout | project loading and scaffold tests |
+| [`architecture/repository-and-project-layout.md`](architecture/repository-and-project-layout.md) | Repository and Ori project layout | project loading and scaffold tests |
 
 ## Normative contracts
 
