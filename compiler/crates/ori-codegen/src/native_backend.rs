@@ -4978,7 +4978,9 @@ impl<M: Module> NativeBackend<M> {
     fn make_closure_wrapper_sig(&self, f: &HirFunc) -> ir::Signature {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(self.ptr_ty));
-        for p in &f.params {
+        let synthetic_env_params = usize::from(is_synthetic_closure_func(f));
+        let params = f.params.iter().skip(synthetic_env_params);
+        for p in params {
             if let Some(t) = cl_type(&p.ty, self.ptr_ty) {
                 sig.params.push(AbiParam::new(t));
             }
@@ -5110,9 +5112,6 @@ impl<M: Module> NativeBackend<M> {
             }
         }
         for f in &hir.funcs {
-            if is_synthetic_closure_func(f) {
-                continue;
-            }
             // A split module can pass any public function to a callback in a
             // different object, so local reference collection cannot know all
             // wrappers needed at this boundary. Emit every concrete wrapper so
@@ -5458,8 +5457,11 @@ impl<M: Module> NativeBackend<M> {
                 b.append_block_params_for_function_params(block);
                 b.switch_to_block(block);
                 b.seal_block(block);
-                let params: Vec<ir::Value> =
-                    b.block_params(block).iter().skip(1).copied().collect();
+                let params: Vec<ir::Value> = if is_synthetic_closure_func(f) {
+                    b.block_params(block).to_vec()
+                } else {
+                    b.block_params(block).iter().skip(1).copied().collect()
+                };
                 let call = b.ins().call(original_ref, &params);
                 let results = b.inst_results(call).to_vec();
                 if results.is_empty() {
