@@ -26,6 +26,9 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Native target selection.** Release packages now select the host
   architecture for Linux, Windows, and macOS instead of assuming x86_64;
   macOS Apple Silicon packages therefore find their staged `aarch64` runtime.
+- **No-Rust smoke checks.** CI now removes hosted-runner Rust locations from
+  `PATH` before validating packaged installs, so the smoke jobs test the
+  intended end-user environment instead of failing on preinstalled tools.
 - **Driver modularization.** Native runtime discovery, ABI metadata validation,
   platform artifact naming, and linker argument construction now live in a
   dedicated driver pipeline module. The compile, run, test, and doctor routes

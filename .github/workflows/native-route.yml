@@ -115,12 +115,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential
+          # GitHub's hosted image includes Rust for unrelated workflows. Keep
+          # the system tools needed by the package smoke, but remove Cargo and
+          # rustup locations so this job exercises the no-Rust install path.
+          clean_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          echo "PATH=$clean_path" >> "$GITHUB_ENV"
+          export PATH="$clean_path"
           if command -v rustc >/dev/null 2>&1; then
-            echo "ERROR: rustc is present on this runner — smoke would be invalid"
+            echo "ERROR: rustc is still reachable after PATH sanitization"
             exit 1
           fi
           if command -v cargo >/dev/null 2>&1; then
-            echo "ERROR: cargo is present on this runner — smoke would be invalid"
+            echo "ERROR: cargo is still reachable after PATH sanitization"
             exit 1
           fi
 
@@ -148,12 +154,23 @@ jobs:
       - name: Ensure Rust is not present
         shell: pwsh
         run: |
+          $cleanPath = @(
+            "$env:SystemRoot\System32",
+            "$env:SystemRoot",
+            "$env:SystemRoot\System32\Wbem",
+            "$env:ProgramFiles\Git\cmd",
+            "$env:ProgramFiles\7-Zip",
+            "$env:ProgramFiles\PowerShell\7",
+            "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+          ) -join ";"
+          $env:Path = $cleanPath
+          "Path=$cleanPath" >> $env:GITHUB_ENV
           if (Get-Command rustc -ErrorAction SilentlyContinue) {
-            Write-Error "rustc is present on this runner — smoke would be invalid"
+            Write-Error "rustc is still reachable after PATH sanitization"
             exit 1
           }
           if (Get-Command cargo -ErrorAction SilentlyContinue) {
-            Write-Error "cargo is present on this runner — smoke would be invalid"
+            Write-Error "cargo is still reachable after PATH sanitization"
             exit 1
           }
 
@@ -229,12 +246,15 @@ jobs:
 
       - name: Ensure Rust is not present
         run: |
+          clean_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+          echo "PATH=$clean_path" >> "$GITHUB_ENV"
+          export PATH="$clean_path"
           if command -v rustc >/dev/null 2>&1; then
-            echo "ERROR: rustc is present on this runner — smoke would be invalid"
+            echo "ERROR: rustc is still reachable after PATH sanitization"
             exit 1
           fi
           if command -v cargo >/dev/null 2>&1; then
-            echo "ERROR: cargo is present on this runner — smoke would be invalid"
+            echo "ERROR: cargo is still reachable after PATH sanitization"
             exit 1
           fi
 
@@ -263,12 +283,15 @@ jobs:
 
       - name: Ensure Rust is not present
         run: |
+          clean_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+          echo "PATH=$clean_path" >> "$GITHUB_ENV"
+          export PATH="$clean_path"
           if command -v rustc >/dev/null 2>&1; then
-            echo "ERROR: rustc is present on this runner — smoke would be invalid"
+            echo "ERROR: rustc is still reachable after PATH sanitization"
             exit 1
           fi
           if command -v cargo >/dev/null 2>&1; then
-            echo "ERROR: cargo is present on this runner — smoke would be invalid"
+            echo "ERROR: cargo is still reachable after PATH sanitization"
             exit 1
           fi
 
