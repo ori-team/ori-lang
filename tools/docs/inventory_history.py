@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a machine-readable inventory of historical documentation.
-
-This is a migration helper for DOC-MIGRATE-1. It does not modify source
-files. The generated report is deterministic and intended for review before
-moving files.
-"""
+"""Generate machine-readable and concise historical documentation inventories."""
 
 from __future__ import annotations
 
@@ -14,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / ".ai/generated/documentation-history-inventory.json"
+SUMMARY = ROOT / ".ai/generated/documentation-history-inventory.tsv"
 
 ARCHIVE_CATEGORY_NAMES = {"plans", "audits", "investigations", "sessions", "legacy"}
 SKIP_PARTS = {".git", "target", "node_modules", "dist", "build", ".ori"}
@@ -166,12 +162,18 @@ def main() -> int:
 
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
-    if REPORT.exists() and REPORT.read_text(encoding="utf-8") == rendered:
-        print(f"inventory unchanged: {REPORT.relative_to(ROOT)}")
-        return 0
-
     REPORT.write_text(rendered, encoding="utf-8")
-    print(f"wrote {len(records)} records to {REPORT.relative_to(ROOT)}")
+
+    rows = ["path\tcategory\ttitle\tlines\tinbound_references"]
+    for record in records:
+        title = record["title"].replace("\t", " ").replace("\n", " ")
+        rows.append(
+            f'{record["path"]}\t{record["suggested_category"]}\t{title}\t'
+            f'{record["lines"]}\t{len(record["inbound_references"])}'
+        )
+    SUMMARY.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    print(f"wrote {len(records)} records")
     return 0
 
 
