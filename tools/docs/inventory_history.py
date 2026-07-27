@@ -10,19 +10,24 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / ".ai/generated/documentation-history-inventory.json"
 
-HISTORICAL_ROOTS = [
-    ROOT / "docs/planning/historico",
-]
-
 ARCHIVE_CATEGORY_NAMES = {"plans", "audits", "investigations", "sessions", "legacy"}
-
 SKIP_PARTS = {".git", "target", "node_modules", "dist", "build", ".ori"}
+
+PLANNING_EXCLUSIONS = {
+    "docs/planning/README.md",
+    "docs/planning/BACKLOG.md",
+    "docs/planning/PENDENTES.md",
+    "docs/planning/adr-ori-surface-s3-auk9.md",
+    "docs/planning/adr-arc-single-cascade-owner.md",
+    "docs/planning/adr-arc-cow-collections.md",
+    "docs/planning/repo-and-project-layout.md",
+    "docs/planning/qa/test-matrix-ori.md",
+}
 
 
 def tracked_text_files() -> list[Path]:
@@ -41,34 +46,17 @@ def tracked_text_files() -> list[Path]:
 def candidate_files() -> list[Path]:
     candidates: set[Path] = set()
 
-    for root in HISTORICAL_ROOTS:
-        if root.exists():
-            candidates.update(path for path in root.rglob("*") if path.is_file())
+    planning = ROOT / "docs/planning"
+    if planning.exists():
+        for path in planning.rglob("*.md"):
+            rel = path.relative_to(ROOT).as_posix()
+            if rel not in PLANNING_EXCLUSIONS:
+                candidates.add(path)
 
     archive = ROOT / "docs/archive"
     if archive.exists():
         for path in archive.iterdir():
-            if not path.is_file() or path.name == "README.md":
-                continue
-            candidates.add(path)
-
-    planning = ROOT / "docs/planning"
-    if planning.exists():
-        for path in planning.iterdir():
-            if not path.is_file() or path.suffix.lower() != ".md":
-                continue
-            lower = path.name.casefold()
-            if lower in {"readme.md", "backlog.md", "pendentes.md"}:
-                continue
-            if lower.startswith("adr-"):
-                continue
-            if any(token in lower for token in (
-                "plan", "plano", "audit", "auditoria", "check", "bug",
-                "report", "relatorio", "investig", "study", "estudo",
-                "analysis", "analise", "prompt", "session", "sessao",
-                "resume", "migration", "migracao", "roadmap", "status",
-                "complete", "implement", "conclu", "history", "historico",
-            )):
+            if path.is_file() and path.name != "README.md":
                 candidates.add(path)
 
     return sorted(candidates)
@@ -84,19 +72,38 @@ def title_of(text: str, fallback: str) -> str:
 def suggested_category(path: Path, title: str, text: str) -> tuple[str, str]:
     haystack = f"{path.name} {title} {text[:3000]}".casefold()
 
-    if any(token in haystack for token in ("sessão", "sessao", "session", "resume point", "retomar", "máquina", "machine switch")):
+    if any(token in haystack for token in (
+        "sessão", "sessao", "session", "resume point", "retomar",
+        "máquina", "machine switch", "checkpoint de sessão",
+    )):
         return "sessions", "session/resume terminology"
 
-    if any(token in haystack for token in ("audit", "auditoria", "gap analysis", "lacunas", "assessment", "avaliação", "avaliacao")):
+    if any(token in haystack for token in (
+        "audit", "auditoria", "gap analysis", "lacunas", "assessment",
+        "avaliação", "avaliacao", "parity", "closure report",
+        "relatório de fechamento", "relatorio de fechamento",
+    )):
         return "audits", "audit/assessment terminology"
 
-    if any(token in haystack for token in ("bugcheck", "bug check", "investigation", "investigação", "investigacao", "benchmark", "study", "estudo", "análise", "analise", "experiment", "experimento", "prototype", "protótipo", "prompt")):
+    if any(token in haystack for token in (
+        "bugcheck", "bug check", "investigation", "investigação",
+        "investigacao", "benchmark", "study", "estudo", "análise",
+        "analise", "experiment", "experimento", "prototype", "protótipo",
+        "prompt", "discussion", "discussão", "discussao", "ideas", "ideias",
+    )):
         return "investigations", "investigation/experiment terminology"
 
-    if any(token in haystack for token in ("legacy", "retired", "obsolete", "obsoleto", "surface s3", "auk9", "old syntax", "sintaxe antiga", "predecessor")):
+    if any(token in haystack for token in (
+        "legacy", "retired", "obsolete", "obsoleto", "surface s3", "auk9",
+        "old syntax", "sintaxe antiga", "predecessor", "compatibility pointer",
+    )):
         return "legacy", "legacy/superseded terminology"
 
-    if any(token in haystack for token in ("plan", "plano", "roadmap", "implementation", "implementação", "implementacao", "pr-", "milestone", "maturity", "maturidade", "migration", "migração", "migracao")):
+    if any(token in haystack for token in (
+        "plan", "plano", "roadmap", "implementation", "implementação",
+        "implementacao", "pr-", "milestone", "maturity", "maturidade",
+        "migration", "migração", "migracao", "backlog", "freeze",
+    )):
         return "plans", "plan/implementation terminology"
 
     return "investigations", "default historical evidence classification"
@@ -149,6 +156,7 @@ def main() -> int:
         "schema_version": 1,
         "generated_for": "DOC-MIGRATE-1",
         "candidate_count": len(records),
+        "excluded_current_paths": sorted(PLANNING_EXCLUSIONS),
         "categories": {
             category: sum(1 for record in records if record["suggested_category"] == category)
             for category in sorted(ARCHIVE_CATEGORY_NAMES)
