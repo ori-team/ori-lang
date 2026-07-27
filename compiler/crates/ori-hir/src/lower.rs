@@ -949,6 +949,7 @@ struct Scope {
 struct Lowerer<'a> {
     def_map: &'a DefMap,
     func_sigs: &'a [FuncSig],
+    func_sig_indices: HashMap<DefId, usize>,
     value_sigs: &'a [ValueSig],
     struct_sigs: &'a [StructSig],
     enum_sigs: &'a [EnumSig],
@@ -981,6 +982,7 @@ struct Lowerer<'a> {
     iter_inline_counter: usize,
     /// Iterators currently being inlined, to reject (mutual) recursion.
     iter_inline_stack: Vec<SmolStr>,
+    current_where_constraints: Vec<ori_types::WhereConstraintSig>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -1009,9 +1011,15 @@ impl<'a> Lowerer<'a> {
                 .iter()
                 .map(|(id, repr)| (*id, (0, repr.clone()))),
         );
+        let func_sig_indices = func_sigs
+            .iter()
+            .enumerate()
+            .map(|(index, signature)| (signature.def_id, index))
+            .collect();
         Self {
             def_map,
             func_sigs,
+            func_sig_indices,
             value_sigs,
             struct_sigs,
             enum_sigs,
@@ -1032,6 +1040,7 @@ impl<'a> Lowerer<'a> {
             iter_fns: HashMap::new(),
             iter_inline_counter: 0,
             iter_inline_stack: Vec::new(),
+            current_where_constraints: Vec::new(),
         }
     }
 
@@ -1243,11 +1252,15 @@ impl<'a> Lowerer<'a> {
     /// Declared return type of a function/method definition, or `Infer` when
     /// no signature is registered (generic instantiation fills it in later).
     fn func_return_ty(&self, def_id: ori_types::DefId) -> Ty {
-        self.func_sigs
-            .iter()
-            .find(|sig| sig.def_id == def_id)
+        self.func_sig(def_id)
             .map(|sig| sig.return_ty.clone())
             .unwrap_or(Ty::Infer(0))
+    }
+
+    fn func_sig(&self, def_id: DefId) -> Option<&FuncSig> {
+        self.func_sig_indices
+            .get(&def_id)
+            .and_then(|index| self.func_sigs.get(*index))
     }
 
     fn ty_for_def_path(&self, path: &str) -> Ty {
@@ -1255,7 +1268,7 @@ impl<'a> Lowerer<'a> {
             match self.def_map.get(id).kind {
                 DefKind::Struct | DefKind::Enum | DefKind::TypeAlias => Ty::Named(id, Vec::new()),
                 DefKind::Func | DefKind::Extern => {
-                    if let Some(sig) = self.func_sigs.iter().find(|sig| sig.def_id == id) {
+                    if let Some(sig) = self.func_sig(id) {
                         Ty::Func {
                             params: sig.params.clone(),
                             ret: Box::new(sig.return_ty.clone()),
@@ -1284,6 +1297,43 @@ impl<'a> Lowerer<'a> {
             .iter()
             .find(|sig| sig.name == method)
             .map(|sig| sig.return_ty.clone())
+    }
+
+    fn associated_method_for_type_param(
+        &self,
+        param_index: u32,
+        param_name: &SmolStr,
+        method_name: &str,
+    ) -> Option<Ty> {
+        let receiver_ty = Ty::Param {
+            index: param_index,
+            name: param_name.clone(),
+        };
+        let mut matches = self
+            .current_where_constraints
+            .iter()
+            .filter(|constraint| {
+                !constraint.negative
+                    && constraint.param_index == param_index
+                    && constraint.param_name == *param_name
+            })
+            .filter_map(|constraint| {
+                let trait_sig = self
+                    .trait_sigs
+                    .iter()
+                    .find(|sig| sig.def_id == constraint.trait_def_id)?;
+                let method = trait_sig
+                    .methods
+                    .iter()
+                    .find(|method| method.name == method_name && !method.has_self)?;
+                Some(ori_types::substitute_trait_self(
+                    &method.return_ty,
+                    constraint.trait_def_id,
+                    &receiver_ty,
+                ))
+            });
+        let result = matches.next()?;
+        matches.next().is_none().then_some(result)
     }
     fn trait_method_func_for_type(
         &self,
@@ -1417,11 +1467,7 @@ impl<'a> Lowerer<'a> {
                         .ends_with(".Iterable")
                 })
                 .and_then(|impl_sig| impl_sig.methods.iter().find(|method| method.name == "next"))
-                .and_then(|method| {
-                    self.func_sigs
-                        .iter()
-                        .find(|sig| sig.def_id == method.func_def_id)
-                })
+                .and_then(|method| self.func_sig(method.func_def_id))
                 .and_then(|sig| match &sig.return_ty {
                     Ty::Optional(inner) => Some(*inner.clone()),
                     _ => None,
@@ -1444,9 +1490,7 @@ impl<'a> Lowerer<'a> {
         let impl_method = impl_sig.methods.iter().find(|sig| sig.name == method)?;
         let path = self.def_map.get(impl_method.func_def_id).path.clone();
         let return_ty = self
-            .func_sigs
-            .iter()
-            .find(|sig| sig.def_id == impl_method.func_def_id)
+            .func_sig(impl_method.func_def_id)
             .map(|sig| sig.return_ty.clone())
             .unwrap_or(Ty::Infer(0));
         Some((path, return_ty))
@@ -1717,6 +1761,7 @@ fn lower_trait_sigs(def_map: &DefMap, trait_sigs: &[TraitSig]) -> Vec<HirTrait> 
                     default_func_name: method.has_default.then(|| {
                         SmolStr::new(format!("{}.{}", def_map.get(sig.def_id).path, method.name))
                     }),
+                    has_self: method.has_self,
                 })
                 .collect(),
         })
@@ -2166,6 +2211,13 @@ pub fn lower(
                 if f.is_iter {
                     continue;
                 }
+                let path = format!("{}.{}", namespace, f.name.text);
+                let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
+                let previous_where_constraints = std::mem::take(&mut l.current_where_constraints);
+                l.current_where_constraints = l
+                    .func_sig(def_id)
+                    .map(|sig| sig.where_constraints.clone())
+                    .unwrap_or_default();
                 let tp: Vec<SmolStr> = f.type_params.iter().map(|p| p.name.text.clone()).collect();
                 let params = l.lower_params(&f.params, &tp);
                 let body_ret_ty = f
@@ -2182,9 +2234,8 @@ pub fn lower(
                 l.async_inner_ret_ty = f.is_async.then(|| body_ret_ty.clone());
                 let body = l.lower_block(&f.body, &tp);
                 l.async_inner_ret_ty = None;
+                l.current_where_constraints = previous_where_constraints;
                 l.pop();
-                let path = format!("{}.{}", namespace, f.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
                 let c_export_name = c_export_name_from_attrs(&item.attrs, f.name.text.as_str());
                 funcs.push(HirFunc {
                     def_id,
@@ -2658,6 +2709,11 @@ fn insert_default_arguments_expr(
         }
         HirExprKind::MethodCall { receiver, args, .. } => {
             insert_default_arguments_expr(receiver, defaults);
+            for arg in args {
+                insert_default_arguments_expr(arg, defaults);
+            }
+        }
+        HirExprKind::AssociatedCall { args, .. } => {
             for arg in args {
                 insert_default_arguments_expr(arg, defaults);
             }
@@ -3677,6 +3733,34 @@ impl<'a> Lowerer<'a> {
                         }
                         _ => {}
                     }
+                    if q.parts.len() == 2 {
+                        let receiver_name = &q.parts[0].text;
+                        if let Some(param_index) = tp.iter().position(|name| name == receiver_name)
+                        {
+                            if let Some(return_ty) = self.associated_method_for_type_param(
+                                param_index as u32,
+                                receiver_name,
+                                q.last().as_str(),
+                            ) {
+                                return HirExpr {
+                                    kind: HirExprKind::AssociatedCall {
+                                        receiver_ty: Ty::Param {
+                                            index: param_index as u32,
+                                            name: receiver_name.clone(),
+                                        },
+                                        method: q.last().text.clone(),
+                                        args: self
+                                            .lower_call_args(args, tp)
+                                            .into_iter()
+                                            .map(|arg| arg.value)
+                                            .collect(),
+                                    },
+                                    ty: return_ty,
+                                    span: *span,
+                                };
+                            }
+                        }
+                    }
                     if let Some(trait_path) = qualified_prefix(q) {
                         if let Some(trait_def_id) =
                             self.resolve_def_id_with_kind(&trait_path, DefKind::Trait)
@@ -4661,7 +4745,10 @@ fn build_iter_inline_construct(
     body.extend(transform_iter_block(&decl.body.stmts, &ctx));
     body.push(Stmt::Break(sp));
     Stmt::Loop(LoopStmt {
-        body: Block { stmts: body, span: sp },
+        body: Block {
+            stmts: body,
+            span: sp,
+        },
         span: sp,
     })
 }
@@ -5648,12 +5735,6 @@ fn lower_lvalue(lv: &ori_ast::stmt::LValue, lowerer: &mut Lowerer, tp: &[SmolStr
             index: Box::new(lowerer.lower_expr(index, tp)),
         },
     }
-}
-
-fn has_explicit_self_param(params: &[ori_ast::item::Param]) -> bool {
-    params
-        .first()
-        .is_some_and(|param| param.name.text.as_str() == "self")
 }
 
 fn lvalue_to_expr(lv: &HirLValue, span: Span) -> HirExpr {

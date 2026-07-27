@@ -108,6 +108,24 @@ import demo.math (double)
 For `demo.math = { path = "../math" }`, the path must point at a project with
 an `ori.proj` or a package with an `ori.pkg.toml`.
 
+### Dependency lockfile
+
+`ori lock` writes an optional `ori.lock` beside the project/package manifest.
+It records the exact dependency source and version selected for the current
+manifest. Git dependencies also record the resolved commit revision. The file
+is generated and must not be edited by hand.
+
+`ori lock --locked` validates the existing snapshot without rewriting it.
+When an `ori.lock` is present, `ori check`, `ori build`, `ori compile`, and
+`ori test` reject a manifest whose resolved dependencies differ from that
+snapshot. Projects without a lockfile retain the unconstrained development
+workflow.
+
+Package-local imports stop at the package boundary. A dependency's modules
+must be addressed with the dependency package prefix (`demo.math` in the
+example); a bare module name is never searched across every dependency. This
+keeps two packages that both contain `format.orl` independent.
+
 ---
 
 ## `ori.pkg.toml`

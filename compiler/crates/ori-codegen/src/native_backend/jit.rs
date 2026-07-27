@@ -15,6 +15,8 @@ use std::path::Path;
 use crate::native_backend::NativeBackend;
 use ori_hir::HirModule;
 
+type RuntimeSymbolLookup = dyn Fn(&str) -> Option<*const u8> + Send;
+
 /// Execute the given HIR module in-process via Cranelift JIT.
 ///
 /// `cdylib_path` must point at the staged `ori_runtime.{dll,so,dylib}` built
@@ -57,15 +59,14 @@ pub fn run_jit(
     unsafe impl Send for SendLibrary {}
 
     let send_libs: Vec<SendLibrary> = libraries.into_iter().map(SendLibrary).collect();
-    let lookup: Box<dyn Fn(&str) -> Option<*const u8> + Send> =
-        Box::new(move |name: &str| unsafe {
-            for lib in &send_libs {
-                if let Ok(sym) = lib.0.get::<unsafe extern "C" fn()>(name.as_bytes()) {
-                    return Some(*sym as *const () as *const u8);
-                }
+    let lookup: Box<RuntimeSymbolLookup> = Box::new(move |name: &str| unsafe {
+        for lib in &send_libs {
+            if let Ok(sym) = lib.0.get::<unsafe extern "C" fn()>(name.as_bytes()) {
+                return Some(*sym as *const () as *const u8);
             }
-            None
-        });
+        }
+        None
+    });
     // Product flags: verifier off, opt_level none for faster `ori run` startup.
     // `with_flags` takes string pairs (not a Flags object).
     let mut builder = JITBuilder::with_flags(

@@ -10,8 +10,8 @@ end
 
 main()
     rnd.seed(42)
-    const n: int = rnd.int(1, 10)
-    const flag: bool = rnd.bool()
+    const n = rnd.int(1, 10)
+    const flag = rnd.bool()
     io.println(f"random int[1,10]={n} bool={flag}")
 
     io.println(fmt.number(3.14159, 2))

@@ -45,7 +45,7 @@ import_form
     ;
 
 import_item
-    = IDENT [ "as" IDENT ]   (* member rename inside selective list only *)
+    = IDENT [ "=" IDENT ]    (* member rename inside selective list only *)
     ;
 
 imports_block
@@ -499,8 +499,8 @@ pattern
     | IDENT "(" [ named_pattern { "," named_pattern } ] ")"
     | "some" "(" pattern ")"
     | "none"
-    | "success" "(" pattern ")"
-    | "error"   "(" pattern ")"
+    | "ok" "(" pattern ")"
+    | "err" "(" pattern ")"
     | "tuple" "(" pattern { "," pattern } ")"
     ;
 

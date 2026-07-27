@@ -1,7 +1,7 @@
-use crate::def::DefMap;
+use crate::def::{CompileTimeValue, ConstEvalFailure, ConstEvalFailureKind, DefMap};
 use crate::ty::{OpaqueTy, Ty};
 use ori_ast::common::QualifiedName;
-use ori_ast::ty::Type as AstType;
+use ori_ast::ty::{ConstExpr, Type as AstType};
 use ori_diagnostics::{Diagnostic, DiagnosticSink, FileId, Label};
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -77,82 +77,49 @@ pub fn lower_type_with_local_aliases(
     }
     match ast_ty {
         AstType::Slice(inner, _) => Ty::Slice(Box::new(rec!(inner))),
-        // `size: 8` — a named compile-time constant in argument position.
-        // `size: cap` names a `const` parameter instead, resolved by
-        // substitution at the use site.
-        AstType::ConstArg { name, value, span } => match value {
-            ori_ast::ty::ConstArgValue::Literal(v) => Ty::ConstInt(name.text.clone(), *v),
-            ori_ast::ty::ConstArgValue::Param(param) => {
-                match type_params.iter().position(|p| p == &param.text) {
-                    Some(index) => Ty::Param {
-                        index: index as u32,
-                        name: param.text.clone(),
-                    },
-                    None => {
-                        sink.emit(
-                            Diagnostic::error(
-                                "type.undefined_const_param",
-                                format!(
-                                    "`{}` is not a `const` parameter in scope",
-                                    param.text
-                                ),
-                            )
-                            .with_label(Label::primary(file_id, *span, "unknown const parameter"))
-                            .with_action(
-                                "declare it on the type, e.g. `struct Buffer[const size: int]`, or use a literal",
-                            ),
-                        );
-                        Ty::Error
-                    }
-                }
-            }
-        },
+        // Concrete CT-0 expressions become ConstInt. A direct `size: cap`
+        // remains a parameter for substitution at the use site.
+        AstType::ConstArg { name, value, span } => lower_const_expression(
+            value,
+            &name.text,
+            *span,
+            &ConstLoweringContext {
+                module_path,
+                type_params,
+                def_map,
+                file_id,
+                aliases,
+            },
+            sink,
+        ),
         AstType::Array { elem, size, span } => {
             let elem_ty = rec!(elem);
-            let size_ty = match size {
-                ori_ast::ty::ConstArgValue::Literal(v) => {
-                    if *v < 0 {
-                        sink.emit(
-                            Diagnostic::error(
-                                "type.negative_array_size",
-                                format!("array length must not be negative, found `{v}`"),
-                            )
-                            .with_label(Label::primary(file_id, *span, "array length"))
-                            .with_action("use a length of zero or more"),
-                        );
-                        Ty::Error
-                    } else {
-                        Ty::ConstInt(SmolStr::new("size"), *v)
-                    }
+            let size_ty = lower_const_expression(
+                size,
+                "size",
+                *span,
+                &ConstLoweringContext {
+                    module_path,
+                    type_params,
+                    def_map,
+                    file_id,
+                    aliases,
+                },
+                sink,
+            );
+            let size_ty = match size_ty {
+                Ty::ConstInt(_, value) if value < 0 => {
+                    sink.emit(
+                        Diagnostic::error(
+                            "type.negative_array_size",
+                            format!("array length must not be negative, found `{value}`"),
+                        )
+                        .with_label(Label::primary(file_id, size.span(), "array length"))
+                        .with_action("use a length of zero or more"),
+                    );
+                    Ty::Error
                 }
-                ori_ast::ty::ConstArgValue::Param(param) => {
-                    match type_params.iter().position(|p| p == &param.text) {
-                        Some(index) => Ty::Param {
-                            index: index as u32,
-                            name: param.text.clone(),
-                        },
-                        None => {
-                            sink.emit(
-                                Diagnostic::error(
-                                    "type.undefined_const_param",
-                                    format!(
-                                        "`{}` is not a `const` parameter in scope",
-                                        param.text
-                                    ),
-                                )
-                                .with_label(Label::primary(
-                                    file_id,
-                                    *span,
-                                    "unknown const parameter",
-                                ))
-                                .with_action(
-                                    "declare it on the type, e.g. `struct Buffer[const size: int]`, or use a literal",
-                                ),
-                            );
-                            Ty::Error
-                        }
-                    }
-                }
+                other => other,
             };
             // Elements live inline with no reference counting, so a managed
             // element would be stored without a retain and released by nobody.
@@ -268,6 +235,198 @@ pub fn lower_type_with_local_aliases(
             )
         }
     }
+}
+
+struct ConstLoweringContext<'a> {
+    module_path: &'a str,
+    type_params: &'a [SmolStr],
+    def_map: &'a DefMap,
+    file_id: FileId,
+    aliases: &'a HashMap<SmolStr, SmolStr>,
+}
+
+fn lower_const_expression(
+    expression: &ConstExpr,
+    argument_name: &str,
+    usage_span: ori_diagnostics::Span,
+    context: &ConstLoweringContext<'_>,
+    sink: &mut DiagnosticSink,
+) -> Ty {
+    if let ConstExpr::Name(name) = expression {
+        if name.is_single() {
+            if let Some(index) = context
+                .type_params
+                .iter()
+                .position(|param| param == &name.last().text)
+            {
+                return Ty::Param {
+                    index: index as u32,
+                    name: name.last().text.clone(),
+                };
+            }
+        }
+    }
+
+    if let Some(parameter) = referenced_type_parameter(expression, context.type_params) {
+        sink.emit(
+            Diagnostic::error(
+                "type.const_param_expression_unsupported",
+                format!(
+                    "const parameter `{parameter}` cannot yet be used inside arithmetic or conditionals"
+                ),
+            )
+            .with_label(Label::primary(
+                context.file_id,
+                expression.span(),
+                "symbolic const expression",
+            ))
+            .with_why(
+                "CT-0 evaluates concrete expressions; symbolic const arithmetic needs a later monomorphization phase",
+            )
+            .with_action("pass the const parameter directly, or compute a concrete module constant"),
+        );
+        return Ty::Error;
+    }
+
+    match crate::const_eval::evaluate_type_const_expr(
+        expression,
+        context.module_path,
+        context.aliases,
+        context.def_map,
+        context.file_id,
+    ) {
+        Ok(CompileTimeValue::Int(value)) => Ty::ConstInt(SmolStr::new(argument_name), value),
+        Ok(CompileTimeValue::Bool(_)) => {
+            sink.emit(
+                Diagnostic::error(
+                    "type.const_argument_not_integer",
+                    format!("const type argument `{argument_name}` must evaluate to an integer"),
+                )
+                .with_label(Label::primary(
+                    context.file_id,
+                    expression.span(),
+                    "boolean value",
+                ))
+                .with_action("use an integer result, such as `if condition then 1 else 0`"),
+            );
+            Ty::Error
+        }
+        Err(failure) => {
+            if failure.kind == ConstEvalFailureKind::UndefinedName {
+                if let ConstExpr::Name(name) = expression {
+                    if name.is_single() {
+                        sink.emit(
+                            Diagnostic::error(
+                                "type.undefined_const_param",
+                                format!(
+                                    "`{}` is neither a const parameter nor a module constant in scope",
+                                    name.last()
+                                ),
+                            )
+                            .with_label(Label::primary(
+                                context.file_id,
+                                expression.span(),
+                                "unknown compile-time name",
+                            ))
+                            .with_action(
+                                "declare it as a const parameter, define a module `const`, or import a public module constant",
+                            ),
+                        );
+                        return Ty::Error;
+                    }
+                }
+            }
+            emit_const_eval_failure(sink, failure, context.file_id, usage_span);
+            Ty::Error
+        }
+    }
+}
+
+fn referenced_type_parameter<'a>(
+    expression: &'a ConstExpr,
+    type_params: &'a [SmolStr],
+) -> Option<&'a str> {
+    match expression {
+        ConstExpr::Name(name)
+            if name.is_single()
+                && type_params
+                    .iter()
+                    .any(|parameter| parameter == &name.last().text) =>
+        {
+            Some(name.last().as_str())
+        }
+        ConstExpr::Unary { operand, .. } => referenced_type_parameter(operand, type_params),
+        ConstExpr::Binary { lhs, rhs, .. } => referenced_type_parameter(lhs, type_params)
+            .or_else(|| referenced_type_parameter(rhs, type_params)),
+        ConstExpr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => referenced_type_parameter(condition, type_params)
+            .or_else(|| referenced_type_parameter(then_expr, type_params))
+            .or_else(|| referenced_type_parameter(else_expr, type_params)),
+        _ => None,
+    }
+}
+
+fn emit_const_eval_failure(
+    sink: &mut DiagnosticSink,
+    failure: ConstEvalFailure,
+    usage_file_id: FileId,
+    usage_span: ori_diagnostics::Span,
+) {
+    let (code, action) = match failure.kind {
+        ConstEvalFailureKind::UnsupportedExpression => (
+            "consteval.unsupported_expression",
+            "use literals, integer/boolean module constants, integer arithmetic, comparisons, boolean logic, or inline `if`",
+        ),
+        ConstEvalFailureKind::InvalidLiteral => (
+            "consteval.invalid_literal",
+            "use an integer literal representable by Ori's compile-time `int`",
+        ),
+        ConstEvalFailureKind::UndefinedName => (
+            "consteval.undefined_name",
+            "declare or import the module constant before using it in a type",
+        ),
+        ConstEvalFailureKind::NonConstName => (
+            "consteval.non_const_name",
+            "use a module `const`; variables and functions are runtime values",
+        ),
+        ConstEvalFailureKind::PrivateName => (
+            "name.private",
+            "make the constant public or keep the type-level use in the declaring module",
+        ),
+        ConstEvalFailureKind::Cycle => (
+            "consteval.cycle",
+            "break the cycle so each compile-time constant has a finite value",
+        ),
+        ConstEvalFailureKind::Overflow => (
+            "consteval.overflow",
+            "reduce the operands so the result fits in the compile-time `int` range",
+        ),
+        ConstEvalFailureKind::DivisionByZero => (
+            "consteval.division_by_zero",
+            "make the divisor non-zero",
+        ),
+        ConstEvalFailureKind::TypeMismatch => (
+            "consteval.type_mismatch",
+            "keep arithmetic operands integer and conditions boolean",
+        ),
+    };
+    let mut diagnostic = Diagnostic::error(code, failure.detail).with_label(Label::primary(
+        failure.file_id,
+        failure.span,
+        "compile-time evaluation failed here",
+    ));
+    if failure.file_id != usage_file_id || failure.span != usage_span {
+        diagnostic = diagnostic.with_label(Label::primary(
+            usage_file_id,
+            usage_span,
+            "required by this const type argument",
+        ));
+    }
+    sink.emit(diagnostic.with_action(action));
 }
 
 fn lower_named(

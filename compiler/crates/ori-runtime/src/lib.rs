@@ -4,7 +4,7 @@ pub const ORI_ABI_VERSION: &str = "ori-native-abi-1";
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io::Write;
 use std::os::raw::{c_char, c_uchar};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -16,10 +16,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 //                                                          ^── ptr passed to
 //                                                              retain/release
 //
-// The destructor hook is reserved for runtime-internal cleanup (e.g. a
-// list's element storage). Compiler-registered ARC edges are the single
-// owner of stored managed children (see docs/planning/
-// adr-arc-single-cascade-owner.md); a hook must never release them.
+// The destructor hook serves runtime-internal cleanup (e.g. a list's element
+// storage) and compiler-generated callbacks for `core.Destructor`.
+// Compiler-registered ARC edges remain the single owner of stored managed
+// children (see docs/planning/adr-arc-single-cascade-owner.md); a hook may
+// observe those children but must never release their edge-owned references.
 // Layout guard: `ori_heap_header_layout_is_stable` in tests.rs.
 
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -103,9 +104,9 @@ impl std::hash::BuildHasher for PtrHashBuilder {
 /// A `HashMap` keyed by payload address.
 type PtrMap<V> = HashMap<usize, V, PtrHashBuilder>;
 
-/// Ownership edges indexed both ways so edge registration/removal and the bulk
-/// lookups on free (`take_owned_edges`, `remove_incoming_edges`) cost
-/// O(degree) instead of a scan over every edge in the process.
+/// Ownership edges indexed both ways so edge registration/removal and the
+/// consolidated free path cost O(degree) instead of scanning every edge in the
+/// process.
 #[derive(Default)]
 struct ArcEdges {
     by_owner: PtrMap<Vec<usize>>,
@@ -321,7 +322,7 @@ fn maybe_collect_cycles_cooperative() {
 ///
 /// Same invariants as `ori_arc_collect_cycles` when a pass actually runs.
 #[no_mangle]
-pub unsafe extern "C" fn ori_arc_maybe_collect_cycles() {
+unsafe extern "C" fn ori_arc_maybe_collect_cycles() {
     maybe_collect_cycles_cooperative();
 }
 
@@ -370,52 +371,22 @@ unsafe fn registered_payload_size(ptr: *const u8) -> Option<usize> {
         .map(|allocation| allocation.size)
 }
 
-unsafe fn unregister_allocation(ptr: *mut u8) -> Option<*mut OriHeapHeader> {
+/// Copies a bounded prefix from a runtime-owned NUL-terminated string/bytes
+/// payload while the allocation registry lock is held. Debugger consumers use
+/// this instead of retaining a borrowed slice after the registry lookup.
+unsafe fn registered_payload_preview(ptr: *const u8, max_len: usize) -> Option<(Vec<u8>, usize)> {
+    if ptr.is_null() {
+        return None;
+    }
     let payload = ptr as usize;
-    let mut state = arc_state().lock().ok()?;
-    state
-        .remove_allocation(payload)
-        .map(|allocation| allocation.header as *mut OriHeapHeader)
-}
-
-unsafe fn remove_incoming_edges(ptr: *mut u8) {
-    if let Ok(mut state) = arc_state().lock() {
-        state.edges.remove_edges_to(ptr as usize);
-    }
-}
-
-unsafe fn take_owned_edges(ptr: *mut u8) -> Vec<*mut u8> {
-    let owner = ptr as usize;
-    if let Ok(mut state) = arc_state().lock() {
-        state
-            .edges
-            .take_children_of(owner)
-            .into_iter()
-            .map(|child| child as *mut u8)
-            .collect()
-    } else {
-        Vec::new()
-    }
-}
-
-unsafe fn free_registered_object(ptr: *mut u8, release_owned_edges: bool) {
-    let Some(header) = unregister_allocation(ptr) else {
-        return;
-    };
-    let children = if release_owned_edges {
-        take_owned_edges(ptr)
-    } else {
-        Vec::new()
-    };
-    remove_incoming_edges(ptr);
-    if let Some(dtor) = (*header).destructor {
-        dtor(ptr);
-    }
-    std::ptr::drop_in_place(&mut (*header).refcount);
-    libc::free(header as *mut libc::c_void);
-    for child in children {
-        ori_arc_release(child);
-    }
+    let state = arc_state().lock().ok()?;
+    let allocation = state.allocations.get(&payload)?;
+    let content_len = allocation.size.saturating_sub(1);
+    let preview_len = content_len.min(max_len);
+    // SAFETY: the registry entry identifies the allocation beginning at
+    // `ptr`, and `preview_len` is bounded by its registered payload size.
+    let bytes = std::slice::from_raw_parts(ptr, preview_len).to_vec();
+    Some((bytes, content_len))
 }
 
 /// Allocates one managed runtime object and returns a pointer to its payload.
@@ -431,7 +402,7 @@ unsafe fn free_registered_object(ptr: *mut u8, release_owned_edges: bool) {
 /// free the allocation itself. The returned pointer must be released with
 /// `ori_arc_release` when the owner is done with it.
 #[no_mangle]
-pub unsafe extern "C" fn ori_alloc(
+unsafe extern "C" fn ori_alloc(
     size: usize,
     destructor: Option<unsafe extern "C" fn(*mut u8)>,
 ) -> *mut u8 {
@@ -459,7 +430,7 @@ pub unsafe extern "C" fn ori_alloc(
 /// be a live payload pointer previously returned by `ori_alloc` or another
 /// runtime constructor that uses `ori_alloc`.
 #[no_mangle]
-pub unsafe extern "C" fn ori_arc_retain(ptr: *mut u8) {
+unsafe extern "C" fn ori_arc_retain(ptr: *mut u8) {
     if ptr.is_null() {
         return;
     }
@@ -477,20 +448,20 @@ pub unsafe extern "C" fn ori_arc_retain(ptr: *mut u8) {
 /// be a live payload pointer. Each owning reference must be released exactly once;
 /// using `ptr` after the final release is undefined behavior.
 #[no_mangle]
-pub unsafe extern "C" fn ori_arc_release(ptr: *mut u8) {
+unsafe extern "C" fn ori_arc_release(ptr: *mut u8) {
     if ptr.is_null() {
         return;
     }
     let payload = ptr as usize;
 
     // Everything that touches shared state happens in **one** critical section.
-    // The previous shape locked once to decrement, then `free_registered_object`
-    // locked three more times (unregister, take edges, remove incoming) plus a
+    // The previous shape locked once to decrement, then locked three more times
+    // (unregister, take edges, remove incoming) plus a
     // redundant `header_for_registered` — six acquisitions to drop one string,
     // which dominated the cost of every managed temporary.
     //
-    // The destructor and the recursive child releases stay **outside** the lock:
-    // a destructor releases its children and would re-enter this function.
+    // The destructor and recursive child releases stay **outside** the lock:
+    // a destructor may call back into the ARC runtime and would otherwise deadlock.
     let dead = {
         let mut state = arc_state().lock().unwrap_or_else(|e| e.into_inner());
         let Some(allocation) = state.allocations.get(&payload) else {
@@ -542,7 +513,7 @@ pub unsafe extern "C" fn ori_arc_release(ptr: *mut u8) {
 /// payload pointers. Callers must unregister or update the edge before replacing,
 /// removing, or freeing the slot that owns the child reference.
 #[no_mangle]
-pub unsafe extern "C" fn ori_arc_register_edge(owner: *mut u8, child: *mut u8) {
+unsafe extern "C" fn ori_arc_register_edge(owner: *mut u8, child: *mut u8) {
     if owner.is_null() || child.is_null() {
         return;
     }
@@ -1095,7 +1066,7 @@ unsafe fn new_result_raw(is_ok: bool, raw: i64) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_spawn(closure: *mut u8) -> *mut OriTaskJob {
+unsafe extern "C" fn ori_task_spawn(closure: *mut u8) -> *mut OriTaskJob {
     if closure.is_null() {
         return alloc_task_job(OriTaskJob {
             handle: Mutex::new(None),
@@ -1122,7 +1093,7 @@ pub unsafe extern "C" fn ori_task_spawn(closure: *mut u8) -> *mut OriTaskJob {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_join(job: *mut OriTaskJob) -> *mut u8 {
+unsafe extern "C" fn ori_task_join(job: *mut OriTaskJob) -> *mut u8 {
     if job.is_null() {
         return new_result_raw(false, 0);
     }
@@ -1140,7 +1111,7 @@ pub unsafe extern "C" fn ori_task_join(job: *mut OriTaskJob) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_detach(job: *mut OriTaskJob) {
+unsafe extern "C" fn ori_task_detach(job: *mut OriTaskJob) {
     if job.is_null() {
         return;
     }
@@ -1155,7 +1126,7 @@ pub unsafe extern "C" fn ori_task_detach(job: *mut OriTaskJob) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_sleep(ms: i64) -> *mut OriFuture {
+unsafe extern "C" fn ori_task_sleep(ms: i64) -> *mut OriFuture {
     let future = alloc_pending_future();
     if future.is_null() {
         return future;
@@ -1167,27 +1138,27 @@ pub unsafe extern "C" fn ori_task_sleep(ms: i64) -> *mut OriFuture {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_pending() -> *mut OriFuture {
+unsafe extern "C" fn ori_future_pending() -> *mut OriFuture {
     alloc_pending_future()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_ready_i64(value: i64) -> *mut OriFuture {
+unsafe extern "C" fn ori_future_ready_i64(value: i64) -> *mut OriFuture {
     alloc_ready_future(value)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_ready_f64(value: f64) -> *mut OriFuture {
+unsafe extern "C" fn ori_future_ready_f64(value: f64) -> *mut OriFuture {
     alloc_ready_future(value.to_bits() as i64)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_ready_ptr(value: *mut u8) -> *mut OriFuture {
+unsafe extern "C" fn ori_future_ready_ptr(value: *mut u8) -> *mut OriFuture {
     alloc_ready_future_ptr(value)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_ready_void() -> *mut OriFuture {
+unsafe extern "C" fn ori_future_ready_void() -> *mut OriFuture {
     alloc_ready_future(0)
 }
 
@@ -1289,27 +1260,27 @@ unsafe fn async_runner_void(closure_addr: usize, future_addr: usize, _: usize) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_async_spawn_i64(closure: *mut u8) -> *mut OriFuture {
+unsafe extern "C" fn ori_async_spawn_i64(closure: *mut u8) -> *mut OriFuture {
     async_spawn_with_runner(closure, async_runner_i64)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_async_spawn_f64(closure: *mut u8) -> *mut OriFuture {
+unsafe extern "C" fn ori_async_spawn_f64(closure: *mut u8) -> *mut OriFuture {
     async_spawn_with_runner(closure, async_runner_f64)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_async_spawn_ptr(closure: *mut u8) -> *mut OriFuture {
+unsafe extern "C" fn ori_async_spawn_ptr(closure: *mut u8) -> *mut OriFuture {
     async_spawn_with_runner(closure, async_runner_ptr)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_async_spawn_void(closure: *mut u8) -> *mut OriFuture {
+unsafe extern "C" fn ori_async_spawn_void(closure: *mut u8) -> *mut OriFuture {
     async_spawn_with_runner(closure, async_runner_void)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_poll(future: *mut OriFuture) -> i64 {
+unsafe extern "C" fn ori_future_poll(future: *mut OriFuture) -> i64 {
     if future.is_null() {
         return future_status_code(OriFutureStatus::Cancelled);
     }
@@ -1321,7 +1292,7 @@ pub unsafe extern "C" fn ori_future_poll(future: *mut OriFuture) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_value_i64(future: *mut OriFuture) -> i64 {
+unsafe extern "C" fn ori_future_value_i64(future: *mut OriFuture) -> i64 {
     if future.is_null() {
         return 0;
     }
@@ -1333,17 +1304,17 @@ pub unsafe extern "C" fn ori_future_value_i64(future: *mut OriFuture) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_value_f64(future: *mut OriFuture) -> f64 {
+unsafe extern "C" fn ori_future_value_f64(future: *mut OriFuture) -> f64 {
     f64::from_bits(ori_future_value_i64(future) as u64)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_value_ptr(future: *mut OriFuture) -> *mut u8 {
+unsafe extern "C" fn ori_future_value_ptr(future: *mut OriFuture) -> *mut u8 {
     ori_future_value_i64(future) as *mut u8
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_on_ready(future: *mut OriFuture, closure: *mut u8) {
+unsafe extern "C" fn ori_future_on_ready(future: *mut OriFuture, closure: *mut u8) {
     if closure.is_null() {
         return;
     }
@@ -1371,18 +1342,18 @@ pub unsafe extern "C" fn ori_future_on_ready(future: *mut OriFuture, closure: *m
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_complete_i64(future: *mut OriFuture, value: i64) {
+unsafe extern "C" fn ori_future_complete_i64(future: *mut OriFuture, value: i64) {
     let waiters = set_future_status(future, OriFutureStatus::Ready, value, false);
     schedule_future_waiters(waiters);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_complete_f64(future: *mut OriFuture, value: f64) {
+unsafe extern "C" fn ori_future_complete_f64(future: *mut OriFuture, value: f64) {
     ori_future_complete_i64(future, value.to_bits() as i64);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_complete_ptr(future: *mut OriFuture, value: *mut u8) {
+unsafe extern "C" fn ori_future_complete_ptr(future: *mut OriFuture, value: *mut u8) {
     let value_is_managed = retain_registered_future_payload(value);
     let waiters = set_future_status(
         future,
@@ -1394,18 +1365,18 @@ pub unsafe extern "C" fn ori_future_complete_ptr(future: *mut OriFuture, value: 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_complete_void(future: *mut OriFuture) {
+unsafe extern "C" fn ori_future_complete_void(future: *mut OriFuture) {
     ori_future_complete_i64(future, 0);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_fail(future: *mut OriFuture) {
+unsafe extern "C" fn ori_future_fail(future: *mut OriFuture) {
     let waiters = set_future_status(future, OriFutureStatus::Failed, 0, false);
     schedule_future_waiters(waiters);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_future_cancel(future: *mut OriFuture) {
+unsafe extern "C" fn ori_future_cancel(future: *mut OriFuture) {
     let waiters = set_future_status(future, OriFutureStatus::Cancelled, 0, false);
     schedule_future_waiters(waiters);
 }
@@ -1428,7 +1399,7 @@ unsafe fn deregister_future_from_token(future: *mut OriFuture, cancel_token: *mu
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_create_token() -> *mut u8 {
+unsafe extern "C" fn ori_task_create_token() -> *mut u8 {
     let token = ori_alloc(
         std::mem::size_of::<RuntimeCancelToken>(),
         Some(ori_task_cancel_token_dtor),
@@ -1451,7 +1422,7 @@ unsafe extern "C" fn ori_task_cancel_token_dtor(ptr: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_cancel(token_ptr: *mut u8) {
+unsafe extern "C" fn ori_task_cancel(token_ptr: *mut u8) {
     if token_ptr.is_null() {
         return;
     }
@@ -1470,7 +1441,7 @@ pub unsafe extern "C" fn ori_task_cancel(token_ptr: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_is_cancelled(token_ptr: *mut u8) -> i8 {
+unsafe extern "C" fn ori_task_is_cancelled(token_ptr: *mut u8) -> i8 {
     if token_ptr.is_null() {
         return 0;
     }
@@ -1483,7 +1454,7 @@ pub unsafe extern "C" fn ori_task_is_cancelled(token_ptr: *mut u8) -> i8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_associate(token_ptr: *mut u8, future_ptr: *mut u8) {
+unsafe extern "C" fn ori_task_associate(token_ptr: *mut u8, future_ptr: *mut u8) {
     if token_ptr.is_null() || future_ptr.is_null() {
         return;
     }
@@ -1511,12 +1482,12 @@ pub unsafe extern "C" fn ori_task_associate(token_ptr: *mut u8, future_ptr: *mut
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_executor_schedule(closure: *mut u8) {
+unsafe extern "C" fn ori_executor_schedule(closure: *mut u8) {
     schedule_executor_task_owned(closure as usize);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_executor_run_one() -> i64 {
+unsafe extern "C" fn ori_executor_run_one() -> i64 {
     let Some(closure_addr) = pop_executor_task() else {
         return 0;
     };
@@ -1525,7 +1496,7 @@ pub unsafe extern "C" fn ori_executor_run_one() -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_executor_drain() -> i64 {
+unsafe extern "C" fn ori_executor_drain() -> i64 {
     let mut ran = 0;
     while ori_executor_run_one() != 0 {
         ran += 1;
@@ -1535,7 +1506,7 @@ pub unsafe extern "C" fn ori_executor_drain() -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_block_on(future: *mut OriFuture) -> i64 {
+unsafe extern "C" fn ori_task_block_on(future: *mut OriFuture) -> i64 {
     if future.is_null() {
         set_task_last_await_status(OriFutureStatus::Cancelled);
         return 0;
@@ -1591,17 +1562,17 @@ pub unsafe extern "C" fn ori_task_block_on(future: *mut OriFuture) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_block_on_f64(future: *mut OriFuture) -> f64 {
+unsafe extern "C" fn ori_task_block_on_f64(future: *mut OriFuture) -> f64 {
     f64::from_bits(ori_task_block_on(future) as u64)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_task_block_on_ptr(future: *mut OriFuture) -> *mut u8 {
+unsafe extern "C" fn ori_task_block_on_ptr(future: *mut OriFuture) -> *mut u8 {
     ori_task_block_on(future) as *mut u8
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_channel_create() -> *mut OriChannel {
+unsafe extern "C" fn ori_channel_create() -> *mut OriChannel {
     alloc_channel(OriChannel {
         state: Mutex::new(OriChannelState {
             queue: VecDeque::new(),
@@ -1612,7 +1583,7 @@ pub unsafe extern "C" fn ori_channel_create() -> *mut OriChannel {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_channel_send(channel: *mut OriChannel, value: i64) -> *mut u8 {
+unsafe extern "C" fn ori_channel_send(channel: *mut OriChannel, value: i64) -> *mut u8 {
     if channel.is_null() {
         return new_result_raw(false, 0);
     }
@@ -1629,7 +1600,7 @@ pub unsafe extern "C" fn ori_channel_send(channel: *mut OriChannel, value: i64) 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_channel_receive(channel: *mut OriChannel) -> *mut u8 {
+unsafe extern "C" fn ori_channel_receive(channel: *mut OriChannel) -> *mut u8 {
     if channel.is_null() {
         return new_result_raw(false, 0);
     }
@@ -1652,7 +1623,7 @@ pub unsafe extern "C" fn ori_channel_receive(channel: *mut OriChannel) -> *mut u
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_channel_close(channel: *mut OriChannel) {
+unsafe extern "C" fn ori_channel_close(channel: *mut OriChannel) {
     if channel.is_null() {
         return;
     }
@@ -1665,12 +1636,12 @@ pub unsafe extern "C" fn ori_channel_close(channel: *mut OriChannel) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_atomic_new(value: i64) -> *mut OriAtomicInt {
+unsafe extern "C" fn ori_atomic_new(value: i64) -> *mut OriAtomicInt {
     alloc_atomic_int(value)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_atomic_load(value: *mut OriAtomicInt) -> i64 {
+unsafe extern "C" fn ori_atomic_load(value: *mut OriAtomicInt) -> i64 {
     if value.is_null() {
         return 0;
     }
@@ -1678,7 +1649,7 @@ pub unsafe extern "C" fn ori_atomic_load(value: *mut OriAtomicInt) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_atomic_store(value: *mut OriAtomicInt, next: i64) {
+unsafe extern "C" fn ori_atomic_store(value: *mut OriAtomicInt, next: i64) {
     if value.is_null() {
         return;
     }
@@ -1686,7 +1657,7 @@ pub unsafe extern "C" fn ori_atomic_store(value: *mut OriAtomicInt, next: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_atomic_add(value: *mut OriAtomicInt, delta: i64) -> i64 {
+unsafe extern "C" fn ori_atomic_add(value: *mut OriAtomicInt, delta: i64) -> i64 {
     if value.is_null() {
         return 0;
     }
@@ -1704,7 +1675,7 @@ pub unsafe extern "C" fn ori_atomic_add(value: *mut OriAtomicInt, delta: i64) ->
 /// it owns; unregistering the wrong edge can release another owner's child too
 /// early.
 #[no_mangle]
-pub unsafe extern "C" fn ori_arc_unregister_edge(owner: *mut u8, child: *mut u8) {
+unsafe extern "C" fn ori_arc_unregister_edge(owner: *mut u8, child: *mut u8) {
     if owner.is_null() || child.is_null() {
         return;
     }
@@ -1730,11 +1701,7 @@ pub unsafe extern "C" fn ori_arc_unregister_edge(owner: *mut u8, child: *mut u8)
 /// must be live payload pointers. Callers must use this for real slot
 /// replacement only, so ARC retain/release balance matches the container state.
 #[no_mangle]
-pub unsafe extern "C" fn ori_arc_update_edge(
-    owner: *mut u8,
-    old_child: *mut u8,
-    new_child: *mut u8,
-) {
+unsafe extern "C" fn ori_arc_update_edge(owner: *mut u8, old_child: *mut u8, new_child: *mut u8) {
     if old_child == new_child {
         return;
     }
@@ -1751,7 +1718,7 @@ pub unsafe extern "C" fn ori_arc_update_edge(
 /// runtime ARC API. Callers must not mutate registered edges concurrently while
 /// cycle collection is running.
 #[no_mangle]
-pub unsafe extern "C" fn ori_arc_collect_cycles() -> i64 {
+unsafe extern "C" fn ori_arc_collect_cycles() -> i64 {
     let Ok(state) = arc_state().lock() else {
         return 0;
     };
@@ -1862,13 +1829,19 @@ unsafe fn collect_cycles_over_candidates(
     }
     drop(state);
 
-    for (payload, header) in collected_pairs {
+    // Run every finalizer while every payload in the collected cycle is still
+    // allocated. A user `core.Destructor` may read another object in the same
+    // cycle; freeing as we iterate would make that observation order-dependent.
+    for &(payload, header) in &collected_pairs {
         let payload = payload as *mut u8;
         let header = header as *mut OriHeapHeader;
         (*header).refcount.store(0, Ordering::Release);
         if let Some(dtor) = (*header).destructor {
             dtor(payload);
         }
+    }
+    for (_, header) in collected_pairs {
+        let header = header as *mut OriHeapHeader;
         std::ptr::drop_in_place(&mut (*header).refcount);
         libc::free(header as *mut libc::c_void);
     }
@@ -1934,7 +1907,7 @@ pub extern "C" fn ori_arc_live_allocations() -> i64 {
 
 /// Print `len` bytes from `ptr` to stdout, followed by a newline.
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_print(ptr: *const u8, len: i64) {
+unsafe extern "C" fn ori_io_print(ptr: *const u8, len: i64) {
     if ptr.is_null() || len <= 0 {
         println!();
         return;
@@ -1947,7 +1920,7 @@ pub unsafe extern "C" fn ori_io_print(ptr: *const u8, len: i64) {
 
 /// Print `len` bytes from `ptr` to stderr, followed by a newline.
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_eprint(ptr: *const u8, len: i64) {
+unsafe extern "C" fn ori_io_eprint(ptr: *const u8, len: i64) {
     if ptr.is_null() || len <= 0 {
         eprintln!();
         return;
@@ -1959,7 +1932,7 @@ pub unsafe extern "C" fn ori_io_eprint(ptr: *const u8, len: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_read_line() -> *mut u8 {
+unsafe extern "C" fn ori_io_read_line() -> *mut u8 {
     let mut line = String::new();
     match std::io::stdin().read_line(&mut line) {
         Ok(0) => new_optional_ptr(false, std::ptr::null_mut()),
@@ -2035,17 +2008,17 @@ unsafe fn alloc_file_stream(kind: RuntimeStreamKind, file: std::fs::File) -> *mu
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_stdin() -> *mut u8 {
+unsafe extern "C" fn ori_io_stdin() -> *mut u8 {
     alloc_stream(RuntimeStreamKind::Stdin)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_stdout() -> *mut u8 {
+unsafe extern "C" fn ori_io_stdout() -> *mut u8 {
     alloc_stream(RuntimeStreamKind::Stdout)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_stderr() -> *mut u8 {
+unsafe extern "C" fn ori_io_stderr() -> *mut u8 {
     alloc_stream(RuntimeStreamKind::Stderr)
 }
 
@@ -2053,7 +2026,7 @@ pub unsafe extern "C" fn ori_io_stderr() -> *mut u8 {
 ///
 /// Returns `result[Input, string]`.
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_open_input(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_io_open_input(path: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     match std::fs::File::open(path_str) {
         Ok(file) => new_result(true, alloc_file_stream(RuntimeStreamKind::FileRead, file)),
@@ -2065,7 +2038,7 @@ pub unsafe extern "C" fn ori_io_open_input(path: *const u8) -> *mut u8 {
 ///
 /// Returns `result[Output, string]`.
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_open_output(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_io_open_output(path: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     match std::fs::File::create(path_str) {
         Ok(file) => new_result(true, alloc_file_stream(RuntimeStreamKind::FileWrite, file)),
@@ -2074,7 +2047,7 @@ pub unsafe extern "C" fn ori_io_open_output(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_read(stream_ptr: *mut u8, max_bytes: i64) -> *mut u8 {
+unsafe extern "C" fn ori_io_read(stream_ptr: *mut u8, max_bytes: i64) -> *mut u8 {
     if stream_ptr.is_null() {
         return new_result(false, cstring_from_str("Invalid input stream"));
     }
@@ -2110,7 +2083,7 @@ pub unsafe extern "C" fn ori_io_read(stream_ptr: *mut u8, max_bytes: i64) -> *mu
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_write(stream_ptr: *mut u8, data: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_io_write(stream_ptr: *mut u8, data: *const u8) -> *mut u8 {
     if stream_ptr.is_null() {
         return new_result(false, cstring_from_str("Invalid output stream"));
     }
@@ -2140,7 +2113,7 @@ pub unsafe extern "C" fn ori_io_write(stream_ptr: *mut u8, data: *const u8) -> *
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_flush(stream_ptr: *mut u8) -> *mut u8 {
+unsafe extern "C" fn ori_io_flush(stream_ptr: *mut u8) -> *mut u8 {
     if stream_ptr.is_null() {
         return new_result(false, cstring_from_str("Invalid output stream"));
     }
@@ -2169,7 +2142,7 @@ pub unsafe extern "C" fn ori_io_flush(stream_ptr: *mut u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_close_input(stream_ptr: *mut u8) {
+unsafe extern "C" fn ori_io_close_input(stream_ptr: *mut u8) {
     if stream_ptr.is_null() {
         return;
     }
@@ -2181,7 +2154,7 @@ pub unsafe extern "C" fn ori_io_close_input(stream_ptr: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_io_close_output(stream_ptr: *mut u8) {
+unsafe extern "C" fn ori_io_close_output(stream_ptr: *mut u8) {
     if stream_ptr.is_null() {
         return;
     }
@@ -2197,7 +2170,7 @@ pub unsafe extern "C" fn ori_io_close_output(stream_ptr: *mut u8) {
 /// Convert an i64 to a null-terminated C string allocated with malloc.
 /// Caller is responsible for freeing the result.
 #[no_mangle]
-pub unsafe extern "C" fn ori_int_to_cstr(n: i64) -> *mut u8 {
+unsafe extern "C" fn ori_int_to_cstr(n: i64) -> *mut u8 {
     let mut ptr = std::ptr::null_mut();
     let mut len = 0;
     ori_to_string_parts(n, &mut ptr, &mut len);
@@ -2205,7 +2178,7 @@ pub unsafe extern "C" fn ori_int_to_cstr(n: i64) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_to_string(n: i64) -> *mut u8 {
+unsafe extern "C" fn ori_to_string(n: i64) -> *mut u8 {
     ori_int_to_cstr(n)
 }
 
@@ -2215,12 +2188,12 @@ pub extern "C" fn ori_to_int(value: i64) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_to_string_parts(n: i64, out_ptr: *mut *mut u8, out_len: *mut i64) {
+unsafe extern "C" fn ori_to_string_parts(n: i64, out_ptr: *mut *mut u8, out_len: *mut i64) {
     write_string_parts(n.to_string(), out_ptr, out_len);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_float_to_string_parts(
+unsafe extern "C" fn ori_float_to_string_parts(
     value: f64,
     out_ptr: *mut *mut u8,
     out_len: *mut i64,
@@ -2229,7 +2202,7 @@ pub unsafe extern "C" fn ori_float_to_string_parts(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_bool_to_string_parts(
+unsafe extern "C" fn ori_bool_to_string_parts(
     value: c_uchar,
     out_ptr: *mut *mut u8,
     out_len: *mut i64,
@@ -2252,7 +2225,7 @@ unsafe fn write_string_parts(body: String, out_ptr: *mut *mut u8, out_len: *mut 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_len(ptr: *const u8) -> i64 {
+unsafe extern "C" fn ori_len(ptr: *const u8) -> i64 {
     cstr_byte_len(ptr) as i64
 }
 
@@ -2264,17 +2237,17 @@ unsafe fn cstr_byte_len(ptr: *const u8) -> usize {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_len(ptr: *const u8) -> i64 {
+unsafe extern "C" fn ori_string_len(ptr: *const u8) -> i64 {
     cstr_str(ptr).chars().count() as i64
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_concat(a: *const u8, b: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_concat(a: *const u8, b: *const u8) -> *mut u8 {
     ori_string_concat_parts(a, cstr_byte_len(a) as i64, b, cstr_byte_len(b) as i64)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_concat_parts(
+unsafe extern "C" fn ori_string_concat_parts(
     a: *const u8,
     a_len: i64,
     b: *const u8,
@@ -2286,7 +2259,7 @@ pub unsafe extern "C" fn ori_string_concat_parts(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_slice(s: *const u8, start: i64, end: i64) -> *mut u8 {
+unsafe extern "C" fn ori_string_slice(s: *const u8, start: i64, end: i64) -> *mut u8 {
     if s.is_null() {
         abort_bounds("ori string slice bounds out of range");
     }
@@ -2303,62 +2276,58 @@ pub unsafe extern "C" fn ori_string_slice(s: *const u8, start: i64, end: i64) ->
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_contains(s: *const u8, sub: *const u8) -> c_uchar {
+unsafe extern "C" fn ori_string_contains(s: *const u8, sub: *const u8) -> c_uchar {
     let s = cstr_str(s);
     let sub = cstr_str(sub);
     u8::from(s.contains(sub)) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_starts_with(s: *const u8, prefix: *const u8) -> c_uchar {
+unsafe extern "C" fn ori_string_starts_with(s: *const u8, prefix: *const u8) -> c_uchar {
     let s = cstr_str(s);
     let prefix = cstr_str(prefix);
     u8::from(s.starts_with(prefix)) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_ends_with(s: *const u8, suffix: *const u8) -> c_uchar {
+unsafe extern "C" fn ori_string_ends_with(s: *const u8, suffix: *const u8) -> c_uchar {
     let s = cstr_str(s);
     let suffix = cstr_str(suffix);
     u8::from(s.ends_with(suffix)) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_trim(s: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_trim(s: *const u8) -> *mut u8 {
     cstring_from_str(cstr_str(s).trim())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_trim_start(s: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_trim_start(s: *const u8) -> *mut u8 {
     cstring_from_str(cstr_str(s).trim_start())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_trim_end(s: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_trim_end(s: *const u8) -> *mut u8 {
     cstring_from_str(cstr_str(s).trim_end())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_to_upper(s: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_to_upper(s: *const u8) -> *mut u8 {
     cstring_from_str(&cstr_str(s).to_uppercase())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_to_lower(s: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_to_lower(s: *const u8) -> *mut u8 {
     cstring_from_str(&cstr_str(s).to_lowercase())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_replace(
-    s: *const u8,
-    from: *const u8,
-    to: *const u8,
-) -> *mut u8 {
+unsafe extern "C" fn ori_string_replace(s: *const u8, from: *const u8, to: *const u8) -> *mut u8 {
     cstring_from_str(&cstr_str(s).replace(cstr_str(from), cstr_str(to)))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_index_of(s: *const u8, sub: *const u8) -> i64 {
+unsafe extern "C" fn ori_string_index_of(s: *const u8, sub: *const u8) -> i64 {
     let s = cstr_str(s);
     let sub = cstr_str(sub);
     s.find(sub)
@@ -2367,7 +2336,7 @@ pub unsafe extern "C" fn ori_string_index_of(s: *const u8, sub: *const u8) -> i6
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_join(list: *mut OriList, sep: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_join(list: *mut OriList, sep: *const u8) -> *mut u8 {
     if list.is_null() {
         return cstring_from_str("");
     }
@@ -2384,7 +2353,7 @@ pub unsafe extern "C" fn ori_string_join(list: *mut OriList, sep: *const u8) -> 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_repeat(s: *const u8, count: i64) -> *mut u8 {
+unsafe extern "C" fn ori_string_repeat(s: *const u8, count: i64) -> *mut u8 {
     if count <= 0 {
         return cstring_from_str("");
     }
@@ -2392,7 +2361,7 @@ pub unsafe extern "C" fn ori_string_repeat(s: *const u8, count: i64) -> *mut u8 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_pad_left(
+unsafe extern "C" fn ori_string_pad_left(
     s: *const u8,
     target_len: i64,
     fill: *const u8,
@@ -2401,7 +2370,7 @@ pub unsafe extern "C" fn ori_string_pad_left(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_pad_right(
+unsafe extern "C" fn ori_string_pad_right(
     s: *const u8,
     target_len: i64,
     fill: *const u8,
@@ -2436,6 +2405,18 @@ unsafe fn cstr_str<'a>(ptr: *const u8) -> &'a str {
 
 fn cstring_from_str(s: &str) -> *mut u8 {
     cstring_from_slices(&[s.as_bytes()])
+}
+
+/// Allocate a process-lifetime, unmanaged C string for `ori_os_args`.
+///
+/// Command-line arguments are owned by the host process rather than by an
+/// Ori scope. The small intentional leak is bounded by the number of argv
+/// entries and ends with process termination; keeping these pointers outside
+/// ARC makes temporary argument lists safe to pass through generic list APIs.
+fn cstring_from_process_arg(s: &str) -> *mut u8 {
+    CString::new(s)
+        .unwrap_or_else(|_| CString::new("").expect("empty C string has no NUL"))
+        .into_raw() as *mut u8
 }
 
 /// Allocates one managed string holding `parts` end to end, NUL-terminated.
@@ -2589,7 +2570,7 @@ unsafe fn list_ensure_capacity(list: *mut OriList, min_cap: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_new() -> *mut OriList {
+unsafe extern "C" fn ori_list_new() -> *mut OriList {
     let cap = 8_i64;
     let bytes = cap as usize * std::mem::size_of::<i64>();
     let data = libc::malloc(bytes) as *mut i64;
@@ -2605,7 +2586,7 @@ pub unsafe extern "C" fn ori_list_new() -> *mut OriList {
 
 /// Create an empty list with at least `capacity` slots pre-allocated.
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_with_capacity(capacity: i64) -> *mut OriList {
+unsafe extern "C" fn ori_list_with_capacity(capacity: i64) -> *mut OriList {
     let list = ori_list_new();
     if !list.is_null() {
         list_ensure_capacity(list, capacity.max(0));
@@ -2614,7 +2595,7 @@ pub unsafe extern "C" fn ori_list_with_capacity(capacity: i64) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_capacity(list: *mut OriList) -> i64 {
+unsafe extern "C" fn ori_list_capacity(list: *mut OriList) -> i64 {
     if list.is_null() {
         0
     } else {
@@ -2624,12 +2605,12 @@ pub unsafe extern "C" fn ori_list_capacity(list: *mut OriList) -> i64 {
 
 /// Ensure the list can hold at least `capacity` elements without further realloc.
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_reserve(list: *mut OriList, capacity: i64) {
+unsafe extern "C" fn ori_list_reserve(list: *mut OriList, capacity: i64) {
     list_ensure_capacity(list, capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_push(list: *mut OriList, value: i64) {
+unsafe extern "C" fn ori_list_push(list: *mut OriList, value: i64) {
     if list.is_null() {
         return;
     }
@@ -2642,7 +2623,7 @@ pub unsafe extern "C" fn ori_list_push(list: *mut OriList, value: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_get(list: *mut OriList, index: i64) -> i64 {
+unsafe extern "C" fn ori_list_get(list: *mut OriList, index: i64) -> i64 {
     if list.is_null() || index < 0 || index >= (*list).len {
         abort_bounds("ori list index out of bounds");
     }
@@ -2669,7 +2650,7 @@ pub struct OriSlice {
 ///
 /// Bounds are checked once, here, against the owner's length at creation time.
 #[no_mangle]
-pub unsafe extern "C" fn ori_slice_new(list: *mut OriList, start: i64, end: i64) -> *mut u8 {
+unsafe extern "C" fn ori_slice_new(list: *mut OriList, start: i64, end: i64) -> *mut u8 {
     let owner_len = if list.is_null() { 0 } else { (*list).len };
     if start < 0 || end < start || end > owner_len {
         abort_bounds("ori slice bounds out of range");
@@ -2691,7 +2672,7 @@ pub unsafe extern "C" fn ori_slice_new(list: *mut OriList, start: i64, end: i64)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_slice_len(slice: *mut u8) -> i64 {
+unsafe extern "C" fn ori_slice_len(slice: *mut u8) -> i64 {
     if slice.is_null() {
         return 0;
     }
@@ -2703,7 +2684,7 @@ pub unsafe extern "C" fn ori_slice_len(slice: *mut u8) -> i64 {
 /// The index is relative to the window; the owner's length is re-checked
 /// because the list may have shrunk since the window was made.
 #[no_mangle]
-pub unsafe extern "C" fn ori_slice_get(slice: *mut u8, index: i64) -> i64 {
+unsafe extern "C" fn ori_slice_get(slice: *mut u8, index: i64) -> i64 {
     if slice.is_null() {
         abort_bounds("ori slice index out of bounds");
     }
@@ -2721,7 +2702,7 @@ pub unsafe extern "C" fn ori_slice_get(slice: *mut u8, index: i64) -> i64 {
 
 /// The owning list, so the compiler can register the ARC edge.
 #[no_mangle]
-pub unsafe extern "C" fn ori_slice_owner(slice: *mut u8) -> *mut u8 {
+unsafe extern "C" fn ori_slice_owner(slice: *mut u8) -> *mut u8 {
     if slice.is_null() {
         return std::ptr::null_mut();
     }
@@ -2729,7 +2710,7 @@ pub unsafe extern "C" fn ori_slice_owner(slice: *mut u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_set(list: *mut OriList, index: i64, value: i64) {
+unsafe extern "C" fn ori_list_set(list: *mut OriList, index: i64, value: i64) {
     if list.is_null() || index < 0 || index >= (*list).len {
         return;
     }
@@ -2738,7 +2719,7 @@ pub unsafe extern "C" fn ori_list_set(list: *mut OriList, index: i64, value: i64
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_len(list: *mut OriList) -> i64 {
+unsafe extern "C" fn ori_list_len(list: *mut OriList) -> i64 {
     if list.is_null() {
         0
     } else {
@@ -2747,12 +2728,12 @@ pub unsafe extern "C" fn ori_list_len(list: *mut OriList) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_is_empty(list: *mut OriList) -> c_uchar {
+unsafe extern "C" fn ori_list_is_empty(list: *mut OriList) -> c_uchar {
     u8::from(ori_list_len(list) == 0) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_pop(list: *mut OriList) -> i64 {
+unsafe extern "C" fn ori_list_pop(list: *mut OriList) -> i64 {
     if list.is_null() || (*list).len <= 0 {
         return 0;
     }
@@ -2763,7 +2744,7 @@ pub unsafe extern "C" fn ori_list_pop(list: *mut OriList) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_try_pop(list: *mut OriList) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_list_try_pop(list: *mut OriList) -> *mut OriOptionalInt {
     if list.is_null() || (*list).len <= 0 {
         return alloc_optional_int(0, 0);
     }
@@ -2772,7 +2753,7 @@ pub unsafe extern "C" fn ori_list_try_pop(list: *mut OriList) -> *mut OriOptiona
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_remove(list: *mut OriList, index: i64) {
+unsafe extern "C" fn ori_list_remove(list: *mut OriList, index: i64) {
     if list.is_null() || index < 0 || index >= (*list).len {
         return;
     }
@@ -2787,7 +2768,7 @@ pub unsafe extern "C" fn ori_list_remove(list: *mut OriList, index: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_try_remove(list: *mut OriList, index: i64) -> c_uchar {
+unsafe extern "C" fn ori_list_try_remove(list: *mut OriList, index: i64) -> c_uchar {
     if list.is_null() || index < 0 || index >= (*list).len {
         return 0;
     }
@@ -2796,7 +2777,7 @@ pub unsafe extern "C" fn ori_list_try_remove(list: *mut OriList, index: i64) -> 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_insert(list: *mut OriList, index: i64, value: i64) {
+unsafe extern "C" fn ori_list_insert(list: *mut OriList, index: i64, value: i64) {
     if list.is_null() {
         return;
     }
@@ -2814,12 +2795,12 @@ pub unsafe extern "C" fn ori_list_insert(list: *mut OriList, index: i64, value: 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_contains(list: *mut OriList, value: i64) -> c_uchar {
+unsafe extern "C" fn ori_list_contains(list: *mut OriList, value: i64) -> c_uchar {
     u8::from(ori_list_index_of(list, value) >= 0) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_index_of(list: *mut OriList, value: i64) -> i64 {
+unsafe extern "C" fn ori_list_index_of(list: *mut OriList, value: i64) -> i64 {
     if list.is_null() {
         return -1;
     }
@@ -2832,7 +2813,7 @@ pub unsafe extern "C" fn ori_list_index_of(list: *mut OriList, value: i64) -> i6
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_sort(list: *mut OriList) {
+unsafe extern "C" fn ori_list_sort(list: *mut OriList) {
     if list.is_null() || (*list).len <= 1 {
         return;
     }
@@ -2842,7 +2823,7 @@ pub unsafe extern "C" fn ori_list_sort(list: *mut OriList) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_reverse(list: *mut OriList) {
+unsafe extern "C" fn ori_list_reverse(list: *mut OriList) {
     if list.is_null() || (*list).len <= 1 {
         return;
     }
@@ -2852,7 +2833,7 @@ pub unsafe extern "C" fn ori_list_reverse(list: *mut OriList) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_slice(list: *mut OriList, start: i64, end: i64) -> *mut OriList {
+unsafe extern "C" fn ori_list_slice(list: *mut OriList, start: i64, end: i64) -> *mut OriList {
     if list.is_null() {
         abort_bounds("ori list slice bounds out of range");
     }
@@ -2864,7 +2845,7 @@ pub unsafe extern "C" fn ori_list_slice(list: *mut OriList, start: i64, end: i64
     );
     let out = ori_list_with_capacity((end - start) as i64);
     for i in start..end {
-        ori_list_push_borrowed_maybe_managed(out, *(*list).data.add(i as usize));
+        ori_list_push_borrowed_maybe_managed(out, *(*list).data.add(i));
     }
     out
 }
@@ -2873,11 +2854,15 @@ unsafe fn list_optional_at(list: *mut OriList, index: i64) -> *mut u8 {
     if list.is_null() || index < 0 || index >= (*list).len {
         return alloc_optional_int(0, 0) as *mut u8;
     }
-    alloc_optional_int(1, *(*list).data.add(index as usize)) as *mut u8
+    // The element may be a managed pointer. Keep a temporary ARC edge on the
+    // optional result so a caller can copy/read it before the source list is
+    // released (for example `ori.args.get_or`). Scalar values are harmless:
+    // `header_for_registered` ignores values that are not runtime allocations.
+    alloc_optional_borrowed_managed_value(1, *(*list).data.add(index as usize)) as *mut u8
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_try_get(list: *mut OriList, index: i64) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_list_try_get(list: *mut OriList, index: i64) -> *mut OriOptionalInt {
     list_optional_at(list, index) as *mut OriOptionalInt
 }
 
@@ -2893,7 +2878,7 @@ unsafe fn list_clear(list: *mut OriList) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_clear(list: *mut OriList) {
+unsafe extern "C" fn ori_list_clear(list: *mut OriList) {
     list_clear(list);
 }
 
@@ -2905,17 +2890,17 @@ unsafe fn list_copy(list: *mut OriList) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_clone(list: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_list_clone(list: *mut OriList) -> *mut OriList {
     list_copy(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_to_list(list: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_list_to_list(list: *mut OriList) -> *mut OriList {
     list_copy(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_from_list(list: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_list_from_list(list: *mut OriList) -> *mut OriList {
     list_copy(list)
 }
 
@@ -3058,22 +3043,22 @@ unsafe fn deque_find_raw(deque: *mut OriDeque, value: i64, value_kind: u8) -> *m
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_new() -> *mut OriDeque {
+unsafe extern "C" fn ori_deque_new() -> *mut OriDeque {
     deque_alloc()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_push_front(deque: *mut OriDeque, value: i64) {
+unsafe extern "C" fn ori_deque_push_front(deque: *mut OriDeque, value: i64) {
     deque_push_borrowed_maybe_managed(deque, value, true);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_push_back(deque: *mut OriDeque, value: i64) {
+unsafe extern "C" fn ori_deque_push_back(deque: *mut OriDeque, value: i64) {
     deque_push_borrowed_maybe_managed(deque, value, false);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_pop_front(deque: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_deque_pop_front(deque: *mut OriDeque) -> *mut u8 {
     if deque.is_null() || (*deque).values.is_empty() {
         return alloc_optional_int(0, 0) as *mut u8;
     }
@@ -3083,7 +3068,7 @@ pub unsafe extern "C" fn ori_deque_pop_front(deque: *mut OriDeque) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_pop_back(deque: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_deque_pop_back(deque: *mut OriDeque) -> *mut u8 {
     if deque.is_null() || (*deque).values.is_empty() {
         return alloc_optional_int(0, 0) as *mut u8;
     }
@@ -3093,7 +3078,7 @@ pub unsafe extern "C" fn ori_deque_pop_back(deque: *mut OriDeque) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_front(deque: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_deque_front(deque: *mut OriDeque) -> *mut u8 {
     deque_optional_value(if deque.is_null() {
         None
     } else {
@@ -3102,7 +3087,7 @@ pub unsafe extern "C" fn ori_deque_front(deque: *mut OriDeque) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_back(deque: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_deque_back(deque: *mut OriDeque) -> *mut u8 {
     deque_optional_value(if deque.is_null() {
         None
     } else {
@@ -3111,7 +3096,7 @@ pub unsafe extern "C" fn ori_deque_back(deque: *mut OriDeque) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_len(deque: *mut OriDeque) -> i64 {
+unsafe extern "C" fn ori_deque_len(deque: *mut OriDeque) -> i64 {
     if deque.is_null() {
         0
     } else {
@@ -3120,12 +3105,12 @@ pub unsafe extern "C" fn ori_deque_len(deque: *mut OriDeque) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_is_empty(deque: *mut OriDeque) -> c_uchar {
+unsafe extern "C" fn ori_deque_is_empty(deque: *mut OriDeque) -> c_uchar {
     u8::from(deque.is_null() || (*deque).values.is_empty()) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_clear(deque: *mut OriDeque) {
+unsafe extern "C" fn ori_deque_clear(deque: *mut OriDeque) {
     if !deque.is_null() {
         for value in (*deque).values.iter().copied() {
             unregister_collection_edge(deque as *mut u8, value);
@@ -3136,12 +3121,12 @@ pub unsafe extern "C" fn ori_deque_clear(deque: *mut OriDeque) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_to_list(deque: *mut OriDeque) -> *mut OriList {
+unsafe extern "C" fn ori_deque_to_list(deque: *mut OriDeque) -> *mut OriList {
     deque_to_list(deque)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_clone(deque: *mut OriDeque) -> *mut OriDeque {
+unsafe extern "C" fn ori_deque_clone(deque: *mut OriDeque) -> *mut OriDeque {
     let out = ori_deque_new();
     if deque.is_null() {
         return out;
@@ -3153,137 +3138,137 @@ pub unsafe extern "C" fn ori_deque_clone(deque: *mut OriDeque) -> *mut OriDeque 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_new() -> *mut OriDeque {
+unsafe extern "C" fn ori_queue_new() -> *mut OriDeque {
     ori_deque_new()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_enqueue(queue: *mut OriDeque, value: i64) {
+unsafe extern "C" fn ori_queue_enqueue(queue: *mut OriDeque, value: i64) {
     ori_deque_push_back(queue, value);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_dequeue(queue: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_queue_dequeue(queue: *mut OriDeque) -> *mut u8 {
     ori_deque_pop_front(queue)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_peek(queue: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_queue_peek(queue: *mut OriDeque) -> *mut u8 {
     ori_deque_front(queue)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_len(queue: *mut OriDeque) -> i64 {
+unsafe extern "C" fn ori_queue_len(queue: *mut OriDeque) -> i64 {
     ori_deque_len(queue)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_is_empty(queue: *mut OriDeque) -> c_uchar {
+unsafe extern "C" fn ori_queue_is_empty(queue: *mut OriDeque) -> c_uchar {
     ori_deque_is_empty(queue)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_clear(queue: *mut OriDeque) {
+unsafe extern "C" fn ori_queue_clear(queue: *mut OriDeque) {
     ori_deque_clear(queue);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_to_list(queue: *mut OriDeque) -> *mut OriList {
+unsafe extern "C" fn ori_queue_to_list(queue: *mut OriDeque) -> *mut OriList {
     ori_deque_to_list(queue)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_clone(queue: *mut OriDeque) -> *mut OriDeque {
+unsafe extern "C" fn ori_queue_clone(queue: *mut OriDeque) -> *mut OriDeque {
     ori_deque_clone(queue)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_new() -> *mut OriDeque {
+unsafe extern "C" fn ori_stack_new() -> *mut OriDeque {
     ori_deque_new()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_push(stack: *mut OriDeque, value: i64) {
+unsafe extern "C" fn ori_stack_push(stack: *mut OriDeque, value: i64) {
     ori_deque_push_back(stack, value);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_pop(stack: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_stack_pop(stack: *mut OriDeque) -> *mut u8 {
     ori_deque_pop_back(stack)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_peek(stack: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_stack_peek(stack: *mut OriDeque) -> *mut u8 {
     ori_deque_back(stack)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_len(stack: *mut OriDeque) -> i64 {
+unsafe extern "C" fn ori_stack_len(stack: *mut OriDeque) -> i64 {
     ori_deque_len(stack)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_is_empty(stack: *mut OriDeque) -> c_uchar {
+unsafe extern "C" fn ori_stack_is_empty(stack: *mut OriDeque) -> c_uchar {
     ori_deque_is_empty(stack)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_clear(stack: *mut OriDeque) {
+unsafe extern "C" fn ori_stack_clear(stack: *mut OriDeque) {
     ori_deque_clear(stack);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_to_list(stack: *mut OriDeque) -> *mut OriList {
+unsafe extern "C" fn ori_stack_to_list(stack: *mut OriDeque) -> *mut OriList {
     ori_deque_to_list(stack)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_clone(stack: *mut OriDeque) -> *mut OriDeque {
+unsafe extern "C" fn ori_stack_clone(stack: *mut OriDeque) -> *mut OriDeque {
     ori_deque_clone(stack)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_new() -> *mut OriDeque {
+unsafe extern "C" fn ori_linked_list_new() -> *mut OriDeque {
     ori_deque_new()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_push_front(list: *mut OriDeque, value: i64) {
+unsafe extern "C" fn ori_linked_list_push_front(list: *mut OriDeque, value: i64) {
     ori_deque_push_front(list, value);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_push_back(list: *mut OriDeque, value: i64) {
+unsafe extern "C" fn ori_linked_list_push_back(list: *mut OriDeque, value: i64) {
     ori_deque_push_back(list, value);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_pop_front(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_linked_list_pop_front(list: *mut OriDeque) -> *mut u8 {
     ori_deque_pop_front(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_front(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_linked_list_front(list: *mut OriDeque) -> *mut u8 {
     ori_deque_front(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_cursor_front(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_linked_list_cursor_front(list: *mut OriDeque) -> *mut u8 {
     deque_cursor_front(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_cursor_back(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_linked_list_cursor_back(list: *mut OriDeque) -> *mut u8 {
     deque_cursor_back(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_value_at(list: *mut OriDeque, cursor: i64) -> *mut u8 {
+unsafe extern "C" fn ori_linked_list_value_at(list: *mut OriDeque, cursor: i64) -> *mut u8 {
     deque_value_at(list, cursor)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_insert_after(
+unsafe extern "C" fn ori_linked_list_insert_after(
     list: *mut OriDeque,
     cursor: i64,
     value: i64,
@@ -3292,103 +3277,97 @@ pub unsafe extern "C" fn ori_linked_list_insert_after(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_remove_at(list: *mut OriDeque, cursor: i64) -> *mut u8 {
+unsafe extern "C" fn ori_linked_list_remove_at(list: *mut OriDeque, cursor: i64) -> *mut u8 {
     deque_remove_at(list, cursor)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_find(list: *mut OriDeque, value: i64) -> *mut u8 {
+unsafe extern "C" fn ori_linked_list_find(list: *mut OriDeque, value: i64) -> *mut u8 {
     deque_find_raw(list, value, MAP_KEY_INT)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_find_string(
-    list: *mut OriDeque,
-    value: *const u8,
-) -> *mut u8 {
+unsafe extern "C" fn ori_linked_list_find_string(list: *mut OriDeque, value: *const u8) -> *mut u8 {
     deque_find_raw(list, value as i64, MAP_KEY_STRING)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_len(list: *mut OriDeque) -> i64 {
+unsafe extern "C" fn ori_linked_list_len(list: *mut OriDeque) -> i64 {
     ori_deque_len(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_is_empty(list: *mut OriDeque) -> c_uchar {
+unsafe extern "C" fn ori_linked_list_is_empty(list: *mut OriDeque) -> c_uchar {
     ori_deque_is_empty(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_clear(list: *mut OriDeque) {
+unsafe extern "C" fn ori_linked_list_clear(list: *mut OriDeque) {
     ori_deque_clear(list);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_to_list(list: *mut OriDeque) -> *mut OriList {
+unsafe extern "C" fn ori_linked_list_to_list(list: *mut OriDeque) -> *mut OriList {
     ori_deque_to_list(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_clone(list: *mut OriDeque) -> *mut OriDeque {
+unsafe extern "C" fn ori_linked_list_clone(list: *mut OriDeque) -> *mut OriDeque {
     ori_deque_clone(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_new() -> *mut OriDeque {
+unsafe extern "C" fn ori_doubly_linked_list_new() -> *mut OriDeque {
     ori_deque_new()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_push_front(list: *mut OriDeque, value: i64) {
+unsafe extern "C" fn ori_doubly_linked_list_push_front(list: *mut OriDeque, value: i64) {
     ori_deque_push_front(list, value);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_push_back(list: *mut OriDeque, value: i64) {
+unsafe extern "C" fn ori_doubly_linked_list_push_back(list: *mut OriDeque, value: i64) {
     ori_deque_push_back(list, value);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_pop_front(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_doubly_linked_list_pop_front(list: *mut OriDeque) -> *mut u8 {
     ori_deque_pop_front(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_pop_back(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_doubly_linked_list_pop_back(list: *mut OriDeque) -> *mut u8 {
     ori_deque_pop_back(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_front(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_doubly_linked_list_front(list: *mut OriDeque) -> *mut u8 {
     ori_deque_front(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_back(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_doubly_linked_list_back(list: *mut OriDeque) -> *mut u8 {
     ori_deque_back(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_cursor_front(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_doubly_linked_list_cursor_front(list: *mut OriDeque) -> *mut u8 {
     deque_cursor_front(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_cursor_back(list: *mut OriDeque) -> *mut u8 {
+unsafe extern "C" fn ori_doubly_linked_list_cursor_back(list: *mut OriDeque) -> *mut u8 {
     deque_cursor_back(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_value_at(
-    list: *mut OriDeque,
-    cursor: i64,
-) -> *mut u8 {
+unsafe extern "C" fn ori_doubly_linked_list_value_at(list: *mut OriDeque, cursor: i64) -> *mut u8 {
     deque_value_at(list, cursor)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_insert_after(
+unsafe extern "C" fn ori_doubly_linked_list_insert_after(
     list: *mut OriDeque,
     cursor: i64,
     value: i64,
@@ -3397,7 +3376,7 @@ pub unsafe extern "C" fn ori_doubly_linked_list_insert_after(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_insert_before(
+unsafe extern "C" fn ori_doubly_linked_list_insert_before(
     list: *mut OriDeque,
     cursor: i64,
     value: i64,
@@ -3406,20 +3385,17 @@ pub unsafe extern "C" fn ori_doubly_linked_list_insert_before(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_remove_at(
-    list: *mut OriDeque,
-    cursor: i64,
-) -> *mut u8 {
+unsafe extern "C" fn ori_doubly_linked_list_remove_at(list: *mut OriDeque, cursor: i64) -> *mut u8 {
     deque_remove_at(list, cursor)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_find(list: *mut OriDeque, value: i64) -> *mut u8 {
+unsafe extern "C" fn ori_doubly_linked_list_find(list: *mut OriDeque, value: i64) -> *mut u8 {
     deque_find_raw(list, value, MAP_KEY_INT)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_find_string(
+unsafe extern "C" fn ori_doubly_linked_list_find_string(
     list: *mut OriDeque,
     value: *const u8,
 ) -> *mut u8 {
@@ -3427,27 +3403,27 @@ pub unsafe extern "C" fn ori_doubly_linked_list_find_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_len(list: *mut OriDeque) -> i64 {
+unsafe extern "C" fn ori_doubly_linked_list_len(list: *mut OriDeque) -> i64 {
     ori_deque_len(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_is_empty(list: *mut OriDeque) -> c_uchar {
+unsafe extern "C" fn ori_doubly_linked_list_is_empty(list: *mut OriDeque) -> c_uchar {
     ori_deque_is_empty(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_clear(list: *mut OriDeque) {
+unsafe extern "C" fn ori_doubly_linked_list_clear(list: *mut OriDeque) {
     ori_deque_clear(list);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_to_list(list: *mut OriDeque) -> *mut OriList {
+unsafe extern "C" fn ori_doubly_linked_list_to_list(list: *mut OriDeque) -> *mut OriList {
     ori_deque_to_list(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_clone(list: *mut OriDeque) -> *mut OriDeque {
+unsafe extern "C" fn ori_doubly_linked_list_clone(list: *mut OriDeque) -> *mut OriDeque {
     ori_deque_clone(list)
 }
 
@@ -3609,7 +3585,7 @@ unsafe fn tree_remove_subtree_inner(tree: *mut OriTree, node: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_new(root_value: i64) -> *mut OriTree {
+unsafe extern "C" fn ori_tree_new(root_value: i64) -> *mut OriTree {
     let tree = ori_alloc(std::mem::size_of::<OriTree>(), Some(ori_tree_dtor)) as *mut OriTree;
     if tree.is_null() {
         return tree;
@@ -3628,7 +3604,7 @@ pub unsafe extern "C" fn ori_tree_new(root_value: i64) -> *mut OriTree {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_root(tree: *mut OriTree) -> i64 {
+unsafe extern "C" fn ori_tree_root(tree: *mut OriTree) -> i64 {
     if tree.is_null()
         || (*tree).root < 0
         || (*tree).root >= (*tree).nodes_len
@@ -3640,13 +3616,13 @@ pub unsafe extern "C" fn ori_tree_root(tree: *mut OriTree) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_value(tree: *mut OriTree, node: i64) -> i64 {
+unsafe extern "C" fn ori_tree_value(tree: *mut OriTree, node: i64) -> i64 {
     let index = tree_valid_node(tree, node);
     *(*tree).values.add(index)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_try_value(tree: *mut OriTree, node: i64) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_tree_try_value(tree: *mut OriTree, node: i64) -> *mut OriOptionalInt {
     if !tree_is_valid_node(tree, node) {
         return alloc_optional_int(0, 0);
     }
@@ -3654,12 +3630,12 @@ pub unsafe extern "C" fn ori_tree_try_value(tree: *mut OriTree, node: i64) -> *m
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_contains_node(tree: *mut OriTree, node: i64) -> c_uchar {
+unsafe extern "C" fn ori_tree_contains_node(tree: *mut OriTree, node: i64) -> c_uchar {
     u8::from(tree_is_valid_node(tree, node)) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_set_value(tree: *mut OriTree, node: i64, value: i64) -> c_uchar {
+unsafe extern "C" fn ori_tree_set_value(tree: *mut OriTree, node: i64, value: i64) -> c_uchar {
     if !tree_is_valid_node(tree, node) {
         return 0;
     }
@@ -3671,7 +3647,7 @@ pub unsafe extern "C" fn ori_tree_set_value(tree: *mut OriTree, node: i64, value
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_add_child(tree: *mut OriTree, parent: i64, value: i64) -> i64 {
+unsafe extern "C" fn ori_tree_add_child(tree: *mut OriTree, parent: i64, value: i64) -> i64 {
     tree_valid_node(tree, parent);
     let child = tree_push_node(tree, parent, value);
     let children = *(*tree).children.add(parent as usize);
@@ -3680,13 +3656,13 @@ pub unsafe extern "C" fn ori_tree_add_child(tree: *mut OriTree, parent: i64, val
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_children(tree: *mut OriTree, node: i64) -> *mut OriList {
+unsafe extern "C" fn ori_tree_children(tree: *mut OriTree, node: i64) -> *mut OriList {
     let index = tree_valid_node(tree, node);
     list_copy(*(*tree).children.add(index))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_parent(tree: *mut OriTree, node: i64) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_tree_parent(tree: *mut OriTree, node: i64) -> *mut OriOptionalInt {
     let index = tree_valid_node(tree, node);
     let parent = *(*tree).parents.add(index);
     if parent < 0 {
@@ -3697,7 +3673,7 @@ pub unsafe extern "C" fn ori_tree_parent(tree: *mut OriTree, node: i64) -> *mut 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_remove_subtree(tree: *mut OriTree, node: i64) {
+unsafe extern "C" fn ori_tree_remove_subtree(tree: *mut OriTree, node: i64) {
     let index = tree_valid_node(tree, node);
     let parent = *(*tree).parents.add(index);
     if parent >= 0 {
@@ -3710,7 +3686,7 @@ pub unsafe extern "C" fn ori_tree_remove_subtree(tree: *mut OriTree, node: i64) 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_move_subtree(
+unsafe extern "C" fn ori_tree_move_subtree(
     tree: *mut OriTree,
     node: i64,
     new_parent: i64,
@@ -3754,12 +3730,12 @@ unsafe fn tree_find_raw(tree: *mut OriTree, value: i64, string_mode: bool) -> *m
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_find(tree: *mut OriTree, value: i64) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_tree_find(tree: *mut OriTree, value: i64) -> *mut OriOptionalInt {
     tree_find_raw(tree, value, false)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_find_string(
+unsafe extern "C" fn ori_tree_find_string(
     tree: *mut OriTree,
     value: *const u8,
 ) -> *mut OriOptionalInt {
@@ -3767,7 +3743,7 @@ pub unsafe extern "C" fn ori_tree_find_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_len(tree: *mut OriTree) -> i64 {
+unsafe extern "C" fn ori_tree_len(tree: *mut OriTree) -> i64 {
     if tree.is_null() {
         0
     } else {
@@ -3776,7 +3752,7 @@ pub unsafe extern "C" fn ori_tree_len(tree: *mut OriTree) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_depth(tree: *mut OriTree, node: i64) -> i64 {
+unsafe extern "C" fn ori_tree_depth(tree: *mut OriTree, node: i64) -> i64 {
     let mut index = tree_valid_node(tree, node) as i64;
     let mut depth = 0;
     loop {
@@ -3818,7 +3794,7 @@ unsafe fn tree_post_order(tree: *mut OriTree, node: i64, out: *mut OriList) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_pre_order(tree: *mut OriTree) -> *mut OriList {
+unsafe extern "C" fn ori_tree_pre_order(tree: *mut OriTree) -> *mut OriList {
     let out = ori_list_new();
     if tree.is_null() || (*tree).root < 0 {
         return out;
@@ -3828,7 +3804,7 @@ pub unsafe extern "C" fn ori_tree_pre_order(tree: *mut OriTree) -> *mut OriList 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_post_order(tree: *mut OriTree) -> *mut OriList {
+unsafe extern "C" fn ori_tree_post_order(tree: *mut OriTree) -> *mut OriList {
     let out = ori_list_new();
     if tree.is_null() || (*tree).root < 0 {
         return out;
@@ -3838,7 +3814,7 @@ pub unsafe extern "C" fn ori_tree_post_order(tree: *mut OriTree) -> *mut OriList
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_breadth_first(tree: *mut OriTree) -> *mut OriList {
+unsafe extern "C" fn ori_tree_breadth_first(tree: *mut OriTree) -> *mut OriList {
     let out = ori_list_new();
     if tree.is_null() || (*tree).root < 0 {
         return out;
@@ -3886,7 +3862,7 @@ unsafe fn tree_clone_subtree(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_clone(tree: *mut OriTree) -> *mut OriTree {
+unsafe extern "C" fn ori_tree_clone(tree: *mut OriTree) -> *mut OriTree {
     if tree.is_null() || (*tree).root < 0 || !tree_is_valid_node(tree, (*tree).root) {
         return ori_tree_new(0);
     }
@@ -3905,7 +3881,7 @@ pub unsafe extern "C" fn ori_tree_clone(tree: *mut OriTree) -> *mut OriTree {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_tree_clone_subtree(tree: *mut OriTree, node: i64) -> *mut OriTree {
+unsafe extern "C" fn ori_tree_clone_subtree(tree: *mut OriTree, node: i64) -> *mut OriTree {
     if !tree_is_valid_node(tree, node) {
         return ori_tree_new(0);
     }
@@ -3924,14 +3900,14 @@ pub unsafe extern "C" fn ori_tree_clone_subtree(tree: *mut OriTree, node: i64) -
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_free(list: *mut OriList) {
+unsafe extern "C" fn ori_list_free(list: *mut OriList) {
     ori_arc_release(list as *mut u8);
 }
 
 /// Map: applies fn_ptr(env_ptr, elem) to each element and returns a new list.
 /// fn_ptr must be compatible with `fn(*const c_void, i64) -> i64`.
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_map(
+unsafe extern "C" fn ori_list_map(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -3950,7 +3926,7 @@ pub unsafe extern "C" fn ori_list_map(
 
 /// Filter: keeps elements for which fn_ptr(env_ptr, elem) returns non-zero.
 #[no_mangle]
-pub unsafe extern "C" fn ori_list_filter(
+unsafe extern "C" fn ori_list_filter(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -3971,7 +3947,7 @@ pub unsafe extern "C" fn ori_list_filter(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_flat_map(
+unsafe extern "C" fn ori_iter_flat_map(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -3997,7 +3973,7 @@ pub unsafe extern "C" fn ori_iter_flat_map(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_any(
+unsafe extern "C" fn ori_iter_any(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -4017,7 +3993,7 @@ pub unsafe extern "C" fn ori_iter_any(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_all(
+unsafe extern "C" fn ori_iter_all(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -4037,7 +4013,7 @@ pub unsafe extern "C" fn ori_iter_all(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_count_where(
+unsafe extern "C" fn ori_iter_count_where(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -4058,7 +4034,7 @@ pub unsafe extern "C" fn ori_iter_count_where(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_take(list: *mut OriList, n: i64) -> *mut OriList {
+unsafe extern "C" fn ori_iter_take(list: *mut OriList, n: i64) -> *mut OriList {
     let out = ori_list_new();
     if list.is_null() || n <= 0 {
         return out;
@@ -4071,7 +4047,7 @@ pub unsafe extern "C" fn ori_iter_take(list: *mut OriList, n: i64) -> *mut OriLi
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_skip(list: *mut OriList, n: i64) -> *mut OriList {
+unsafe extern "C" fn ori_iter_skip(list: *mut OriList, n: i64) -> *mut OriList {
     let out = ori_list_new();
     if list.is_null() {
         return out;
@@ -4088,7 +4064,7 @@ pub unsafe extern "C" fn ori_iter_skip(list: *mut OriList, n: i64) -> *mut OriLi
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_reverse(list: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_iter_reverse(list: *mut OriList) -> *mut OriList {
     let out = ori_list_new();
     if list.is_null() {
         return out;
@@ -4100,7 +4076,7 @@ pub unsafe extern "C" fn ori_iter_reverse(list: *mut OriList) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_reduce(
+unsafe extern "C" fn ori_iter_reduce(
     list: *mut OriList,
     initial: i64,
     fn_ptr: *const std::ffi::c_void,
@@ -4120,7 +4096,7 @@ pub unsafe extern "C" fn ori_iter_reduce(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_find(
+unsafe extern "C" fn ori_iter_find(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -4140,7 +4116,7 @@ pub unsafe extern "C" fn ori_iter_find(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_sort(list: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_iter_sort(list: *mut OriList) -> *mut OriList {
     let out = ori_list_new();
     if list.is_null() {
         return out;
@@ -4168,7 +4144,7 @@ pub unsafe extern "C" fn ori_iter_sort(list: *mut OriList) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_sort_string(list: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_iter_sort_string(list: *mut OriList) -> *mut OriList {
     let out = ori_list_new();
     if list.is_null() {
         return out;
@@ -4196,7 +4172,7 @@ pub unsafe extern "C" fn ori_iter_sort_string(list: *mut OriList) -> *mut OriLis
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_sort_by(
+unsafe extern "C" fn ori_iter_sort_by(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -4230,7 +4206,7 @@ pub unsafe extern "C" fn ori_iter_sort_by(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_unique(list: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_iter_unique(list: *mut OriList) -> *mut OriList {
     let out = ori_list_new();
     if list.is_null() {
         return out;
@@ -4252,7 +4228,7 @@ pub unsafe extern "C" fn ori_iter_unique(list: *mut OriList) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_unique_string(list: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_iter_unique_string(list: *mut OriList) -> *mut OriList {
     let out = ori_list_new();
     if list.is_null() {
         return out;
@@ -4274,7 +4250,7 @@ pub unsafe extern "C" fn ori_iter_unique_string(list: *mut OriList) -> *mut OriL
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_zip(left: *mut OriList, right: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_iter_zip(left: *mut OriList, right: *mut OriList) -> *mut OriList {
     let out = ori_list_new();
     if left.is_null() || right.is_null() {
         return out;
@@ -4295,7 +4271,7 @@ pub unsafe extern "C" fn ori_iter_zip(left: *mut OriList, right: *mut OriList) -
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_partition(
+unsafe extern "C" fn ori_iter_partition(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -4329,7 +4305,7 @@ pub unsafe extern "C" fn ori_iter_partition(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_group_by(
+unsafe extern "C" fn ori_iter_group_by(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -4361,7 +4337,7 @@ pub unsafe extern "C" fn ori_iter_group_by(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_group_by_string(
+unsafe extern "C" fn ori_iter_group_by_string(
     list: *mut OriList,
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
@@ -4391,7 +4367,7 @@ pub unsafe extern "C" fn ori_iter_group_by_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_iter_flatten(nested: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_iter_flatten(nested: *mut OriList) -> *mut OriList {
     let out = ori_list_new();
     if nested.is_null() {
         return out;
@@ -4409,7 +4385,7 @@ pub unsafe extern "C" fn ori_iter_flatten(nested: *mut OriList) -> *mut OriList 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_split(s: *const u8, sep: *const u8) -> *mut OriList {
+unsafe extern "C" fn ori_string_split(s: *const u8, sep: *const u8) -> *mut OriList {
     let list = ori_list_new();
     let text = cstr_str(s);
     let sep = cstr_str(sep);
@@ -4426,7 +4402,7 @@ pub unsafe extern "C" fn ori_string_split(s: *const u8, sep: *const u8) -> *mut 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_chars(s: *const u8) -> *mut OriList {
+unsafe extern "C" fn ori_string_chars(s: *const u8) -> *mut OriList {
     let list = ori_list_new();
     for ch in cstr_str(s).chars() {
         ori_list_push_owned_managed(list, cstring_from_str(&ch.to_string()));
@@ -4620,17 +4596,17 @@ unsafe fn set_reserve_capacity(set: *mut OriSet, capacity: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_new() -> *mut OriSet {
+unsafe extern "C" fn ori_set_new() -> *mut OriSet {
     set_alloc()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_add(set: *mut OriSet, value: i64) {
+unsafe extern "C" fn ori_set_add(set: *mut OriSet, value: i64) {
     ori_set_add_raw(set, value, SET_ITEM_INT);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_add_string(set: *mut OriSet, value: *const u8) {
+unsafe extern "C" fn ori_set_add_string(set: *mut OriSet, value: *const u8) {
     ori_set_add_raw(set, value as i64, SET_ITEM_STRING);
 }
 
@@ -4668,12 +4644,12 @@ unsafe fn ori_set_add_raw(set: *mut OriSet, value: i64, item_kind: u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_contains(set: *mut OriSet, value: i64) -> c_uchar {
+unsafe extern "C" fn ori_set_contains(set: *mut OriSet, value: i64) -> c_uchar {
     ori_set_contains_raw(set, value, SET_ITEM_INT)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_contains_string(set: *mut OriSet, value: *const u8) -> c_uchar {
+unsafe extern "C" fn ori_set_contains_string(set: *mut OriSet, value: *const u8) -> c_uchar {
     ori_set_contains_raw(set, value as i64, SET_ITEM_STRING)
 }
 
@@ -4690,22 +4666,22 @@ unsafe fn ori_set_contains_raw(set: *mut OriSet, value: i64, item_kind: u8) -> c
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_is_empty(set: *mut OriSet) -> c_uchar {
+unsafe extern "C" fn ori_set_is_empty(set: *mut OriSet) -> c_uchar {
     u8::from(ori_set_len(set) == 0) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_remove(set: *mut OriSet, value: i64) {
+unsafe extern "C" fn ori_set_remove(set: *mut OriSet, value: i64) {
     ori_set_remove_raw(set, value, SET_ITEM_INT);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_remove_string(set: *mut OriSet, value: *const u8) {
+unsafe extern "C" fn ori_set_remove_string(set: *mut OriSet, value: *const u8) {
     ori_set_remove_raw(set, value as i64, SET_ITEM_STRING);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_try_remove(set: *mut OriSet, value: i64) -> c_uchar {
+unsafe extern "C" fn ori_set_try_remove(set: *mut OriSet, value: i64) -> c_uchar {
     if ori_set_contains(set, value) == 0 {
         0
     } else {
@@ -4715,7 +4691,7 @@ pub unsafe extern "C" fn ori_set_try_remove(set: *mut OriSet, value: i64) -> c_u
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_try_remove_string(set: *mut OriSet, value: *const u8) -> c_uchar {
+unsafe extern "C" fn ori_set_try_remove_string(set: *mut OriSet, value: *const u8) -> c_uchar {
     if ori_set_contains_string(set, value) == 0 {
         0
     } else {
@@ -4755,7 +4731,7 @@ unsafe fn ori_set_remove_raw(set: *mut OriSet, value: i64, item_kind: u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_len(set: *mut OriSet) -> i64 {
+unsafe extern "C" fn ori_set_len(set: *mut OriSet) -> i64 {
     if set.is_null() {
         0
     } else {
@@ -4764,7 +4740,7 @@ pub unsafe extern "C" fn ori_set_len(set: *mut OriSet) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_capacity(set: *mut OriSet) -> i64 {
+unsafe extern "C" fn ori_set_capacity(set: *mut OriSet) -> i64 {
     if set.is_null() {
         0
     } else {
@@ -4773,12 +4749,12 @@ pub unsafe extern "C" fn ori_set_capacity(set: *mut OriSet) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_reserve(set: *mut OriSet, capacity: i64) {
+unsafe extern "C" fn ori_set_reserve(set: *mut OriSet, capacity: i64) {
     set_reserve_capacity(set, capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_clear(set: *mut OriSet) {
+unsafe extern "C" fn ori_set_clear(set: *mut OriSet) {
     if set.is_null() {
         return;
     }
@@ -4797,7 +4773,7 @@ pub unsafe extern "C" fn ori_set_clear(set: *mut OriSet) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_to_list(set: *mut OriSet) -> *mut OriList {
+unsafe extern "C" fn ori_set_to_list(set: *mut OriSet) -> *mut OriList {
     let out = ori_list_new();
     if set.is_null() {
         return out;
@@ -4809,7 +4785,7 @@ pub unsafe extern "C" fn ori_set_to_list(set: *mut OriSet) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_clone(set: *mut OriSet) -> *mut OriSet {
+unsafe extern "C" fn ori_set_clone(set: *mut OriSet) -> *mut OriSet {
     let out = ori_set_new();
     if set.is_null() {
         return out;
@@ -4823,7 +4799,7 @@ pub unsafe extern "C" fn ori_set_clone(set: *mut OriSet) -> *mut OriSet {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_from_list(list: *mut OriList) -> *mut OriSet {
+unsafe extern "C" fn ori_set_from_list(list: *mut OriList) -> *mut OriSet {
     let out = ori_set_new();
     if list.is_null() {
         return out;
@@ -4837,7 +4813,7 @@ pub unsafe extern "C" fn ori_set_from_list(list: *mut OriList) -> *mut OriSet {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_from_list_string(list: *mut OriList) -> *mut OriSet {
+unsafe extern "C" fn ori_set_from_list_string(list: *mut OriList) -> *mut OriSet {
     let out = ori_set_new();
     if list.is_null() {
         return out;
@@ -4851,12 +4827,12 @@ pub unsafe extern "C" fn ori_set_from_list_string(list: *mut OriList) -> *mut Or
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_free(set: *mut OriSet) {
+unsafe extern "C" fn ori_set_free(set: *mut OriSet) {
     ori_arc_release(set as *mut u8);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_union(a: *mut OriSet, b: *mut OriSet) -> *mut OriSet {
+unsafe extern "C" fn ori_set_union(a: *mut OriSet, b: *mut OriSet) -> *mut OriSet {
     let out = ori_set_new();
     if !a.is_null() {
         for i in 0..(*a).len as usize {
@@ -4876,7 +4852,7 @@ pub unsafe extern "C" fn ori_set_union(a: *mut OriSet, b: *mut OriSet) -> *mut O
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_intersection(a: *mut OriSet, b: *mut OriSet) -> *mut OriSet {
+unsafe extern "C" fn ori_set_intersection(a: *mut OriSet, b: *mut OriSet) -> *mut OriSet {
     let out = ori_set_new();
     if a.is_null() || b.is_null() {
         return out;
@@ -4892,7 +4868,7 @@ pub unsafe extern "C" fn ori_set_intersection(a: *mut OriSet, b: *mut OriSet) ->
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_set_difference(a: *mut OriSet, b: *mut OriSet) -> *mut OriSet {
+unsafe extern "C" fn ori_set_difference(a: *mut OriSet, b: *mut OriSet) -> *mut OriSet {
     let out = ori_set_new();
     if a.is_null() {
         return out;
@@ -5087,12 +5063,12 @@ unsafe fn map_reserve_capacity(map: *mut OriMap, capacity: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_new() -> *mut OriMap {
+unsafe extern "C" fn ori_map_new() -> *mut OriMap {
     map_alloc_with(std::ptr::null(), std::ptr::null(), MAP_KEY_UNKNOWN)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_new_custom(
+unsafe extern "C" fn ori_map_new_custom(
     hash_fn: *const std::ffi::c_void,
     eq_fn: *const std::ffi::c_void,
 ) -> *mut OriMap {
@@ -5138,17 +5114,17 @@ unsafe fn ori_map_set_raw(map: *mut OriMap, key: i64, value: i64, key_kind: u8) 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_set(map: *mut OriMap, key: i64, value: i64) {
+unsafe extern "C" fn ori_map_set(map: *mut OriMap, key: i64, value: i64) {
     ori_map_set_raw(map, key, value, MAP_KEY_INT);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_set_string(map: *mut OriMap, key: *const u8, value: i64) {
+unsafe extern "C" fn ori_map_set_string(map: *mut OriMap, key: *const u8, value: i64) {
     ori_map_set_raw(map, key as i64, value, MAP_KEY_STRING);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_set_custom(map: *mut OriMap, key: i64, value: i64) {
+unsafe extern "C" fn ori_map_set_custom(map: *mut OriMap, key: i64, value: i64) {
     ori_map_set_raw(map, key, value, MAP_KEY_CUSTOM);
 }
 
@@ -5168,22 +5144,22 @@ unsafe fn ori_map_get_raw(map: *mut OriMap, key: i64, key_kind: u8) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_get(map: *mut OriMap, key: i64) -> i64 {
+unsafe extern "C" fn ori_map_get(map: *mut OriMap, key: i64) -> i64 {
     ori_map_get_raw(map, key, MAP_KEY_INT)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_get_string(map: *mut OriMap, key: *const u8) -> i64 {
+unsafe extern "C" fn ori_map_get_string(map: *mut OriMap, key: *const u8) -> i64 {
     ori_map_get_raw(map, key as i64, MAP_KEY_STRING)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_get_custom(map: *mut OriMap, key: i64) -> i64 {
+unsafe extern "C" fn ori_map_get_custom(map: *mut OriMap, key: i64) -> i64 {
     ori_map_get_raw(map, key, MAP_KEY_CUSTOM)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_try_get(map: *mut OriMap, key: i64) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_map_try_get(map: *mut OriMap, key: i64) -> *mut OriOptionalInt {
     if ori_map_contains(map, key) == 0 {
         alloc_optional_int(0, 0)
     } else {
@@ -5194,7 +5170,7 @@ pub unsafe extern "C" fn ori_map_try_get(map: *mut OriMap, key: i64) -> *mut Ori
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_try_get_string(
+unsafe extern "C" fn ori_map_try_get_string(
     map: *mut OriMap,
     key: *const u8,
 ) -> *mut OriOptionalInt {
@@ -5206,7 +5182,7 @@ pub unsafe extern "C" fn ori_map_try_get_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_try_get_custom(map: *mut OriMap, key: i64) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_map_try_get_custom(map: *mut OriMap, key: i64) -> *mut OriOptionalInt {
     if ori_map_contains_custom(map, key) == 0 {
         alloc_optional_int(0, 0)
     } else {
@@ -5225,22 +5201,22 @@ unsafe fn ori_map_contains_raw(map: *mut OriMap, key: i64, key_kind: u8) -> c_uc
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_contains(map: *mut OriMap, key: i64) -> c_uchar {
+unsafe extern "C" fn ori_map_contains(map: *mut OriMap, key: i64) -> c_uchar {
     ori_map_contains_raw(map, key, MAP_KEY_INT)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_contains_string(map: *mut OriMap, key: *const u8) -> c_uchar {
+unsafe extern "C" fn ori_map_contains_string(map: *mut OriMap, key: *const u8) -> c_uchar {
     ori_map_contains_raw(map, key as i64, MAP_KEY_STRING)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_contains_custom(map: *mut OriMap, key: i64) -> c_uchar {
+unsafe extern "C" fn ori_map_contains_custom(map: *mut OriMap, key: i64) -> c_uchar {
     ori_map_contains_raw(map, key, MAP_KEY_CUSTOM)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_is_empty(map: *mut OriMap) -> c_uchar {
+unsafe extern "C" fn ori_map_is_empty(map: *mut OriMap) -> c_uchar {
     u8::from(ori_map_len(map) == 0) as c_uchar
 }
 
@@ -5278,22 +5254,22 @@ unsafe fn ori_map_remove_raw(map: *mut OriMap, key: i64, key_kind: u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_remove(map: *mut OriMap, key: i64) {
+unsafe extern "C" fn ori_map_remove(map: *mut OriMap, key: i64) {
     ori_map_remove_raw(map, key, MAP_KEY_INT);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_remove_string(map: *mut OriMap, key: *const u8) {
+unsafe extern "C" fn ori_map_remove_string(map: *mut OriMap, key: *const u8) {
     ori_map_remove_raw(map, key as i64, MAP_KEY_STRING);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_remove_custom(map: *mut OriMap, key: i64) {
+unsafe extern "C" fn ori_map_remove_custom(map: *mut OriMap, key: i64) {
     ori_map_remove_raw(map, key, MAP_KEY_CUSTOM);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_try_remove(map: *mut OriMap, key: i64) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_map_try_remove(map: *mut OriMap, key: i64) -> *mut OriOptionalInt {
     if ori_map_contains(map, key) == 0 {
         alloc_optional_int(0, 0)
     } else {
@@ -5305,7 +5281,7 @@ pub unsafe extern "C" fn ori_map_try_remove(map: *mut OriMap, key: i64) -> *mut 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_try_remove_string(
+unsafe extern "C" fn ori_map_try_remove_string(
     map: *mut OriMap,
     key: *const u8,
 ) -> *mut OriOptionalInt {
@@ -5320,10 +5296,7 @@ pub unsafe extern "C" fn ori_map_try_remove_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_try_remove_custom(
-    map: *mut OriMap,
-    key: i64,
-) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_map_try_remove_custom(map: *mut OriMap, key: i64) -> *mut OriOptionalInt {
     if ori_map_contains_custom(map, key) == 0 {
         alloc_optional_int(0, 0)
     } else {
@@ -5335,7 +5308,7 @@ pub unsafe extern "C" fn ori_map_try_remove_custom(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_keys(map: *mut OriMap) -> *mut OriList {
+unsafe extern "C" fn ori_map_keys(map: *mut OriMap) -> *mut OriList {
     let out = ori_list_new();
     if map.is_null() {
         return out;
@@ -5347,7 +5320,7 @@ pub unsafe extern "C" fn ori_map_keys(map: *mut OriMap) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_values(map: *mut OriMap) -> *mut OriList {
+unsafe extern "C" fn ori_map_values(map: *mut OriMap) -> *mut OriList {
     let out = ori_list_new();
     if map.is_null() {
         return out;
@@ -5359,7 +5332,7 @@ pub unsafe extern "C" fn ori_map_values(map: *mut OriMap) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_entries(map: *mut OriMap) -> *mut OriList {
+unsafe extern "C" fn ori_map_entries(map: *mut OriMap) -> *mut OriList {
     let out = ori_list_new();
     if map.is_null() {
         return out;
@@ -5379,7 +5352,7 @@ pub unsafe extern "C" fn ori_map_entries(map: *mut OriMap) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_len(map: *mut OriMap) -> i64 {
+unsafe extern "C" fn ori_map_len(map: *mut OriMap) -> i64 {
     if map.is_null() {
         0
     } else {
@@ -5388,7 +5361,7 @@ pub unsafe extern "C" fn ori_map_len(map: *mut OriMap) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_capacity(map: *mut OriMap) -> i64 {
+unsafe extern "C" fn ori_map_capacity(map: *mut OriMap) -> i64 {
     if map.is_null() {
         0
     } else {
@@ -5397,12 +5370,12 @@ pub unsafe extern "C" fn ori_map_capacity(map: *mut OriMap) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_reserve(map: *mut OriMap, capacity: i64) {
+unsafe extern "C" fn ori_map_reserve(map: *mut OriMap, capacity: i64) {
     map_reserve_capacity(map, capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_key_at(map: *mut OriMap, index: i64) -> i64 {
+unsafe extern "C" fn ori_map_key_at(map: *mut OriMap, index: i64) -> i64 {
     if map.is_null() || index < 0 || index >= (*map).len {
         return 0;
     }
@@ -5410,7 +5383,7 @@ pub unsafe extern "C" fn ori_map_key_at(map: *mut OriMap, index: i64) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_value_at(map: *mut OriMap, index: i64) -> i64 {
+unsafe extern "C" fn ori_map_value_at(map: *mut OriMap, index: i64) -> i64 {
     if map.is_null() || index < 0 || index >= (*map).len {
         return 0;
     }
@@ -5418,7 +5391,7 @@ pub unsafe extern "C" fn ori_map_value_at(map: *mut OriMap, index: i64) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_clear(map: *mut OriMap) {
+unsafe extern "C" fn ori_map_clear(map: *mut OriMap) {
     if map.is_null() {
         return;
     }
@@ -5439,7 +5412,7 @@ pub unsafe extern "C" fn ori_map_clear(map: *mut OriMap) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_clone(map: *mut OriMap) -> *mut OriMap {
+unsafe extern "C" fn ori_map_clone(map: *mut OriMap) -> *mut OriMap {
     let out = ori_map_new();
     if map.is_null() {
         return out;
@@ -5460,7 +5433,7 @@ pub unsafe extern "C" fn ori_map_clone(map: *mut OriMap) -> *mut OriMap {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_from_entries(entries: *mut OriList) -> *mut OriMap {
+unsafe extern "C" fn ori_map_from_entries(entries: *mut OriList) -> *mut OriMap {
     let out = ori_map_new();
     if entries.is_null() {
         return out;
@@ -5479,7 +5452,7 @@ pub unsafe extern "C" fn ori_map_from_entries(entries: *mut OriList) -> *mut Ori
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_from_entries_string(entries: *mut OriList) -> *mut OriMap {
+unsafe extern "C" fn ori_map_from_entries_string(entries: *mut OriList) -> *mut OriMap {
     let out = ori_map_new();
     if entries.is_null() {
         return out;
@@ -5498,39 +5471,39 @@ pub unsafe extern "C" fn ori_map_from_entries_string(entries: *mut OriList) -> *
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_map_free(map: *mut OriMap) {
+unsafe extern "C" fn ori_map_free(map: *mut OriMap) {
     ori_arc_release(map as *mut u8);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_new() -> *mut OriMap {
+unsafe extern "C" fn ori_hash_table_new() -> *mut OriMap {
     ori_map_new()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_with_capacity(capacity: i64) -> *mut OriMap {
+unsafe extern "C" fn ori_hash_table_with_capacity(capacity: i64) -> *mut OriMap {
     let table = ori_map_new();
     ori_map_reserve(table, capacity);
     table
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_set(table: *mut OriMap, key: i64, value: i64) {
+unsafe extern "C" fn ori_hash_table_set(table: *mut OriMap, key: i64, value: i64) {
     ori_map_set(table, key, value);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_set_string(table: *mut OriMap, key: *const u8, value: i64) {
+unsafe extern "C" fn ori_hash_table_set_string(table: *mut OriMap, key: *const u8, value: i64) {
     ori_map_set_string(table, key, value);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_get(table: *mut OriMap, key: i64) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_hash_table_get(table: *mut OriMap, key: i64) -> *mut OriOptionalInt {
     ori_map_try_get(table, key)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_get_string(
+unsafe extern "C" fn ori_hash_table_get_string(
     table: *mut OriMap,
     key: *const u8,
 ) -> *mut OriOptionalInt {
@@ -5538,15 +5511,12 @@ pub unsafe extern "C" fn ori_hash_table_get_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_remove(
-    table: *mut OriMap,
-    key: i64,
-) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_hash_table_remove(table: *mut OriMap, key: i64) -> *mut OriOptionalInt {
     ori_map_try_remove(table, key)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_remove_string(
+unsafe extern "C" fn ori_hash_table_remove_string(
     table: *mut OriMap,
     key: *const u8,
 ) -> *mut OriOptionalInt {
@@ -5554,70 +5524,67 @@ pub unsafe extern "C" fn ori_hash_table_remove_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_contains(table: *mut OriMap, key: i64) -> c_uchar {
+unsafe extern "C" fn ori_hash_table_contains(table: *mut OriMap, key: i64) -> c_uchar {
     ori_map_contains(table, key)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_contains_string(
-    table: *mut OriMap,
-    key: *const u8,
-) -> c_uchar {
+unsafe extern "C" fn ori_hash_table_contains_string(table: *mut OriMap, key: *const u8) -> c_uchar {
     ori_map_contains_string(table, key)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_is_empty(table: *mut OriMap) -> c_uchar {
+unsafe extern "C" fn ori_hash_table_is_empty(table: *mut OriMap) -> c_uchar {
     ori_map_is_empty(table)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_len(table: *mut OriMap) -> i64 {
+unsafe extern "C" fn ori_hash_table_len(table: *mut OriMap) -> i64 {
     ori_map_len(table)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_capacity(table: *mut OriMap) -> i64 {
+unsafe extern "C" fn ori_hash_table_capacity(table: *mut OriMap) -> i64 {
     ori_map_capacity(table)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_reserve(table: *mut OriMap, capacity: i64) {
+unsafe extern "C" fn ori_hash_table_reserve(table: *mut OriMap, capacity: i64) {
     ori_map_reserve(table, capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_clear(table: *mut OriMap) {
+unsafe extern "C" fn ori_hash_table_clear(table: *mut OriMap) {
     ori_map_clear(table);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_clone(table: *mut OriMap) -> *mut OriMap {
+unsafe extern "C" fn ori_hash_table_clone(table: *mut OriMap) -> *mut OriMap {
     ori_map_clone(table)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_from_entries(entries: *mut OriList) -> *mut OriMap {
+unsafe extern "C" fn ori_hash_table_from_entries(entries: *mut OriList) -> *mut OriMap {
     ori_map_from_entries(entries)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_from_entries_string(entries: *mut OriList) -> *mut OriMap {
+unsafe extern "C" fn ori_hash_table_from_entries_string(entries: *mut OriList) -> *mut OriMap {
     ori_map_from_entries_string(entries)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_keys(table: *mut OriMap) -> *mut OriList {
+unsafe extern "C" fn ori_hash_table_keys(table: *mut OriMap) -> *mut OriList {
     ori_map_keys(table)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_values(table: *mut OriMap) -> *mut OriList {
+unsafe extern "C" fn ori_hash_table_values(table: *mut OriMap) -> *mut OriList {
     ori_map_values(table)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_hash_table_entries(table: *mut OriMap) -> *mut OriList {
+unsafe extern "C" fn ori_hash_table_entries(table: *mut OriMap) -> *mut OriList {
     ori_map_entries(table)
 }
 
@@ -5904,7 +5871,7 @@ unsafe fn graph_remove_node_raw(graph: *mut OriGraph, node: i64, node_kind: u8) 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_new(directed: c_uchar) -> *mut OriGraph {
+unsafe extern "C" fn ori_graph_new(directed: c_uchar) -> *mut OriGraph {
     let graph = ori_alloc(std::mem::size_of::<OriGraph>(), Some(ori_graph_dtor)) as *mut OriGraph;
     if !graph.is_null() {
         (*graph).nodes = graph_alloc_array(8);
@@ -5923,32 +5890,32 @@ pub unsafe extern "C" fn ori_graph_new(directed: c_uchar) -> *mut OriGraph {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_add_node(graph: *mut OriGraph, node: i64) {
+unsafe extern "C" fn ori_graph_add_node(graph: *mut OriGraph, node: i64) {
     graph_add_node_raw(graph, node, MAP_KEY_INT);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_add_node_string(graph: *mut OriGraph, node: *const u8) {
+unsafe extern "C" fn ori_graph_add_node_string(graph: *mut OriGraph, node: *const u8) {
     graph_add_node_raw(graph, node as i64, MAP_KEY_STRING);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_remove_node(graph: *mut OriGraph, node: i64) {
+unsafe extern "C" fn ori_graph_remove_node(graph: *mut OriGraph, node: i64) {
     graph_remove_node_raw(graph, node, MAP_KEY_INT);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_remove_node_string(graph: *mut OriGraph, node: *const u8) {
+unsafe extern "C" fn ori_graph_remove_node_string(graph: *mut OriGraph, node: *const u8) {
     graph_remove_node_raw(graph, node as i64, MAP_KEY_STRING);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_add_edge(graph: *mut OriGraph, from: i64, to: i64) {
+unsafe extern "C" fn ori_graph_add_edge(graph: *mut OriGraph, from: i64, to: i64) {
     graph_add_edge_raw(graph, from, to, MAP_KEY_INT);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_add_edge_string(
+unsafe extern "C" fn ori_graph_add_edge_string(
     graph: *mut OriGraph,
     from: *const u8,
     to: *const u8,
@@ -5957,7 +5924,7 @@ pub unsafe extern "C" fn ori_graph_add_edge_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_add_weighted_edge(
+unsafe extern "C" fn ori_graph_add_weighted_edge(
     graph: *mut OriGraph,
     from: i64,
     to: i64,
@@ -5967,7 +5934,7 @@ pub unsafe extern "C" fn ori_graph_add_weighted_edge(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_add_weighted_edge_string(
+unsafe extern "C" fn ori_graph_add_weighted_edge_string(
     graph: *mut OriGraph,
     from: *const u8,
     to: *const u8,
@@ -5977,12 +5944,12 @@ pub unsafe extern "C" fn ori_graph_add_weighted_edge_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_remove_edge(graph: *mut OriGraph, from: i64, to: i64) {
+unsafe extern "C" fn ori_graph_remove_edge(graph: *mut OriGraph, from: i64, to: i64) {
     graph_remove_edge_raw(graph, from, to, MAP_KEY_INT);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_remove_edge_string(
+unsafe extern "C" fn ori_graph_remove_edge_string(
     graph: *mut OriGraph,
     from: *const u8,
     to: *const u8,
@@ -5991,25 +5958,22 @@ pub unsafe extern "C" fn ori_graph_remove_edge_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_has_node(graph: *mut OriGraph, node: i64) -> c_uchar {
+unsafe extern "C" fn ori_graph_has_node(graph: *mut OriGraph, node: i64) -> c_uchar {
     u8::from(graph_find_node(graph, node, MAP_KEY_INT) >= 0) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_has_node_string(
-    graph: *mut OriGraph,
-    node: *const u8,
-) -> c_uchar {
+unsafe extern "C" fn ori_graph_has_node_string(graph: *mut OriGraph, node: *const u8) -> c_uchar {
     u8::from(graph_find_node(graph, node as i64, MAP_KEY_STRING) >= 0) as c_uchar
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_has_edge(graph: *mut OriGraph, from: i64, to: i64) -> c_uchar {
+unsafe extern "C" fn ori_graph_has_edge(graph: *mut OriGraph, from: i64, to: i64) -> c_uchar {
     graph_has_edge_raw(graph, from, to, MAP_KEY_INT)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_has_edge_string(
+unsafe extern "C" fn ori_graph_has_edge_string(
     graph: *mut OriGraph,
     from: *const u8,
     to: *const u8,
@@ -6031,7 +5995,7 @@ unsafe fn graph_edge_weight_raw(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_edge_weight(
+unsafe extern "C" fn ori_graph_edge_weight(
     graph: *mut OriGraph,
     from: i64,
     to: i64,
@@ -6040,7 +6004,7 @@ pub unsafe extern "C" fn ori_graph_edge_weight(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_edge_weight_string(
+unsafe extern "C" fn ori_graph_edge_weight_string(
     graph: *mut OriGraph,
     from: *const u8,
     to: *const u8,
@@ -6067,12 +6031,12 @@ unsafe fn graph_neighbors_raw(graph: *mut OriGraph, node: i64, node_kind: u8) ->
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_neighbors(graph: *mut OriGraph, node: i64) -> *mut OriList {
+unsafe extern "C" fn ori_graph_neighbors(graph: *mut OriGraph, node: i64) -> *mut OriList {
     graph_neighbors_raw(graph, node, MAP_KEY_INT)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_neighbors_string(
+unsafe extern "C" fn ori_graph_neighbors_string(
     graph: *mut OriGraph,
     node: *const u8,
 ) -> *mut OriList {
@@ -6080,7 +6044,7 @@ pub unsafe extern "C" fn ori_graph_neighbors_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_nodes(graph: *mut OriGraph) -> *mut OriList {
+unsafe extern "C" fn ori_graph_nodes(graph: *mut OriGraph) -> *mut OriList {
     let out = ori_list_new();
     if graph.is_null() {
         return out;
@@ -6092,7 +6056,7 @@ pub unsafe extern "C" fn ori_graph_nodes(graph: *mut OriGraph) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_edges(graph: *mut OriGraph) -> *mut OriList {
+unsafe extern "C" fn ori_graph_edges(graph: *mut OriGraph) -> *mut OriList {
     let out = ori_list_new();
     if graph.is_null() {
         return out;
@@ -6181,33 +6145,27 @@ unsafe fn graph_dfs_raw(graph: *mut OriGraph, start: i64, node_kind: u8) -> *mut
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_bfs(graph: *mut OriGraph, start: i64) -> *mut OriList {
+unsafe extern "C" fn ori_graph_bfs(graph: *mut OriGraph, start: i64) -> *mut OriList {
     graph_bfs_raw(graph, start, MAP_KEY_INT)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_bfs_string(
-    graph: *mut OriGraph,
-    start: *const u8,
-) -> *mut OriList {
+unsafe extern "C" fn ori_graph_bfs_string(graph: *mut OriGraph, start: *const u8) -> *mut OriList {
     graph_bfs_raw(graph, start as i64, MAP_KEY_STRING)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_dfs(graph: *mut OriGraph, start: i64) -> *mut OriList {
+unsafe extern "C" fn ori_graph_dfs(graph: *mut OriGraph, start: i64) -> *mut OriList {
     graph_dfs_raw(graph, start, MAP_KEY_INT)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_dfs_string(
-    graph: *mut OriGraph,
-    start: *const u8,
-) -> *mut OriList {
+unsafe extern "C" fn ori_graph_dfs_string(graph: *mut OriGraph, start: *const u8) -> *mut OriList {
     graph_dfs_raw(graph, start as i64, MAP_KEY_STRING)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_topological_sort(graph: *mut OriGraph) -> *mut OriList {
+unsafe extern "C" fn ori_graph_topological_sort(graph: *mut OriGraph) -> *mut OriList {
     let out = ori_list_new();
     if graph.is_null() || (*graph).directed == 0 {
         return out;
@@ -6243,7 +6201,7 @@ pub unsafe extern "C" fn ori_graph_topological_sort(graph: *mut OriGraph) -> *mu
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_is_directed(graph: *mut OriGraph) -> c_uchar {
+unsafe extern "C" fn ori_graph_is_directed(graph: *mut OriGraph) -> c_uchar {
     if graph.is_null() {
         0
     } else {
@@ -6252,7 +6210,7 @@ pub unsafe extern "C" fn ori_graph_is_directed(graph: *mut OriGraph) -> c_uchar 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_len(graph: *mut OriGraph) -> i64 {
+unsafe extern "C" fn ori_graph_len(graph: *mut OriGraph) -> i64 {
     if graph.is_null() {
         0
     } else {
@@ -6261,7 +6219,7 @@ pub unsafe extern "C" fn ori_graph_len(graph: *mut OriGraph) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_edge_len(graph: *mut OriGraph) -> i64 {
+unsafe extern "C" fn ori_graph_edge_len(graph: *mut OriGraph) -> i64 {
     if graph.is_null() {
         0
     } else {
@@ -6300,7 +6258,7 @@ unsafe fn graph_has_cycle_undirected(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_has_cycle(graph: *mut OriGraph) -> c_uchar {
+unsafe extern "C" fn ori_graph_has_cycle(graph: *mut OriGraph) -> c_uchar {
     if graph.is_null() {
         return 0;
     }
@@ -6324,9 +6282,7 @@ pub unsafe extern "C" fn ori_graph_has_cycle(graph: *mut OriGraph) -> c_uchar {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_try_topological_sort(
-    graph: *mut OriGraph,
-) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_graph_try_topological_sort(graph: *mut OriGraph) -> *mut OriOptionalInt {
     if graph.is_null() || (*graph).directed == 0 || ori_graph_has_cycle(graph) != 0 {
         return alloc_optional_int(0, 0);
     }
@@ -6335,7 +6291,7 @@ pub unsafe extern "C" fn ori_graph_try_topological_sort(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_clone(graph: *mut OriGraph) -> *mut OriGraph {
+unsafe extern "C" fn ori_graph_clone(graph: *mut OriGraph) -> *mut OriGraph {
     if graph.is_null() {
         return ori_graph_new(1);
     }
@@ -6361,7 +6317,7 @@ pub unsafe extern "C" fn ori_graph_clone(graph: *mut OriGraph) -> *mut OriGraph 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_components(graph: *mut OriGraph) -> *mut OriList {
+unsafe extern "C" fn ori_graph_components(graph: *mut OriGraph) -> *mut OriList {
     let out = ori_list_new();
     if graph.is_null() {
         return out;
@@ -6390,90 +6346,76 @@ pub unsafe extern "C" fn ori_graph_components(graph: *mut OriGraph) -> *mut OriL
     out
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn ori_graph_strongly_connected_components(
+struct StronglyConnectedTraversal {
     graph: *mut OriGraph,
-) -> *mut OriList {
+    next_index: i64,
+    stack: Vec<usize>,
+    on_stack: Vec<bool>,
+    indices: Vec<i64>,
+    lowlink: Vec<i64>,
+    output: *mut OriList,
+}
+
+impl StronglyConnectedTraversal {
+    unsafe fn visit(&mut self, vertex: usize) {
+        self.indices[vertex] = self.next_index;
+        self.lowlink[vertex] = self.next_index;
+        self.next_index += 1;
+        self.stack.push(vertex);
+        self.on_stack[vertex] = true;
+
+        for next in graph_neighbor_indices(self.graph, vertex) {
+            if self.indices[next] < 0 {
+                self.visit(next);
+                self.lowlink[vertex] = self.lowlink[vertex].min(self.lowlink[next]);
+            } else if self.on_stack[next] {
+                self.lowlink[vertex] = self.lowlink[vertex].min(self.indices[next]);
+            }
+        }
+
+        if self.lowlink[vertex] != self.indices[vertex] {
+            return;
+        }
+
+        let component = ori_list_new();
+        while let Some(next) = self.stack.pop() {
+            self.on_stack[next] = false;
+            ori_list_push_borrowed_maybe_managed(component, *(*self.graph).nodes.add(next));
+            if next == vertex {
+                break;
+            }
+        }
+        ori_list_push_owned_managed(self.output, component as *mut u8);
+    }
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_graph_strongly_connected_components(graph: *mut OriGraph) -> *mut OriList {
     let out = ori_list_new();
     if graph.is_null() {
         return out;
     }
     let len = (*graph).len as usize;
-    let mut index_counter = 0_i64;
-    let mut stack: Vec<usize> = Vec::new();
-    let mut on_stack = vec![false; len];
-    let mut indices = vec![-1_i64; len];
-    let mut lowlink = vec![0_i64; len];
-
-    unsafe fn strongconnect(
-        graph: *mut OriGraph,
-        vertex: usize,
-        index_counter: &mut i64,
-        stack: &mut Vec<usize>,
-        on_stack: &mut [bool],
-        indices: &mut [i64],
-        lowlink: &mut [i64],
-        out: *mut OriList,
-    ) {
-        indices[vertex] = *index_counter;
-        lowlink[vertex] = *index_counter;
-        *index_counter += 1;
-        stack.push(vertex);
-        on_stack[vertex] = true;
-
-        for next in graph_neighbor_indices(graph, vertex) {
-            if indices[next] < 0 {
-                strongconnect(
-                    graph,
-                    next,
-                    index_counter,
-                    stack,
-                    on_stack,
-                    indices,
-                    lowlink,
-                    out,
-                );
-                lowlink[vertex] = lowlink[vertex].min(lowlink[next]);
-            } else if on_stack[next] {
-                lowlink[vertex] = lowlink[vertex].min(indices[next]);
-            }
-        }
-
-        if lowlink[vertex] == indices[vertex] {
-            let component = ori_list_new();
-            loop {
-                let Some(next) = stack.pop() else {
-                    break;
-                };
-                on_stack[next] = false;
-                ori_list_push_borrowed_maybe_managed(component, *(*graph).nodes.add(next));
-                if next == vertex {
-                    break;
-                }
-            }
-            ori_list_push_owned_managed(out, component as *mut u8);
-        }
-    }
+    let mut traversal = StronglyConnectedTraversal {
+        graph,
+        next_index: 0,
+        stack: Vec::new(),
+        on_stack: vec![false; len],
+        indices: vec![-1; len],
+        lowlink: vec![0; len],
+        output: out,
+    };
 
     for vertex in 0..len {
-        if indices[vertex] < 0 {
-            strongconnect(
-                graph,
-                vertex,
-                &mut index_counter,
-                &mut stack,
-                &mut on_stack,
-                &mut indices,
-                &mut lowlink,
-                out,
-            );
+        if traversal.indices[vertex] < 0 {
+            traversal.visit(vertex);
         }
     }
     out
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_transitive_closure(graph: *mut OriGraph) -> *mut OriGraph {
+unsafe extern "C" fn ori_graph_transitive_closure(graph: *mut OriGraph) -> *mut OriGraph {
     if graph.is_null() {
         return ori_graph_new(1);
     }
@@ -6656,7 +6598,7 @@ unsafe fn graph_shortest_weighted_path_raw(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_shortest_path(
+unsafe extern "C" fn ori_graph_shortest_path(
     graph: *mut OriGraph,
     start: i64,
     goal: i64,
@@ -6665,7 +6607,7 @@ pub unsafe extern "C" fn ori_graph_shortest_path(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_shortest_path_string(
+unsafe extern "C" fn ori_graph_shortest_path_string(
     graph: *mut OriGraph,
     start: *const u8,
     goal: *const u8,
@@ -6674,7 +6616,7 @@ pub unsafe extern "C" fn ori_graph_shortest_path_string(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_shortest_weighted_path(
+unsafe extern "C" fn ori_graph_shortest_weighted_path(
     graph: *mut OriGraph,
     start: i64,
     goal: i64,
@@ -6683,7 +6625,7 @@ pub unsafe extern "C" fn ori_graph_shortest_weighted_path(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_shortest_weighted_path_string(
+unsafe extern "C" fn ori_graph_shortest_weighted_path_string(
     graph: *mut OriGraph,
     start: *const u8,
     goal: *const u8,
@@ -6824,17 +6766,17 @@ unsafe fn heap_sift_down(heap: *mut OriHeap, mut index: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_new() -> *mut OriHeap {
+unsafe extern "C" fn ori_heap_new() -> *mut OriHeap {
     heap_new_with(HEAP_ITEM_UNKNOWN, std::ptr::null())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_new_string() -> *mut OriHeap {
+unsafe extern "C" fn ori_heap_new_string() -> *mut OriHeap {
     heap_new_with(HEAP_ITEM_STRING, std::ptr::null())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_new_custom(compare_fn: *const std::ffi::c_void) -> *mut OriHeap {
+unsafe extern "C" fn ori_heap_new_custom(compare_fn: *const std::ffi::c_void) -> *mut OriHeap {
     heap_new_with(HEAP_ITEM_CUSTOM, compare_fn)
 }
 
@@ -6871,17 +6813,17 @@ unsafe fn heap_push_raw(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_push(heap: *mut OriHeap, value: i64) {
+unsafe extern "C" fn ori_heap_push(heap: *mut OriHeap, value: i64) {
     heap_push_raw(heap, value, HEAP_ITEM_INT, std::ptr::null());
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_push_string(heap: *mut OriHeap, value: *const u8) {
+unsafe extern "C" fn ori_heap_push_string(heap: *mut OriHeap, value: *const u8) {
     heap_push_raw(heap, value as i64, HEAP_ITEM_STRING, std::ptr::null());
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_push_custom(
+unsafe extern "C" fn ori_heap_push_custom(
     heap: *mut OriHeap,
     value: i64,
     compare_fn: *const std::ffi::c_void,
@@ -6893,7 +6835,7 @@ pub unsafe extern "C" fn ori_heap_push_custom(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_pop(heap: *mut OriHeap) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_heap_pop(heap: *mut OriHeap) -> *mut OriOptionalInt {
     if heap.is_null() || (*heap).len == 0 {
         return alloc_optional_int(0, 0);
     }
@@ -6908,7 +6850,7 @@ pub unsafe extern "C" fn ori_heap_pop(heap: *mut OriHeap) -> *mut OriOptionalInt
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_peek(heap: *mut OriHeap) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_heap_peek(heap: *mut OriHeap) -> *mut OriOptionalInt {
     if heap.is_null() || (*heap).len == 0 {
         return alloc_optional_int(0, 0);
     }
@@ -6916,7 +6858,7 @@ pub unsafe extern "C" fn ori_heap_peek(heap: *mut OriHeap) -> *mut OriOptionalIn
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_len(heap: *mut OriHeap) -> i64 {
+unsafe extern "C" fn ori_heap_len(heap: *mut OriHeap) -> i64 {
     if heap.is_null() {
         0
     } else {
@@ -6925,7 +6867,7 @@ pub unsafe extern "C" fn ori_heap_len(heap: *mut OriHeap) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_is_empty(heap: *mut OriHeap) -> c_uchar {
+unsafe extern "C" fn ori_heap_is_empty(heap: *mut OriHeap) -> c_uchar {
     u8::from(heap.is_null() || (*heap).len == 0) as c_uchar
 }
 
@@ -6962,7 +6904,7 @@ unsafe fn heap_alloc_optional_value(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_clear(heap: *mut OriHeap) {
+unsafe extern "C" fn ori_heap_clear(heap: *mut OriHeap) {
     if heap.is_null() {
         return;
     }
@@ -6974,7 +6916,7 @@ pub unsafe extern "C" fn ori_heap_clear(heap: *mut OriHeap) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_to_list(heap: *mut OriHeap) -> *mut OriList {
+unsafe extern "C" fn ori_heap_to_list(heap: *mut OriHeap) -> *mut OriList {
     let out = ori_list_new();
     if heap.is_null() {
         return out;
@@ -6986,7 +6928,7 @@ pub unsafe extern "C" fn ori_heap_to_list(heap: *mut OriHeap) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_clone(heap: *mut OriHeap) -> *mut OriHeap {
+unsafe extern "C" fn ori_heap_clone(heap: *mut OriHeap) -> *mut OriHeap {
     if heap.is_null() {
         return ori_heap_new();
     }
@@ -7021,17 +6963,17 @@ unsafe fn heap_from_list_raw(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_from_list(list: *mut OriList) -> *mut OriHeap {
+unsafe extern "C" fn ori_heap_from_list(list: *mut OriList) -> *mut OriHeap {
     heap_from_list_raw(list, HEAP_ITEM_INT, std::ptr::null())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_from_list_string(list: *mut OriList) -> *mut OriHeap {
+unsafe extern "C" fn ori_heap_from_list_string(list: *mut OriList) -> *mut OriHeap {
     heap_from_list_raw(list, HEAP_ITEM_STRING, std::ptr::null())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_from_list_custom(
+unsafe extern "C" fn ori_heap_from_list_custom(
     list: *mut OriList,
     compare_fn: *const std::ffi::c_void,
 ) -> *mut OriHeap {
@@ -7039,7 +6981,7 @@ pub unsafe extern "C" fn ori_heap_from_list_custom(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_merge(left: *mut OriHeap, right: *mut OriHeap) -> *mut OriHeap {
+unsafe extern "C" fn ori_heap_merge(left: *mut OriHeap, right: *mut OriHeap) -> *mut OriHeap {
     if left.is_null() && right.is_null() {
         return ori_heap_new();
     }
@@ -7091,17 +7033,17 @@ unsafe fn heap_remove_raw(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_remove(heap: *mut OriHeap, value: i64) -> c_uchar {
+unsafe extern "C" fn ori_heap_remove(heap: *mut OriHeap, value: i64) -> c_uchar {
     heap_remove_raw(heap, value, HEAP_ITEM_INT, std::ptr::null())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_remove_string(heap: *mut OriHeap, value: *const u8) -> c_uchar {
+unsafe extern "C" fn ori_heap_remove_string(heap: *mut OriHeap, value: *const u8) -> c_uchar {
     heap_remove_raw(heap, value as i64, HEAP_ITEM_STRING, std::ptr::null())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_remove_custom(
+unsafe extern "C" fn ori_heap_remove_custom(
     heap: *mut OriHeap,
     value: i64,
     compare_fn: *const std::ffi::c_void,
@@ -7110,7 +7052,7 @@ pub unsafe extern "C" fn ori_heap_remove_custom(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_into_sorted_list(heap: *mut OriHeap) -> *mut OriList {
+unsafe extern "C" fn ori_heap_into_sorted_list(heap: *mut OriHeap) -> *mut OriList {
     let out = ori_list_new();
     let work = ori_heap_clone(heap);
     if work.is_null() {
@@ -7267,14 +7209,14 @@ pub extern "C" fn ori_format_binary(value: i64) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_format_date(millis: i64, style: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_format_date(millis: i64, style: *const u8) -> *mut u8 {
     let _style = cstr_str(style);
     let (year, month, day, _, _, _) = utc_parts_from_millis(millis);
     cstring_from_str(&format!("{year:04}-{month:02}-{day:02}"))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_format_datetime(
+unsafe extern "C" fn ori_format_datetime(
     millis: i64,
     style: *const u8,
     locale: *const u8,
@@ -7288,7 +7230,7 @@ pub unsafe extern "C" fn ori_format_datetime(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_format_bytes_size(bytes: i64, style: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_format_bytes_size(bytes: i64, style: *const u8) -> *mut u8 {
     let binary = cstr_str(style).eq_ignore_ascii_case("binary");
     let units = if binary {
         ["B", "KiB", "MiB", "GiB", "TiB"]
@@ -7312,19 +7254,24 @@ pub unsafe extern "C" fn ori_format_bytes_size(bytes: i64, style: *const u8) -> 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_os_set_args(_argc: i32, _argv: *mut *mut c_char) {}
+unsafe extern "C" fn ori_os_set_args(_argc: i32, _argv: *mut *mut c_char) {}
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_os_args() -> *mut OriList {
+unsafe extern "C" fn ori_os_args() -> *mut OriList {
     let list = ori_list_new();
     for arg in std::env::args() {
-        ori_list_push_owned_managed(list, cstring_from_str(&arg));
+        // Process arguments live until process exit. Keep them as unmanaged
+        // C strings so a temporary `ori.args.get_or(...)` list cannot release
+        // the payload before the caller copies or reads it. This mirrors the
+        // lifetime of the host's argv storage and avoids an ARC edge for a
+        // process-global value.
+        ori_list_push_owned_managed(list, cstring_from_process_arg(&arg));
     }
     list
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_os_env(name: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_os_env(name: *const u8) -> *mut u8 {
     match std::env::var(cstr_str(name)) {
         Ok(value) => new_optional_ptr(true, cstring_from_str(&value)),
         Err(_) => new_optional_ptr(false, std::ptr::null_mut()),
@@ -7428,7 +7375,7 @@ pub extern "C" fn ori_random_bool() -> c_uchar {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_random_choice(items: *mut OriList) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_random_choice(items: *mut OriList) -> *mut OriOptionalInt {
     if items.is_null() || (*items).len <= 0 {
         return alloc_optional_int(0, 0);
     }
@@ -7437,7 +7384,7 @@ pub unsafe extern "C" fn ori_random_choice(items: *mut OriList) -> *mut OriOptio
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_random_shuffle(items: *mut OriList) -> *mut OriList {
+unsafe extern "C" fn ori_random_shuffle(items: *mut OriList) -> *mut OriList {
     let out = ori_list_new();
     if items.is_null() {
         return out;
@@ -7470,7 +7417,7 @@ unsafe fn to_ori_json_value(val: serde_json::Value) -> *mut u8 {
         }
         serde_json::Value::Bool(b) => {
             *(ptr as *mut i32) = 1;
-            *(ptr.add(8) as *mut u8) = if b { 1 } else { 0 };
+            *ptr.add(8) = if b { 1 } else { 0 };
         }
         serde_json::Value::Number(num) => {
             *(ptr as *mut i32) = 2;
@@ -7524,7 +7471,7 @@ unsafe fn from_ori_json_value(ptr: *const u8) -> serde_json::Value {
     match tag {
         0 => serde_json::Value::Null,
         1 => {
-            let b = *(ptr.add(8) as *const u8);
+            let b = *ptr.add(8);
             serde_json::Value::Bool(b != 0)
         }
         2 => {
@@ -7573,7 +7520,7 @@ unsafe fn from_ori_json_value(ptr: *const u8) -> serde_json::Value {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_json_parse(text: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_json_parse(text: *const u8) -> *mut u8 {
     match serde_json::from_str::<serde_json::Value>(cstr_str(text)) {
         Ok(value) => {
             let val_ptr = to_ori_json_value(value);
@@ -7587,13 +7534,13 @@ pub unsafe extern "C" fn ori_json_parse(text: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_json_stringify(value: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_json_stringify(value: *const u8) -> *mut u8 {
     let val = from_ori_json_value(value);
     cstring_from_str(&val.to_string())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_json_stringify_pretty(value: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_json_stringify_pretty(value: *const u8) -> *mut u8 {
     let val = from_ori_json_value(value);
     match serde_json::to_string_pretty(&val) {
         Ok(text) => cstring_from_str(&text),
@@ -7606,7 +7553,7 @@ mod test_harness;
 // `ori_test_*` entry points moved to `test_harness.rs` (Etapa 8.3).
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_panic(message: *const u8) {
+unsafe extern "C" fn ori_panic(message: *const u8) {
     eprintln!("ori panic: {}", cstr_str(message));
     std::process::abort();
 }
@@ -7685,7 +7632,7 @@ unsafe fn alloc_optional_owned_managed_value(
     has_value: c_uchar,
     value: i64,
 ) -> *mut OriOptionalInt {
-    let ptr = alloc_optional_int(has_value, value);
+    let ptr = alloc_optional_managed(has_value, value);
     if has_value != 0 {
         ori_arc_register_edge(ptr as *mut u8, value as *mut u8);
         ori_arc_release(value as *mut u8);
@@ -7697,9 +7644,20 @@ unsafe fn alloc_optional_borrowed_managed_value(
     has_value: c_uchar,
     value: i64,
 ) -> *mut OriOptionalInt {
-    let ptr = alloc_optional_int(has_value, value);
+    let ptr = alloc_optional_managed(has_value, value);
     if has_value != 0 {
         ori_arc_register_edge(ptr as *mut u8, value as *mut u8);
+    }
+    ptr
+}
+
+unsafe fn alloc_optional_managed(has_value: c_uchar, value: i64) -> *mut OriOptionalInt {
+    // The registered ARC edge is the sole cascade owner of a managed payload.
+    // A destructor must not release the same child again when the wrapper dies.
+    let ptr = ori_alloc(std::mem::size_of::<OriOptionalInt>(), None) as *mut OriOptionalInt;
+    if !ptr.is_null() {
+        (*ptr).has_value = has_value;
+        (*ptr).value = value;
     }
     ptr
 }
@@ -7729,7 +7687,7 @@ pub extern "C" fn ori_bool_to_string(value: c_uchar) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_to_int(s: *const u8) -> *mut OriOptionalInt {
+unsafe extern "C" fn ori_string_to_int(s: *const u8) -> *mut OriOptionalInt {
     let parsed = cstr_str(s).trim().parse::<i64>().ok();
     match parsed {
         Some(value) => alloc_optional_int(1, value),
@@ -7738,7 +7696,7 @@ pub unsafe extern "C" fn ori_string_to_int(s: *const u8) -> *mut OriOptionalInt 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_to_float(s: *const u8) -> *mut OriOptionalFloat {
+unsafe extern "C" fn ori_string_to_float(s: *const u8) -> *mut OriOptionalFloat {
     let parsed = cstr_str(s).trim().parse::<f64>().ok();
     match parsed {
         Some(value) => alloc_optional_float(1, value),
@@ -7786,7 +7744,7 @@ unsafe fn new_result(is_ok: bool, payload: *mut u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_new_result(is_ok: c_uchar, payload: *mut u8) -> *mut u8 {
+unsafe extern "C" fn ori_new_result(is_ok: c_uchar, payload: *mut u8) -> *mut u8 {
     new_result(is_ok != 0, payload)
 }
 
@@ -7834,7 +7792,7 @@ unsafe fn new_result_void_ok() -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_parse_int(s: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_parse_int(s: *const u8) -> *mut u8 {
     match cstr_str(s).trim().parse::<i64>() {
         Ok(value) => new_result_i64_ok(value),
         Err(_) => new_result(false, cstring_from_str("invalid int")),
@@ -7842,7 +7800,7 @@ pub unsafe extern "C" fn ori_string_parse_int(s: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_parse_float(s: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_parse_float(s: *const u8) -> *mut u8 {
     match cstr_str(s).trim().parse::<f64>() {
         Ok(value) => new_result_f64_ok(value),
         Err(_) => new_result(false, cstring_from_str("invalid float")),
@@ -7850,7 +7808,7 @@ pub unsafe extern "C" fn ori_string_parse_float(s: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_read_text(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_read_text(path: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     match std::fs::read_to_string(path_str) {
         Ok(content) => new_result(true, cstring_from_str(&content)),
@@ -7859,7 +7817,7 @@ pub unsafe extern "C" fn ori_files_read_text(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_write_text(path: *const u8, content: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_write_text(path: *const u8, content: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     let content_str = cstr_str(content);
     match std::fs::write(path_str, content_str.as_bytes()) {
@@ -7869,7 +7827,7 @@ pub unsafe extern "C" fn ori_files_write_text(path: *const u8, content: *const u
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_read_bytes(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_read_bytes(path: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     match std::fs::read(path_str) {
         Ok(content) => new_result(true, cstring_from_bytes(content)),
@@ -7878,7 +7836,7 @@ pub unsafe extern "C" fn ori_files_read_bytes(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_write_bytes(path: *const u8, content: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_write_bytes(path: *const u8, content: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     match std::fs::write(path_str, bytes_payload(content)) {
         Ok(_) => new_result(true, cstring_from_str("")),
@@ -7887,12 +7845,12 @@ pub unsafe extern "C" fn ori_files_write_bytes(path: *const u8, content: *const 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_read_all(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_read_all(path: *const u8) -> *mut u8 {
     ori_files_read_text(path)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_read_text_async(path: *const u8) -> *mut OriFuture {
+unsafe extern "C" fn ori_files_read_text_async(path: *const u8) -> *mut OriFuture {
     let path_str = cstr_str(path).to_string();
     let future = alloc_pending_future();
     if future.is_null() {
@@ -7918,7 +7876,7 @@ pub unsafe extern "C" fn ori_files_read_text_async(path: *const u8) -> *mut OriF
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_write_text_async(
+unsafe extern "C" fn ori_files_write_text_async(
     path: *const u8,
     content: *const u8,
 ) -> *mut OriFuture {
@@ -7948,7 +7906,7 @@ pub unsafe extern "C" fn ori_files_write_text_async(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_append_text(path: *const u8, content: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_append_text(path: *const u8, content: *const u8) -> *mut u8 {
     use std::io::Write;
     let path_str = cstr_str(path);
     let content_str = cstr_str(content);
@@ -7964,12 +7922,12 @@ pub unsafe extern "C" fn ori_files_append_text(path: *const u8, content: *const 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_exists(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_exists(path: *const u8) -> *mut u8 {
     new_result_bool_ok(std::path::Path::new(cstr_str(path)).exists())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_delete(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_delete(path: *const u8) -> *mut u8 {
     let p = std::path::Path::new(cstr_str(path));
     let result = if p.is_dir() {
         std::fs::remove_dir_all(p)
@@ -7983,7 +7941,7 @@ pub unsafe extern "C" fn ori_files_delete(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_list_dir(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_list_dir(path: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     match std::fs::read_dir(path_str) {
         Ok(entries) => {
@@ -7999,7 +7957,7 @@ pub unsafe extern "C" fn ori_files_list_dir(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_create_dir(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_create_dir(path: *const u8) -> *mut u8 {
     match std::fs::create_dir_all(cstr_str(path)) {
         Ok(()) => new_result_void_ok(),
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
@@ -8007,17 +7965,17 @@ pub unsafe extern "C" fn ori_files_create_dir(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_is_file(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_is_file(path: *const u8) -> *mut u8 {
     new_result_bool_ok(std::path::Path::new(cstr_str(path)).is_file())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_is_dir(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_is_dir(path: *const u8) -> *mut u8 {
     new_result_bool_ok(std::path::Path::new(cstr_str(path)).is_dir())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_copy(src: *const u8, dst: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_copy(src: *const u8, dst: *const u8) -> *mut u8 {
     match std::fs::copy(cstr_str(src), cstr_str(dst)) {
         Ok(_) => new_result_void_ok(),
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
@@ -8025,7 +7983,7 @@ pub unsafe extern "C" fn ori_files_copy(src: *const u8, dst: *const u8) -> *mut 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_rename(src: *const u8, dst: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_rename(src: *const u8, dst: *const u8) -> *mut u8 {
     match std::fs::rename(cstr_str(src), cstr_str(dst)) {
         Ok(()) => new_result_void_ok(),
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
@@ -8043,7 +8001,7 @@ unsafe extern "C" fn ori_files_destructor(ptr: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_open_read(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_open_read(path: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     match std::fs::File::open(path_str) {
         Ok(file) => {
@@ -8060,7 +8018,7 @@ pub unsafe extern "C" fn ori_files_open_read(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_open_write(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_open_write(path: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     match std::fs::File::create(path_str) {
         Ok(file) => {
@@ -8077,7 +8035,7 @@ pub unsafe extern "C" fn ori_files_open_write(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_read(file_ptr: *mut u8, bytes_count: i64) -> *mut u8 {
+unsafe extern "C" fn ori_files_read(file_ptr: *mut u8, bytes_count: i64) -> *mut u8 {
     if file_ptr.is_null() {
         return new_result(false, cstring_from_str("Invalid file handle"));
     }
@@ -8100,7 +8058,7 @@ pub unsafe extern "C" fn ori_files_read(file_ptr: *mut u8, bytes_count: i64) -> 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_write(file_ptr: *mut u8, data: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_write(file_ptr: *mut u8, data: *const u8) -> *mut u8 {
     if file_ptr.is_null() {
         return new_result(false, cstring_from_str("Invalid file handle"));
     }
@@ -8117,7 +8075,7 @@ pub unsafe extern "C" fn ori_files_write(file_ptr: *mut u8, data: *const u8) -> 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_close(file_ptr: *mut u8) {
+unsafe extern "C" fn ori_files_close(file_ptr: *mut u8) {
     if file_ptr.is_null() {
         return;
     }
@@ -8128,19 +8086,28 @@ pub unsafe extern "C" fn ori_files_close(file_ptr: *mut u8) {
 // ── ori.bytes ─────────────────────────────────────────────────────────────────
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_bytes_len(ptr: *const u8) -> i64 {
+unsafe extern "C" fn ori_bytes_len(ptr: *const u8) -> i64 {
     bytes_payload(ptr).len() as i64
 }
 
+/// Compare two byte payloads by length and content.
+///
+/// Byte values may contain NUL bytes, so this must use the allocation-aware
+/// payload view instead of the C-string view used by `string` helpers.
 #[no_mangle]
-pub unsafe extern "C" fn ori_bytes_concat(a: *const u8, b: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_bytes_eq(a: *const u8, b: *const u8) -> c_uchar {
+    u8::from(bytes_payload(a) == bytes_payload(b))
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_bytes_concat(a: *const u8, b: *const u8) -> *mut u8 {
     let a = bytes_payload(a);
     let b = bytes_payload(b);
     cstring_from_slices(&[a, b])
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_bytes_slice(ptr: *const u8, start: i64, end: i64) -> *mut u8 {
+unsafe extern "C" fn ori_bytes_slice(ptr: *const u8, start: i64, end: i64) -> *mut u8 {
     if ptr.is_null() {
         abort_bounds("ori bytes slice bounds out of range");
     }
@@ -8155,7 +8122,7 @@ pub unsafe extern "C" fn ori_bytes_slice(ptr: *const u8, start: i64, end: i64) -
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_bytes_to_hex(ptr: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_bytes_to_hex(ptr: *const u8) -> *mut u8 {
     let bytes = bytes_payload(ptr);
     let mut hex = String::with_capacity(bytes.len() * 2);
     for &b in bytes {
@@ -8166,7 +8133,7 @@ pub unsafe extern "C" fn ori_bytes_to_hex(ptr: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_bytes_from_hex(ptr: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_bytes_from_hex(ptr: *const u8) -> *mut u8 {
     let s = cstr_str(ptr);
     if s.len() % 2 != 0 {
         return new_result(false, cstring_from_str("Invalid hex string length"));
@@ -8184,7 +8151,7 @@ pub unsafe extern "C" fn ori_bytes_from_hex(ptr: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_bytes_decode_utf8(ptr: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_bytes_decode_utf8(ptr: *const u8) -> *mut u8 {
     let bytes = bytes_payload(ptr);
     if bytes.contains(&0) {
         return new_result(
@@ -8199,7 +8166,7 @@ pub unsafe extern "C" fn ori_bytes_decode_utf8(ptr: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_bytes_get(ptr: *const u8, index: i64) -> u8 {
+unsafe extern "C" fn ori_bytes_get(ptr: *const u8, index: i64) -> u8 {
     let bytes = bytes_payload(ptr);
     if index < 0 || index as usize >= bytes.len() {
         abort_bounds("ori bytes index out of bounds");
@@ -8221,13 +8188,13 @@ fn checked_slice_bounds(len: i64, start: i64, end: i64, message: &str) -> (usize
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_to_bytes(ptr: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_to_bytes(ptr: *const u8) -> *mut u8 {
     ori_arc_retain(ptr as *mut u8);
     ptr as *mut u8
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_string_from_bytes(ptr: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_string_from_bytes(ptr: *const u8) -> *mut u8 {
     let bytes = bytes_payload(ptr);
     if bytes.contains(&0) {
         return new_result(
@@ -8242,7 +8209,7 @@ pub unsafe extern "C" fn ori_string_from_bytes(ptr: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_abort_concurrent_modification() -> ! {
+unsafe extern "C" fn ori_abort_concurrent_modification() -> ! {
     abort_bounds("concurrent modification during iteration");
 }
 
@@ -8262,7 +8229,7 @@ unsafe extern "C" fn ori_deque_iterator_dtor(ptr: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_iterator_new(deque: *mut OriDeque) -> *mut OriDequeIterator {
+unsafe extern "C" fn ori_deque_iterator_new(deque: *mut OriDeque) -> *mut OriDequeIterator {
     if deque.is_null() {
         return std::ptr::null_mut();
     }
@@ -8281,7 +8248,7 @@ pub unsafe extern "C" fn ori_deque_iterator_new(deque: *mut OriDeque) -> *mut Or
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_deque_iterator_next(iter: *mut OriDequeIterator) -> *mut i64 {
+unsafe extern "C" fn ori_deque_iterator_next(iter: *mut OriDequeIterator) -> *mut i64 {
     if iter.is_null() || (*iter).deque.is_null() {
         return std::ptr::null_mut();
     }
@@ -8303,48 +8270,44 @@ pub unsafe extern "C" fn ori_deque_iterator_next(iter: *mut OriDequeIterator) ->
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_iterator_new(queue: *mut OriDeque) -> *mut OriDequeIterator {
+unsafe extern "C" fn ori_queue_iterator_new(queue: *mut OriDeque) -> *mut OriDequeIterator {
     ori_deque_iterator_new(queue)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_queue_iterator_next(iter: *mut OriDequeIterator) -> *mut i64 {
+unsafe extern "C" fn ori_queue_iterator_next(iter: *mut OriDequeIterator) -> *mut i64 {
     ori_deque_iterator_next(iter)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_iterator_new(stack: *mut OriDeque) -> *mut OriDequeIterator {
+unsafe extern "C" fn ori_stack_iterator_new(stack: *mut OriDeque) -> *mut OriDequeIterator {
     ori_deque_iterator_new(stack)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_stack_iterator_next(iter: *mut OriDequeIterator) -> *mut i64 {
+unsafe extern "C" fn ori_stack_iterator_next(iter: *mut OriDequeIterator) -> *mut i64 {
     ori_deque_iterator_next(iter)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_iterator_new(
+unsafe extern "C" fn ori_linked_list_iterator_new(list: *mut OriDeque) -> *mut OriDequeIterator {
+    ori_deque_iterator_new(list)
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_linked_list_iterator_next(iter: *mut OriDequeIterator) -> *mut i64 {
+    ori_deque_iterator_next(iter)
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_doubly_linked_list_iterator_new(
     list: *mut OriDeque,
 ) -> *mut OriDequeIterator {
     ori_deque_iterator_new(list)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_linked_list_iterator_next(iter: *mut OriDequeIterator) -> *mut i64 {
-    ori_deque_iterator_next(iter)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_iterator_new(
-    list: *mut OriDeque,
-) -> *mut OriDequeIterator {
-    ori_deque_iterator_new(list)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ori_doubly_linked_list_iterator_next(
-    iter: *mut OriDequeIterator,
-) -> *mut i64 {
+unsafe extern "C" fn ori_doubly_linked_list_iterator_next(iter: *mut OriDequeIterator) -> *mut i64 {
     ori_deque_iterator_next(iter)
 }
 
@@ -8364,7 +8327,7 @@ unsafe extern "C" fn ori_heap_iterator_dtor(ptr: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_iterator_new(heap: *mut OriHeap) -> *mut OriHeapIterator {
+unsafe extern "C" fn ori_heap_iterator_new(heap: *mut OriHeap) -> *mut OriHeapIterator {
     if heap.is_null() {
         return std::ptr::null_mut();
     }
@@ -8383,7 +8346,7 @@ pub unsafe extern "C" fn ori_heap_iterator_new(heap: *mut OriHeap) -> *mut OriHe
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_heap_iterator_next(iter: *mut OriHeapIterator) -> *mut i64 {
+unsafe extern "C" fn ori_heap_iterator_next(iter: *mut OriHeapIterator) -> *mut i64 {
     if iter.is_null() || (*iter).heap.is_null() {
         return std::ptr::null_mut();
     }
@@ -8416,7 +8379,7 @@ unsafe extern "C" fn ori_graph_iterator_dtor(ptr: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_iterator_new(graph: *mut OriGraph) -> *mut OriGraphIterator {
+unsafe extern "C" fn ori_graph_iterator_new(graph: *mut OriGraph) -> *mut OriGraphIterator {
     if graph.is_null() {
         return std::ptr::null_mut();
     }
@@ -8435,7 +8398,7 @@ pub unsafe extern "C" fn ori_graph_iterator_new(graph: *mut OriGraph) -> *mut Or
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_graph_iterator_next(iter: *mut OriGraphIterator) -> *mut i64 {
+unsafe extern "C" fn ori_graph_iterator_next(iter: *mut OriGraphIterator) -> *mut i64 {
     if iter.is_null() || (*iter).graph.is_null() {
         return std::ptr::null_mut();
     }
@@ -8460,7 +8423,7 @@ struct RuntimeConnection {
 
 enum ConnectionTransport {
     Plain(std::net::TcpStream),
-    Tls(rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>),
+    Tls(Box<rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>>),
 }
 
 impl ConnectionTransport {
@@ -8597,7 +8560,7 @@ unsafe fn list_string_at(list: *mut OriList, index: i64) -> Option<String> {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_file_size(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_file_size(path: *const u8) -> *mut u8 {
     match std::fs::metadata(cstr_str(path)) {
         Ok(meta) => new_result_i64_ok(meta.len() as i64),
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
@@ -8605,7 +8568,7 @@ pub unsafe extern "C" fn ori_files_file_size(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_modified_at(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_modified_at(path: *const u8) -> *mut u8 {
     match std::fs::metadata(cstr_str(path)) {
         Ok(meta) => match meta.modified() {
             Ok(time) => {
@@ -8622,7 +8585,7 @@ pub unsafe extern "C" fn ori_files_modified_at(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_files_created_at(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_files_created_at(path: *const u8) -> *mut u8 {
     match std::fs::metadata(cstr_str(path)) {
         Ok(meta) => {
             let optional = match meta.created() {
@@ -8642,7 +8605,7 @@ pub unsafe extern "C" fn ori_files_created_at(path: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_os_current_dir() -> *mut u8 {
+unsafe extern "C" fn ori_os_current_dir() -> *mut u8 {
     match std::env::current_dir() {
         Ok(path) => new_result(true, cstring_from_str(&path.to_string_lossy())),
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
@@ -8650,7 +8613,7 @@ pub unsafe extern "C" fn ori_os_current_dir() -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_os_change_dir(path: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_os_change_dir(path: *const u8) -> *mut u8 {
     match std::env::set_current_dir(cstr_str(path)) {
         Ok(()) => new_result(true, std::ptr::null_mut()),
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
@@ -8668,14 +8631,14 @@ pub extern "C" fn ori_random_seed(seed: i64) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_bytes_from_list(values: *mut OriList) -> *mut u8 {
+unsafe extern "C" fn ori_bytes_from_list(values: *mut OriList) -> *mut u8 {
     if values.is_null() {
         return std::ptr::null_mut();
     }
     let mut bytes = Vec::new();
     for i in 0..(*values).len {
         let n = ori_list_get(values, i);
-        if n < 0 || n > 255 {
+        if !(0..=255).contains(&n) {
             return std::ptr::null_mut();
         }
         bytes.push(n as u8);
@@ -8684,7 +8647,7 @@ pub unsafe extern "C" fn ori_bytes_from_list(values: *mut OriList) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_bytes_to_list(value: *const u8) -> *mut OriList {
+unsafe extern "C" fn ori_bytes_to_list(value: *const u8) -> *mut OriList {
     let data = if value.is_null() {
         &[][..]
     } else {
@@ -8698,7 +8661,7 @@ pub unsafe extern "C" fn ori_bytes_to_list(value: *const u8) -> *mut OriList {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_process_run(program: *const u8, args: *mut OriList) -> *mut u8 {
+unsafe extern "C" fn ori_process_run(program: *const u8, args: *mut OriList) -> *mut u8 {
     let program_str = cstr_str(program);
     let mut command = std::process::Command::new(program_str);
     if !args.is_null() {
@@ -8715,10 +8678,7 @@ pub unsafe extern "C" fn ori_process_run(program: *const u8, args: *mut OriList)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_process_run_capture(
-    program: *const u8,
-    args: *mut OriList,
-) -> *mut u8 {
+unsafe extern "C" fn ori_process_run_capture(program: *const u8, args: *mut OriList) -> *mut u8 {
     let program_str = cstr_str(program);
     let mut command = std::process::Command::new(program_str);
     if !args.is_null() {
@@ -8756,7 +8716,7 @@ pub unsafe extern "C" fn ori_process_run_capture(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_connect(host: *const u8, port: i64, timeout_ms: i64) -> *mut u8 {
+unsafe extern "C" fn ori_net_connect(host: *const u8, port: i64, timeout_ms: i64) -> *mut u8 {
     let host_str = cstr_str(host);
     let address = format!("{host_str}:{port}");
     match tcp_connect(&address, timeout_ms) {
@@ -8772,7 +8732,7 @@ pub unsafe extern "C" fn ori_net_connect(host: *const u8, port: i64, timeout_ms:
 /// (poll-based on Unix; worker fallback elsewhere). Does not block the async
 /// executor while waiting.
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_connect_async(
+unsafe extern "C" fn ori_net_connect_async(
     host: *const u8,
     port: i64,
     timeout_ms: i64,
@@ -8785,7 +8745,7 @@ pub unsafe extern "C" fn ori_net_connect_async(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_connect_tls_async(
+unsafe extern "C" fn ori_net_connect_tls_async(
     host: *const u8,
     port: i64,
     timeout_ms: i64,
@@ -8800,7 +8760,7 @@ pub unsafe extern "C" fn ori_net_connect_tls_async(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_accept_async(listener_ptr: *mut u8) -> *mut OriFuture {
+unsafe extern "C" fn ori_net_accept_async(listener_ptr: *mut u8) -> *mut OriFuture {
     let listener_addr = listener_ptr as usize;
     spawn_readiness_io_future(
         move || listener_raw_fd(listener_addr as *mut u8),
@@ -8810,7 +8770,7 @@ pub unsafe extern "C" fn ori_net_accept_async(listener_ptr: *mut u8) -> *mut Ori
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_read_some_async(conn: *mut u8, max_bytes: i64) -> *mut OriFuture {
+unsafe extern "C" fn ori_net_read_some_async(conn: *mut u8, max_bytes: i64) -> *mut OriFuture {
     // Caller retains Connection across await; do not retain/release here
     // (extra release races the async frame and yields "invalid connection").
     let conn_addr = conn as usize;
@@ -8822,7 +8782,7 @@ pub unsafe extern "C" fn ori_net_read_some_async(conn: *mut u8, max_bytes: i64) 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_write_all_async(conn: *mut u8, data: *const u8) -> *mut OriFuture {
+unsafe extern "C" fn ori_net_write_all_async(conn: *mut u8, data: *const u8) -> *mut OriFuture {
     // Copy payload so the await frame may free the original bytes handle.
     // STDLIB-4k: wait for POLLOUT then write without blocking the executor.
     // Returns result[int, string] (bytes written) — avoids void-result await slots
@@ -8850,7 +8810,7 @@ pub unsafe extern "C" fn ori_net_write_all_async(conn: *mut u8, data: *const u8)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_udp_recv_from_async(
+unsafe extern "C" fn ori_net_udp_recv_from_async(
     sock_ptr: *mut u8,
     max_bytes: i64,
 ) -> *mut OriFuture {
@@ -8863,7 +8823,7 @@ pub unsafe extern "C" fn ori_net_udp_recv_from_async(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_udp_send_to_async(
+unsafe extern "C" fn ori_net_udp_send_to_async(
     sock_ptr: *mut u8,
     host: *const u8,
     port: i64,
@@ -8926,7 +8886,7 @@ fn ensure_io_reactor_thread() {
     IO_REACTOR_THREAD.get_or_init(|| {
         std::thread::Builder::new()
             .name("ori-io-reactor".into())
-            .spawn(|| io_reactor_loop())
+            .spawn(io_reactor_loop)
             .expect("spawn ori-io-reactor");
     });
 }
@@ -9099,11 +9059,7 @@ unsafe fn spawn_io_result_future(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_connect_tls(
-    host: *const u8,
-    port: i64,
-    timeout_ms: i64,
-) -> *mut u8 {
+unsafe extern "C" fn ori_net_connect_tls(host: *const u8, port: i64, timeout_ms: i64) -> *mut u8 {
     use rustls::pki_types::ServerName;
     let host_str = cstr_str(host);
     let address = format!("{host_str}:{port}");
@@ -9132,14 +9088,14 @@ pub unsafe extern "C" fn ori_net_connect_tls(
     if let Err(e) = std::io::Write::flush(&mut tls) {
         return new_result(false, cstring_from_str(&e.to_string()));
     }
-    match alloc_runtime_connection(ConnectionTransport::Tls(tls)) {
+    match alloc_runtime_connection(ConnectionTransport::Tls(Box::new(tls))) {
         Ok(payload) => new_result(true, payload),
         Err(msg) => new_result(false, cstring_from_str(&msg)),
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_listen(host: *const u8, port: i64) -> *mut u8 {
+unsafe extern "C" fn ori_net_listen(host: *const u8, port: i64) -> *mut u8 {
     let host_str = cstr_str(host);
     let address = format!("{host_str}:{port}");
     match std::net::TcpListener::bind(&address) {
@@ -9163,7 +9119,7 @@ pub unsafe extern "C" fn ori_net_listen(host: *const u8, port: i64) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_accept(listener_ptr: *mut u8) -> *mut u8 {
+unsafe extern "C" fn ori_net_accept(listener_ptr: *mut u8) -> *mut u8 {
     if listener_ptr.is_null() {
         return new_result(false, cstring_from_str("invalid listener"));
     }
@@ -9181,7 +9137,7 @@ pub unsafe extern "C" fn ori_net_accept(listener_ptr: *mut u8) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_close_listener(listener_ptr: *mut u8) {
+unsafe extern "C" fn ori_net_close_listener(listener_ptr: *mut u8) {
     if listener_ptr.is_null() {
         return;
     }
@@ -9191,7 +9147,7 @@ pub unsafe extern "C" fn ori_net_close_listener(listener_ptr: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_listener_port(listener_ptr: *mut u8) -> i64 {
+unsafe extern "C" fn ori_net_listener_port(listener_ptr: *mut u8) -> i64 {
     if listener_ptr.is_null() {
         return -1;
     }
@@ -9205,7 +9161,7 @@ pub unsafe extern "C" fn ori_net_listener_port(listener_ptr: *mut u8) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_udp_bind(host: *const u8, port: i64) -> *mut u8 {
+unsafe extern "C" fn ori_net_udp_bind(host: *const u8, port: i64) -> *mut u8 {
     let host_str = cstr_str(host);
     let address = format!("{host_str}:{port}");
     match std::net::UdpSocket::bind(&address) {
@@ -9229,7 +9185,7 @@ pub unsafe extern "C" fn ori_net_udp_bind(host: *const u8, port: i64) -> *mut u8
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_udp_send_to(
+unsafe extern "C" fn ori_net_udp_send_to(
     sock_ptr: *mut u8,
     host: *const u8,
     port: i64,
@@ -9260,7 +9216,7 @@ pub unsafe extern "C" fn ori_net_udp_send_to(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_udp_recv_from(sock_ptr: *mut u8, max_bytes: i64) -> *mut u8 {
+unsafe extern "C" fn ori_net_udp_recv_from(sock_ptr: *mut u8, max_bytes: i64) -> *mut u8 {
     if sock_ptr.is_null() {
         return new_result(false, cstring_from_str("invalid UDP socket"));
     }
@@ -9280,7 +9236,7 @@ pub unsafe extern "C" fn ori_net_udp_recv_from(sock_ptr: *mut u8, max_bytes: i64
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_udp_close(sock_ptr: *mut u8) {
+unsafe extern "C" fn ori_net_udp_close(sock_ptr: *mut u8) {
     if sock_ptr.is_null() {
         return;
     }
@@ -9290,7 +9246,7 @@ pub unsafe extern "C" fn ori_net_udp_close(sock_ptr: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_udp_local_port(sock_ptr: *mut u8) -> i64 {
+unsafe extern "C" fn ori_net_udp_local_port(sock_ptr: *mut u8) -> i64 {
     if sock_ptr.is_null() {
         return -1;
     }
@@ -9306,7 +9262,7 @@ pub unsafe extern "C" fn ori_net_udp_local_port(sock_ptr: *mut u8) -> i64 {
 /// Set TCP read timeout in milliseconds. `timeout_ms <= 0` clears the deadline.
 /// Returns `result[void, string]` (ok/err pointer pair).
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_set_read_timeout_ms(conn: *mut u8, timeout_ms: i64) -> *mut u8 {
+unsafe extern "C" fn ori_net_set_read_timeout_ms(conn: *mut u8, timeout_ms: i64) -> *mut u8 {
     if conn.is_null() {
         return new_result(false, cstring_from_str("invalid connection"));
     }
@@ -9327,7 +9283,7 @@ pub unsafe extern "C" fn ori_net_set_read_timeout_ms(conn: *mut u8, timeout_ms: 
 
 /// Set TCP write timeout in milliseconds. `timeout_ms <= 0` clears the deadline.
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_set_write_timeout_ms(conn: *mut u8, timeout_ms: i64) -> *mut u8 {
+unsafe extern "C" fn ori_net_set_write_timeout_ms(conn: *mut u8, timeout_ms: i64) -> *mut u8 {
     if conn.is_null() {
         return new_result(false, cstring_from_str("invalid connection"));
     }
@@ -9347,7 +9303,7 @@ pub unsafe extern "C" fn ori_net_set_write_timeout_ms(conn: *mut u8, timeout_ms:
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_read_some(conn: *mut u8, max_bytes: i64) -> *mut u8 {
+unsafe extern "C" fn ori_net_read_some(conn: *mut u8, max_bytes: i64) -> *mut u8 {
     if conn.is_null() {
         return new_result(false, cstring_from_str("invalid connection"));
     }
@@ -9370,7 +9326,7 @@ pub unsafe extern "C" fn ori_net_read_some(conn: *mut u8, max_bytes: i64) -> *mu
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_write_all(conn: *mut u8, data: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_net_write_all(conn: *mut u8, data: *const u8) -> *mut u8 {
     if conn.is_null() {
         return new_result(false, cstring_from_str("invalid connection"));
     }
@@ -9390,7 +9346,7 @@ pub unsafe extern "C" fn ori_net_write_all(conn: *mut u8, data: *const u8) -> *m
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_close(conn: *mut u8) {
+unsafe extern "C" fn ori_net_close(conn: *mut u8) {
     if conn.is_null() {
         return;
     }
@@ -9402,7 +9358,7 @@ pub unsafe extern "C" fn ori_net_close(conn: *mut u8) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_net_is_closed(conn: *mut u8) -> c_uchar {
+unsafe extern "C" fn ori_net_is_closed(conn: *mut u8) -> c_uchar {
     if conn.is_null() {
         return 1;
     }
@@ -9411,12 +9367,12 @@ pub unsafe extern "C" fn ori_net_is_closed(conn: *mut u8) -> c_uchar {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_mem_string_as_ptr(ptr: *const u8) -> i64 {
+unsafe extern "C" fn ori_mem_string_as_ptr(ptr: *const u8) -> i64 {
     ptr as i64
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ori_mem_string_len(ptr: *const u8) -> i64 {
+unsafe extern "C" fn ori_mem_string_len(ptr: *const u8) -> i64 {
     cstr_byte_len(ptr) as i64
 }
 
@@ -9469,7 +9425,7 @@ pub extern "C" fn ori_math_is_finite(x: f64) -> c_uchar {
 
 /// Hash a password with argon2id. Returns a PHC-encoded string, or empty on failure.
 #[no_mangle]
-pub unsafe extern "C" fn ori_password_hash(password: *const u8) -> *mut u8 {
+unsafe extern "C" fn ori_password_hash(password: *const u8) -> *mut u8 {
     use argon2::{
         password_hash::{PasswordHasher, SaltString},
         Argon2,
@@ -9490,7 +9446,7 @@ pub unsafe extern "C" fn ori_password_hash(password: *const u8) -> *mut u8 {
 
 /// Verify password against a PHC argon2 hash. Returns 1 if ok, 0 otherwise.
 #[no_mangle]
-pub unsafe extern "C" fn ori_password_verify(password: *const u8, encoded: *const u8) -> c_uchar {
+unsafe extern "C" fn ori_password_verify(password: *const u8, encoded: *const u8) -> c_uchar {
     use argon2::{
         password_hash::{PasswordHash, PasswordVerifier},
         Argon2,
@@ -9551,7 +9507,7 @@ fn decode_totp_secret(b32: &str) -> Option<Vec<u8>> {
 
 /// Generate a new base32 TOTP secret (160-bit / 20 bytes).
 #[no_mangle]
-pub unsafe extern "C" fn ori_totp_generate_secret() -> *mut u8 {
+unsafe extern "C" fn ori_totp_generate_secret() -> *mut u8 {
     use data_encoding::BASE32_NOPAD;
     let mut buf = [0u8; 20];
     if getrandom::getrandom(&mut buf).is_err() {
@@ -9563,7 +9519,7 @@ pub unsafe extern "C" fn ori_totp_generate_secret() -> *mut u8 {
 /// Compute current TOTP code for `secret_b32` at `unix_secs` (step 30s).
 /// Returns a 6-digit string, or empty on failure.
 #[no_mangle]
-pub unsafe extern "C" fn ori_totp_code(secret_b32: *const u8, unix_secs: i64) -> *mut u8 {
+unsafe extern "C" fn ori_totp_code(secret_b32: *const u8, unix_secs: i64) -> *mut u8 {
     let secret = cstr_str(secret_b32);
     let Some(key) = decode_totp_secret(secret) else {
         return cstring_from_str("");
@@ -9579,7 +9535,7 @@ pub unsafe extern "C" fn ori_totp_code(secret_b32: *const u8, unix_secs: i64) ->
 /// Verify TOTP `code` against `secret_b32` at `unix_secs` with ±`window` steps.
 /// Returns 1 if ok, 0 otherwise.
 #[no_mangle]
-pub unsafe extern "C" fn ori_totp_verify(
+unsafe extern "C" fn ori_totp_verify(
     secret_b32: *const u8,
     code: *const u8,
     unix_secs: i64,
@@ -9593,7 +9549,7 @@ pub unsafe extern "C" fn ori_totp_verify(
     let Some(key) = decode_totp_secret(secret) else {
         return 0;
     };
-    let win = window.clamp(0, 10) as i64;
+    let win = window.clamp(0, 10);
     let counter = (unix_secs as u64) / 30;
     for delta in -win..=win {
         let c = counter as i64 + delta;
@@ -9634,7 +9590,7 @@ static RT_INIT_COUNT: AtomicU64 = AtomicU64::new(0);
 ///
 /// Returns `0` on success. Idempotent: subsequent calls return `0`.
 #[no_mangle]
-pub unsafe extern "C" fn ori_rt_init() -> i32 {
+unsafe extern "C" fn ori_rt_init() -> i32 {
     if RT_INIT_COUNT
         .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -9650,7 +9606,7 @@ pub unsafe extern "C" fn ori_rt_init() -> i32 {
 
 /// Best-effort runtime teardown for embed hosts. The host process may continue.
 #[no_mangle]
-pub unsafe extern "C" fn ori_rt_shutdown() {
+unsafe extern "C" fn ori_rt_shutdown() {
     // Phase 1: no-op beyond a fence — managed heaps are process-lifetime for
     // embed hosts that do not retain Ori objects across unload.
     std::sync::atomic::fence(Ordering::SeqCst);

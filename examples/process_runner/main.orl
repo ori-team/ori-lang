@@ -1,7 +1,7 @@
 module examples.process_runner
 
 -- Canonical stdlib style: import ori.X (not ori.X.utils).
--- Helpers that used to live only under process.utils are inlined with L1 map/convert.
+-- Process capture uses the current L1 map and conversion helpers.
 
 imports
     ori.convert = conv

@@ -47,10 +47,28 @@
 | **M2** | **Stdlib** + **layout** + **surface result** | **✅ fechado** | Pais `ori.X`; utils compat; `ok`/`err`; **`public alias` de domínio** (`fs`/`io`/`net`/`json`/`config`) |
 | **M3** | **ABI estável** documentada | **✅ fechado** | Spec `19-abi.md` = `ori-native-abi-1` |
 | **M1** | **Independência do Rust para usuário final** | **✅ fechado** | `docs/install.md`; tools smoke S3 + paths `compiler/`; `tools/smoke_no_rust.sh`; CI jobs `smoke-no-rust-*` |
-| **M4** | Self-hosting | **próxima discussão** (última) | Só depois do restante já útil |
+| **M4** | Self-hosting | **adiado; reavaliado em 2026-07-26** (última discussão) | Ainda não: priorizar modularização, estabilidade do compilador/runtime e DX |
 
 > **Ordem M2 → M3 → M1 fechada.** Lista aberta unificada: **[BACKLOG.md](BACKLOG.md)**  
 > (próximo: **DIST-1** Windows package, depois **STDLIB-2** HTTP, etc.)
+
+### Decisão de prontidão para self-hosting — 2026-07-26
+
+Ainda não é o momento de iniciar o self-hosting. A Ori já pode ser instalada,
+compilada e executada sem Rust pelo usuário final (M1), mas o compilador ainda
+está recebendo mudanças de estabilização: o cache por arquivo já reutiliza
+objetos nativos, o debugger continua ampliando a inspeção de variáveis, e os
+contratos entre frontend, HIR, codegen, runtime e documentação agora estão
+fechados em módulos explícitos. Escrever uma segunda versão do compilador em
+Ori agora duplicaria o trabalho e tornaria cada ajuste de linguagem mais lento.
+
+O caminho recomendado é consolidar essa fundação: fortalecer diagnósticos e
+regressões, medir o runtime em programas reais e estabilizar a stdlib/ABI por
+uma janela sem breaking changes. A conversa sobre self-hosting deve voltar quando existirem
+um bootstrap documentado e repetível, um subconjunto da stdlib suficiente para
+construir o compilador, um frontend/HIR com contratos estáveis e uma matriz de
+build reproduzível. Até lá, self-hosting continua sendo M4 — um marco de
+maturidade de longo prazo, não uma condição para a Ori ser útil.
 
 ### Explicitamente fora da fila
 
@@ -113,6 +131,15 @@ adicione o detalhe no plano de uso real e mantenha aqui apenas o resumo.
 - [x] Todos os 5 blocos acima implementados.
 - [x] Nenhuma regressão nas suítes `concurrency_async` e `multifile_imports`.
 - [x] Teste de sanidade do compilador executado com sucesso.
+
+> Nota de revalidação (2026-07-26): este critério continua atendido. Os quatro
+> abortos nativos de string/ARC encontrados pela suíte ampla eram uma dupla
+> liberação no wrapper gerenciado de `optional`; **RUNTIME-ARC-1** foi corrigido
+> sob o contrato de um único dono da cascata ARC. Os 364 testes de
+> `multifile_imports` e o workspace Cargo completo estão verdes.
+> **RUST-QUALITY-1** também foi fechado: runtime, codegen e driver passam
+> Clippy estrito sem `allow`, e `daily_fast.sh` mantém o gate ativo. Detalhes:
+> [`BACKLOG.md`](BACKLOG.md).
 
 ---
 
@@ -262,7 +289,7 @@ adicione o detalhe no plano de uso real e mantenha aqui apenas o resumo.
 
 - [x] **`ori explain <code>`** — comando CLI que imprime descrição, causa provável e sugestão de correção para um código do catálogo (`docs/spec/13-error-catalog.md`); espelhar `zt explain`. Gate: teste de integração em `ori-driver` cobrindo ≥3 códigos (`name.undefined`, `project.circular_import`, `type.type_mismatch`).
 - [x] **`ori doctor`** — verifica ambiente de desenvolvimento: runtime empacotada/cdylib resolvível, linker disponível (`ORI_USE_BUNDLED_RUST_LLD` / `ORI_USE_SYSTEM_LINKER`), `ORI_STDLIB_ROOT`, triple suportado, modo `ori run`. Gate: `compiler/crates/ori-driver/tests/doctor.rs` (2 testes, exit 0 em dev layout).
-- [x] **Extensão VS Code (`extensions/vscode-orl/`)** — LanguageClient → `ori-lsp`, settings `ori.*`, grammar/snippets, comandos Check/Run/Test/Doctor/Format/Summary. Completion Layer 2 stdlib + goto/hover stdlib integrados via catálogo LSP. v0.2.2: doctor no Output Channel, `ori.summaryProject`, auto-discovery de paths do workspace.
+- [x] **Extensão VS Code (`extensions/vscode-orl/`)** — LanguageClient → `ori-lsp`, settings `ori.*`, grammar/snippets, comandos Check/Run/Test/Debug/Doctor/Format/Summary. O tipo de debug `ori` inicia `ori debug --dap` e integra breakpoints, continue/step, pilha, variáveis escalares, snapshots estruturados de structs/optional/result/enums e coleções, metadados/elementos de listas, `evaluate` seguro e prévias de strings/bytes na Debug View. Completion Layer 2 stdlib + goto/hover stdlib integrados via catálogo LSP. v0.2.2: doctor no Output Channel, `ori.summaryProject`, auto-discovery de paths do workspace.
 - [x] **Guia pedagógico “Errors, Null, Void”** — documento único (`docs/guides/errors-null-void.md`) com mapa mental dos quatro conceitos + tabela comparativa + exemplos mínimos; linkado do `README.md`. Gate: revisão cruzada com caps. 04 e 09 da spec (sem contradição).
 
 ### 2. Uniformização de APIs stdlib (alta prioridade)

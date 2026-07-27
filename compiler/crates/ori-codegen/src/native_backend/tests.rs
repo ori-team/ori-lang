@@ -86,6 +86,11 @@ const NATIVE_EXPR_COVERAGE: &[NativeHirCoverage] = &[
         note: "slice, trait object e chamada resolvida",
     },
     NativeHirCoverage {
+        variant: "AssociatedCall",
+        evidence: &["HirExprKind::AssociatedCall"],
+        note: "funcao associada concreta ou monomorfizada sem receptor",
+    },
+    NativeHirCoverage {
         variant: "StructLit",
         evidence: &["HirExprKind::StructLit"],
         note: "alloc + stores por layout nativo",
@@ -1140,7 +1145,7 @@ fn leading_identifier(item: &str) -> Option<String> {
 fn missing_raw_native_linker_reports_native_linker_not_c_compiler() {
     let err = link_with_raw_native_command(
         Path::new("__ori_missing_native_linker_for_test__"),
-        Path::new("input.o"),
+        &[Path::new("input.o").to_path_buf()],
         Path::new("output.exe"),
         &[],
         NativeLinkOptions::default(),

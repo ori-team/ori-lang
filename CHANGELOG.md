@@ -10,7 +10,223 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Driver modularization.** Native runtime discovery, ABI metadata validation,
+  platform artifact naming, and linker argument construction now live in a
+  dedicated driver pipeline module. The compile, run, test, and doctor routes
+  keep their existing interfaces and behavior.
+- **Project loading modularization.** Manifest parsing, dependency scope
+  discovery, stdlib lookup, import resolution, and source-graph loading now
+  live in a dedicated project pipeline module while preserving the existing
+  compile, check, doc, test, and LSP behavior.
+- **Frontend modularization.** Lexing, parsing, source checking, and their
+  public driver entry points now live in a dedicated frontend module. Existing
+  diagnostics, timing hooks, and `ori-driver` APIs remain unchanged.
+- **HIR modularization.** Source lowering, stdlib enum registration, generic
+  preparation, and native module splitting now live in a dedicated HIR
+  pipeline module. Native compilation keeps the same object boundaries and
+  incremental cache behavior.
+- **Native execution modularization.** JIT execution and the native test
+  harness now live in a dedicated execution module. The public `run_jit`
+  route and `ori test` results remain unchanged.
+- **AOT compilation modularization.** Incremental reuse, HIR-to-object
+  generation, native linking, C-header emission, and debug-symbol sidecars
+  now live in a dedicated compile module. `ori compile`, `ori build`, and
+  shared-library output keep their existing behavior.
+- **Pipeline interface stabilization.** Source loading now returns one
+  `ResolvedSources` contract containing the loaded graph, semantic model, and
+  dependency context. Cross-cutting timing diagnostics moved out of the
+  project loader into their own internal module.
+- **Strict Rust quality gate.** Runtime, codegen, and driver now pass Clippy
+  with warnings denied across library, binary, and test targets. Runtime C ABI
+  exports keep stable `#[no_mangle]` symbols with minimal Rust visibility;
+  graph traversal, loop emission, linker, debugger, documentation, and source
+  loading now use domain state/request types instead of long parameter lists.
+  The combined command is enforced by `tools/qa/daily_fast.sh`.
+- **Bytes equality parity.** Native `bytes` equality now compares exact
+  lengths and payloads, including embedded NUL bytes, through a registered
+  runtime ABI function. The C/debug backend rejects this operation explicitly
+  instead of silently comparing raw pointers.
+- **Grammar/spec synchronization.** Corrected the normative EBNF to use the
+  implemented S3 selective-import rename (`=`) and result patterns (`ok`/`err`)
+  rather than the removed legacy spellings.
+- **Semantic documentation audit.** Synchronized the normative chapters with
+  the current runtime for embedded-NUL file reads, `ok`/`err` propagation,
+  async `using` cleanup, contracts, and formatter defaults.
+- **Audit regression matrix.** Added checker, runtime, native AOT, and C/debug
+  regressions for logical `bytes` equality, while retaining the existing S3
+  coverage for result patterns, trait receivers, async cleanup, contracts, and
+  formatter behavior.
+- **Linux integration project.** Added `examples/linux_log_report`, a
+  multi-module log analyzer with filesystem I/O, CLI handling, a deterministic
+  fixture, English/Portuguese usage notes, and a standalone native test module.
+- **CLI argument lifetime.** `ori.args.get_or` now copies process arguments
+  before the temporary argument list is released. The runtime keeps host argv
+  strings outside ARC for their process lifetime, and a native regression
+  covers passing a real argument to a compiled program.
+- **Thin pipeline façade.** Every driver command now has a domain-owned module
+  contract: frontend, project loading, HIR lowering, AOT compilation, native
+  execution, formatting, and documentation. The documentation index,
+  validation, signature extraction, Markdown rendering, and static HTML
+  rendering moved to `pipeline/docs.rs`; `pipeline.rs` is now a small
+  orchestration and re-export façade (392 lines) with no hidden child-module
+  aliases.
+- **Reproducible package builds.** Added `ori lock`, the deterministic
+  `ori.lock` snapshot format, `ori lock --locked` validation, Git revision
+  pinning, and automatic lock refresh from `ori get`. A present lockfile is
+  checked during project loading so stale dependency metadata fails before
+  code generation.
+- **Package namespace isolation.** Local imports now stop at the owning
+  package boundary. Modules from dependencies are addressed with their
+  package-qualified prefix (`package.module`), preventing same-named modules
+  from colliding across dependencies.
+- **Safe incremental native builds.** Successful native outputs are recorded
+  in `.ori/incremental.json` and reused when the complete source graph,
+  manifests, lockfile, compiler version, and build options match. Set
+  `ORI_DISABLE_INCREMENTAL=1` to force a rebuild. Dependency-bearing projects
+  without `ori.lock` rebuild conservatively; no partial HIR is restored.
+  A rebuild now emits content-addressed objects under `.ori/modules/`, one per
+  source file, and links all of them together. An implementation-only change
+  recompiles that file while unchanged callers reuse their objects; public
+  signature/layout changes naturally change the shared interface key. Shared
+  libraries, dynamic global initializers and explicit debug instrumentation
+  keep the safe monolithic route. The index reports how many source modules
+  changed during a rebuild.
+- **Native debug symbols.** Linux ELF output now receives a compact DWARF v4
+  line table mapped to Ori functions and source lines, with an accompanying
+  `*.debug.json` map for every platform. The map now includes each function's
+  visible parameters, locals, pattern bindings and closure captures with
+  source lines, so tooling has the same variable catalogue on Linux, macOS and
+  Windows. The cooperative DAP continues to provide live values (including
+  managed aggregates) on all three. Windows native linkers receive an explicit
+  deterministic `*.pdb` path and debug switch; rich CodeView local-variable
+  locations remain pending because Cranelift does not yet emit them. Missing
+  `objcopy` or equivalent tooling leaves the valid binary intact and reports a
+  warning.
+
+- **Debugger cooperativo — `stackTrace` e `variables`.** O backend agora
+  registra entrada/saída das funções Ori instrumentadas e envia ao agente a
+  pilha de chamadas e variáveis escalares visíveis (`bool`, inteiros e floats)
+  em cada evento `stopped`. A coleta também expõe campos escalares de `struct`
+  (inclusive aninhados), `length`/`capacity` de listas por caminhos qualificados
+  (`user.name`, `items.length`), frames async entre suspensões/retomadas e
+  capturas de closures. Valores gerenciados sem leitura segura permanecem
+  resumidos como `<managed>`. Strings e bytes gerenciados agora mostram uma
+  prévia limitada e segura (bytes em hexadecimal); literais estáticos e buffers
+  estrangeiros só são lidos quando registram um comprimento exato, e ponteiros
+  não registrados continuam sem dereference. O protocolo JSON continua
+  compatível com adapters que ignoram campos adicionais. Elementos de listas
+  aparecem por referência DAP, com leitura limitada aos primeiros 64 itens na
+  raiz e 8 por nível aninhado; optional/result, enums, mapas, conjuntos e
+  coleções opacas expõem snapshots estruturados. O DAP também avalia
+  expressões locais puramente sobre o snapshot parado, sem executar código no
+  alvo. Regressão E2E: `ori-driver/tests/debugger.rs`.
+- **Adaptador de debugger no CLI.** `ori debug <arquivo>` agora compila com
+  instrumentação, conecta o agente cooperativo e oferece continue/step no
+  terminal; `ori debug --dap` expõe o mesmo fluxo por um servidor DAP mínimo,
+  incluindo breakpoints, pilha, escopos, variáveis escalares, snapshots de
+  structs/optional/result/enums e coleções, elementos indexados, frames async,
+  capturas de closures, prévias seguras de strings/bytes gerenciados e
+  `evaluate` limitado ao snapshot local do último stop.
+- **Integração do debugger no VS Code.** A extensão registra o tipo `ori`,
+  inicia `ori debug --dap`, adiciona o comando `Ori: Debug Current File` e
+  oferece uma configuração inicial de `launch.json`. O plugin Zed documenta o
+  comando manual porque sua API atual não expõe um descriptor de debugger.
+- Reduced large-module native compile time by indexing function signatures,
+  collecting Cranelift references per function, looking up selected symbols
+  directly, and generating named-function closure wrappers only on demand. The
+  10,000-function AOT probe now completes in about 21 seconds on the
+  development host instead of the previously reported roughly four minutes;
+  complex managed/trait/async bodies keep conservative symbol visibility.
+  Added opt-in pipeline-stage timings and strict ignored scaling guards for
+  both `check` and `compile`.
+- Shelved general scoped arenas until a real short-lived-allocation workload
+  demonstrates a bottleneck and a measured prototype justifies region/lifetime
+  semantics. A safe ID-based `Pool[T]` remains the preferred narrower design
+  if demand appears.
+- Defined the C emitter as a permanently partial synchronous debug/transpile
+  route. Cranelift AOT/JIT remains the product and semantic reference; C
+  maintenance covers invalid output, crashes, and wrong semantics inside the
+  documented subset rather than async/concurrency parity.
+- Shelved implicit first-class iterator objects. Inline `iter` + `suspend`
+  remains the zero-allocation path for direct `for` consumption, and an
+  explicit state struct implementing `core.Iterable` already covers stored,
+  passed, and returned lazy producers.
+- Established `0.3.8` as the living development baseline after the published
+  `v0.3.7`; synchronized the Cargo workspace and packaged runtime metadata.
+- Backend diagnostics now render declared type names instead of leaking
+  internal `<def DefId(N)>` values, including names nested in collection and
+  function types.
+- Generic associated-function calls now reject ambiguous matches when more
+  than one bound provides the same receiver-less method, instead of selecting
+  whichever bound happened to appear first.
+- The C backend reports an ordinary unsupported-operation diagnostic if an
+  opaque collection reaches an invalid equality path instead of panicking.
+- Updated the VS Code/Cursor and Zed extensions for the current Ori surface: canonical match cases, compact trait application, `newtype`, struct destructuring, conditional payload bindings, current literals, and delimiter pairing.
+- Refreshed the examples catalog and source programs for the current language surface: match-expressions, or-patterns, struct destructuring, `newtype`, local inference, capacity-aware collections, and readable English comments. Fixed the standalone const-generic probe and validated every `.orl` example with `ori check`.
+
 ### Adicionado
+- **CT-0: expressões constantes sem keyword nova.** Argumentos constantes de
+  tipos e comprimentos de `array` agora aceitam constantes inteiras/booleanas
+  de módulo (inclusive importadas), aritmética inteira checada, comparações,
+  lógica booleana e `if` inline. O avaliador roda antes do lowering de tipos e
+  independe do backend. Overflow, divisão por zero, ciclos, inicializadores que exigem
+  runtime, incompatibilidade escalar e resultado final não inteiro têm
+  diagnósticos próprios. Chamadas, alocação, I/O, ambiente, FFI e macros ficam
+  fora do CT-0; parâmetros const simbólicos continuam aceitos diretamente, mas
+  `cap + 1` foi adiado para uma futura etapa de monomorfização.
+- **Destrutores customizados com `core.Destructor`.** Structs e enums podem
+  implementar `mut destroy(self)` para executar limpeza automática quando a
+  última referência ARC morre. O callback roda uma vez, enquanto o payload e
+  seus campos ainda estão legíveis; depois o runtime libera o payload e
+  propaga a liberação pelas arestas registradas. A DCE preserva construções
+  cujo descarte é observável, inclusive quando o binding não é lido. Em ciclos,
+  todos os callbacks rodam antes que qualquer payload do ciclo seja liberado.
+  O backend C rejeita o recurso com `backend.c_unsupported`, em vez de omitir a
+  limpeza silenciosamente. Para fechamento determinístico, `using` +
+  `core.Disposable` continua sendo a ferramenta apropriada.
+- **`optional` e `result` diretos em `@c_export`.** O ABI gerado divide
+  `optional[T]` em tag `bool` + payload e `result[T, E]` em `OriResultTag` +
+  payloads `ok`/`error`; retornos usam parâmetros `out`. Somente a variante
+  ativa é lida ou escrita. Strings e handles ativos transferidos ao host
+  seguem o mesmo contrato ARC dos retornos diretos. O header gerado declara
+  `OriResultTag`, as assinaturas expandidas e o ownership. Um host C real cobre
+  `some`/`none`, `ok`/`error`, handles gerenciados, strings estrangeiras e
+  retorno ao baseline de alocações.
+- **Handles opacos para structs gerenciadas em `@c_export`.** Structs não
+  genéricas e não vazias com `string`, structs aninhadas ou coleções agora
+  aparecem no header como tipos incompletos `OriTypeHandle`. Parâmetros são
+  emprestados — o wrapper retém uma referência temporária — e retornos
+  transferem uma referência ARC ao host, liberada com `ori_arc_release`.
+  A mesma retenção torna seguro repassar como parâmetro uma `string` antes
+  retornada por Ori. O host C E2E cobre empréstimos repetidos, alias retornado,
+  liberação de campos internos e contador de alocações de volta ao baseline.
+- **Header C gerado para `ori compile --lib`.** Todo build de biblioteca
+  bem-sucedido agora grava também o `.h` irmão, com guards C/C++, tipos
+  escalares portáveis, `typedef` das structs exportadas, assinaturas
+  pointer/out, lifecycle do runtime e nota de ownership para retornos
+  `string`. Os hosts C E2E incluem esse arquivo em vez de repetir a ABI à mão.
+  Nomes customizados de `@c_export` agora precisam ser identificadores C
+  portáveis (`attr.c_export_bad_name`).
+- **`@c_export` de structs escalares.** Structs não genéricas e não vazias,
+  compostas apenas por números e `bool`, atravessam a ABI por ponteiros:
+  parâmetros usam `const Type *` e retornos usam um último `Type *out`. O
+  wrapper traduz o layout C naturalmente alinhado para o layout interno Ori,
+  libera temporárias de retorno e mantém ownership no host. O teste E2E com um
+  host C real cobre padding misto, ida/volta e ausência de crescimento nas
+  alocações vivas. O contrato também explicita `int` como `int64_t` portátil
+  (em vez do `long` dependente de plataforma usado na documentação anterior).
+- **Benchmark de churn de temporárias gerenciadas.**
+  `tools/bench/managed_temporary_churn.orl` reproduz dois milhões de
+  concatenações curtas. Uma free list local por classes de tamanho foi
+  implementada e medida, mas ficou cerca de 2% mais lenta que o `tcache` da
+  glibc (0,355 s contra 0,348 s); a implementação foi revertida e o benchmark
+  ficou como guarda para não reabrir a otimização sem uma carga diferente.
+- **Funções associadas em bounds genéricos.** Uma função genérica pode chamar
+  uma função associada declarada pelo bound, como `T.default()` sob
+  `for T: core.Default`. A monomorfização resolve o `apply` concreto e ambos os
+  backends emitem uma chamada estática sem receptor ou vtable.
 - **Geradores: `iter` + `suspend` (inline, estilo Nim).** `iter counter(stop: int) -> int`
   declara um gerador; `suspend v` entrega um valor ao `for` consumidor e retoma
   no próximo passo. O corpo é **colado no laço** (transform AST→AST em
@@ -77,6 +293,31 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [`docs/planning/historico/nim-study-2026-07-17-c3.md`](docs/planning/historico/nim-study-2026-07-17-c3.md).
 
 ### Corrigido
+- **ARC de payloads gerenciados em `optional`.** O wrapper nativo registrava o
+  payload como uma aresta ARC e também o liberava manualmente no destrutor; a
+  cascata genérica liberava a mesma referência uma segunda vez. A aresta
+  registrada agora é a única dona da liberação em cascata. Regressões no
+  runtime, AOT e JIT cobrem `path.relative("a/b/c", "a/b")`, que antes
+  abortava ou retornava texto corrompido.
+- **Inventário interno da ABI nativa.** O símbolo `ori_bytes_eq` agora integra
+  a lista testada de imports diretos do codegen, restaurando a guarda que exige
+  documentação explícita para cada dependência interna do runtime.
+- **Smoke local dos exemplos.** `tools/qa/examples_smoke.sh` agora escolhe o
+  binário Ori de desenvolvimento ou release dentro de `compiler/target`
+  quando `ORI_BIN` não é informado, sem exigir uma instalação global durante
+  o QA do repositório.
+- **VS Code/Cursor:** o VSIX volta a incluir `vscode-languageclient` e suas
+  dependências de runtime. O pacote `0.3.5` era gerado com
+  `--no-dependencies`, falhava ao ativar com `Cannot find module
+  'vscode-languageclient/node'` e, por consequência, deixava autocomplete,
+  hover, diagnostics e comandos LSP inoperantes. O smoke agora empacota o
+  VSIX e verifica explicitamente a presença do módulo. A extensão também
+  reconhece `.oridoc` com grammar própria e destaca expressões dentro de
+  f-strings simples e multilinha como código Ori. O sidecar `ori.io` também
+  deixou de duplicar três símbolos Layer 1, restaurando `ori doc check` no
+  projeto temporário do smoke; os fixtures E2E do LSP agora usam o import S3
+  canônico (`import path = alias`) e executam o `ori-lsp` recém-compilado por
+  Cargo, não um binário antigo encontrado por fallback em `target/debug`.
 - **ARC: args owned nas coleções restantes + arestas de graph canônicas.**
   Os emissores especiais de `hash_table`/`graph`/`heap`/`tree`/
   `linked_list.find` e as listas-fonte de `maps.from_entries`/

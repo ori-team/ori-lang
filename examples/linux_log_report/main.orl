@@ -1,0 +1,67 @@
+module app.main
+
+-- A small Linux-oriented log report command. Pass a log file as argument 1
+-- and an optional output path as argument 2.
+imports
+    app.report = report
+    app.stats = stats
+    ori.args = args
+    ori.fs = fs
+    ori.io = io
+    ori.path = path
+end
+
+const DEFAULT_LOG: string = "examples/linux_log_report/sample.log"
+
+print_report(log_path: string, output_path: string, text: string)
+    const summary: stats.LogStats = stats.analyze(text)
+    const rendered: string = report.render(log_path, summary)
+    io.println(rendered)
+
+    if output_path != ""
+        match fs.write_text_result(output_path, rendered)
+        case ok(_):
+            io.println("report written to " + output_path)
+        case err(message):
+            io.eprintln("cannot write report: " + message)
+        end
+    end
+end
+
+load_report(log_path: string, output_path: string) -> result[void, string]
+    match fs.read_text(log_path)
+    case ok(text):
+        print_report(log_path, output_path, text)
+        return ok()
+    case err(message):
+        return err(message)
+    end
+    return err("unable to read log")
+end
+
+main()
+    const first_arg: string = args.get_or(1, "")
+    -- `ori run` keeps its command word in the target's argument view. A
+    -- compiled copy instead receives the log path directly at index 1.
+    const launched_by_ori: bool = first_arg == "run"
+    const log_path: string = if launched_by_ori then "examples/linux_log_report/sample.log" else first_arg
+    const output_path: string = if launched_by_ori
+        then ""
+        else args.get_or(2, "")
+    const selected_log: string = if log_path == "" then DEFAULT_LOG else log_path
+    match load_report(selected_log, output_path)
+    case ok(_):
+    case err(message):
+        if launched_by_ori or selected_log == DEFAULT_LOG
+            const fallback: string = path.join(["..", "examples", "linux_log_report", "sample.log"])
+            match load_report(fallback, output_path)
+            case ok(_):
+            case err(fallback_message):
+                io.eprintln("cannot read " + selected_log + ": " + message)
+                io.eprintln("fallback failed: " + fallback_message)
+            end
+        else
+            io.eprintln("cannot read " + selected_log + ": " + message)
+        end
+    end
+end

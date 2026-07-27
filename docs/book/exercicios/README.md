@@ -150,3 +150,28 @@ end
 
 `ori check` deve apontar algo na família `name.*` (nome `io` indefinido).  
 Depois corrija com `import ori.io = io`.
+
+## 17 — Guards no match
+
+```ori
+module app.ex17
+
+import ori.io = io
+
+classify(n: int) -> string
+    match n
+        case v if v < 0:
+            return "negativo"
+        case 0:
+            return "zero"
+        case else:
+            return "positivo"
+    end
+end
+
+main()
+    io.println(classify(-5))
+    io.println(classify(0))
+    io.println(classify(5))
+end
+```

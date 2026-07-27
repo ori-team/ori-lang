@@ -14,8 +14,6 @@
 //! Everything inside the handler is async-signal-safe: a direct `write(2)` and
 //! `_exit(2)`, no allocation and no formatting.
 
-#![allow(clippy::missing_safety_doc)]
-
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Low address of the current thread stack, and the guard size below it.
@@ -117,7 +115,7 @@ unsafe extern "C" fn handler(
 ///
 /// Idempotent and best-effort: if any step fails the program keeps its previous
 /// behaviour (a plain crash) rather than refusing to start.
-pub unsafe fn install() {
+pub(super) unsafe fn install() {
     if INSTALLED.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -150,7 +148,7 @@ pub unsafe fn install() {
     }
 
     let mut action: libc::sigaction = std::mem::zeroed();
-    action.sa_sigaction = handler as usize;
+    action.sa_sigaction = handler as *const () as usize;
     action.sa_flags = libc::SA_ONSTACK | libc::SA_SIGINFO;
     libc::sigemptyset(&mut action.sa_mask);
     libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
@@ -159,7 +157,7 @@ pub unsafe fn install() {
 
 /// C entry point so generated `main` can install the guard explicitly.
 #[no_mangle]
-pub unsafe extern "C" fn ori_rt_install_stack_guard() {
+unsafe extern "C" fn ori_rt_install_stack_guard() {
     install();
 }
 

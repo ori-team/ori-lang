@@ -127,7 +127,7 @@ clamp(v: int, lo: int, hi: int if it >= lo) -> int
 ```
 
 `it` refers to the parameter value. A violation is a runtime panic
-(`contract.param_violation` — planned/runtime).
+(`contract.param_violation`).
 
 ### Variadic Parameters
 

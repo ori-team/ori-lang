@@ -1,11 +1,16 @@
 # Livro Ori — laboratório de linguagem
 
-> **Versão do livro:** `0.3.x-book.2`  
+> **Versão do livro:** `0.3.x-book.4` (auditoria completa + expansão 2026-07-19)  
 > **Âncora da linguagem:** Ori **0.3.x** (superfície S3 + inferência opção B)  
 > **Idioma:** português na prosa · código em sintaxe S3 (inglês de API)  
-> **Status:** rascunho vivo — explica e aponta; a verdade normativa fica em [`../spec/`](../spec/)  
-> **Revisão:** snippets principais validados com `ori check` (hello, result, optional/`try`,
-> fluxo/pipe, struct, traits, FS, `@test`, roteiro 30 min; multiarquivo exige `ori.proj`)
+> **Status:** Contrato narrativo e explicativo (autossuficiente) — desenhado para máxima legibilidade e aprendizado, sem exigir idas constantes à especificação.
+> **Revisão 2026-07-19:** cada capítulo foi reconferido contra o compilador real
+> (`ori check`/`ori run` ao vivo) e contra o CLI/stdlib/catálogo de diagnósticos
+> reais. Corrigidos: prefixo de módulo (`ori.*`, não `std.*`), direção do import,
+> extensão `.orl`, formato TOML do `ori.proj`, sintaxe de `match`/`using`,
+> comandos e variáveis de ambiente do CLI, e o formato real dos códigos de
+> diagnóstico. Adicionado: guards de `match`, índice completo da stdlib (~34
+> módulos) e do CLI (~20 comandos), limites reais do `is`, e mais.
 
 ## PDF
 
@@ -94,13 +99,13 @@ Exemplos canônicos do repo: [exemplos-canonicos.md](exemplos-canonicos.md).
 
 | Documento | Papel |
 |-----------|--------|
-| Este livro | Narrativa + ensino + consulta em PT |
-| [`../spec/`](../spec/) | Contrato normativo (EN) |
-| [`../language/tour.pt-BR.md`](../language/tour.pt-BR.md) | Tour curto |
-| [`../guides/`](../guides/) | How-tos pontuais |
+| Este livro | Narrativo e principal ponto de aprendizado (autossuficiente, focado em clareza) |
+| [`../spec/`](../spec/) | Contrato normativo formal (para desenvolvedores do compilador) |
+| [`../language/tour.pt-BR.md`](../language/tour.pt-BR.md) | Tour rápido em uma página |
+| [`../guides/`](../guides/) | Tutoriais de tarefas específicas |
 | [`../../CHANGELOG.md`](../../CHANGELOG.md) | O que mudou entre versões |
 
-Em conflito de sintaxe, prevalecem a spec e o compilador — não este rascunho.
+O livro é a porta de entrada e deve conter todas as explicações necessárias. Em caso de conflito estrito de regra, a spec e o compilador dão a palavra final, mas o livro deve ser mantido atualizado para refletir a realidade.
 
 ## Manutenção
 

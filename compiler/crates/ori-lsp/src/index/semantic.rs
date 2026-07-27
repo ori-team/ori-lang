@@ -160,10 +160,7 @@ impl SemanticIndex {
         // After a dot: `receiver.` or `receiver.partial`
         if let Some(rel_dot) = line.rfind('.') {
             let after_dot = &line[rel_dot + 1..];
-            if after_dot
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_')
-            {
+            if after_dot.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 let before_dot = &line[..rel_dot];
                 if let Some(receiver) = before_dot
                     .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
@@ -267,7 +264,9 @@ impl SemanticIndex {
                     name: namespace.clone(),
                     kind: SymbolKind::Import,
                     range: span_to_range(source, import.path.span),
-                    hover: format!("```ori\nimport {namespace}\n```\n\nModule import (full path only)."),
+                    hover: format!(
+                        "```ori\nimport {namespace}\n```\n\nModule import (full path only)."
+                    ),
                     summary: format!("import {namespace}"),
                 });
             }
@@ -440,12 +439,11 @@ impl SemanticIndex {
         for stmt in stmts {
             match stmt {
                 ori_ast::stmt::Stmt::Const(c) => {
-                    let ty_str = c
-                        .ty
-                        .as_ref()
-                        .map(type_to_string)
-                        .or_else(|| syntactic_type_hint(&c.value))
-                        .unwrap_or_else(|| "_".to_string());
+                    let ty_str =
+                        c.ty.as_ref()
+                            .map(type_to_string)
+                            .or_else(|| syntactic_type_hint(&c.value))
+                            .unwrap_or_else(|| "_".to_string());
                     let range = span_to_range(source, c.name.span);
                     self.add(SemanticSymbol {
                         name: c.name.text.to_string(),
@@ -459,12 +457,11 @@ impl SemanticIndex {
                     });
                 }
                 ori_ast::stmt::Stmt::Var(v) => {
-                    let ty_str = v
-                        .ty
-                        .as_ref()
-                        .map(type_to_string)
-                        .or_else(|| syntactic_type_hint(&v.value))
-                        .unwrap_or_else(|| "_".to_string());
+                    let ty_str =
+                        v.ty.as_ref()
+                            .map(type_to_string)
+                            .or_else(|| syntactic_type_hint(&v.value))
+                            .unwrap_or_else(|| "_".to_string());
                     let range = span_to_range(source, v.name.span);
                     self.add(SemanticSymbol {
                         name: v.name.text.to_string(),
@@ -524,10 +521,7 @@ impl SemanticIndex {
                         name: f.binding.text.to_string(),
                         kind: SymbolKind::Variable,
                         range,
-                        hover: format!(
-                            "```ori\nfor {}\n```\n\nLoop binding.",
-                            f.binding.text
-                        ),
+                        hover: format!("```ori\nfor {}\n```\n\nLoop binding.", f.binding.text),
                         summary: "_".to_string(),
                     });
                     if let Some(second) = &f.second_binding {
@@ -536,10 +530,7 @@ impl SemanticIndex {
                             name: second.text.to_string(),
                             kind: SymbolKind::Variable,
                             range,
-                            hover: format!(
-                                "```ori\nfor _, {}\n```\n\nLoop binding.",
-                                second.text
-                            ),
+                            hover: format!("```ori\nfor _, {}\n```\n\nLoop binding.", second.text),
                             summary: "_".to_string(),
                         });
                     }

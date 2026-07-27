@@ -250,6 +250,18 @@ The length is written as a **named** const argument for the same reason
 between brackets, which reads as an index everywhere else in Ori. Any other name
 is `parse.expected_array_size`.
 
+The value may be a concrete CT-0 expression. CT-0 is deliberately smaller than
+runtime Ori: integer literals, integer/boolean module constants, checked integer
+arithmetic, comparisons, boolean logic, and inline `if` are accepted. It cannot
+call functions, allocate, perform I/O, read the environment, or cross FFI.
+
+```ori
+const words: int = 4
+const page_size: int = if words == 4 then words * 2 else 1
+
+const page: array[int, size: page_size] = [1, 2, 3, 4, 5, 6, 7, 8]
+```
+
 ### Rules
 
 - **The length is part of the identity.** `array[int, size: 4]` and
@@ -263,7 +275,8 @@ is `parse.expected_array_size`.
 - **`ori.mem.size_of` reports the whole block**: `size_of` of an
   `array[int, size: 4]` is 32, not the size of a pointer.
 - The length may be a `const` parameter, which is what makes const generics
-  useful:
+  useful. In CT-0 the parameter must be passed directly; symbolic arithmetic
+  such as `size: cap + 1` is reserved for a later monomorphization extension:
 
   ```ori
   struct InlineString[const cap: int]
@@ -307,7 +320,7 @@ try value                  -- unwrap or propagate from enclosing function
 
 Current status: `.or(fallback)` is accepted for `optional[T]` and
 `result[T, E]` in the checker, native backend, and C backend. The fallback is
-evaluated only when the receiver is `none` or `error(_)`. `.or_return()` is
+evaluated only when the receiver is `none` or `err(_)`. `.or_return()` is
 accepted as shorthand for propagation. The older `.or_return(expr)` form is
 not implemented.
 
@@ -354,8 +367,8 @@ try value                            -- unwrap success or propagate error
 ```
 
 Current status: `.or(fallback)` and `.or_return()` are accepted. `.or_wrap(...)`
-is accepted for `result[T, string]` and returns `success(v)` unchanged or
-`error(context + ": " + e)` for `error(e)`. The context expression is evaluated
+is accepted for `result[T, string]` and returns `ok(v)` unchanged or
+`err(context + ": " + e)` for `err(e)`. The context expression is evaluated
 only on the error path. Use `try` or `match` when explicit error handling is
 clearer. Postfix `expr?` was removed (S3); the compiler emits
 `parse.question_propagate_removed`.
@@ -364,9 +377,9 @@ Pattern matching:
 
 ```ori
 match load_config(path)
-case success(config):
+case ok(config):
     use_config(config)
-case error(msg):
+case err(msg):
     io.print(f"failed: {msg}")
 end
 ```
@@ -432,7 +445,9 @@ shape.draw()
 Rules:
 - `any[Trait]` values have heap-allocated vtable dispatch.
 - Prefer generics for performance-sensitive paths.
-- `==` on `any[Trait]` is supported when the trait constraint includes equality (runtime vtable dispatch to the concrete type's `Equatable` implementation).
+- `==` on `any[Trait]` is supported through the runtime vtable. Equal
+  concrete payloads compare structurally when their types provide equality;
+  values with different concrete types compare unequal.
 - Passing `any[Trait]` across FFI requires explicit ABI annotation.
 
 ---
@@ -496,7 +511,7 @@ Rules:
 
 ---
 
-## `success()` — Void Result
+## `ok()` — Void Result
 
 When a function returns `result[void, E]`, `ok()` with no arguments is valid:
 
@@ -513,8 +528,8 @@ end
 ```
 
 This is the exact analogue of `return` with no value in a `void` function.
-The `void` value is implicit. `success()` with no args is a compile error
-when the expected type is not `result[void, _]`.
+The `void` value is implicit. `ok()` with no args is a compile error when the
+expected type is not `result[void, _]`.
 
 ---
 
@@ -528,8 +543,9 @@ Current implementation status:
   `stack`, `linked_list`, etc.) when element types support equality, and
   non-generic structs whose fields also support equality.
 - Function values are not comparable.
-- `any[Trait]` values support structural equality via runtime vtable when the
-  trait constraint permits it.
+- `any[Trait]` values support structural equality via their runtime vtable;
+  the concrete payload type still determines whether a meaningful equality
+  operation exists.
 - Native and C/debug structural equality for `set[T]` and `map[K, V]` is
   implemented when keys/elements implement `Equatable` or builtin equality.
 
@@ -548,7 +564,7 @@ Current implementation status:
 | non-generic `struct` | Structural equality when all fields support equality |
 | generic `struct[T]` | Structural equality with generic substitution |
 | opaque collections | Structural equality when elements/keys support equality |
-| `any[Trait]` | Vtable equality when trait constraint allows |
+| `any[Trait]` | Vtable equality for compatible concrete payloads |
 | `func(...)` | Compile error |
 
 Structural equality rules:

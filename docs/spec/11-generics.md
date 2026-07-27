@@ -86,9 +86,9 @@ A trait may be declared with type parameters:
 
 ```ori
 trait Container[Item]
-    mut add(item: Item)
-    get(index: int) -> optional[Item]
-    length() -> int
+    mut add(self, item: Item)
+    get(self, index: int) -> optional[Item]
+    length(self) -> int
 end
 ```
 
@@ -236,7 +236,7 @@ error[generic.constraint_not_satisfied]: T does not satisfy constraint
    |                          ^^^^^^^^^^^^^^^^
    |
    = why: K = User, but User does not satisfy Comparable
-   = action: add `apply User` / `use Comparable` with `compare(other: User) -> int`
+   = action: add `apply User` / `use Comparable` with `compare(self, other: User) -> int`
 ```
 
 ---
@@ -248,7 +248,7 @@ It may be used as a type argument:
 
 ```ori
 trait Cloneable
-    clone() -> Self
+    clone(self) -> Self
 end
 
 apply Config use Cloneable
@@ -335,6 +335,9 @@ end
 
 const b: Buffer[size: 8] = Buffer { used: 0 }
 const m: Matrix[rows: 2, cols: 3] = Matrix { label: "2x3" }
+
+const words: int = 4
+const computed: Buffer[size: words * 2] = Buffer { used: 0 }
 ```
 
 Rules:
@@ -342,7 +345,17 @@ Rules:
 - **Arguments are named**, not positional. A bare `Buffer[8]` would read
   exactly like the index expression `frutas[8]`; `Buffer[size: 8]` reads as
   an argument, matching how calls, struct literals and enum payloads already
-  name their values. A non-integer value is `parse.expected_const_arg_value`.
+  name their values.
+- A concrete argument uses CT-0 constant evaluation: integer literals,
+  integer/boolean module constants, checked integer arithmetic, comparisons,
+  boolean logic, and inline `if`. Calls, allocation, I/O, environment access,
+  and FFI are not compile-time operations.
+- Evaluation is backend-independent and deterministic. Overflow, division by
+  zero, constant dependency cycles, unsupported runtime expressions, and a
+  final non-integer value are compile-time errors.
+- A `const` parameter may be forwarded directly (`size: cap`). Arithmetic over
+  a symbolic parameter (`size: cap + 1`) is not part of CT-0 because it needs
+  symbolic substitution during monomorphization.
 - The value is part of the type's identity: `Buffer[size: 8]` and
   `Buffer[size: 16]` are **different types** and do not substitute for each
   other.
@@ -351,8 +364,8 @@ Rules:
   appears only in the annotation. Type arguments are not inherited this way —
   those come from the fields.
 - The constant is a compile-time tag only: it occupies no storage and never
-  reaches runtime. (Fixed-size arrays, which would consume it, do not exist
-  yet.)
+  reaches runtime. Fixed-size arrays consume the evaluated value as their
+  inline length (chapter 04).
 
 ### Not supported
 

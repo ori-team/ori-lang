@@ -68,7 +68,7 @@ version bump, but should still be documented here or in the stdlib manifest.
 | Default CC | Platform C ABI (System V AMD64 / Microsoft x64 / Apple AArch64) |
 | Cranelift functions | Declared with the system default C calling convention |
 | `extern "C"` imports | Same platform C ABI; symbol name is exact (no Ori mangling) |
-| Runtime exports | `#[no_mangle] unsafe extern "C"` — C symbol = Rust `fn` name (`ori_list_new`, …) |
+| Runtime exports | `#[no_mangle] unsafe extern "C"` — C symbol = Rust `fn` name (`ori_list_new`, …); Rust visibility is private unless another compiler crate intentionally consumes the item |
 
 Managed values are almost always passed as **payload pointers** (`*mut u8` /
 `i64` bit-pattern of a pointer). Primitive `int`/`float`/`bool` use native
@@ -228,9 +228,10 @@ Callers never pass the header pointer to retain/release — only the payload.
 
 **Note:** A historical comment in the runtime mentioned `[u32 ref][u32 type_tag]`.
 That is **obsolete**. The live header is refcount + optional destructor function
-pointer. The hook is reserved for runtime-internal cleanup; cascading release
-of stored managed children goes through registered ARC edges (single cascade
-owner — see `docs/planning/adr-arc-single-cascade-owner.md` and Spec 10).
+pointer. The hook is used by runtime-internal cleanup and compiler callbacks
+for `core.Destructor`; cascading release of stored managed children still goes
+through registered ARC edges (single cascade owner — see
+`docs/planning/adr-arc-single-cascade-owner.md` and Spec 10).
 Layout guard test: `ori_heap_header_layout_is_stable` (`ori-runtime`).
 
 ### 6.2 Core ARC API (stable symbols)
@@ -415,23 +416,185 @@ current mangler.
 ### 8.3b `@c_export` — the host-facing surface
 
 `@c_export` on a `public` function emits an **unmangled** symbol with the
-declared name, so a host can `dlsym` it directly. The wrapper forwards
-arguments unchanged: the Ori representation of every accepted type is already
-its C representation.
+declared name, so a host can call or `dlsym` it directly. Scalar arguments use
+their native representation; scalar-field structs cross through the
+pointer/out bridge below; structs with managed fields cross as opaque ARC
+handles. A custom symbol in `@c_export("name")` must be a portable,
+non-keyword C/C++ identifier.
 
 Accepted types:
 
 | Ori type | C type |
 |---|---|
-| `int`, `int8`…`int64`, `u8`…`u64` | `long`, `int8_t`…`int64_t`, `uint8_t`…`uint64_t` |
+| `int`, `int8`…`int64`, `u8`…`u64` | `int64_t`, `int8_t`…`int64_t`, `uint8_t`…`uint64_t` |
 | `float`, `float32`, `float64` | `double`, `float`, `double` |
-| `bool` | `_Bool` |
+| `bool` | `bool` from `<stdbool.h>` |
 | `string` | `const char *` — NUL-terminated |
+| scalar-field `struct` parameter | `const OriType *` |
+| scalar-field `struct` return | `void` return plus final `OriType *out` parameter |
+| managed `struct` parameter | borrowed `const OriTypeHandle *` |
+| managed `struct` return | owned `OriTypeHandle *` |
+| `optional[T]` parameter | `bool name_has_value, T name_value` |
+| `optional[T]` return | `bool` plus `T *out` |
+| `result[T, E]` parameter | `OriResultTag name_tag, T name_ok, E name_error` |
+| `result[T, E]` return | `OriResultTag` plus `T *ok_out, E *error_out` |
 | `void` (return only) | `void` |
 
-Aggregates (`struct`, `list`, `map`, `set`, `optional`, `result`, `tuple`) are
-**rejected** with `attr.c_export_bad_type`: they have no stable C layout in
-ABI-1.
+`T` and `E` in the `optional`/`result` rows use the scalar, string, scalar
+struct, or managed-handle bridge described in this section. A `result` branch
+may be `void`, in which case its payload parameter is omitted; an `optional`
+payload may not be `void`.
+
+Direct `list`, `map`, `set`, and `tuple` values, plus nested
+`optional`/`result`, generic structs, and empty structs, are **rejected** with
+`attr.c_export_bad_type`. Collections may be stored inside an opaque managed
+struct because their private layout never crosses the boundary.
+
+#### Generated header (normative)
+
+Every successful `ori compile --lib -o <library>` also writes a C header by
+replacing the library extension with `.h`:
+
+```text
+libscores.so  → libscores.h
+scores.dll    → scores.h
+```
+
+The header is the canonical host declaration. It contains:
+
+- `<stdbool.h>` and `<stdint.h>`;
+- `extern "C"` guards for C++;
+- declarations for `ori_rt_init`, `__ori_module_init`, `ori_rt_shutdown`,
+  `ori_arc_retain`, and `ori_arc_release`;
+- one complete `typedef struct` for each scalar struct used directly by an
+  export and one incomplete handle declaration for each managed struct;
+- `OriResultTag` with `ORI_RESULT_ERR = 0` and `ORI_RESULT_OK = 1` when an
+  export uses `result`;
+- all `@c_export` function declarations, including pointer/out lowering.
+
+A unique source type `Point` is exposed as `OriPoint`. If two exported modules
+contain the same short type name, the generator qualifies both names with
+their module path. Field and parameter names that collide with C keywords are
+suffixed with `_`; this does not change their order or ABI. Hosts should include
+the generated header instead of duplicating declarations manually.
+
+#### Scalar struct bridge (normative)
+
+A non-generic, non-empty struct whose fields are only numeric scalars or
+`bool` crosses the host boundary through a pointer. Its C layout uses field
+declaration order, each field's natural C alignment, and tail padding to the
+largest field alignment. This is independent of Ori's internal struct packing;
+the export wrapper copies fields between the two layouts.
+
+The host declares the corresponding C type:
+
+```c
+typedef struct {
+    _Bool enabled;
+    int64_t primary;
+    int64_t fallback;
+} OriPoint;
+```
+
+A parameter is a borrowed, non-null pointer. The wrapper creates an owned Ori
+value before entering the function, so the host keeps ownership and may reuse
+its struct after the call:
+
+```c
+int64_t choose_point(const OriPoint *point);
+```
+
+An Ori function returning the struct is exported as `void` with one final,
+non-null output pointer:
+
+```c
+void make_point(_Bool enabled, int64_t primary, int64_t fallback, OriPoint *out);
+```
+
+The wrapper copies the returned fields into `out` and releases the temporary
+Ori allocation before returning. No Ori allocation ownership crosses this
+boundary. `@repr("C")` is not required because the wrapper performs the layout
+translation explicitly.
+
+#### Opaque managed struct handles (normative)
+
+A non-generic, non-empty struct that is not eligible for the scalar bridge is
+exported as an opaque handle. This includes structs containing `string`, nested
+structs, collections, or other managed values. The header exposes only an
+incomplete type:
+
+```c
+typedef struct OriProfileHandle OriProfileHandle;
+```
+
+The host cannot inspect or allocate this type. A valid handle is a non-null
+pointer returned by an Ori export:
+
+```c
+OriProfileHandle *make_profile(const char *name, int64_t score);
+int64_t profile_score(const OriProfileHandle *profile);
+```
+
+**Parameters are borrowed.** The export wrapper retains a registered handle
+before entering the Ori function; the function consumes that temporary
+reference through its normal scope cleanup. The host's reference remains valid
+after the call.
+
+**Returns are owned.** The host receives one ARC reference and must eventually
+call `ori_arc_release(handle)`. If it deliberately creates another C-side owner,
+it must first call `ori_arc_retain(handle)` and later release both references.
+Passing an arbitrary foreign pointer as a handle is invalid: unlike a foreign
+C string, it has no Ori object layout behind it.
+
+This is an additive host-facing contract. The struct's private field layout is
+not part of `ori-native-abi-1`; hosts interact with it only through exported
+functions.
+
+#### Optional and result bridge (normative)
+
+An `optional[T]` parameter is split into a presence flag and one payload:
+
+```c
+int64_t optional_score(bool score_has_value, int64_t score_value);
+```
+
+When `score_has_value` is false, the wrapper does not read a pointer-shaped
+payload. An `optional[T]` return uses `bool` as the tag and appends one
+non-null output pointer:
+
+```c
+bool find_score(const char *name, int64_t *out);
+```
+
+The wrapper writes `out` only when it returns `true`.
+
+A `result[T, E]` uses the generated `OriResultTag`. Parameters provide the tag
+and both possible payload positions; only the selected position is read:
+
+```c
+int64_t consume_result(
+    OriResultTag value_tag,
+    int64_t value_ok,
+    const char *value_error
+);
+```
+
+A result return uses the tag as its C return value and appends an output pointer
+for each non-`void` branch:
+
+```c
+OriResultTag make_profile(
+    const char *name,
+    OriProfileHandle **ok_out,
+    const char **error_out
+);
+```
+
+Only the active branch is written. An active returned `string` or opaque handle
+transfers one owned ARC reference to the host and must be released with
+`ori_arc_release`; inactive output pointers are not dereferenced. Scalar struct
+payloads use their natural-layout pointer/out bridge. Parameter payloads remain
+borrowed under the same rules as their direct forms.
 
 #### String ownership (normative)
 
@@ -439,11 +602,12 @@ An Ori string value *is* a pointer to NUL-terminated bytes; the ARC header sits
 immediately **before** that pointer. Two rules follow, and they are not
 symmetric:
 
-**Parameters — the host keeps ownership.** Ori never frees a string it receives
-from C. `ori_arc_retain` / `ori_arc_release` look the pointer up in the
-allocation registry and are **no-ops** for memory Ori did not allocate, so
-passing a literal, a stack buffer, or `malloc`'d memory is safe. The pointer
-must stay valid for the duration of the call.
+**Parameters — the host keeps ownership.** The wrapper retains a registered
+Ori string before the call and the function releases that temporary reference
+on scope exit, so a string previously returned by Ori remains owned by the
+host. `ori_arc_retain` / `ori_arc_release` are **no-ops** for memory Ori did not
+allocate, so passing a literal, a stack buffer, or `malloc`'d memory is also
+safe. The pointer must stay valid for the duration of the call.
 
 **Returns — the host takes ownership.** The returned string is ARC-managed with
 a reference count of 1 and no Ori scope owns it any more. The host must release
@@ -464,15 +628,31 @@ A host that only reads the result immediately and never frees it is memory-safe
 but unbounded. Treat `ori_arc_release` as mandatory in long-running hosts.
 
 Regression tests: `check_c_export_accepts_string_params_and_return`,
-`check_c_export_still_rejects_aggregates`,
-`compile_lib_c_export_string_round_trips_through_a_c_host` (builds a real C host
-with `cc` and exercises the full cycle).
+`check_c_export_accepts_scalar_structs`,
+`check_c_export_accepts_managed_struct_handles`,
+`check_c_export_accepts_optional_and_result_bridges`,
+`check_c_export_still_rejects_empty_generic_and_direct_collection_aggregates`,
+`check_c_export_requires_a_portable_c_symbol_name`,
+`compile_lib_c_export_produces_shared_object_on_linux`,
+`compile_lib_c_export_scalar_struct_round_trips_through_a_c_host`,
+`compile_lib_c_export_managed_struct_handle_preserves_host_ownership`, and
+`compile_lib_c_export_string_round_trips_through_a_c_host`, and
+`compile_lib_c_export_optional_and_result_round_trip_through_c_host` (build real
+C hosts with `cc`, include the generated headers, and exercise the full
+ownership cycle).
 
-### 8.4 Destructors generated by codegen
+### 8.4 Custom destructor callbacks
 
-Synthetic names such as `__dtor_struct_{id}`, `__dtor_enum_{id}`,
-`__dtor_tuple_{n}` are compiler-private. They are registered as `ori_alloc`
-destructor hooks for managed composite allocations.
+For each concrete struct or enum implementing `core.Destructor`, native codegen
+emits a compiler-private `__ori_destructor_<DefId>` callback and passes its
+address to `ori_alloc`. The callback invokes the user implementation's
+`destroy(self)` method; it does not release stored managed fields.
+
+At final release, the runtime removes the allocation from the ARC registry,
+runs the callback while the payload and its fields are still readable, frees
+the payload, and then releases surviving registered children. During cycle
+collection, all callbacks run before any payload in that collected cycle is
+freed. Registered edges remain the sole owner of managed fields.
 
 ---
 
@@ -519,7 +699,7 @@ lists language-surface stability separately from this binary contract.
 |---------|------------------|
 | `ORI_ABI_VERSION`, ARC, collections | `compiler/crates/ori-runtime/src/lib.rs` |
 | Layout math, mangling, main export | `compiler/crates/ori-codegen/src/native_backend.rs` |
-| Driver ABI check + `runtime-link.json` | `compiler/crates/ori-driver/src/pipeline.rs` |
+| Driver ABI check + `runtime-link.json` | `compiler/crates/ori-driver/src/pipeline/runtime.rs` |
 | Manifest symbol list | `ori-types` stdlib modules |
 | FFI safety narrative | `docs/spec/16-runtime-ffi-safety.md` |
 | ARC language rules | `docs/spec/10-memory.md` |

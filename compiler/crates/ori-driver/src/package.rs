@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const LOCKFILE_FORMAT_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageManifest {
     pub root: PathBuf,
@@ -20,6 +22,49 @@ pub struct PackageManifest {
 pub struct PackageDependency {
     pub name: String,
     pub requirement: DependencyRequirement,
+}
+
+/// The reproducible dependency snapshot stored in `ori.lock`.
+///
+/// The manifest remains the human-edited source of requirements.  The lock
+/// file records the concrete package versions (and Git revisions) that were
+/// materialised, so a later build can detect drift before compiling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageLockfile {
+    pub root_name: String,
+    pub root_version: String,
+    pub dependencies: Vec<LockedDependency>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockedDependency {
+    pub name: String,
+    pub source: LockedDependencySource,
+    pub version: String,
+    pub path: Option<String>,
+    pub url: Option<String>,
+    pub revision: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LockedDependencySource {
+    Registry,
+    Path,
+    Git,
+}
+
+#[derive(Debug, Clone)]
+pub struct LockPackageOptions {
+    pub path: PathBuf,
+    pub locked: bool,
+    pub cache_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockPackageOutput {
+    pub path: PathBuf,
+    pub dependencies: usize,
+    pub changed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,7 +96,13 @@ pub struct GitDependencySpec {
 }
 
 impl GitDependencySpec {
-    pub fn from_requirement(url: String, rev: Option<String>, tag: Option<String>, branch: Option<String>, version: Option<String>) -> Self {
+    pub fn from_requirement(
+        url: String,
+        rev: Option<String>,
+        tag: Option<String>,
+        branch: Option<String>,
+        version: Option<String>,
+    ) -> Self {
         Self {
             url,
             rev,
@@ -251,6 +302,503 @@ pub fn load_package_manifest(path: impl AsRef<Path>) -> Result<PackageManifest, 
     parse_package_manifest(&source, root, manifest_path)
 }
 
+/// Return the lockfile path belonging to a package root.
+pub fn package_lock_path(root: &Path) -> PathBuf {
+    root.join("ori.lock")
+}
+
+/// Read an existing lockfile.  The parser intentionally accepts only the
+/// small, stable format emitted by `write_package_lock`; malformed files fail
+/// early instead of being silently ignored.
+pub fn load_package_lock(path: &Path) -> Result<PackageLockfile, String> {
+    let source = fs::read_to_string(path).map_err(|err| {
+        format!(
+            "package.lock_read_failed: cannot read `{}`: {err}",
+            path.display()
+        )
+    })?;
+    parse_package_lock(&source, path)
+}
+
+/// Resolve and write the lockfile for a package.  `locked` performs a
+/// read-only validation and fails if the manifest would produce a different
+/// snapshot.
+pub fn run_lock_package(options: LockPackageOptions) -> Result<LockPackageOutput, String> {
+    let root = package_root_from_path(&options.path)?;
+    let manifest = load_lock_manifest(&root)?;
+    let cache_root = options
+        .cache_root
+        .or_else(|| default_package_cache_root().ok());
+    let resolved = resolve_package_lock(&manifest, cache_root.as_deref())?;
+    let lock_path = package_lock_path(&root);
+    if lock_path.is_file() {
+        let current = load_package_lock(&lock_path)?;
+        if current == resolved {
+            return Ok(LockPackageOutput {
+                path: lock_path,
+                dependencies: resolved.dependencies.len(),
+                changed: false,
+            });
+        }
+        if options.locked {
+            return Err(format!(
+                "package.lock_out_of_date: `{}` does not match the current manifest (run `ori lock` to refresh)",
+                lock_path.display()
+            ));
+        }
+    } else if options.locked {
+        return Err(format!(
+            "package.lock_missing: `{}` is required by `--locked`",
+            lock_path.display()
+        ));
+    }
+    write_package_lock(&lock_path, &resolved)?;
+    Ok(LockPackageOutput {
+        path: lock_path,
+        dependencies: resolved.dependencies.len(),
+        changed: true,
+    })
+}
+
+/// Validate a package lock when one is present.  Existing projects without a
+/// lockfile retain their pre-lock behaviour; `ori lock` is the explicit opt-in
+/// that creates the reproducible snapshot.
+pub fn validate_package_lock(root: &Path) -> Result<(), String> {
+    let lock_path = package_lock_path(root);
+    if !lock_path.is_file() {
+        return Ok(());
+    }
+    let manifest = load_lock_manifest(root)?;
+    let cache = default_package_cache_root().ok();
+    let expected = resolve_package_lock(&manifest, cache.as_deref())?;
+    let current = load_package_lock(&lock_path)?;
+    if current != expected {
+        return Err(format!(
+            "package.lock_out_of_date: `{}` does not match the current manifest (run `ori lock` to refresh)",
+            lock_path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn load_lock_manifest(root: &Path) -> Result<PackageManifest, String> {
+    let package_manifest = root.join("ori.pkg.toml");
+    if package_manifest.is_file() {
+        return load_package_manifest(&package_manifest);
+    }
+    let project_manifest = root.join("ori.proj");
+    if project_manifest.is_file() {
+        return parse_project_lock_manifest(&project_manifest);
+    }
+    Err(format!(
+        "package.get_target_invalid: `{}` has neither `ori.proj` nor `ori.pkg.toml`",
+        root.display()
+    ))
+}
+
+fn parse_project_lock_manifest(path: &Path) -> Result<PackageManifest, String> {
+    let source = fs::read_to_string(path).map_err(|err| {
+        format!(
+            "package.manifest_missing: cannot read `{}`: {err}",
+            path.display()
+        )
+    })?;
+    let root = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let mut section = String::new();
+    let mut name = None;
+    let mut version = None;
+    let mut entry = None;
+    let mut dependencies = Vec::new();
+    for (line_index, raw_line) in source.lines().enumerate() {
+        let line = strip_comment(raw_line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+        let Some((key, value)) = split_key_value(line) else {
+            return Err(format!(
+                "package.manifest_syntax: `{}` line {}: expected `key = value`",
+                path.display(),
+                line_index + 1
+            ));
+        };
+        if section == "dependencies" {
+            dependencies.push(parse_dependency(key, value).map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {}: {err}",
+                    path.display(),
+                    line_index + 1
+                )
+            })?);
+            continue;
+        }
+        match key.trim() {
+            "name" => name = Some(parse_string_value(value)?),
+            "version" => version = Some(parse_string_value(value)?),
+            "entry" => entry = Some(parse_string_value(value)?),
+            _ => {}
+        }
+    }
+    let name = name.unwrap_or_else(|| {
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("ori-project")
+            .to_string()
+    });
+    let version = version.unwrap_or_else(|| "0.0.0".to_string());
+    validate_package_name(&name).map_err(|err| format!("package.name_invalid: {err}"))?;
+    validate_semver_like(&version).map_err(|err| format!("package.version_invalid: {err}"))?;
+    Ok(PackageManifest {
+        root: root.clone(),
+        manifest_path: path.to_path_buf(),
+        name,
+        version,
+        entry: root.join(entry.unwrap_or_else(|| "main.orl".to_string())),
+        ori_version: "0.3.8".to_string(),
+        description: None,
+        dependencies,
+        native_libs: Vec::new(),
+    })
+}
+
+fn resolve_package_lock(
+    manifest: &PackageManifest,
+    cache_root: Option<&Path>,
+) -> Result<PackageLockfile, String> {
+    let mut dependencies = Vec::new();
+    let mut seen = HashSet::new();
+    collect_locked_dependencies(manifest, cache_root, &mut seen, &mut dependencies)?;
+    dependencies.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
+    Ok(PackageLockfile {
+        root_name: manifest.name.clone(),
+        root_version: manifest.version.clone(),
+        dependencies,
+    })
+}
+
+fn collect_locked_dependencies(
+    manifest: &PackageManifest,
+    cache_root: Option<&Path>,
+    seen: &mut HashSet<String>,
+    locked: &mut Vec<LockedDependency>,
+) -> Result<(), String> {
+    for dependency in &manifest.dependencies {
+        let (root, entry) = match &dependency.requirement {
+            DependencyRequirement::Path { path, version } => {
+                let root = manifest.root.join(path);
+                let child = load_package_manifest(&root)?;
+                if child.name != dependency.name {
+                    return Err(format!(
+                        "package.dependency_name_mismatch: dependency `{}` points to package `{}`",
+                        dependency.name, child.name
+                    ));
+                }
+                if let Some(expected) = version {
+                    if child.version != *expected {
+                        return Err(format!(
+                            "package.dependency_version_mismatch: dependency `{}` expected `{expected}`, found `{}`",
+                            dependency.name, child.version
+                        ));
+                    }
+                }
+                let relative = path.to_string_lossy().replace('\\', "/");
+                (
+                    root,
+                    LockedDependency {
+                        name: child.name.clone(),
+                        source: LockedDependencySource::Path,
+                        version: child.version.clone(),
+                        path: Some(relative),
+                        url: None,
+                        revision: None,
+                    },
+                )
+            }
+            DependencyRequirement::Version(version) => {
+                let cache = cache_root.ok_or_else(|| {
+                    format!(
+                        "package.cache_home_missing: set ORI_PACKAGE_CACHE to resolve version dependency `{}`",
+                        dependency.name
+                    )
+                })?;
+                let root = ensure_version_package_cached(
+                    &dependency.name,
+                    version,
+                    cache,
+                    resolve_registry_location(None).ok().as_ref(),
+                )?;
+                let child = load_package_manifest(&root)?;
+                (
+                    root,
+                    LockedDependency {
+                        name: child.name.clone(),
+                        source: LockedDependencySource::Registry,
+                        version: child.version.clone(),
+                        path: None,
+                        url: None,
+                        revision: None,
+                    },
+                )
+            }
+            DependencyRequirement::Git {
+                url,
+                rev,
+                tag,
+                branch,
+                version,
+            } => {
+                let cache = cache_root.ok_or_else(|| {
+                    "package.cache_home_missing: set ORI_PACKAGE_CACHE to resolve git dependencies"
+                        .to_string()
+                })?;
+                let spec = GitDependencySpec::from_requirement(
+                    url.clone(),
+                    rev.clone(),
+                    tag.clone(),
+                    branch.clone(),
+                    version.clone(),
+                );
+                let root = ensure_git_dependency_cached(&dependency.name, &spec, cache)?;
+                let child = load_package_manifest(&root)?;
+                let revision = git_revision(&root).ok().or(rev.clone());
+                (
+                    root,
+                    LockedDependency {
+                        name: child.name.clone(),
+                        source: LockedDependencySource::Git,
+                        version: child.version.clone(),
+                        path: None,
+                        url: Some(url.clone()),
+                        revision,
+                    },
+                )
+            }
+        };
+
+        let key = format!("{}@{}", entry.name, entry.version);
+        if seen.insert(key) {
+            collect_locked_dependencies(&load_package_manifest(&root)?, cache_root, seen, locked)?;
+            locked.push(entry);
+        }
+    }
+    Ok(())
+}
+
+fn git_revision(root: &Path) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .map_err(|err| format!("git rev-parse failed: {err}"))?;
+    if !output.status.success() {
+        return Err("git rev-parse returned a failure status".to_string());
+    }
+    let revision = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if revision.is_empty() {
+        Err("git rev-parse returned an empty revision".to_string())
+    } else {
+        Ok(revision)
+    }
+}
+
+fn write_package_lock(path: &Path, lock: &PackageLockfile) -> Result<(), String> {
+    let mut text = String::from("# This file is generated by `ori lock`.\n");
+    text.push_str("format = 1\n");
+    text.push_str(&format!("root = {}\n", quote_lock_string(&lock.root_name)));
+    text.push_str(&format!(
+        "root_version = {}\n\n",
+        quote_lock_string(&lock.root_version)
+    ));
+    for dependency in &lock.dependencies {
+        text.push_str("[[dependency]]\n");
+        text.push_str(&format!("name = {}\n", quote_lock_string(&dependency.name)));
+        text.push_str(&format!(
+            "source = {}\n",
+            quote_lock_string(match dependency.source {
+                LockedDependencySource::Registry => "registry",
+                LockedDependencySource::Path => "path",
+                LockedDependencySource::Git => "git",
+            })
+        ));
+        text.push_str(&format!(
+            "version = {}\n",
+            quote_lock_string(&dependency.version)
+        ));
+        if let Some(path_value) = &dependency.path {
+            text.push_str(&format!("path = {}\n", quote_lock_string(path_value)));
+        }
+        if let Some(url) = &dependency.url {
+            text.push_str(&format!("url = {}\n", quote_lock_string(url)));
+        }
+        if let Some(revision) = &dependency.revision {
+            text.push_str(&format!("revision = {}\n", quote_lock_string(revision)));
+        }
+        text.push('\n');
+    }
+    let temporary = path.with_extension("lock.tmp");
+    fs::write(&temporary, text).map_err(|err| {
+        format!(
+            "package.lock_write_failed: cannot write `{}`: {err}",
+            path.display()
+        )
+    })?;
+    match fs::rename(&temporary, path) {
+        Ok(()) => Ok(()),
+        Err(rename_error) if cfg!(windows) && path.is_file() => {
+            // Windows does not replace an existing destination with rename.
+            // The lockfile is generated state, so replace it explicitly only
+            // after the atomic rename attempt has failed.
+            fs::remove_file(path)
+                .and_then(|_| fs::rename(&temporary, path))
+                .map_err(|replace_error| {
+                    format!(
+                        "package.lock_write_failed: cannot replace `{}`: {rename_error}; retry failed: {replace_error}",
+                        path.display()
+                    )
+                })
+        }
+        Err(err) => Err(format!(
+            "package.lock_write_failed: cannot replace `{}`: {err}",
+            path.display()
+        )),
+    }
+}
+
+fn parse_package_lock(source: &str, path: &Path) -> Result<PackageLockfile, String> {
+    let mut format = None;
+    let mut root = None;
+    let mut root_version = None;
+    let mut dependencies = Vec::new();
+    let mut current: Option<HashMap<String, String>> = None;
+    for (line_index, raw_line) in source.lines().enumerate() {
+        let line = strip_comment(raw_line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line == "[[dependency]]" {
+            if let Some(table) = current.take() {
+                dependencies.push(parse_locked_dependency(table, path, line_index + 1)?);
+            }
+            current = Some(HashMap::new());
+            continue;
+        }
+        let (key, value) = split_key_value(line).ok_or_else(|| {
+            format!(
+                "package.lock_syntax: `{}` line {}: expected `key = value`",
+                path.display(),
+                line_index + 1
+            )
+        })?;
+        let key = key.trim();
+        if let Some(table) = current.as_mut() {
+            table.insert(
+                key.to_string(),
+                parse_string_value(value).map_err(|err| {
+                    format!(
+                        "package.lock_syntax: `{}` line {}: {err}",
+                        path.display(),
+                        line_index + 1
+                    )
+                })?,
+            );
+        } else {
+            match key {
+                "format" => {
+                    format = Some(value.trim().parse::<u32>().map_err(|_| {
+                        format!(
+                            "package.lock_syntax: `{}` has invalid format",
+                            path.display()
+                        )
+                    })?);
+                }
+                "root" => root = Some(parse_string_value(value)?),
+                "root_version" => root_version = Some(parse_string_value(value)?),
+                other => {
+                    return Err(format!(
+                        "package.lock_syntax: `{}` has unknown top-level key `{other}`",
+                        path.display()
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(table) = current.take() {
+        dependencies.push(parse_locked_dependency(
+            table,
+            path,
+            source.lines().count(),
+        )?);
+    }
+    if format != Some(LOCKFILE_FORMAT_VERSION) {
+        return Err(format!(
+            "package.lock_version: `{}` uses an unsupported lockfile format",
+            path.display()
+        ));
+    }
+    Ok(PackageLockfile {
+        root_name: root.ok_or_else(|| {
+            format!(
+                "package.lock_syntax: `{}` is missing `root`",
+                path.display()
+            )
+        })?,
+        root_version: root_version.ok_or_else(|| {
+            format!(
+                "package.lock_syntax: `{}` is missing `root_version`",
+                path.display()
+            )
+        })?,
+        dependencies,
+    })
+}
+
+fn parse_locked_dependency(
+    table: HashMap<String, String>,
+    path: &Path,
+    line: usize,
+) -> Result<LockedDependency, String> {
+    let required = |key: &str| {
+        table.get(key).cloned().ok_or_else(|| {
+            format!(
+                "package.lock_syntax: `{}` dependency near line {} is missing `{key}`",
+                path.display(),
+                line
+            )
+        })
+    };
+    let source = match required("source")?.as_str() {
+        "registry" => LockedDependencySource::Registry,
+        "path" => LockedDependencySource::Path,
+        "git" => LockedDependencySource::Git,
+        other => {
+            return Err(format!(
+                "package.lock_syntax: `{}` has unknown dependency source `{other}`",
+                path.display()
+            ));
+        }
+    };
+    Ok(LockedDependency {
+        name: required("name")?,
+        source,
+        version: required("version")?,
+        path: table.get("path").cloned(),
+        url: table.get("url").cloned(),
+        revision: table.get("revision").cloned(),
+    })
+}
+
+fn quote_lock_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 fn install_local_package(
     root: &Path,
     expected_name: Option<&str>,
@@ -283,13 +831,7 @@ fn install_local_package(
                     cache_root,
                     resolve_registry_location(None).ok().as_ref(),
                 )?;
-                install_local_package(
-                    &root,
-                    Some(&dependency.name),
-                    cache_root,
-                    seen,
-                    packages,
-                )?;
+                install_local_package(&root, Some(&dependency.name), cache_root, seen, packages)?;
             }
             DependencyRequirement::Path { path, version } => {
                 let dependency_root = manifest.root.join(path);
@@ -981,7 +1523,9 @@ pub fn ensure_version_package_cached(
 }
 
 /// Fetch all git (and install path) dependencies declared by a project or package manifest.
-pub fn run_get_dependencies(options: GetDependenciesOptions) -> Result<GetDependenciesOutput, String> {
+pub fn run_get_dependencies(
+    options: GetDependenciesOptions,
+) -> Result<GetDependenciesOutput, String> {
     let cache_root = match options.cache_root {
         Some(path) => path,
         None => default_package_cache_root()?,
@@ -995,8 +1539,18 @@ pub fn run_get_dependencies(options: GetDependenciesOptions) -> Result<GetDepend
 
     if pkg_manifest.is_file() {
         install_local_package(&root, None, &cache_root, &mut seen, &mut packages)?;
+        run_lock_package(LockPackageOptions {
+            path: root.clone(),
+            locked: false,
+            cache_root: Some(cache_root.clone()),
+        })?;
     } else if proj_manifest.is_file() {
         fetch_project_git_dependencies(&proj_manifest, &cache_root, &mut seen, &mut packages)?;
+        run_lock_package(LockPackageOptions {
+            path: root.clone(),
+            locked: false,
+            cache_root: Some(cache_root.clone()),
+        })?;
     } else if options.path.is_file() {
         let name = options
             .path
@@ -1013,6 +1567,13 @@ pub fn run_get_dependencies(options: GetDependenciesOptions) -> Result<GetDepend
             )?;
         } else if name == "ori.proj" {
             fetch_project_git_dependencies(&options.path, &cache_root, &mut seen, &mut packages)?;
+            if let Some(project_root) = options.path.parent() {
+                run_lock_package(LockPackageOptions {
+                    path: project_root.to_path_buf(),
+                    locked: false,
+                    cache_root: Some(cache_root.clone()),
+                })?;
+            }
         } else {
             return Err(format!(
                 "package.get_target_invalid: `{}` is not an Ori project/package root",
@@ -1083,8 +1644,7 @@ fn fetch_project_git_dependencies(
                 version,
             } => {
                 let spec = GitDependencySpec::from_requirement(url, rev, tag, branch, version);
-                let installed_root =
-                    ensure_git_dependency_cached(&dep.name, &spec, cache_root)?;
+                let installed_root = ensure_git_dependency_cached(&dep.name, &spec, cache_root)?;
                 let manifest = load_package_manifest(&installed_root)?;
                 let key = format!("{}@{}", manifest.name, manifest.version);
                 if seen.insert(key) {
@@ -1134,7 +1694,7 @@ fn fetch_git_checkout(spec: &GitDependencySpec, cache_root: &Path) -> Result<Pat
         || checkout_root.join("ori.proj").is_file()
         || has_nested_package_manifest(&checkout_root)
     {
-        return Ok(find_package_root_in_checkout(&checkout_root)?);
+        return find_package_root_in_checkout(&checkout_root);
     }
 
     if checkout_root.exists() {
@@ -1150,7 +1710,11 @@ fn fetch_git_checkout(spec: &GitDependencySpec, cache_root: &Path) -> Result<Pat
     }
 
     let url = normalize_git_url(&spec.url);
-    eprintln!("ori: fetching git dependency {} ({})...", url, spec.ref_key());
+    eprintln!(
+        "ori: fetching git dependency {} ({})...",
+        url,
+        spec.ref_key()
+    );
 
     let mut clone = Command::new("git");
     clone.arg("clone");
@@ -1167,9 +1731,9 @@ fn fetch_git_checkout(spec: &GitDependencySpec, cache_root: &Path) -> Result<Pat
     }
     clone.arg(&url).arg(&checkout_root);
 
-    let status = clone.status().map_err(|err| {
-        format!("package.git_clone_failed: failed to invoke git: {err}")
-    })?;
+    let status = clone
+        .status()
+        .map_err(|err| format!("package.git_clone_failed: failed to invoke git: {err}"))?;
 
     if !status.success() {
         // Retry without --branch main if default failed (remote may use master)
@@ -1182,9 +1746,7 @@ fn fetch_git_checkout(spec: &GitDependencySpec, cache_root: &Path) -> Result<Pat
                 .arg(&url)
                 .arg(&checkout_root)
                 .status()
-                .map_err(|err| {
-                    format!("package.git_clone_failed: failed to invoke git: {err}")
-                })?;
+                .map_err(|err| format!("package.git_clone_failed: failed to invoke git: {err}"))?;
             if !status.success() {
                 return Err(format!(
                     "package.git_clone_failed: git clone failed for `{url}` (status {status})"
@@ -1247,7 +1809,11 @@ fn normalize_git_url(url: &str) -> String {
     if url.starts_with("github.com/") {
         return format!("https://{url}");
     }
-    if url.starts_with("file://") || url.starts_with("http://") || url.starts_with("https://") || url.starts_with("git@") {
+    if url.starts_with("file://")
+        || url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("git@")
+    {
         return url.to_string();
     }
     // bare local path
@@ -1399,7 +1965,9 @@ pub fn resolve_registry_location(override_url: Option<&str>) -> Result<RegistryL
         })?;
 
     if raw.starts_with("http://") || raw.starts_with("https://") {
-        return Ok(RegistryLocation::Http(raw.trim_end_matches('/').to_string()));
+        return Ok(RegistryLocation::Http(
+            raw.trim_end_matches('/').to_string(),
+        ));
     }
     let path = if let Some(rest) = raw.strip_prefix("file://") {
         PathBuf::from(rest)
@@ -1679,9 +2247,7 @@ fn parse_global_index(text: &str) -> Result<HashMap<String, Vec<String>>, String
     let mut i = 0;
     let bytes = body.as_bytes();
     while i < bytes.len() {
-        while i < bytes.len()
-            && ((bytes[i] as char).is_whitespace() || bytes[i] == b',')
-        {
+        while i < bytes.len() && ((bytes[i] as char).is_whitespace() || bytes[i] == b',') {
             i += 1;
         }
         if i >= bytes.len() {
@@ -1757,7 +2323,9 @@ fn compare_semver_like(a: &str, b: &str) -> std::cmp::Ordering {
 
 fn split_name_version(spec: &str) -> (&str, Option<&str>) {
     if let Some((name, ver)) = spec.rsplit_once('@') {
-        if !name.is_empty() && !ver.is_empty() && ver.chars().next().is_some_and(|c| c.is_ascii_digit())
+        if !name.is_empty()
+            && !ver.is_empty()
+            && ver.chars().next().is_some_and(|c| c.is_ascii_digit())
         {
             return (name, Some(ver));
         }
@@ -1862,4 +2430,59 @@ fn http_put_file(url: &str, file: &Path, token: Option<&str>, force: bool) -> Re
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lockfile_round_trip_preserves_path_dependency() {
+        let root = std::env::temp_dir().join(format!(
+            "ori_lock_round_trip_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock must be after epoch")
+                .as_nanos()
+        ));
+        let dependency = root.join("dep");
+        fs::create_dir_all(&dependency).expect("create test package");
+        fs::write(
+            dependency.join("ori.pkg.toml"),
+            "[package]\nname = \"demo.dep\"\nversion = \"1.0.0\"\nentry = \"main.orl\"\nori_version = \"0.3.8\"\n",
+        )
+        .expect("write dependency manifest");
+        fs::write(dependency.join("main.orl"), "module demo.dep\n")
+            .expect("write dependency source");
+        fs::create_dir_all(&root).expect("create root package");
+        fs::write(
+            root.join("ori.pkg.toml"),
+            "[package]\nname = \"demo.app\"\nversion = \"1.0.0\"\nentry = \"main.orl\"\nori_version = \"0.3.8\"\n\n[dependencies]\ndemo.dep = { path = \"dep\" }\n",
+        )
+        .expect("write root manifest");
+        fs::write(root.join("main.orl"), "module demo.app\n").expect("write root source");
+
+        let output = run_lock_package(LockPackageOptions {
+            path: root.clone(),
+            locked: false,
+            cache_root: None,
+        })
+        .expect("write lockfile");
+        assert!(output.changed);
+        let lock = load_package_lock(&output.path).expect("read lockfile");
+        assert_eq!(lock.root_name, "demo.app");
+        assert_eq!(lock.dependencies.len(), 1);
+        assert_eq!(lock.dependencies[0].source, LockedDependencySource::Path);
+        assert_eq!(lock.dependencies[0].path.as_deref(), Some("dep"));
+
+        let second = run_lock_package(LockPackageOptions {
+            path: root.clone(),
+            locked: true,
+            cache_root: None,
+        })
+        .expect("validate unchanged lockfile");
+        assert!(!second.changed);
+        let _ = fs::remove_dir_all(root);
+    }
 }

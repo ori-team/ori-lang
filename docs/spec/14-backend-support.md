@@ -1,6 +1,6 @@
 # Backend support matrix
 
-Status: current as of 2026-07-13 (FREEZE-1 / 0.3.x).  
+Status: current as of 2026-07-23 (FREEZE-1 / 0.3.x).
 Residual cleanup: [`../planning/qa/residual-cleanup-2026-07-13.md`](../planning/qa/residual-cleanup-2026-07-13.md) · audit `tools/qa/residual_audit.sh`.
 
 This page separates three things:
@@ -26,15 +26,16 @@ Legend:
 | Traits and `any[Trait]` | yes | yes | partial | Native tests cover dynamic dispatch. |
 | Generics and monomorphization | yes | yes | partial | Native tests cover generic functions and imported generic traits. |
 | Lists, maps, sets, deques, queues, stacks | yes | yes | partial | Native runtime owns ARC edges. |
-| Structural equality | yes | yes | partial | Native and C/debug cover primitives, `bytes`, `optional`, `result`, tuples, lists, generic structs, `set[T]`, and `map[K,V]` when keys/elements support equality. |
+| Structural equality | yes | partial | partial | Native covers primitives, `bytes`, `optional`, `result`, tuples, lists, generic structs, `set[T]`, and `map[K,V]` when keys/elements support equality. C/debug covers the corresponding supported shapes but rejects `bytes` equality because its debug representation has no length-carrying payload. |
 | Hash tables, trees, graphs, heaps | yes | yes | partial | Native tests cover stdlib operations. |
 | JSON (`json.parse` / `json.Value`) | yes | yes | partial | C backend emits `ori_json_parse` FFI stubs without dedicated C lowering; execution requires native runtime. |
 | `ori.net` (TCP/TLS/UDP) | yes | yes | no | Native runtime only (rustls). Sync path blocking; async uses shared I/O reactor with `poll(2)` readiness (STDLIB-4k) for read/write/accept/UDP; connect/TLS still worker+future (STDLIB-4b). |
 | File I/O async | yes | yes | no | L1 `fs.read_text_async` / `write_text_async` (worker + future); L2 `read_text_in_background` Jobs. |
-| `bytes` with internal NUL | yes | yes | partial | `string` still rejects internal NUL at conversion boundary. |
+| `bytes` with internal NUL | yes | partial | partial | Native preserves embedded NUL bytes; the C/debug backend does not expose the length-carrying `bytes` representation. `string` still rejects internal NUL at conversion boundary. |
 | Unicode `string.len`, `slice`, `index_of` | yes | yes | partial | Indices are Unicode scalar indices, not byte offsets. |
 | Async functions and `await` | yes | yes* | no | *Promised native subset closed (LANG-1). Rare residual layout failures only — see inventory. C/debug rejects async. |
-| `using` resource cleanup | yes | yes | partial | Sync and async `using` supported; async dispose on normal return, `try`/`?`, cancel, fail, and `break`. |
+| `using` resource cleanup | yes | yes | partial | Sync and async `using` supported; async dispose on normal return, `try`, cancel, fail, and `break`. |
+| `core.Destructor` automatic cleanup | yes | yes | no | Native AOT/JIT run the callback before field cleanup. C/debug rejects it with `backend.c_unsupported` rather than changing semantics. |
 | `lazy.once` / `lazy.force` | yes | yes | partial | Native uses inline Cranelift codegen; C backend has dedicated lowering. |
 | LSP diagnostics positions | yes | yes | n/a | LSP uses UTF-16 columns and handles CRLF. |
 
@@ -47,17 +48,17 @@ Supported today (covered by `concurrency_async.rs`):
 - `await future` as a top-level expression statement.
 - `const x: T = await future`.
 - `return await future`.
-- `const x: T = try await future` and `const x: T = (await future)?`.
+- `const x: T = try await future`.
 - `await` inside top-level return expressions, call arguments, and operators.
 - `await` inside top-level statement conditions, such as `if await flag()`.
-- `using` inside `async func` with `dispose()` on scope exit, cancellation, failure, propagation (`try`/`?`), and `break`.
+- `using` inside `async func` with `dispose()` on scope exit, cancellation, failure, propagation (`try`), and `break`.
 - Multiple awaits in the same async function with preserved ARC locals across suspensions.
 
 ### LANG-1 status (2026-07-13)
 
 The **promised** native async subset above is **closed**: positive coverage lives in
 `compiler/crates/ori-driver/tests/concurrency_async.rs` (loops, branches, match,
-`using`, managed values across suspension, `try`/`?`, call/operator/condition
+`using`, managed values across suspension, `try`, call/operator/condition
 awaits, nested bodies).
 
 Shapes that still emit `backend.native_unsupported` are **not** open async
@@ -161,13 +162,14 @@ Legend:
 - Changing a row from `no` to `yes` requires a positive `build_c_backend_*`
   test in `multifile_imports.rs`.
 
-## C/debug async parity (v2 backlog — deferred)
+## C/debug async and concurrency scope
 
-Full async/concurrency parity in the C/debug backend is **not planned for v1**.
+Full async/concurrency parity in the C/debug backend is **intentionally not
+part of its contract**.
 The native Cranelift backend is the reference implementation for `async func`,
 `await`, `task.*`, `channel.*`, and `atomic.*`.
 
-Current C/debug behaviour (unchanged until v2):
+Current C/debug behaviour:
 
 - `async func` / `await` in user code: rejected at C codegen with an actionable
   message (`backend.c_unsupported` via `ori emit c`).
@@ -177,16 +179,13 @@ Current C/debug behaviour (unchanged until v2):
 Rationale: async on native uses a dedicated state machine, ARC frame edges, and
 runtime executor hooks that would duplicate a large fraction of `ori-runtime`
 in `ORI_RUNTIME_H`. The C route remains a **debug/transpile** path for sync
-programs, not a second production backend.
+programs, not a second production backend. Maintenance covers invalid C,
+compiler crashes, and wrong semantics inside the documented synchronous
+subset. New language features may reject C emission with
+`backend.c_unsupported`.
 
-Future options (v2, pick one):
-
-1. **Selective parity** — inline executor stubs for a minimal async subset.
-2. **Explicit deprecation** — document C backend as sync-only permanently.
-3. **Shared IR** — generate async state machines in a backend-agnostic layer
-   (large refactor).
-
-Until a v2 decision lands, do not mark C async as partial/yes in the matrix.
+Do not mark C async/concurrency as partial or supported unless a future
+language decision explicitly promotes C to a product backend.
 
 ## Rules for future work
 

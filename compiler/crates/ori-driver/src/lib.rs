@@ -1,6 +1,8 @@
+pub mod debugger;
 pub mod doc_export;
 pub mod emit;
 pub mod explain;
+pub mod incremental;
 pub mod oridoc;
 pub mod package;
 pub mod pipeline;

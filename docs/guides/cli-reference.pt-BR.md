@@ -74,6 +74,7 @@ Ori nunca a libera. Veja [../spec/19-abi.md](../spec/19-abi.md) §8.3b.
 | `ori summary` | Mostra entry, namespaces e imports do projeto |
 | `ori install <nome> --path .` | Instala um pacote no cache local |
 | `ori get` | Baixa dependências git/path para o cache local |
+| `ori lock [path]` | Resolve dependências e grava `ori.lock`; `--locked` apenas valida |
 | `ori publish` | Publica um pacote no registry de `ORI_REGISTRY` |
 | `ori update` | Atualiza a toolchain para a última release publicada |
 
@@ -165,6 +166,41 @@ O backend C é auxílio de depuração, não referência semântica — a refer�
 backend nativo
 ([../spec/14-backend-support.md](../spec/14-backend-support.md)).
 
+## Depuração de programas
+
+Use o debugger nativo cooperativo para programas nativos, inclusive funções
+async e closures:
+
+```text
+ori debug examples/cli_args/main.orl --breakpoint 41
+```
+
+Quando parar, `c` continua, `s` avança para a próxima linha instrumentada e
+`q` encerra o alvo. O adaptador de terminal mostra local, pilha (inclusive
+frames async) e variáveis visíveis. O mesmo catálogo de variáveis é gerado no
+Linux, macOS e Windows; os valores ao vivo vêm do snapshot cooperativo do
+runtime.
+
+Para uma IDE, inicie o servidor mínimo do Debug Adapter Protocol pelo stdio:
+
+```text
+ori debug --dap
+```
+
+O adaptador DAP aceita `initialize`, `launch`, `setBreakpoints`,
+`configurationDone`, `continue`, `next`, `threads`, `stackTrace`, `scopes`,
+`variables`, `evaluate` e `disconnect`. Campos de structs, `optional`,
+`result`, payloads de enums, mapas, conjuntos e coleções opacas suportadas
+aparecem com nomes qualificados (por exemplo `user.name`); listas expõem
+`length`/`capacity` e filhos indexados com limite seguro. Frames async continuam
+visíveis através de `await`, e capturas aparecem no frame da closure. Strings e
+bytes gerenciados mostram uma prévia limitada (bytes em hexadecimal); buffers
+estáticos ou estrangeiros só são lidos depois do registro de um comprimento
+exato. `evaluate` limita-se a aritmética escalar, comparações, lógica booleana e
+strings do último snapshot parado, sem executar código no alvo. Builds nativos
+também escrevem `program.debug.json`, um catálogo portátil de parâmetros,
+variáveis locais, bindings de padrões e capturas de closures com suas linhas.
+
 ---
 
 ## Variáveis de ambiente
@@ -179,5 +215,18 @@ backend nativo
 | `ORI_REQUIRE_PACKAGED_RUNTIME` | Falha em vez de cair no build do runtime via Cargo |
 | `ORI_USE_JIT` / `ORI_USE_AOT` | Força a rota de execução do `ori run` |
 | `ORI_USE_SYSTEM_LINKER` / `ORI_USE_BUNDLED_RUST_LLD` | Escolhe o linker |
+| `ORI_DISABLE_INCREMENTAL` | Desativa a reutilização da saída completa e dos objetos por arquivo em `.ori/incremental.json` / `.ori/modules/` |
+| `ORI_OBJCOPY` | Escolhe `objcopy`/`llvm-objcopy` para emitir seções DWARF no Linux |
 
 `--no-color` é aceito por todos os comandos e desliga a saída ANSI.
+
+Quando o projeto contém `ori.lock`, a resolução de dependências é validada
+antes da compilação. Imports continuam limitados ao pacote: use o módulo
+qualificado da dependência (`demo.math`) em vez de uma busca sem prefixo entre
+todos os pacotes.
+Rebuilds nativos informam quantos módulos-fonte mudaram. O rebuild mantém em
+`.ori/modules/` os objetos de arquivos inalterados e faz o link com os objetos
+regenerados; projetos com inicializadores globais dinâmicos, `--lib` ou
+instrumentação explícita de debug usam a rota monolítica conservadora. No
+Windows, um link nativo bem-sucedido escreve o `.pdb` irmão com caminho
+determinístico quando o linker o suporta.

@@ -89,9 +89,7 @@ fn stmt_always_recurses(stmt: &Stmt, name: &SmolStr) -> bool {
             }
             match_stmt.cases.iter().all(|case| match case {
                 // A guarded arm may not be taken at all.
-                MatchCase::Pattern {
-                    guard: Some(_), ..
-                } => false,
+                MatchCase::Pattern { guard: Some(_), .. } => false,
                 MatchCase::Pattern { body, .. } | MatchCase::Else { body, .. } => {
                     stmts_always_recurse(body, name)
                 }
@@ -227,9 +225,7 @@ fn expr_always_calls(expr: &Expr, name: &SmolStr) -> bool {
 fn is_self_reference(callee: &Expr, name: &SmolStr) -> bool {
     match callee {
         Expr::Ident(ident) => &ident.text == name,
-        Expr::QualifiedIdent(path) => {
-            path.parts.len() == 1 && &path.parts[0].text == name
-        }
+        Expr::QualifiedIdent(path) => path.parts.len() == 1 && &path.parts[0].text == name,
         _ => false,
     }
 }

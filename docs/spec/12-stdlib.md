@@ -277,7 +277,7 @@ close_output(output: io.Output)                      -> void
 from the three standard streams (`stdin`, `stdout`, `stderr`) and support
 byte-oriented read/write with `result` error propagation.
 
-`read` returns `none` inside `success` on EOF, or `error(msg)` on failure.
+`read` returns `none` inside `ok` on EOF, or `err(msg)` on failure.
 `write` returns the number of bytes written on success.
 `flush` is a no-op on `stderr` in some backends but is provided for consistency.
 
@@ -340,12 +340,13 @@ The async variants complete on the native runtime and return the same
 `result[string,string]` shape after `await`.
 
 `read_all(path)` is a text convenience alias for `read_text(path)`.
-`read_bytes(path)` returns the current `bytes` representation. Because the
-current `bytes` ABI is NUL-terminated, files containing `0x00` return an error
-until `bytes` gains explicit length storage.
+`read_bytes(path)` returns the exact file bytes, including embedded `0x00`
+values. The runtime keeps the payload NUL-terminated for safe interop and tracks
+the logical length separately, so the terminator is not part of the value.
 
-Planned but not implemented in the current compiler/runtime: none of the above
-file-handle APIs are missing — see **Dedicated file handle** below.
+All file-handle APIs listed above are implemented in the current
+compiler/runtime; see **Dedicated file handle** below for the opaque handle
+variant.
 
 ### Dedicated file handle (`ori.fs.File`)
 
@@ -403,7 +404,7 @@ join_non_empty(parts: list[string], separator: string) -> string
 truncate(s: string, max_len: int)             -> string
 ```
 
-Invalid input returns `error(message)`. The `ori.convert` parsing helpers are
+Invalid input returns `err(message)`. The `ori.convert` parsing helpers are
 kept for optional-style parsing where invalid input should become `none`.
 
 ## `ori.convert` - Type Conversion
@@ -897,7 +898,8 @@ format.bytes_size(bytes: int, style: string) -> string
 
 Current status:
 
-- `decimals` is explicit because stdlib default arguments are not supported yet.
+- `decimals` is explicit by API design; default arguments are supported by the
+  language, but this formatter keeps its precision choice visible at each call.
 - `date` and `datetime` currently format UTC ISO output.
 - `bytes_size` accepts `"binary"` for KiB/MiB units. Other style values use
   decimal KB/MB units.
@@ -1066,8 +1068,8 @@ Rules:
 
 - `task.spawn` runs a no-argument function or closure on a native thread.
 - Captured values and the return value must satisfy `Transferable`.
-- `task.join` returns `success(value)` when the task finishes normally.
-- `task.join` returns `error(...)` when the job was already joined, missing, or
+- `task.join` returns `ok(value)` when the task finishes normally.
+- `task.join` returns `err(...)` when the job was already joined, missing, or
   the native thread panicked. The error is an opaque `task.JoinError` value.
 - `task.detach` lets the native thread continue without requiring a join.
 - `task.sleep(ms)` creates a pending `future[void]` that becomes ready after
@@ -1111,9 +1113,9 @@ channel.close[T](ch: channel.Channel[T]) -> void
 Behavior:
 
 - `channel.create` creates an unbounded FIFO channel.
-- `channel.send` enqueues a transferable value, or returns `error(...)` when
+- `channel.send` enqueues a transferable value, or returns `err(...)` when
   the channel is closed.
-- `channel.receive` waits until a value is available, or returns `error(...)`
+- `channel.receive` waits until a value is available, or returns `err(...)`
   when the channel is closed and empty.
 - `channel.close` closes the channel and wakes waiting receivers.
 
@@ -1164,7 +1166,7 @@ json.stringify_pretty(value: json.Value) -> string
 Current behavior:
 
 - `json.parse(text)` returns `ok(Value)` for valid JSON.
-- `json.parse(text)` returns `error("invalid json")` for invalid JSON.
+- `json.parse(text)` returns `err("invalid json")` for invalid JSON.
 - `json.stringify` and `json.stringify_pretty` serialize the structured `Value`
   enum recursively.
 
@@ -1282,7 +1284,8 @@ os.arch() -> string              -- "x86_64", "aarch64", etc.
 Current implementation notes:
 
 - `os.args()` returns the process argument vector as reported by the host. The
-  first item is the executable path/name when the platform provides it.
+  first item is the executable path/name when the platform provides it. The
+  runtime keeps these host-owned strings valid for the process lifetime.
 - `os.env(name)` returns `some(value)` when the variable exists and `none`
   otherwise.
 - `os.platform()` currently normalizes known targets to `"windows"`, `"linux"`,
@@ -1304,6 +1307,8 @@ args.program_name_or(fallback: string) -> string
 ```
 
 `ori.args` is a small `.orl` convenience layer over `ori.os.args`.
+`get_or` copies a selected argument before the temporary argument list is
+released, so the returned `string` can safely outlive the lookup expression.
 
 ---
 
@@ -1343,7 +1348,7 @@ for local project/tool config, not for a full schema-validation framework.
 ## `ori.Error` — Standard Error Type
 
 Status: implemented base value type. `import ori.Error` is accepted. Prefer an
-alias when constructing the value, because `error(...)`/`Error(...)` are also
+alias when constructing the value, because `err(...)`/`Error(...)` are also
 result wrapper forms.
 
 ```ori

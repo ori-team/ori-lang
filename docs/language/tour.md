@@ -246,6 +246,22 @@ main()
 end
 ```
 
+Most code needs no manual memory handling. For the uncommon case where a value
+owns something outside Ori's managed heap, it may implement
+`core.Destructor`:
+
+```ori
+apply NativeHandle use core.Destructor
+    mut destroy(self)
+        close_external(self.id)
+    end
+end
+```
+
+`destroy` runs automatically when the last reference dies. Its timing may be
+delayed by a reference cycle, so use `using` + `core.Disposable` when a file,
+socket, or similar resource must close at the end of a specific scope.
+
 ---
 
 ## 7. Functions and style

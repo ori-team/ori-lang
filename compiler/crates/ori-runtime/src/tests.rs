@@ -141,6 +141,45 @@ fn string_and_bytes_use_nul_terminated_payload_layout() {
 }
 
 #[test]
+fn bytes_equality_compares_length_and_embedded_nul_content() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    arc_state().lock().unwrap().allocations.clear();
+    arc_state().lock().unwrap().edges.clear();
+
+    unsafe {
+        let same_left = cstring_from_bytes(vec![0x41, 0x00, 0x42]);
+        let same_right = cstring_from_bytes(vec![0x41, 0x00, 0x42]);
+        let different = cstring_from_bytes(vec![0x41, 0x00, 0x43]);
+        let different_length = cstring_from_bytes(vec![0x41, 0x00]);
+
+        assert_eq!(ori_bytes_eq(same_left, same_right), 1);
+        assert_eq!(ori_bytes_eq(same_left, different), 0);
+        assert_eq!(ori_bytes_eq(same_left, different_length), 0);
+
+        ori_arc_release(same_left);
+        ori_arc_release(same_right);
+        ori_arc_release(different);
+        ori_arc_release(different_length);
+    }
+}
+
+#[test]
+fn debug_payload_preview_is_bounded_and_registry_backed() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    unsafe {
+        let text = cstring_from_str(&"x".repeat(300));
+        let (preview, content_len) = registered_payload_preview(text, 16).expect("managed text");
+        assert_eq!(content_len, 300);
+        assert_eq!(preview.len(), 16);
+        assert_eq!(preview, vec![b'x'; 16]);
+        ori_arc_release(text);
+
+        let foreign = c"foreign".as_ptr().cast::<u8>();
+        assert!(registered_payload_preview(foreign, 16).is_none());
+    }
+}
+
+#[test]
 fn string_len_and_slice_use_unicode_scalar_indices() {
     let _guard = TEST_ARC_LOCK.lock().unwrap();
     arc_state().lock().unwrap().allocations.clear();
@@ -604,6 +643,43 @@ fn optional_and_result_layouts_match_native_backend() {
         assert_eq!(*(result.add(ptr_size) as *mut *mut u8), payload);
         free_result(result);
         ori_arc_release(payload);
+    }
+}
+
+#[test]
+fn borrowed_managed_optional_releases_its_payload_edge_once() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    arc_state().lock().unwrap().allocations.clear();
+    arc_state().lock().unwrap().edges.clear();
+
+    unsafe {
+        let list = ori_list_new();
+        let item = cstring_from_str("item");
+        ori_list_push_borrowed_maybe_managed(list, item as i64);
+        ori_arc_release(item);
+
+        let optional = ori_list_try_get(list, 0);
+        let borrowed_item = (*optional).value as *mut u8;
+        assert_eq!(
+            (*header_for(borrowed_item))
+                .refcount
+                .load(AtomicOrdering::SeqCst),
+            2
+        );
+
+        ori_arc_release(optional as *mut u8);
+
+        assert!(header_for_registered(borrowed_item).is_some());
+        assert_eq!(cstr_str(borrowed_item), "item");
+        assert_eq!(
+            (*header_for(borrowed_item))
+                .refcount
+                .load(AtomicOrdering::SeqCst),
+            1
+        );
+
+        ori_arc_release(list as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
     }
 }
 

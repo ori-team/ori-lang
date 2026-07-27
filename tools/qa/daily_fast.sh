@@ -15,6 +15,8 @@ export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
 cd "$comp"
 echo "== S0 cargo check --workspace =="
 cargo check --workspace
+echo "== S0 strict clippy (runtime + codegen + driver) =="
+cargo clippy -p ori-runtime -p ori-codegen -p ori-driver --tests --no-deps -- -D warnings
 echo "== S1 unit crates =="
 cargo test -p ori-lexer -- --quiet 2>/dev/null || true
 cargo test -p ori-parser -- --quiet 2>/dev/null || true

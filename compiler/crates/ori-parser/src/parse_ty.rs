@@ -1,5 +1,5 @@
 use crate::parser::Parser;
-use ori_ast::ty::{ConstArgValue, Type};
+use ori_ast::ty::{ConstExpr, Type};
 use ori_lexer::TokenKind;
 
 macro_rules! primitive_type {
@@ -317,50 +317,25 @@ impl<'src> Parser<'src> {
         Some(Type::ConstArg { name, value, span })
     }
 
-    /// The value after `name:` in a const type argument, with its span.
+    /// The CT-0 expression after `name:` in a const type argument.
     ///
-    /// Either an integer literal (`size: 8`) or the name of a `const` parameter
-    /// in scope (`size: cap`), which lets a generic type pass its own const
-    /// parameter down to a nested type.
-    fn parse_const_arg_value(&mut self) -> Option<(ConstArgValue, ori_diagnostics::Span)> {
-        // A bare identifier names a const parameter.
-        if matches!(self.peek_kind(), Some(TokenKind::Ident)) {
-            let name = self.parse_name()?;
-            let span = name.span;
-            return Some((ConstArgValue::Param(name), span));
-        }
-
-        let tok = self.peek()?.clone();
-        let negative = tok.kind == TokenKind::Minus;
-        if negative {
-            self.advance();
-        }
-        if !matches!(self.peek_kind(), Some(TokenKind::IntLit)) {
-            let span = self.current_span();
-            self.error(
-                "parse.expected_const_arg_value",
-                "a named type argument takes an integer constant or a `const` parameter, e.g. `size: 8` or `size: cap`",
-                span,
-            );
-            return None;
-        }
-        let value_tok = self.advance().unwrap();
-        let text = self.slice(value_tok.span).replace('_', "");
-        let value: i64 = match text.parse() {
-            Ok(v) => v,
-            Err(_) => {
+    /// Parsing starts through the normal expression grammar, then narrows the
+    /// result to the side-effect-free constant AST. Type lowering evaluates
+    /// concrete expressions and preserves a direct const parameter reference.
+    fn parse_const_arg_value(&mut self) -> Option<(ConstExpr, ori_diagnostics::Span)> {
+        let expr = self.parse_expr()?;
+        let span = expr.span();
+        match ConstExpr::from_expr(expr) {
+            Ok(const_expr) => Some((const_expr, span)),
+            Err(unsupported_span) => {
                 self.error(
-                    "parse.expected_const_arg_value",
-                    "integer constant is out of range for a type argument",
-                    value_tok.span,
+                    "parse.expected_const_expression",
+                    "a named type argument accepts only constants, integer arithmetic, comparisons, boolean logic, and inline `if`",
+                    unsupported_span,
                 );
-                return None;
+                None
             }
-        };
-        Some((
-            ConstArgValue::Literal(if negative { -value } else { value }),
-            value_tok.span,
-        ))
+        }
     }
 
     /// `array[T, size: N]` — element type, then the length as a named const.
@@ -496,7 +471,9 @@ impl<'src> Parser<'src> {
         Some((args, end))
     }
 
-    pub(crate) fn parse_type_arg_list_free(&mut self) -> Option<(Vec<Type>, ori_diagnostics::Span)> {
+    pub(crate) fn parse_type_arg_list_free(
+        &mut self,
+    ) -> Option<(Vec<Type>, ori_diagnostics::Span)> {
         let open = match self.peek_kind() {
             Some(TokenKind::LBracket) => TokenKind::LBracket,
             Some(TokenKind::Lt) => {

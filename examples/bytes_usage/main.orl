@@ -3,37 +3,37 @@ module app.bytes_demo
 import ori.io = io
 
 main()
-    io.print("Bytes Primitive Demonstration")
-    io.print("-----------------------------")
+    io.println("Bytes Primitive Demonstration")
+    io.println("-----------------------------")
 
     -- Create bytes from a string
     const b1: bytes = "Ori".to_bytes()
-    io.print(f"Bytes 1 Length: {b1.len()}")
-    io.print(f"Bytes 1 Hex: {b1.to_hex()}")
+    io.println(f"Bytes 1 Length: {b1.len()}")
+    io.println(f"Bytes 1 Hex: {b1.to_hex()}")
 
     -- Direct access to bytes
     const first_byte: u8 = b1.get(0)
-    io.print(f"First byte value: {int(first_byte)}")
+    io.println(f"First byte value: {int(first_byte)}")
 
     -- Concatenation
     const b2: bytes = " Language".to_bytes()
     const combined: bytes = b1.concat(b2)
-    io.print(f"Combined Length: {combined.len()}")
+    io.println(f"Combined Length: {combined.len()}")
     
     -- Decoding back to string
     match combined.decode_utf8()
         case ok(s):
-            io.print(f"Decoded: {s}")
+            io.println(f"Decoded: {s}")
         case err(e):
-            io.print(f"Decode Error: {e}")
+            io.println(f"Decode Error: {e}")
     end
 
     -- Slicing
     const sub: bytes = combined.slice(0, 3)
     match sub.decode_utf8()
         case ok(s):
-            io.print(f"Sliced (0-3): {s}")
+            io.println(f"Sliced (0-3): {s}")
         case err(_):
-            io.print("Slice error")
+            io.println("Slice error")
     end
 end

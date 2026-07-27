@@ -988,7 +988,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "ori-ast"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "ori-diagnostics",
  "smol_str",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "ori-codegen"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -1004,24 +1004,27 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "gimli",
  "libloading",
+ "object",
  "ori-ast",
  "ori-diagnostics",
  "ori-hir",
  "ori-types",
+ "serde_json",
  "smol_str",
 ]
 
 [[package]]
 name = "ori-diagnostics"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "ori-driver"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "clap",
  "ori-ast",
@@ -1041,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "ori-hir"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "ori-ast",
  "ori-diagnostics",
@@ -1051,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "ori-lexer"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "logos",
  "ori-diagnostics",
@@ -1059,7 +1062,7 @@ dependencies = [
 
 [[package]]
 name = "ori-lsp"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "lsp-types 0.95.1",
  "ori-ast",
@@ -1075,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "ori-parser"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "ori-ast",
  "ori-diagnostics",
@@ -1085,7 +1088,7 @@ dependencies = [
 
 [[package]]
 name = "ori-runtime"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "argon2",
  "data-encoding",
@@ -1103,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "ori-types"
-version = "0.3.5"
+version = "0.3.8"
 dependencies = [
  "ori-ast",
  "ori-diagnostics",

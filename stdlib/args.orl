@@ -1,6 +1,7 @@
 module ori.args
 
 import ori.os = os
+import ori.string = str
 
 public all() -> list[string]
     return os.args()
@@ -12,7 +13,9 @@ end
 
 public get_or(index: int, fallback: string) -> string
     if some(value) = ori.list.try_get(os.args(), index)
-        return value
+        -- `os.args()` owns the returned string. Copy it before the temporary
+        -- argument list is released so callers can safely retain the value.
+        return str.concat("", value)
     end
     return fallback
 end

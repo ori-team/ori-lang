@@ -158,6 +158,76 @@ end
     );
 }
 
+#[test]
+fn jit_path_relative_keeps_list_segments_alive() {
+    let dir = TestDir::new("jit_path_relative_lifetime");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.path = path
+
+main()
+    io.print(path.relative("a/b/c", "a/b"))
+end
+"#,
+    );
+
+    let output = run_jit(&dir.path("main.orl"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "ori run (JIT) failed: status={:?} stderr={stderr}",
+        output.status
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "c\n");
+}
+
+#[test]
+fn jit_run_custom_destructor_before_field_cleanup() {
+    let dir = TestDir::new("jit_custom_destructor");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+
+struct Resource
+    label: string
+end
+
+apply Resource use core.Destructor
+    mut destroy(self)
+        io.println("destroy:" + self.label)
+    end
+end
+
+consume()
+    const resource: Resource = Resource { label: "jit" + "-resource" }
+end
+
+main()
+    consume()
+    io.println("done")
+end
+"#,
+    );
+
+    let output = run_jit(&dir.path("main.orl"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "ori run (JIT) failed: status={:?} stderr={stderr}",
+        output.status
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "destroy:jit-resource\ndone\n"
+    );
+}
+
 /// Guarded cases must fall through to the next arm when the guard is false
 /// (regression: guards were dropped in AST→HIR lowering — 2026-07-19).
 #[test]

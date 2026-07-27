@@ -843,6 +843,21 @@ end
 }
 
 #[test]
+fn type_accepts_equality_on_bytes() {
+    let dir = TestDir::new("type_bytes_equality");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+main()
+    check b"ori" == b"ori", "bytes equality"
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
 fn type_rejects_equality_on_function_types() {
     let dir = TestDir::new("type_eq_func");
     dir.write(
@@ -4078,6 +4093,31 @@ end
 }
 
 #[test]
+fn compile_runs_args_get_or_without_dangling_payload() {
+    let dir = TestDir::new("args_get_or_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+imports
+    ori.args = args
+    ori.io = io
+end
+
+main()
+    io.println(args.get_or(1, "fallback"))
+end
+"#,
+    );
+    let exe = exe_path(&dir, "args_get_or");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).arg("provided").output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "provided");
+}
+
+#[test]
 fn crosscut_build_generates_c_source_with_entry_point() {
     let dir = TestDir::new("crosscut_build_c");
     dir.write(
@@ -5735,6 +5775,114 @@ end
 }
 
 #[test]
+fn compile_runs_ct0_const_expressions() {
+    let dir = TestDir::new("ct0_const_expressions");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+const words: int = 4
+const page_size: int = if words == 4 then words * 2 else 1
+
+struct Page
+    cells: array[int, size: page_size]
+end
+
+struct Marker[const size: int]
+    value: int
+end
+
+main()
+    const values: array[int, size: (2 + 2) * 2] = [1, 2, 3, 4, 5, 6, 7, 8]
+    const page: Page = Page { cells: values }
+    const marker: Marker[size: words * 2] = Marker { value: 9 }
+    io.println(f"{page.cells[7]}")
+    io.println(f"{marker.value}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let exe = exe_path(&dir, "ct0_const_expressions");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "8\n9\n");
+}
+
+#[test]
+fn check_reports_ct0_const_expression_failures() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "overflow",
+            "main()\n    const xs: array[int, size: 9223372036854775807 + 1] = []\nend\n",
+            "consteval.overflow",
+        ),
+        (
+            "division_by_zero",
+            "main()\n    const xs: array[int, size: 8 / 0] = []\nend\n",
+            "consteval.division_by_zero",
+        ),
+        (
+            "cycle",
+            "const left: int = right\nconst right: int = left\n\nmain()\n    const xs: array[int, size: left] = []\nend\n",
+            "consteval.cycle",
+        ),
+        (
+            "boolean_result",
+            "main()\n    const xs: array[int, size: 1 < 2] = []\nend\n",
+            "type.const_argument_not_integer",
+        ),
+        (
+            "runtime_initializer",
+            "capacity() -> int\n    return 4\nend\n\nconst cap: int = capacity()\n\nmain()\n    const xs: array[int, size: cap] = []\nend\n",
+            "consteval.unsupported_expression",
+        ),
+        (
+            "runtime_variable",
+            "var cap: int = 4\n\nmain()\n    const xs: array[int, size: cap + 1] = []\nend\n",
+            "consteval.non_const_name",
+        ),
+        (
+            "undefined_nested_name",
+            "main()\n    const xs: array[int, size: missing + 1] = []\nend\n",
+            "consteval.undefined_name",
+        ),
+        (
+            "non_boolean_condition",
+            "main()\n    const xs: array[int, size: if 1 then 2 else 3] = []\nend\n",
+            "consteval.type_mismatch",
+        ),
+        (
+            "unsigned_outside_ct0_range",
+            "main()\n    const xs: array[int, size: 18446744073709551615u64] = []\nend\n",
+            "consteval.invalid_literal",
+        ),
+        (
+            "symbolic_arithmetic",
+            "struct Buffer[const cap: int]\n    cells: array[int, size: cap + 1]\nend\n\nmain()\nend\n",
+            "type.const_param_expression_unsupported",
+        ),
+    ];
+
+    for (label, body, expected) in cases {
+        let dir = TestDir::new(&format!("ct0_bad_{label}"));
+        dir.write("main.orl", &format!("module app.main\n\n{body}"));
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(expected),
+            "`{label}` should report `{expected}`: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+#[test]
 fn check_rejects_bad_arrays() {
     let cases: &[(&str, &str, &str)] = &[
         (
@@ -5766,7 +5914,10 @@ fn check_rejects_bad_arrays() {
 
     for (label, body, expected) in cases {
         let dir = TestDir::new(&format!("array_bad_{label}"));
-        dir.write("main.orl", &format!("module app.main\n\nmain()\n{body}end\n"));
+        dir.write(
+            "main.orl",
+            &format!("module app.main\n\nmain()\n{body}end\n"),
+        );
         let out = run_check(&dir.path("main.orl")).unwrap();
         assert!(
             diagnostic_codes(&out).contains(expected),
@@ -5967,7 +6118,10 @@ fn check_rejects_recursion_with_no_escape() {
 
     for (label, body) in cases {
         let dir = TestDir::new(&format!("uncond_rec_{label}"));
-        dir.write("main.orl", &format!("module app.main\n\n{body}\nmain()\nend\n"));
+        dir.write(
+            "main.orl",
+            &format!("module app.main\n\n{body}\nmain()\nend\n"),
+        );
         let out = run_check(&dir.path("main.orl")).unwrap();
         assert!(
             diagnostic_codes(&out).contains(&"control.unconditional_recursion"),
@@ -6004,7 +6158,10 @@ fn check_accepts_recursion_that_can_terminate() {
 
     for (label, body) in cases {
         let dir = TestDir::new(&format!("ok_rec_{label}"));
-        dir.write("main.orl", &format!("module app.main\n\n{body}\nmain()\nend\n"));
+        dir.write(
+            "main.orl",
+            &format!("module app.main\n\n{body}\nmain()\nend\n"),
+        );
         let out = run_check(&dir.path("main.orl")).unwrap();
         assert!(
             !diagnostic_codes(&out).contains(&"control.unconditional_recursion"),
@@ -6981,7 +7138,7 @@ end
 
     let out = run_check(&dir.path("main.orl")).unwrap();
     assert!(
-        diagnostic_codes(&out).contains(&"parse.expected_const_arg_value"),
+        diagnostic_codes(&out).contains(&"parse.expected_const_expression"),
         "a named type argument takes an integer constant: {:?}",
         out.diagnostics
     );
@@ -7318,6 +7475,81 @@ end
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["? 0"]);
+}
+
+/// A receiver-less trait function can be dispatched statically through a
+/// constrained type parameter. Monomorphization selects the concrete `apply`
+/// implementation without inventing a runtime receiver.
+#[test]
+fn compile_runs_generic_associated_function() {
+    let dir = TestDir::new("generic_assoc_fn");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.core = core
+
+struct User
+    age: int
+end
+
+apply User use core.Default
+    default() -> User
+        return User { age: 42 }
+    end
+end
+
+make_default for T: core.Default (prototype: T) -> T
+    return T.default()
+end
+
+main()
+    const prototype: User = User { age: 0 }
+    const user: User = make_default(prototype)
+    io.println(f"{user.age}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "generic_assoc_fn");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "42");
+}
+
+#[test]
+fn check_rejects_ambiguous_generic_associated_function() {
+    let dir = TestDir::new("ambiguous_generic_assoc_fn");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+trait Alpha
+    value() -> int
+end
+
+trait Beta
+    value() -> int
+end
+
+read_value for T: Alpha, T: Beta (prototype: T) -> int
+    return T.value()
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    assert!(
+        diagnostic_codes(&out).contains(&"type.ambiguous_method"),
+        "{:?}",
+        out.diagnostics
+    );
 }
 
 /// An inherent method without `self` is an associated function on the type:

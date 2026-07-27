@@ -196,6 +196,9 @@ pub fn resolve_many<S: Into<SmolStr>>(
 
     // ── Phase 2: lower function signatures ───────────────────────────────────
     let reexports = collect_reexports(files);
+    let const_evaluations =
+        crate::const_eval::collect_module_const_evaluations(files, &reexports, &def_map);
+    def_map.set_const_evaluations(const_evaluations);
 
     let mut func_sigs = Vec::new();
     let mut value_sigs = Vec::new();
@@ -256,7 +259,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                             all_tp.extend(m.type_params.iter().map(|p| p.name.text.clone()));
                             let mut m_aliases = aliases.clone();
                             m_aliases.insert(SmolStr::new("Self"), s.name.text.clone());
-                            let mut params: Vec<Ty> = m
+                            let params: Vec<Ty> = m
                                 .params
                                 .iter()
                                 .map(|p| {
@@ -384,10 +387,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                         .iter()
                         .map(|p| p.name.text.clone())
                         .collect();
-                    let self_ty = type_def_id
-                        .map(|def_id| Ty::Named(def_id, Vec::new()))
-                        .unwrap_or(Ty::Infer(0));
-
                     // Free methods + free binds: inherent on the type.
                     // Binds were aliased in phase 1b (`Type.slot` → free fn DefId);
                     // missing targets are already diagnosed there.
@@ -403,7 +402,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                 &aliases,
                                 &HashMap::new(),
                                 &def_map,
-                                self_ty.clone(),
                                 *file_id,
                                 sink,
                                 &mut func_sigs,
@@ -460,7 +458,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         &aliases,
                                         &section_assoc_types,
                                         &def_map,
-                                        self_ty.clone(),
                                         *file_id,
                                         sink,
                                         &mut func_sigs,
@@ -537,7 +534,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                 all_tp.extend(sig.type_params.iter().map(|p| p.name.text.clone()));
                                 let mut m_aliases = aliases.clone();
                                 m_aliases.insert(SmolStr::new("Self"), t.name.text.clone());
-                                let mut params: Vec<Ty> = sig
+                                let params: Vec<Ty> = sig
                                     .params
                                     .iter()
                                     .map(|p| {
@@ -598,7 +595,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                 all_tp.extend(func.type_params.iter().map(|p| p.name.text.clone()));
                                 let mut m_aliases = aliases.clone();
                                 m_aliases.insert(SmolStr::new("Self"), t.name.text.clone());
-                                let mut params: Vec<Ty> = func
+                                let params: Vec<Ty> = func
                                     .params
                                     .iter()
                                     .map(|p| {
@@ -1095,7 +1092,6 @@ fn resolve_apply_method_func_sig(
     // signature can name it. Empty for free members.
     associated_types: &HashMap<SmolStr, ori_ast::ty::Type>,
     def_map: &DefMap,
-    self_ty: Ty,
     file_id: FileId,
     sink: &mut DiagnosticSink,
     func_sigs: &mut Vec<FuncSig>,
@@ -1104,7 +1100,7 @@ fn resolve_apply_method_func_sig(
     all_tp.extend(m.type_params.iter().map(|p| p.name.text.clone()));
     let mut m_aliases = aliases.clone();
     m_aliases.insert(SmolStr::new("Self"), type_name.clone());
-    let mut params: Vec<Ty> = m
+    let params: Vec<Ty> = m
         .params
         .iter()
         .map(|p| {
@@ -1232,6 +1228,7 @@ const CORE_TRAIT_NAMES: &[&str] = &[
     "Comparable",
     "Hashable",
     "Disposable",
+    "Destructor",
     "Iterable",
     "Default",
     "Error",
@@ -1395,6 +1392,15 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                 }],
                 "Disposable" => vec![TraitMethodSig {
                     name: SmolStr::new("dispose"),
+                    params: vec![self_ty],
+                    return_ty: Ty::Void,
+                    is_mut: true,
+                    has_default: false,
+                    has_self: true,
+                    span: ori_diagnostics::Span::DUMMY,
+                }],
+                "Destructor" => vec![TraitMethodSig {
+                    name: SmolStr::new("destroy"),
                     params: vec![self_ty],
                     return_ty: Ty::Void,
                     is_mut: true,
@@ -1755,12 +1761,9 @@ fn register_item(
                         // `Type.method(...)`, so it also answers at the
                         // type-scoped path, like a free member.
                         if !has_explicit_self_param(&m.params) {
-                            let short = SmolStr::new(format!(
-                                "{}.{}.{}",
-                                ns, type_name, m.name.text
-                            ));
-                            let full =
-                                SmolStr::new(format!("{}.{}", ns, m_name));
+                            let short =
+                                SmolStr::new(format!("{}.{}.{}", ns, type_name, m.name.text));
+                            let full = SmolStr::new(format!("{}.{}", ns, m_name));
                             if def_map.lookup(&short).is_some() {
                                 sink.emit(
                                     Diagnostic::error(
@@ -1775,9 +1778,7 @@ fn register_item(
                                         m.span,
                                         "defined again here",
                                     ))
-                                    .with_action(
-                                        "rename or remove one of the definitions",
-                                    ),
+                                    .with_action("rename or remove one of the definitions"),
                                 );
                             } else if let Some(target) = def_map.lookup(&full) {
                                 def_map.alias_path(short, target);

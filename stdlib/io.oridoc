@@ -69,30 +69,3 @@ doc func write_text
     returns:
         `result` with the byte count written, or an error.
 end
-
-doc func flush
-    summary:
-        Flushes `output`.
-    param output:
-        Stream to flush.
-    returns:
-        `result` indicating success or an error.
-end
-
-doc func close_input
-    summary:
-        Closes `input`; further reads will error.
-    param input:
-        Stream to close.
-    returns:
-        Nothing.
-end
-
-doc func close_output
-    summary:
-        Closes `output`; further writes will error.
-    param output:
-        Stream to close.
-    returns:
-        Nothing.
-end

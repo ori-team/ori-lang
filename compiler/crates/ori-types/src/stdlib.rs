@@ -2137,13 +2137,17 @@ pub fn stdlib_native_abi(
         "ori_bytes_from_list" => (vec![Ptr], Some(Ptr)),
         "ori_bytes_to_list" => (vec![Ptr], Some(Ptr)),
         "ori_process_run" | "ori_process_run_capture" => (vec![Ptr, Ptr], Some(Ptr)),
-        "ori_net_connect" | "ori_net_connect_tls" | "ori_net_connect_async"
+        "ori_net_connect"
+        | "ori_net_connect_tls"
+        | "ori_net_connect_async"
         | "ori_net_connect_tls_async" => (vec![Ptr, I64, I64], Some(Ptr)),
         "ori_net_listen" | "ori_net_udp_bind" => (vec![Ptr, I64], Some(Ptr)),
         "ori_net_accept" | "ori_net_accept_async" => (vec![Ptr], Some(Ptr)),
         "ori_net_close_listener" | "ori_net_udp_close" => (vec![Ptr], None),
         "ori_net_listener_port" | "ori_net_udp_local_port" => (vec![Ptr], Some(I64)),
-        "ori_net_udp_send_to" | "ori_net_udp_send_to_async" => (vec![Ptr, Ptr, I64, Ptr], Some(Ptr)),
+        "ori_net_udp_send_to" | "ori_net_udp_send_to_async" => {
+            (vec![Ptr, Ptr, I64, Ptr], Some(Ptr))
+        }
         "ori_net_udp_recv_from" | "ori_net_udp_recv_from_async" => (vec![Ptr, I64], Some(Ptr)),
         "ori_net_read_some" | "ori_net_read_some_async" => (vec![Ptr, I64], Some(Ptr)),
         "ori_net_set_read_timeout_ms" | "ori_net_set_write_timeout_ms" => {

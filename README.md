@@ -264,6 +264,7 @@ The `ori` CLI is implemented by `compiler/crates/ori-driver`.
 | `ori install name[@ver]` | install from `ORI_REGISTRY` into the package cache |
 | `ori install github.com/org/repo` | shallow-clone a Git package and install into the cache |
 | `ori get [path]` | fetch `git`/`path` dependencies declared in `ori.proj` or `ori.pkg.toml` |
+| `ori lock [path]` | resolve dependencies and write a reproducible `ori.lock` snapshot (`--locked` validates it) |
 | `ori publish <path>` | publish to `ORI_REGISTRY` (file tree or HTTP PUT tarball) |
 | `ori migrate-syntax <paths…>` | best-effort rewrite of pre-S3 syntax to S3 (`--dry-run`, `-v`) |
 
@@ -278,12 +279,20 @@ Useful environment variables:
 | `ORI_USE_AOT=1` | force AOT for `ori run` |
 | `ORI_USE_BUNDLED_RUST_LLD=1` | link through bundled `rust-lld` without the `rustc` driver |
 | `ORI_USE_SYSTEM_LINKER=1` | link through the platform linker directly |
+| `ORI_DISABLE_INCREMENTAL=1` | disable reuse of matching native outputs from `.ori/incremental.json` |
+| `ORI_OBJCOPY` | choose the `objcopy`/`llvm-objcopy` executable used for Linux DWARF sections |
 | `ORI_REQUIRE_PACKAGED_RUNTIME=1` | reject workspace runtime fallback during package validation |
 | `ORI_PACKAGE_CACHE` | override the local package cache used by `ori install` / `ori get` / dep resolve |
 | `ORI_REGISTRY` | package registry root (directory path or `https://…` base) for publish/fetch |
 | `ORI_REGISTRY_TOKEN` | optional Bearer token for HTTP `ori publish` |
 
 The full environment matrix lives in [AGENTS.md](AGENTS.md).
+
+Dependencies are isolated by package. Imports inside a package may use its
+local modules; imports from a dependency use the dependency's package-qualified
+name, for example `import math.format`, even when another dependency also has a
+`format` module. `ori lock` records the exact path, registry version, or Git
+revision used by the build.
 
 ## Project docs
 

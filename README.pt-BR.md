@@ -240,6 +240,7 @@ A CLI `ori` é implementada em `compiler/crates/ori-driver`.
 | `ori install <name> --path <dir>` | instala pacote local no cache |
 | `ori install name[@ver]` | instala de `ORI_REGISTRY` |
 | `ori get [path]` | busca deps git/path do manifesto |
+| `ori lock [path]` | resolve dependências e grava um snapshot reprodutível em `ori.lock` (`--locked` apenas valida) |
 | `ori publish <path>` | publica em `ORI_REGISTRY` (árvore de arquivos ou HTTP) |
 | `ori migrate-syntax <paths…>` | reescreve sintaxe pré-S3 → S3 |
 
@@ -254,9 +255,17 @@ Variáveis úteis:
 | `ORI_USE_AOT=1` | força AOT em `ori run` |
 | `ORI_USE_BUNDLED_RUST_LLD=1` | linka por `rust-lld` empacotado sem o driver `rustc` |
 | `ORI_USE_SYSTEM_LINKER=1` | linka diretamente pelo linker da plataforma |
+| `ORI_DISABLE_INCREMENTAL=1` | desativa a reutilização de saídas nativas em `.ori/incremental.json` |
+| `ORI_OBJCOPY` | escolhe o executável `objcopy`/`llvm-objcopy` usado para as seções DWARF no Linux |
 | `ORI_REQUIRE_PACKAGED_RUNTIME=1` | rejeita fallback para runtime do workspace durante validação de pacote |
 
 A matriz completa de ambiente está em [AGENTS.md](AGENTS.md).
+
+Os pacotes mantêm namespaces isolados. Imports locais ficam dentro do pacote
+que os declara; módulos de dependências usam o prefixo qualificado do pacote,
+como `math.format`. Assim, duas dependências podem ter um módulo `format` sem
+colisão. `ori lock` registra o caminho, a versão do registry ou a revisão Git
+exata usada no build.
 
 ## Visão geral da linguagem
 

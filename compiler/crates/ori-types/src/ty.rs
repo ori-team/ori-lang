@@ -1,5 +1,6 @@
 use crate::def::{DefId, DefKind, DefMap};
 use smol_str::SmolStr;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpaqueTy {
@@ -476,6 +477,86 @@ impl Ty {
         }
     }
 
+    /// Human-readable display name backed by a code-generation name table.
+    ///
+    /// Backends intentionally do not retain the resolver's full [`DefMap`].
+    /// Their compact name table is sufficient to keep internal `DefId` values
+    /// out of diagnostics while preserving declared names in nested types.
+    pub fn display_with_names(&self, names: &HashMap<DefId, SmolStr>) -> std::string::String {
+        match self {
+            Ty::Named(id, args) => {
+                let Some(name) = names.get(id) else {
+                    return self.display();
+                };
+                if args.is_empty() {
+                    name.to_string()
+                } else {
+                    let inner = args
+                        .iter()
+                        .map(|arg| arg.display_with_names(names))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{name}[{inner}]")
+                }
+            }
+            Ty::Optional(inner) => format!("optional[{}]", inner.display_with_names(names)),
+            Ty::Result(ok, err) => format!(
+                "result[{}, {}]",
+                ok.display_with_names(names),
+                err.display_with_names(names)
+            ),
+            Ty::List(inner) => format!("list[{}]", inner.display_with_names(names)),
+            Ty::Slice(inner) => format!("slice[{}]", inner.display_with_names(names)),
+            Ty::Array(elem, size) => match &**size {
+                Ty::ConstInt(_, value) => {
+                    format!("array[{}, size: {value}]", elem.display_with_names(names))
+                }
+                other => format!(
+                    "array[{}, size: {}]",
+                    elem.display_with_names(names),
+                    other.display_with_names(names)
+                ),
+            },
+            Ty::Set(inner) => format!("set[{}]", inner.display_with_names(names)),
+            Ty::Map(key, value) => format!(
+                "map[{}, {}]",
+                key.display_with_names(names),
+                value.display_with_names(names)
+            ),
+            Ty::Range(inner) => format!("range[{}]", inner.display_with_names(names)),
+            Ty::Lazy(inner) => format!("lazy[{}]", inner.display_with_names(names)),
+            Ty::Handle(inner) => format!("handle[{}]", inner.display_with_names(names)),
+            Ty::Future(inner) => format!("future[{}]", inner.display_with_names(names)),
+            Ty::TaskJob(inner) => format!("task.Job[{}]", inner.display_with_names(names)),
+            Ty::Channel(inner) => format!("channel.Channel[{}]", inner.display_with_names(names)),
+            Ty::Tuple(items) => {
+                let inner = items
+                    .iter()
+                    .map(|item| item.display_with_names(names))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("tuple[{inner}]")
+            }
+            Ty::Func { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|param| param.display_with_names(names))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("func({params}) -> {}", ret.display_with_names(names))
+            }
+            Ty::Opaque { kind, args } if !args.is_empty() => {
+                let args = args
+                    .iter()
+                    .map(|arg| arg.display_with_names(names))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}[{args}]", kind.display_name())
+            }
+            _ => self.display(),
+        }
+    }
+
     pub fn display(&self) -> std::string::String {
         match self {
             Ty::Bool => "bool".into(),
@@ -852,5 +933,22 @@ pub fn substitute_trait_self(ty: &Ty, trait_def_id: DefId, self_ty: &Ty) -> Ty {
             ret: Box::new(substitute_trait_self(ret, trait_def_id, self_ty)),
         },
         _ => ty.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DefId, HashMap, SmolStr, Ty};
+
+    #[test]
+    fn codegen_type_display_uses_declared_names_recursively() {
+        let user_id = DefId(7);
+        let names = HashMap::from([(user_id, SmolStr::new("User"))]);
+        let ty = Ty::Result(
+            Box::new(Ty::List(Box::new(Ty::Named(user_id, Vec::new())))),
+            Box::new(Ty::String),
+        );
+
+        assert_eq!(ty.display_with_names(&names), "result[list[User], string]");
     }
 }

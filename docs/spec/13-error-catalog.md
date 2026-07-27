@@ -91,7 +91,7 @@ when the compiler starts producing it.
 | `parse.implement_removed` | error | `implement Trait for Type` was removed; use `apply Type` with `use Trait` |
 | `parse.apply_trait_to_removed` | error | `apply Trait to Type` / `apply Trait for Type` was removed; use `apply Type` with `use Trait` |
 | `parse.apply_member_after_use` | error | Free methods/binds appear after a `use Trait` section (order is free members, then `use`) |
-| `parse.expected_const_arg_value` | error | A named type argument was given neither an integer constant nor a `const` parameter |
+| `parse.expected_const_expression` | error | A named type argument contains an expression outside the side-effect-free CT-0 subset |
 | `parse.expected_array_size` | error | `array[…]` is missing its length, or names it something other than `size`: write `array[int, size: 4]` |
 | `parse.associated_type_keyword_removed` | error | `type Name = …` for an associated type was removed; write `alias Name = …` |
 | `apply.redundant_use_block` | error | An `apply` block whose whole body is one `use` section; write the compact header `apply Type use Trait` |
@@ -110,7 +110,7 @@ when the compiler starts producing it.
 
 | Code | Severity | Description |
 |---|---|---|
-| `type.ambiguous_method` | error | Method call matches more than one trait method for the receiver type |
+| `type.ambiguous_method` | error | A method or generic associated-function call matches more than one trait bound |
 | `type.anon_struct_field_mismatch` | error | Anonymous struct literal fields do not match the expected struct type |
 | `type.anon_struct_type_unknown` | error | Anonymous struct literal is used without an expected struct type |
 | `type.arg_count_mismatch` | error | Function call has the wrong number of arguments |
@@ -167,7 +167,9 @@ when the compiler starts producing it.
 | `type.array_length_mismatch` | error | An array literal has a different number of elements than its declared length |
 | `type.array_element_not_inline` | error | An `array` element type is reference counted. Elements are stored inline with no ARC, so only scalars are allowed; use `list[T]` for managed values |
 | `type.negative_array_size` | error | `array[T, size: N]` was given a negative length |
-| `type.undefined_const_param` | error | A const type argument names a parameter that is not in scope (`size: cap` with no `const cap: int`) |
+| `type.undefined_const_param` | error | A simple const type argument names neither an in-scope const parameter nor a module constant |
+| `type.const_argument_not_integer` | error | A const type argument evaluated successfully, but produced `bool` instead of an integer |
+| `type.const_param_expression_unsupported` | error | A symbolic const parameter appears inside arithmetic or a conditional; CT-0 accepts const parameters only as direct arguments |
 | `type.tuple_index_out_of_bounds` | error | Tuple index is outside the tuple arity |
 | `type.type_mismatch` | error | Value type does not match the expected type |
 | `type.unused_result` | warning | `result[T, E]` expression value is discarded |
@@ -188,6 +190,19 @@ when the compiler starts producing it.
 | `type.iter_variadic_unsupported` | error | A `for` consumes a variadic iterator; not supported yet |
 | `type.iter_recursive_unsupported` | error | An iterator consumes itself (directly or mutually); inlining cannot terminate |
 | `type.assoc_fn_instance_call` | error | An associated function (no `self`) was called on a value; call it as `Type.method(...)` |
+
+### `consteval`
+
+| Code | Severity | Description |
+|------|----------|-------------|
+| `consteval.unsupported_expression` | error | A type-level expression refers to a module constant whose initializer needs runtime execution |
+| `consteval.invalid_literal` | error | An integer literal in a compile-time expression is invalid or outside the CT-0 integer range |
+| `consteval.undefined_name` | error | A nested compile-time expression refers to a name that cannot be resolved |
+| `consteval.non_const_name` | error | A compile-time expression refers to a function or variable instead of a module `const` |
+| `consteval.cycle` | error | Module constants needed by a type-level expression form a dependency cycle |
+| `consteval.overflow` | error | Checked integer arithmetic overflowed during compile-time evaluation |
+| `consteval.division_by_zero` | error | Compile-time division or remainder used zero as the divisor |
+| `consteval.type_mismatch` | error | A compile-time operator, condition, or declared scalar constant received an incompatible scalar type |
 
 ### `concurrency`
 
@@ -275,7 +290,8 @@ Regression tests: `compile_reports_violated_param_contract`,
 | `attr.c_export_not_public` | error | `@c_export` used on a non-`public` function |
 | `attr.c_export_async` | error | `@c_export` used on an async function |
 | `attr.c_export_generic` | error | `@c_export` used on a generic function |
-| `attr.c_export_bad_type` | error | `@c_export` parameter or return type is not FFI-safe. Scalars and `string` are accepted; aggregates are not (see [19-abi.md](19-abi.md) §8.3b) |
+| `attr.c_export_bad_name` | error | `@c_export` symbol name is not a portable, non-keyword C/C++ identifier |
+| `attr.c_export_bad_type` | error | `@c_export` parameter or return type is not FFI-safe. Scalars, `string`, non-empty non-generic structs, and direct `optional`/`result` bridges over those payloads are accepted (see [19-abi.md](19-abi.md) §8.3b) |
 
 ### `doc`
 

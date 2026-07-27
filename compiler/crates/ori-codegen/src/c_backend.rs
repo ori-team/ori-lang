@@ -1879,6 +1879,12 @@ pub struct CCodegen {
     current_return_ty: Option<Ty>,
 }
 
+impl Default for CCodegen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CCodegen {
     pub fn new() -> Self {
         Self {
@@ -1962,6 +1968,38 @@ impl CCodegen {
         }
     }
 
+    fn associated_func_name_for_type(
+        &self,
+        type_def_id: DefId,
+        method_name: &smol_str::SmolStr,
+    ) -> Option<smol_str::SmolStr> {
+        let mut matches = Vec::new();
+        for ((trait_def_id, impl_type_def_id), impl_sig) in &self.trait_impls {
+            if *impl_type_def_id != type_def_id {
+                continue;
+            }
+            let trait_method = self
+                .trait_layouts
+                .get(trait_def_id)?
+                .methods
+                .iter()
+                .find(|method| method.name == *method_name && !method.has_self);
+            let Some(trait_method) = trait_method else {
+                continue;
+            };
+            if let Some(method) = impl_sig
+                .methods
+                .iter()
+                .find(|method| method.name == *method_name)
+            {
+                matches.push(method.func_name.clone());
+            } else if let Some(default_name) = &trait_method.default_func_name {
+                matches.push(default_name.clone());
+            }
+        }
+        (matches.len() == 1).then(|| matches.remove(0))
+    }
+
     fn emit_indent(&mut self) {
         for _ in 0..self.indent {
             self.out.push_str("    ");
@@ -1988,6 +2026,10 @@ impl CCodegen {
     fn unsupported_expr(&mut self, message: impl Into<String>) -> String {
         self.push_codegen_error(message);
         "0".into()
+    }
+
+    fn display_ty(&self, ty: &Ty) -> String {
+        ty.display_with_names(&self.type_names)
     }
 
     pub fn generate(mut self, module: &HirModule) -> Result<String, String> {
@@ -2021,6 +2063,21 @@ impl CCodegen {
         for imp in &module.trait_impls {
             self.trait_impls
                 .insert((imp.trait_def_id, imp.type_def_id), imp.clone());
+        }
+        let destructor_trait_ids = module
+            .traits
+            .iter()
+            .filter(|trait_decl| trait_decl.name == "ori.core.Destructor")
+            .map(|trait_decl| trait_decl.def_id)
+            .collect::<HashSet<_>>();
+        if module
+            .trait_impls
+            .iter()
+            .any(|implementation| destructor_trait_ids.contains(&implementation.trait_def_id))
+        {
+            return Err(
+                "C backend does not support `core.Destructor`; use the native backend".to_owned(),
+            );
         }
 
         // Preamble
@@ -2061,7 +2118,7 @@ impl CCodegen {
 
         let abi_types = collect_abi_types(module);
         for ty in &abi_types {
-            self.emit_abi_type_def(&ty);
+            self.emit_abi_type_def(ty);
         }
         if !abi_types.is_empty() {
             self.out.push('\n');
@@ -2146,7 +2203,7 @@ impl CCodegen {
         // Forward declarations for functions
         for f in &module.funcs {
             if !f.closure_captures.is_empty() {
-                self.out.push_str(&format!("typedef struct {{\n"));
+                self.out.push_str("typedef struct {\n");
                 for cap in &f.closure_captures {
                     self.out.push_str(&format!(
                         "    {} {};\n",
@@ -2231,7 +2288,7 @@ impl CCodegen {
     fn emit_enum(&mut self, e: &HirEnum) {
         let name = def_c_name(e.def_id);
         // Discriminant enum
-        self.line(&format!("typedef enum {{"));
+        self.line("typedef enum {");
         self.push();
         for v in &e.variants {
             self.line(&format!("{}__{},", name, mangle(&v.name)));
@@ -2849,7 +2906,7 @@ impl CCodegen {
                     _ => {
                         self.push_codegen_error(format!(
                             "C backend does not support for-loop iterable type `{}`",
-                            iterable.ty.display()
+                            self.display_ty(&iterable.ty)
                         ));
                     }
                 }
@@ -3052,7 +3109,7 @@ impl CCodegen {
             let Some(trait_layout) = self.trait_layouts.get(trait_def_id).cloned() else {
                 return self.unsupported_expr(format!(
                     "C backend cannot box `{}` as any: missing trait layout for def {}",
-                    expr.ty.display(),
+                    self.display_ty(&expr.ty),
                     trait_def_id.0
                 ));
             };
@@ -3063,7 +3120,7 @@ impl CCodegen {
             else {
                 return self.unsupported_expr(format!(
                     "C backend cannot box `{}` as any: missing implementation for trait def {}",
-                    expr.ty.display(),
+                    self.display_ty(&expr.ty),
                     trait_def_id.0
                 ));
             };
@@ -3084,7 +3141,7 @@ impl CCodegen {
                 else {
                     return self.unsupported_expr(format!(
                         "C backend cannot box `{}` as any: missing method `{}` for trait def {}",
-                        expr.ty.display(),
+                        self.display_ty(&expr.ty),
                         method.name,
                         trait_def_id.0
                     ));
@@ -3274,7 +3331,7 @@ impl CCodegen {
                     ) {
                         let ret_ty_c = ty_to_c(&expr.ty);
                         if ret_ty_c == "void" {
-                            return format!("({{}})");
+                            return "({})".to_string();
                         } else {
                             return format!("(({ret_ty_c}){{0}})");
                         }
@@ -3398,7 +3455,7 @@ impl CCodegen {
                     };
                     let params_ty: Vec<String> = if let Ty::Func { params, .. } = &callee.ty {
                         let mut p = vec!["void*".to_string()];
-                        p.extend(params.iter().map(|t| ty_to_c(t)));
+                        p.extend(params.iter().map(ty_to_c));
                         p
                     } else {
                         vec!["void*".to_string()]
@@ -3508,8 +3565,8 @@ impl CCodegen {
                     }
                     _ => self.unsupported_expr(format!(
                         "C backend cannot propagate `{}` from function returning `{}`",
-                        inner.ty.display(),
-                        return_ty.display()
+                        self.display_ty(&inner.ty),
+                        self.display_ty(&return_ty)
                     )),
                 }
             }
@@ -3694,7 +3751,7 @@ impl CCodegen {
                     let method_sig = &trait_layout.methods[method_index];
                     let ret_ty = ty_to_c(&method_sig.return_ty);
                     let mut params_ty = vec!["void*".to_string()];
-                    params_ty.extend(method_sig.params.iter().skip(1).map(|t| ty_to_c(t)));
+                    params_ty.extend(method_sig.params.iter().skip(1).map(ty_to_c));
 
                     let mut call_args = vec![format!("({}).obj", r)];
                     call_args.extend(as_);
@@ -3717,6 +3774,29 @@ impl CCodegen {
                     format!("ori__{}({}, {})", mangle(method), r, as_.join(", "))
                 }
             }
+            HirExprKind::AssociatedCall {
+                receiver_ty,
+                method,
+                args,
+            } => {
+                let Ty::Named(type_def_id, _) = receiver_ty else {
+                    return self.unsupported_expr(format!(
+                        "associated call `{method}` reached C codegen without a concrete type"
+                    ));
+                };
+                let Some(target) = self.associated_func_name_for_type(*type_def_id, method) else {
+                    return self.unsupported_expr(format!(
+                        "missing associated implementation `{}` for `{}`",
+                        method,
+                        self.display_ty(receiver_ty)
+                    ));
+                };
+                let values = args
+                    .iter()
+                    .map(|arg| self.expr_to_c(arg))
+                    .collect::<Vec<_>>();
+                format!("{}({})", Self::func_c_name(&target), values.join(", "))
+            }
             HirExprKind::Index { object, index } => {
                 let o = self.expr_to_c(object);
                 let i = self.expr_to_c(index);
@@ -3734,7 +3814,7 @@ impl CCodegen {
                     ),
                     other => self.unsupported_expr(format!(
                         "C backend does not support `{}` as index expression",
-                        other.display()
+                        self.display_ty(other)
                     )),
                 }
             }
@@ -3746,7 +3826,7 @@ impl CCodegen {
                 if !matches!(key_ty, Ty::Int | Ty::String) {
                     return self.unsupported_expr(format!(
                         "C backend cannot lower map literal with `{}` keys yet",
-                        key_ty.display()
+                        self.display_ty(key_ty)
                     ));
                 }
                 let tmp = self.fresh_tmp();
@@ -3774,7 +3854,7 @@ impl CCodegen {
                 if !matches!(elem_ty, Ty::Int | Ty::String) {
                     return self.unsupported_expr(format!(
                         "C backend cannot lower set literal with `{}` values yet",
-                        elem_ty.display()
+                        self.display_ty(elem_ty)
                     ));
                 }
                 let tmp = self.fresh_tmp();
@@ -3889,6 +3969,9 @@ impl CCodegen {
     fn equality_to_c(&mut self, left: String, right: String, ty: &Ty, eq: bool) -> String {
         let equal = match ty {
             Ty::String => format!("ori_string_eq({}, {})", left, right),
+            Ty::Bytes => self.unsupported_expr(
+                "C backend does not support byte equality yet; use the native backend",
+            ),
             Ty::Any(_) => self.any_equality_to_c(left, right),
             Ty::Opaque { kind, args } if kind.is_list_backed_collection() => {
                 self.opaque_collection_equality_to_c(left, right, *kind, &args[0])
@@ -3939,7 +4022,12 @@ impl CCodegen {
             OpaqueTy::Stack => "ori_stack_to_list",
             OpaqueTy::LinkedList => "ori_linked_list_to_list",
             OpaqueTy::DoublyLinkedList => "ori_doubly_linked_list_to_list",
-            _ => panic!("unsupported opaque collection for C equality"),
+            _ => {
+                return self.unsupported_expr(format!(
+                    "equality is not supported for `{}` by the C backend",
+                    kind.display_name()
+                ));
+            }
         };
         let l_tmp = self.fresh_tmp();
         let r_tmp = self.fresh_tmp();
@@ -3984,7 +4072,7 @@ impl CCodegen {
         if !matches!(inner, Ty::Int | Ty::String) {
             return self.unsupported_expr(format!(
                 "C backend cannot lower set structural equality for `{}` keys yet",
-                inner.display()
+                self.display_ty(inner)
             ));
         }
         let left_tmp = self.fresh_tmp();
@@ -4016,7 +4104,7 @@ impl CCodegen {
         if !matches!(key_ty, Ty::Int | Ty::String) {
             return self.unsupported_expr(format!(
                 "C backend cannot lower map structural equality for `{}` keys yet",
-                key_ty.display()
+                self.display_ty(key_ty)
             ));
         }
         let left_tmp = self.fresh_tmp();
@@ -4149,7 +4237,7 @@ impl CCodegen {
         let Ty::Lazy(inner) = lazy_ty else {
             return self.unsupported_expr(format!(
                 "C backend cannot create lazy value with non-lazy type `{}`",
-                lazy_ty.display()
+                self.display_ty(lazy_ty)
             ));
         };
         let thunk_s = self.expr_to_c(thunk);
@@ -4165,7 +4253,7 @@ impl CCodegen {
         let Ty::Lazy(inner) = &value.ty else {
             return self.unsupported_expr(format!(
                 "C backend cannot force non-lazy type `{}`",
-                value.ty.display()
+                self.display_ty(&value.ty)
             ));
         };
         if matches!(inner.as_ref(), Ty::Void | Ty::Never) {
@@ -4220,7 +4308,7 @@ impl CCodegen {
             }
             other => self.unsupported_expr(format!(
                 "C backend cannot lower `.or()` for `{}`",
-                other.display()
+                self.display_ty(other)
             )),
         }
     }
@@ -4249,7 +4337,7 @@ impl CCodegen {
             ),
             other => self.unsupported_expr(format!(
                 "C backend cannot lower `.or_wrap()` for `{}`",
-                other.display()
+                self.display_ty(other)
             )),
         }
     }
@@ -4262,7 +4350,7 @@ impl CCodegen {
         let Ty::Map(key_ty, value_ty) = &first_arg.value.ty else {
             return self.unsupported_expr(format!(
                 "C backend map runtime call `{name}` received `{}`",
-                first_arg.value.ty.display()
+                self.display_ty(&first_arg.value.ty)
             ));
         };
         let key_ty = key_ty.as_ref();
@@ -4270,7 +4358,7 @@ impl CCodegen {
         if !matches!(key_ty, Ty::Int | Ty::String) {
             return self.unsupported_expr(format!(
                 "C backend map runtime call `{name}` does not support `{}` keys yet",
-                key_ty.display()
+                self.display_ty(key_ty)
             ));
         }
         let map_s = self.expr_to_c(&first_arg.value);
@@ -4352,14 +4440,14 @@ impl CCodegen {
         let Ty::Set(elem_ty) = &first_arg.value.ty else {
             return self.unsupported_expr(format!(
                 "C backend set runtime call `{name}` received `{}`",
-                first_arg.value.ty.display()
+                self.display_ty(&first_arg.value.ty)
             ));
         };
         let elem_ty = elem_ty.as_ref();
         if !matches!(elem_ty, Ty::Int | Ty::String) {
             return self.unsupported_expr(format!(
                 "C backend set runtime call `{name}` does not support `{}` values yet",
-                elem_ty.display()
+                self.display_ty(elem_ty)
             ));
         }
         let set_s = self.expr_to_c(&first_arg.value);
@@ -4567,7 +4655,7 @@ impl CCodegen {
             }
             _ => self.unsupported_expr(format!(
                 "C backend does not support `{}` as lvalue index expression",
-                expr.ty.display()
+                self.display_ty(&expr.ty)
             )),
         }
     }
@@ -5295,6 +5383,31 @@ mod tests {
         );
         assert!(
             err.contains("invalid HIR: `continue` outside of loop reached C backend"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn c_backend_rejects_custom_destructors_instead_of_dropping_them() {
+        let destructor_trait_id = DefId(2);
+        let resource_type_id = DefId(3);
+        let mut module = module_with_main(Vec::new());
+        module.traits.push(HirTrait {
+            def_id: destructor_trait_id,
+            name: "ori.core.Destructor".into(),
+            methods: Vec::new(),
+        });
+        module.trait_impls.push(HirTraitImpl {
+            trait_def_id: destructor_trait_id,
+            type_def_id: resource_type_id,
+            methods: Vec::new(),
+        });
+
+        let err = CCodegen::new()
+            .generate(&module)
+            .expect_err("custom destructor must not be silently omitted");
+        assert!(
+            err.contains("C backend does not support `core.Destructor`"),
             "{err}"
         );
     }

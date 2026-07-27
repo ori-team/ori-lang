@@ -117,6 +117,63 @@ end
     assert_eq!(stdout.trim(), "hello\nleaks:0");
 }
 
+#[test]
+fn compile_runs_custom_destructor_before_field_cleanup() {
+    let dir = TestDir::new("custom_destructor");
+    let (stdout, stderr, success) = compile_and_run_with_leak_check(
+        &dir,
+        r#"module app.main
+
+import ori.io = io
+import ori.core = core
+
+var destroyed_total: int = 0
+
+struct Resource
+    id: int
+    label: string
+end
+
+enum ResourceState
+    Open(id: int, label: string)
+    Closed
+end
+
+apply Resource use core.Destructor
+    mut destroy(self)
+        destroyed_total = destroyed_total + self.id
+        io.println("destroy:" + self.label)
+    end
+end
+
+apply ResourceState use core.Destructor
+    mut destroy(self)
+        match self
+            case Open(id, label):
+                destroyed_total = destroyed_total + id
+                io.println("destroy-state:" + label)
+            case Closed:
+                io.println("destroy-state:closed")
+        end
+    end
+end
+
+consume()
+    const resource: Resource = Resource { id: 7, label: "socket" + "-1" }
+    const state: ResourceState = ResourceState.Open(id: 3, label: "socket" + "-2")
+end
+
+main()
+    consume()
+    io.println(f"{destroyed_total}")
+end
+"#,
+        "custom_destructor",
+    );
+    assert!(success, "stdout={stdout:?} stderr={stderr:?}");
+    assert_eq!(stdout, "destroy-state:socket-2\ndestroy:socket-1\n10\n");
+}
+
 /// A single list created and dropped in a helper function should leave no
 /// live allocations. The list is created inside `exercise_list`, which
 /// returns only an `int` (non-managed), so the list is released by scope
@@ -2174,6 +2231,42 @@ end
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         "6\n3\n1\n",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_bytes_equality_with_embedded_nul_native() {
+    let dir = TestDir::new("bytes_equality_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const same_left: bytes = b"A\x00B"
+    const same_right: bytes = b"A\x00B"
+    const different: bytes = b"A\x00C"
+    io.println(string(same_left == same_right))
+    io.println(string(same_left != different))
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "bytes_equality_native");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "bytes equality failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "true\ntrue\n",
         "stderr: {stderr}"
     );
 }

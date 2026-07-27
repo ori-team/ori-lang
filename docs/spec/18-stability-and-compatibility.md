@@ -105,9 +105,8 @@ limitation of the current compiler, not a planned removal:
 | Gap | Detail |
 |---|---|
 | Higher-kinded types | Declaration parses, no implementation can satisfy it; **out of scope** by decision ([11](11-generics.md)) |
-| `@c_export` aggregates | Structs, `list`, `map`, `optional`, `result` have no stable C layout; scalars and `string` do cross ([19](19-abi.md) §8.3b) |
+| `@c_export` collection coverage | Scalar structs, managed struct handles, and direct `optional`/`result` bridges are supported. Direct `list`, `map`, `set`, tuples, nested sum types, and generic structs remain private or unsupported ([19](19-abi.md) §8.3b) |
 | Infinite recursion | Not detected at compile time (undecidable). At runtime the stack guard reports `stack overflow` instead of dying on a bare signal |
-| Type names in backend errors | Codegen messages still print `<def DefId(N)>`; the checker no longer does |
 
 ---
 

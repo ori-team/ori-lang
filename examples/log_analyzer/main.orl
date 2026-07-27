@@ -26,14 +26,16 @@ analyze(text: string) -> LogStats
         end
     end
 
-    return LogStats { info_count: info_count,
+    return LogStats {
+        info_count: info_count,
         warn_count: warn_count,
-        error_count: error_count, }
+        error_count: error_count,
+    }
 end
 
 main()
     const sample: string = "[info] boot\n[warn] cache miss\n[error] timeout\n[info] done"
-    const stats: LogStats = analyze(sample)
+    const stats = analyze(sample)
 
     io.print(f"info: {stats.info_count}")
     io.print(f"warn: {stats.warn_count}")

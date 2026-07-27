@@ -3,21 +3,22 @@
 ## Fast daily (`tools/qa/daily_fast.sh`) ~15–40 min
 
 1. `cargo check --workspace`  
-2. Crate units: lexer, parser, types, hir (as available)  
-3. `ori_spec` + `diagnostic_catalog`  
-4. `memory_arc` + `security_robustness` (subset ok if timeout)  
-5. Residual gate: `compile_runs_lang_res_product_surface_native`  
-6. Optional: `examples` smoke first N
+2. Strict Clippy for `ori-runtime`, `ori-codegen`, and `ori-driver` tests
+3. Crate units: lexer, parser, types, hir (as available)
+4. `ori_spec` + `diagnostic_catalog`
+5. `memory_arc` + `security_robustness` (subset ok if timeout)
+6. Residual gate: `compile_runs_lang_res_product_surface_native`
+7. Optional: `examples` smoke first N
 
 ## Full daily / weekly (`tools/qa/daily_full.sh`)
 
 Fast +  
 
-7. `cargo test --workspace`  
-8. `multifile_imports`  
-9. `concurrency_async` full  
-10. `tools/qa/examples_smoke.sh`  
-11. `tools/qa/perf_daily.sh`  
+8. `cargo test --workspace`
+9. `multifile_imports`
+10. `concurrency_async` full
+11. `tools/qa/examples_smoke.sh`
+12. `tools/qa/perf_daily.sh`
 
 ## Perf (`tools/qa/perf_daily.sh`)
 

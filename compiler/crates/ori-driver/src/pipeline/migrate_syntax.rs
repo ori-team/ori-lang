@@ -12,21 +12,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// CLI / library options for `ori migrate-syntax`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct MigrateSyntaxOptions {
     /// When true, do not write files; only report planned changes.
     pub dry_run: bool,
     /// When true, list every scanned file in the summary (`[ok]` for unchanged).
     pub verbose: bool,
-}
-
-impl Default for MigrateSyntaxOptions {
-    fn default() -> Self {
-        Self {
-            dry_run: false,
-            verbose: false,
-        }
-    }
 }
 
 /// One file considered by the migrator.
@@ -771,7 +762,7 @@ fn take_angle_type(s: &str, name_start: usize) -> Option<(usize, String, String)
     let rest = &s[name_start..];
     let mut chars = rest.char_indices();
     let mut name_end = 0;
-    while let Some((off, c)) = chars.next() {
+    for (off, c) in chars.by_ref() {
         if is_ident_char(c) {
             name_end = off + c.len_utf8();
             continue;
@@ -1141,150 +1132,6 @@ fn is_simple_expr_token(s: &str) -> bool {
     !s.is_empty() && !s.contains(" if ") && !s.contains(" else ") && !s.contains(" match ")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn migrates_namespace_func_import_elif() {
-        let src = r#"namespace app.main
-import ori.io as io
-import ori.list only (len)
-public func main()
-    if true
-    else if false
-    end
-end
-"#;
-        let result = migrate_source(src);
-        assert!(
-            result.source.contains("module app.main"),
-            "{}",
-            result.source
-        );
-        assert!(result.source.contains("import ori.io = io"));
-        assert!(result.source.contains("import ori.list (len)"));
-        assert!(result.source.contains("public main()"), "{}", result.source);
-        assert!(!result.source.contains("func main"));
-        assert!(result.source.contains("elif false"));
-    }
-
-    #[test]
-    fn keeps_func_callable_type() {
-        let src = "module app.main\nconst f: func(int) -> int = (x: int) => x\n";
-        let result = migrate_source(src);
-        assert!(result.source.contains("func(int) -> int"));
-        assert_eq!(result.source, src);
-    }
-
-    #[test]
-    fn migrates_angle_and_of_types() {
-        let src = "const xs: list<int> = []\nconst m: map of string to int = {}\n";
-        let result = migrate_source(src);
-        assert!(result.source.contains("list[int]"), "{}", result.source);
-        assert!(
-            result.source.contains("map[string, int]"),
-            "{}",
-            result.source
-        );
-    }
-
-    #[test]
-    fn migrates_do_closure_and_case_dot() {
-        let src = r#"const f = do(x: int) => x * 2
-match v
-    case .Ok(x):
-        return x
-end
-"#;
-        let result = migrate_source(src);
-        assert!(
-            result.source.contains("= (x: int) => x * 2"),
-            "{}",
-            result.source
-        );
-        assert!(result.source.contains("case Ok(x):"));
-        assert!(!result.source.contains("do("));
-    }
-
-    #[test]
-    fn migrates_simple_question_propagate() {
-        let src = "    const x: int = foo()?\n";
-        let result = migrate_source(src);
-        assert!(result.source.contains("try foo()"), "{}", result.source);
-        assert!(!result.source.contains(")?"));
-    }
-
-    #[test]
-    fn migrates_implement_header() {
-        let src = "implement Displayable for Point\n  display(self) -> string\n  end\nend\n";
-        let result = migrate_source(src);
-        assert!(result.source.contains("apply Point"));
-        assert!(result.source.contains("use Displayable"));
-        assert!(!result.notes.is_empty());
-    }
-
-    #[test]
-    fn does_not_touch_todo() {
-        let src = "todo()\n";
-        let result = migrate_source(src);
-        assert_eq!(result.source, src);
-    }
-
-    #[test]
-    fn preserves_utf8_box_drawing_in_comments() {
-        let src = "-- ─────────────────── Structs ────────────────────\nconst xs: list<int> = []\n";
-        let result = migrate_source(src);
-        assert!(
-            result.source.contains("─────────────────── Structs"),
-            "UTF-8 corrupted: {}",
-            result.source
-        );
-        assert!(result.source.contains("list[int]"));
-    }
-
-    #[test]
-    fn should_skip_path_is_permissive_by_default() {
-        assert!(!should_skip_path(Path::new("stdlib/list.orl")));
-        assert!(!should_skip_path(Path::new(
-            "examples/hello_world/main.orl"
-        )));
-        assert!(!should_skip_path(Path::new(
-            "packages/other-lib/src/main.orl"
-        )));
-    }
-
-    #[test]
-    fn format_summary_verbose_lists_unchanged_files() {
-        let report = MigrateSyntaxReport {
-            files: vec![
-                MigratedFile {
-                    path: PathBuf::from("a.orl"),
-                    changed: false,
-                    rewrites: Vec::new(),
-                    notes: Vec::new(),
-                },
-                MigratedFile {
-                    path: PathBuf::from("b.orl"),
-                    changed: true,
-                    rewrites: vec!["namespace→module".into()],
-                    notes: Vec::new(),
-                },
-            ],
-            skipped: vec![PathBuf::from("vendor/legacy")],
-        };
-        let quiet = report.format_summary(false);
-        assert!(quiet.contains("[changed] b.orl"));
-        assert!(!quiet.contains("[ok] a.orl"));
-        assert!(quiet.contains("[skipped] vendor/legacy"));
-
-        let verbose = report.format_summary(true);
-        assert!(verbose.contains("[ok] a.orl"), "{verbose}");
-        assert!(verbose.contains("[changed] b.orl"));
-        assert!(verbose.contains("namespace→module"));
-    }
-}
-
 /// Collapse `apply T` + a lone `use Trait` section into the compact header
 /// `apply T use Trait` (0.4).
 ///
@@ -1458,4 +1305,148 @@ fn rewrite_associated_type_keyword(source: &str, rewrites: &mut Vec<String>) -> 
         text.push('\n');
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_namespace_func_import_elif() {
+        let src = r#"namespace app.main
+import ori.io as io
+import ori.list only (len)
+public func main()
+    if true
+    else if false
+    end
+end
+"#;
+        let result = migrate_source(src);
+        assert!(
+            result.source.contains("module app.main"),
+            "{}",
+            result.source
+        );
+        assert!(result.source.contains("import ori.io = io"));
+        assert!(result.source.contains("import ori.list (len)"));
+        assert!(result.source.contains("public main()"), "{}", result.source);
+        assert!(!result.source.contains("func main"));
+        assert!(result.source.contains("elif false"));
+    }
+
+    #[test]
+    fn keeps_func_callable_type() {
+        let src = "module app.main\nconst f: func(int) -> int = (x: int) => x\n";
+        let result = migrate_source(src);
+        assert!(result.source.contains("func(int) -> int"));
+        assert_eq!(result.source, src);
+    }
+
+    #[test]
+    fn migrates_angle_and_of_types() {
+        let src = "const xs: list<int> = []\nconst m: map of string to int = {}\n";
+        let result = migrate_source(src);
+        assert!(result.source.contains("list[int]"), "{}", result.source);
+        assert!(
+            result.source.contains("map[string, int]"),
+            "{}",
+            result.source
+        );
+    }
+
+    #[test]
+    fn migrates_do_closure_and_case_dot() {
+        let src = r#"const f = do(x: int) => x * 2
+match v
+    case .Ok(x):
+        return x
+end
+"#;
+        let result = migrate_source(src);
+        assert!(
+            result.source.contains("= (x: int) => x * 2"),
+            "{}",
+            result.source
+        );
+        assert!(result.source.contains("case Ok(x):"));
+        assert!(!result.source.contains("do("));
+    }
+
+    #[test]
+    fn migrates_simple_question_propagate() {
+        let src = "    const x: int = foo()?\n";
+        let result = migrate_source(src);
+        assert!(result.source.contains("try foo()"), "{}", result.source);
+        assert!(!result.source.contains(")?"));
+    }
+
+    #[test]
+    fn migrates_implement_header() {
+        let src = "implement Displayable for Point\n  display(self) -> string\n  end\nend\n";
+        let result = migrate_source(src);
+        assert!(result.source.contains("apply Point"));
+        assert!(result.source.contains("use Displayable"));
+        assert!(!result.notes.is_empty());
+    }
+
+    #[test]
+    fn does_not_touch_todo() {
+        let src = "todo()\n";
+        let result = migrate_source(src);
+        assert_eq!(result.source, src);
+    }
+
+    #[test]
+    fn preserves_utf8_box_drawing_in_comments() {
+        let src = "-- ─────────────────── Structs ────────────────────\nconst xs: list<int> = []\n";
+        let result = migrate_source(src);
+        assert!(
+            result.source.contains("─────────────────── Structs"),
+            "UTF-8 corrupted: {}",
+            result.source
+        );
+        assert!(result.source.contains("list[int]"));
+    }
+
+    #[test]
+    fn should_skip_path_is_permissive_by_default() {
+        assert!(!should_skip_path(Path::new("stdlib/list.orl")));
+        assert!(!should_skip_path(Path::new(
+            "examples/hello_world/main.orl"
+        )));
+        assert!(!should_skip_path(Path::new(
+            "packages/other-lib/src/main.orl"
+        )));
+    }
+
+    #[test]
+    fn format_summary_verbose_lists_unchanged_files() {
+        let report = MigrateSyntaxReport {
+            files: vec![
+                MigratedFile {
+                    path: PathBuf::from("a.orl"),
+                    changed: false,
+                    rewrites: Vec::new(),
+                    notes: Vec::new(),
+                },
+                MigratedFile {
+                    path: PathBuf::from("b.orl"),
+                    changed: true,
+                    rewrites: vec!["namespace→module".into()],
+                    notes: Vec::new(),
+                },
+            ],
+            skipped: vec![PathBuf::from("vendor/legacy")],
+        };
+        let quiet = report.format_summary(false);
+        assert!(quiet.contains("[changed] b.orl"));
+        assert!(!quiet.contains("[ok] a.orl"));
+        assert!(quiet.contains("[skipped] vendor/legacy"));
+
+        let verbose = report.format_summary(true);
+        assert!(verbose.contains("[ok] a.orl"), "{verbose}");
+        assert!(verbose.contains("[changed] b.orl"));
+        assert!(verbose.contains("namespace→module"));
+    }
 }

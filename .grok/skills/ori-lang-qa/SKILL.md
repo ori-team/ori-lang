@@ -60,7 +60,7 @@ e `references/test-matrix.md` (cópia skill).
 
 | Stage | Nome | Comando típico |
 |-------|------|----------------|
-| **S0** | Workspace compile | `cargo check --workspace` |
+| **S0** | Workspace compile + compiler quality | `cargo check --workspace` + strict Clippy for runtime/codegen/driver |
 | **S1** | Unit crates (lexer→types) | `cargo test -p ori-lexer -p ori-parser -p ori-types -p ori-hir` |
 | **S2** | Spec + diagnostics | `cargo test -p ori-driver --test ori_spec --test diagnostic_catalog` |
 | **S3** | Memory/security/async | `cargo test -p ori-driver --test memory_arc --test security_robustness --test concurrency_async` |

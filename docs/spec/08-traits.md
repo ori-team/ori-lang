@@ -20,11 +20,11 @@ Traits are Ori's mechanism for polymorphism. There is no class inheritance.
 
 ```ori
 trait Drawable
-    draw(canvas: Canvas)
+    draw(self, canvas: Canvas)
 end
 
 trait Serializable
-    serialize() -> bytes
+    serialize(self) -> bytes
     deserialize(raw: bytes) -> result[Self, string]
 end
 ```
@@ -63,11 +63,11 @@ the trait:
 
 ```ori
 trait Cloneable
-    clone() -> Self
+    clone(self) -> Self
 end
 
 trait Equatable
-    equals(other: Self) -> bool
+    equals(self, other: Self) -> bool
 end
 ```
 
@@ -182,6 +182,23 @@ end
 const a: User = User.default()
 const b: User = User.make_empty()
 ```
+
+Associated trait functions also use static dispatch through a constrained type
+parameter:
+
+```ori
+make_default for T: core.Default (prototype: T) -> T
+    return T.default()
+end
+```
+
+The parameter is monomorphized at the call site; no runtime receiver or vtable
+is involved.
+
+If more than one bound on the same type parameter declares `default`, the call
+`T.default()` is ambiguous and is rejected with `type.ambiguous_method`. Keep
+only one bound that provides that associated function, or give the functions
+distinct names.
 
 Rules:
 

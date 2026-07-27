@@ -67,6 +67,7 @@ pub struct HirTraitMethod {
     pub params: Vec<Ty>,
     pub return_ty: Ty,
     pub default_func_name: Option<SmolStr>,
+    pub has_self: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -350,6 +351,15 @@ pub enum HirExprKind {
     },
     MethodCall {
         receiver: Box<HirExpr>,
+        method: SmolStr,
+        args: Vec<HirExpr>,
+    },
+    /// Static dispatch through a constrained type parameter (`T.default()`).
+    ///
+    /// Monomorphization replaces `receiver_ty` with the concrete type. Unlike
+    /// `MethodCall`, no receiver value is passed to the implementation.
+    AssociatedCall {
+        receiver_ty: Ty,
         method: SmolStr,
         args: Vec<HirExpr>,
     },

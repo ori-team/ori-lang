@@ -205,15 +205,15 @@ Backend status:
 
 Any type may be used as the error branch of `result[T, E]`.
 
-Current implementation: `ori.core.Error` exists as a marker trait. The richer
-`message()`/`cause()` trait-method contract below is planned and documents the
-intended stable shape for future stdlib APIs:
+Current implementation: `ori.core.Error` exists with the required
+`message(self) -> string` method. The richer `cause(self)` method remains
+planned and documents the intended stable shape for future stdlib APIs:
 
 ```ori
 trait Error
-    message() -> string
+    message(self) -> string
 
-    cause() -> optional[any[Error]]
+    cause(self) -> optional[any[Error]]
         return none
     end
 end

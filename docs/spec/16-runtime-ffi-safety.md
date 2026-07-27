@@ -19,6 +19,20 @@ is still being split into smaller modules.
 - Runtime functions must not keep borrowed C pointers after the call returns
   unless the API explicitly copies the payload first.
 
+## C export versus Rust visibility
+
+Runtime entry points are a C ABI, not a public Rust library API. The
+`#[no_mangle]` attribute gives each entry point its stable exported symbol in
+the static and dynamic runtime libraries even when the Rust item itself is
+private. Only Rust items intentionally consumed by another compiler crate,
+such as `ORI_ABI_VERSION`, use Rust `pub` visibility.
+
+This separation prevents Rust callers from bypassing the ABI contract while
+preserving every `ori_*` symbol used by generated AOT and JIT code. The shared
+pointer, length, lifetime, and ownership requirements in this chapter apply to
+all exported entry points. Critical ARC primitives additionally keep local
+`# Safety` rustdoc beside their implementation.
+
 ## String functions
 
 Ori strings currently use a nul-terminated UTF-8 representation.
@@ -98,9 +112,10 @@ The runtime ships a trial-deletion cycle collector accessible via
 
 ## Source-level rustdoc policy
 
-Critical ARC and memory functions should keep local `# Safety` rustdoc near the
-function. For broad FFI families, this file is the current shared contract until
-runtime modules are split and each domain can own smaller rustdoc blocks.
+Critical ARC and memory functions keep local `# Safety` rustdoc near the
+function. Broad FFI families use this chapter as their shared contract. When a
+runtime entry point becomes a public Rust API, it must also gain function-level
+`# Safety` rustdoc before its visibility is widened.
 
 ## Native link strategies
 
@@ -156,4 +171,3 @@ If an Ori program calls `os.exit(code)` under JIT, the runtime invokes
 `std::process::exit(code)` and the driver process terminates with that code —
 matching AOT `ori run` semantics. JIT'd code that panics or segfaults also
 terminates the driver (acceptable for an opt-in mode).
-

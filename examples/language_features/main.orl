@@ -1,8 +1,8 @@
 module app.language_features
 
---- Demonstra as features fundamentais da linguagem Ori:
---- structs, enums, traits, generics, pattern matching, error handling,
---- closures, pipes, contratos e operadores.
+-- Demonstrates Ori core features:
+-- structs, enums, traits, generics, pattern matching, error handling,
+-- closures, pipes, contracts, and operators.
 
 imports
     ori.core = core
@@ -33,20 +33,29 @@ struct Pixel
     color: Color
 end
 
+newtype PointId = int
+
 demo_structs()
     section("Structs and Struct Update")
 
     const origin: Point = Point { x: 0, y: 0 }
-    const moved: Point = {x: 5, y: 10}
+    const moved: Point = Point { x: 5, y: 10 }
+    const { x, y } = moved
     io.println(f"  origin: ({origin.x}, {origin.y})")
-    io.println(f"  moved: ({moved.x}, {moved.y})")
+    io.println(f"  moved: ({x}, {y})")
+
+    const point_id: PointId = PointId(7)
+    io.println(f"  nominal point id: {int(point_id)}")
 
     -- Struct update syntax
     const shifted: Point = moved with { x: 99 } end
     io.println(f"  shifted: ({shifted.x}, {shifted.y})")
 
-    -- Nested struct
-    const px: Pixel = Pixel { pos: Point { x: 3, y: 7 }, color: Color { r: 255, g: 128, b: 0 } }
+    -- Nested structs read naturally when each value gets its own line.
+    const px: Pixel = Pixel {
+        pos: Point { x: 3, y: 7 },
+        color: Color { r: 255, g: 128, b: 0 },
+    }
     io.println(f"  pixel at ({px.pos.x}, {px.pos.y}) color r={px.color.r}")
 end
 
@@ -70,15 +79,18 @@ shape_area(s: Shape) -> int
 end
 
 shape_name(s: Shape) -> string
-    match s
-    case Circle(radius):
-        return "Circle"
-    case Rectangle(width, height):
-        return "Rectangle"
-    case Triangle(base, height):
-        return "Triangle"
+    return match s
+        case Circle(radius): "Circle"
+        case Rectangle(width, height): "Rectangle"
+        case Triangle(base, height): "Triangle"
     end
-    return "Unknown"
+end
+
+shape_is_round(s: Shape) -> bool
+    return match s
+        case Circle(radius): true
+        case else: false
+    end
 end
 
 demo_enums()
@@ -91,7 +103,7 @@ demo_enums()
     ]
 
     for s in shapes
-        io.println(f"  {shape_name(s)}: area = {shape_area(s)}")
+        io.println(f"  {shape_name(s)}: area = {shape_area(s)} round={shape_is_round(s)}")
     end
 end
 
@@ -140,12 +152,15 @@ end
 demo_generics()
     section("Generic Functions")
 
-    io.println(f"  first_or int: {first_or_custom([10, 20, 30], -1)}")
+    const first_int: int = first_or_custom([10, 20, 30], -1)
+    io.println(f"  first_or int: {first_int}")
     const fb_str: string = "empty"
     const str_items: list[string] = ["hello", "world"]
-    io.println(f"  first_or string: {first_or_custom(str_items, fb_str)}")
+    const first_string: string = first_or_custom(str_items, fb_str)
+    io.println(f"  first_or string: {first_string}")
     const empty_list: list[int] = []
-    io.println(f"  first_or empty: {first_or_custom(empty_list, -1)}")
+    const first_empty: int = first_or_custom(empty_list, -1)
+    io.println(f"  first_or empty: {first_empty}")
 
     const repeated: list[string] = repeat_element("Ori", 3)
     io.println(f"  repeat_element: [{repeated[0]}, {repeated[1]}, {repeated[2]}]")
@@ -189,9 +204,9 @@ demo_optional_result()
         io.println(f"  10 / 0 err: {msg}")
     end
 
-    const people: list[string] = ["Ada", "Grace", "Margaret"]
+    const people = ["Ada", "Grace", "Margaret"]
 
-    const grace: string = "Grace"
+    const grace = "Grace"
     match find_by_name(people, grace)
     case some(idx):
         io.println(f"  found Grace at index {idx}")
@@ -199,7 +214,7 @@ demo_optional_result()
         io.println("  Grace not found")
     end
 
-    const linus: string = "Linus"
+    const linus = "Linus"
     match find_by_name(people, linus)
     case some(idx):
         io.println(f"  found Linus at index {idx}")
@@ -207,9 +222,13 @@ demo_optional_result()
         io.println("  Linus not found (expected)")
     end
 
-    const ada: string = "Ada"
+    const ada = "Ada"
     if some(idx) = find_by_name(people, ada)
         io.println(f"  if-some: Ada at index {idx}")
+    end
+
+    if err(message) = safe_divide(10, 0)
+        io.println(f"  if-err: {message}")
     end
 end
 
