@@ -1,183 +1,238 @@
 # Ori documentation atlas
 
-The ATLAS is the canonical navigation map for humans and AI agents. It identifies the source of truth for each subject and connects documents to code, tests, decisions, and operational procedures.
+The ATLAS is the canonical navigation and impact map for humans and AI agents. It identifies which document owns each subject and connects product requirements, architecture, implementation, code, tests, decisions, and operations.
 
-## Rules of the atlas
+## Canonical rules
 
-1. Each subject has one canonical document.
-2. Other documents link to the canonical source instead of repeating its full content.
-3. Architecture describes the system as it exists now.
-4. ADRs explain why durable decisions were made.
-5. RFCs describe proposals that are not yet accepted contracts.
-6. Plans describe how a specific complex change will be executed.
-7. The normative specification describes accepted language and runtime behavior.
-8. Archived material is evidence, not current instruction.
-9. Product version, compiler version, and workspace version are currently **0.3.8**.
-10. The native ABI has its own version: **`ori-native-abi-1`**.
+1. Each subject has one current canonical source.
+2. Other documents link to that source instead of copying the full contract.
+3. Product docs define identity, status, audience, and support.
+4. Architecture describes the implemented system today.
+5. The specification defines accepted language/runtime/project/ABI behavior.
+6. Implementation docs define safe extension and refactoring paths.
+7. ADRs record durable decisions; RFCs evaluate significant proposals.
+8. ExecPlans sequence complex accepted work; the backlog lists open outcomes.
+9. Archived material is evidence, not current instruction.
+10. Product/compiler/workspace version is **0.3.8**; native ABI is **`ori-native-abi-1`**.
+
+Machine-readable relationships live in [`catalog.yaml`](catalog.yaml).
 
 ## Entry points
 
 | Need | Canonical source |
 |---|---|
-| Start contributing | [`../PROJECT_START.md`](../PROJECT_START.md) |
-| Mandatory project rules | [`../AGENTS.md`](../AGENTS.md) |
-| Product overview | [`product/README.md`](product/README.md) |
-| Current status and versions | [`product/status.md`](product/status.md) |
-| Versioning policy | [`product/versioning.md`](product/versioning.md) |
-| Language learning | [`language/tour.md`](language/tour.md) |
-| Installation | [`install.md`](install.md) |
-| Language contract | [`spec/README.md`](spec/README.md) |
-| System architecture | [`architecture/README.md`](architecture/README.md) |
-| Implementation standards | [`implementation/standards.md`](implementation/standards.md) |
-| Testing and conformance | [`quality/README.md`](quality/README.md) |
-| Security engineering | [`security/README.md`](security/README.md) |
-| Decisions and RFCs | [`decisions/README.md`](decisions/README.md) |
-| Active plans | [`plans/README.md`](plans/README.md) |
-| Operations | [`operations/README.md`](operations/README.md) |
-| Historical records | [`archive/README.md`](archive/README.md) |
+| Understand the project | [`../PROJECT_START.md`](../PROJECT_START.md) |
+| Mandatory contribution/agent rules | [`../AGENTS.md`](../AGENTS.md) |
+| Public project introduction | [`../README.md`](../README.md) · [`../README.pt-BR.md`](../README.pt-BR.md) |
+| Contribute | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) |
+| Report a vulnerability | [`../SECURITY.md`](../SECURITY.md) |
+| Install Ori | [`install.md`](install.md) · [`install.pt-BR.md`](install.pt-BR.md) |
+| Learn Ori | [`language/tour.md`](language/tour.md) |
+| Find any document | This ATLAS |
 
 ## Product
 
-| Document | Owns |
+| Subject | Canonical source |
 |---|---|
-| [`product/README.md`](product/README.md) | Product identity, audience, goals, and boundaries |
-| [`product/status.md`](product/status.md) | Current 0.3.8 status, maturity, supported paths, known limitations |
-| [`product/versioning.md`](product/versioning.md) | Version numbers, compatibility classes, release semantics |
-| [`product/accessibility-principles.md`](product/accessibility-principles.md) | Accessibility and cognitive-load principles for language, diagnostics, and docs |
-| [`spec/00-manifesto.md`](spec/00-manifesto.md) | Project purpose and values |
+| Product domain index | [`product/README.md`](product/README.md) |
+| Current implementation/priorities/limitations | [`product/status.md`](product/status.md) |
+| Version classes and compatibility | [`product/versioning.md`](product/versioning.md) |
+| Backend/target/tooling support | [`product/support-matrix.md`](product/support-matrix.md) |
+| Accessibility and cognitive-load principles | [`product/accessibility-principles.md`](product/accessibility-principles.md) |
+| Purpose and values | [`spec/00-manifesto.md`](spec/00-manifesto.md) |
+
+Product documents answer **what, for whom, at what maturity, and with what support level**.
 
 ## Architecture
 
-| Document | Code relationship | Primary evidence |
+| Subject | Canonical source | Primary code/evidence |
 |---|---|---|
-| [`architecture/overview.md`](architecture/overview.md) | Entire repository | Workspace tests and component READMEs |
-| [`architecture/compiler-pipeline.md`](architecture/compiler-pipeline.md) | `compiler/crates/ori-*` | `ori_spec`, driver integration tests |
-| [`architecture/invariants.md`](architecture/invariants.md) | Cross-cutting | Conformance, catalog, ABI and runtime tests |
-| [`architecture/runtime-and-memory.md`](architecture/runtime-and-memory.md) | `ori-runtime`, native backend | `memory_arc`, runtime tests, Spec 10/16/19 |
-| [`architecture/stdlib.md`](architecture/stdlib.md) | `ori-types/src/stdlib.rs`, `stdlib/`, runtime | stdlib parity and multifile tests |
-| [`architecture/repository-and-project-layout.md`](architecture/repository-and-project-layout.md) | Repository and Ori project layout | project loading and scaffold tests |
+| Architecture index | [`architecture/README.md`](architecture/README.md) | — |
+| System context and domains | [`architecture/overview.md`](architecture/overview.md) | repository tree, workspace tests |
+| Crate responsibilities/dependencies | [`architecture/crate-map.md`](architecture/crate-map.md) | `compiler/Cargo.toml`, `compiler/crates/` |
+| Compiler phases and contracts | [`architecture/compiler-pipeline.md`](architecture/compiler-pipeline.md) | driver phase modules, `ori_spec` |
+| Cross-cutting invariants | [`architecture/invariants.md`](architecture/invariants.md) | conformance, ABI, memory, package tests |
+| Runtime/ARC/cycle/FFI | [`architecture/runtime-and-memory.md`](architecture/runtime-and-memory.md) | `ori-runtime`, codegen, memory tests |
+| Standard-library layering | [`architecture/stdlib.md`](architecture/stdlib.md) | stdlib catalog, runtime, `.orl` modules |
+| Repository and user-project layout | [`architecture/repository-and-project-layout.md`](architecture/repository-and-project-layout.md) | project loader/scaffold/path tests |
 
-## Normative contracts
+Architecture changes update their owning document and an ADR when the underlying durable decision changes.
 
-`docs/spec/` remains the normative implementation-facing contract. It is English-first and must describe behavior implemented today.
+## Normative specification
+
+[`spec/README.md`](spec/README.md) is the specification index. The specification is English-only and describes implemented 0.3.8 behavior.
 
 | Contract area | Canonical source |
 |---|---|
-| Identity and overview | `spec/00-manifesto.md`, `spec/01-overview.md` |
-| Modules and declarations | `spec/02-*` and related chapters |
-| Types, expressions, statements | `spec/04-types.md` through `spec/06-statements.md` |
-| Traits and generics | `spec/08-traits.md`, `spec/11-generics.md` |
-| Errors and diagnostics | `spec/09-errors.md`, `spec/13-error-catalog.md` |
-| Memory | `spec/10-memory.md` |
-| Standard library | `spec/12-stdlib.md`, `spec/15-stdlib-maintenance.md` |
-| Backend support | `spec/14-backend-support.md` |
-| Runtime and FFI safety | `spec/16-runtime-ffi-safety.md` |
-| Projects and documentation | `spec/17-project-and-docs.md` |
-| Stability and compatibility | `spec/18-stability-and-compatibility.md` |
-| Native ABI | `spec/19-abi.md` |
+| Language overview | [`spec/01-overview.md`](spec/01-overview.md) |
+| Modules/declarations/grammar | Chapter 02 and syntax chapters |
+| Types | [`spec/04-types.md`](spec/04-types.md) |
+| Expressions | [`spec/05-expressions.md`](spec/05-expressions.md) |
+| Statements/control flow | [`spec/06-statements.md`](spec/06-statements.md) |
+| Functions | [`spec/07-functions.md`](spec/07-functions.md) |
+| Traits | [`spec/08-traits.md`](spec/08-traits.md) |
+| Errors/optional/result | [`spec/09-errors.md`](spec/09-errors.md) |
+| Memory/ARC/cleanup | [`spec/10-memory.md`](spec/10-memory.md) |
+| Generics | [`spec/11-generics.md`](spec/11-generics.md) |
+| Standard library | [`spec/12-stdlib.md`](spec/12-stdlib.md) |
+| Diagnostic codes | [`spec/13-error-catalog.md`](spec/13-error-catalog.md) |
+| Backend support | [`spec/14-backend-support.md`](spec/14-backend-support.md) |
+| Stdlib maintenance | [`spec/15-stdlib-maintenance.md`](spec/15-stdlib-maintenance.md) |
+| Runtime FFI safety | [`spec/16-runtime-ffi-safety.md`](spec/16-runtime-ffi-safety.md) |
+| Projects/documentation formats | [`spec/17-project-and-docs.md`](spec/17-project-and-docs.md) |
+| Stability/compatibility | [`spec/18-stability-and-compatibility.md`](spec/18-stability-and-compatibility.md) |
+| Native ABI | [`spec/19-abi.md`](spec/19-abi.md) |
 
-Normative documents do not contain speculative designs. Proposed behavior belongs in an RFC.
+Future ideas belong in RFCs, not normative chapters.
 
 ## Implementation
 
-| Document | Purpose |
+| Task | Canonical source |
 |---|---|
-| [`implementation/standards.md`](implementation/standards.md) | Repository-wide coding and component-boundary standards |
-| [`implementation/feature-delivery.md`](implementation/feature-delivery.md) | Vertical checklist for a language or tooling feature |
-| [`implementation/compiler/adding-syntax.md`](implementation/compiler/adding-syntax.md) | End-to-end syntax implementation path |
-| Existing component READMEs | Local setup and component-specific details |
+| Implementation domain index | [`implementation/README.md`](implementation/README.md) |
+| Repository-wide coding patterns | [`implementation/standards.md`](implementation/standards.md) |
+| Complete feature delivery | [`implementation/feature-delivery.md`](implementation/feature-delivery.md) |
+| Add/change syntax | [`implementation/compiler/adding-syntax.md`](implementation/compiler/adding-syntax.md) |
+| Extend/refactor type checker | [`implementation/compiler/type-checker.md`](implementation/compiler/type-checker.md) |
+| Modularize runtime safely | [`implementation/runtime/refactoring.md`](implementation/runtime/refactoring.md) |
+| Add stdlib API | [`implementation/stdlib/adding-api.md`](implementation/stdlib/adding-api.md) |
 
-## Quality
+Implementation docs describe **how to change** the current architecture without becoming a second specification.
 
-| Document | Purpose | Related tests/tools |
-|---|---|---|
-| [`quality/test-strategy.md`](quality/test-strategy.md) | Test layers, gates, ownership, and required evidence | `tools/qa/`, Cargo tests |
-| [`quality/language-conformance.md`](quality/language-conformance.md) | Specification-to-test traceability | `ori_spec`, examples |
-| [`quality/diagnostic-design.md`](quality/diagnostic-design.md) | Diagnostic codes, messages, labels, actions, and compatibility | `diagnostic_catalog` |
-| [`quality/performance-policy.md`](quality/performance-policy.md) | Benchmark method and regression policy | benchmark scripts, `performance_guard` |
-| [`planning/qa/test-matrix-ori.md`](planning/qa/test-matrix-ori.md) | Detailed current test coverage matrix | S0–S8 QA stages |
+## Quality and evidence
+
+| Subject | Canonical source |
+|---|---|
+| Quality index | [`quality/README.md`](quality/README.md) |
+| Test layers and gates | [`quality/test-strategy.md`](quality/test-strategy.md) |
+| Spec-to-test conformance | [`quality/language-conformance.md`](quality/language-conformance.md) |
+| Diagnostic design | [`quality/diagnostic-design.md`](quality/diagnostic-design.md) |
+| Performance and benchmarks | [`quality/performance-policy.md`](quality/performance-policy.md) |
+| Fuzzing | [`quality/fuzzing.md`](quality/fuzzing.md) |
+| Differential testing | [`quality/differential-testing.md`](quality/differential-testing.md) |
+| Property-based testing | [`quality/property-testing.md`](quality/property-testing.md) |
+| Documentation quality/CI | [`quality/documentation-quality.md`](quality/documentation-quality.md) |
+| Detailed transitional test matrix | [`planning/qa/test-matrix-ori.md`](planning/qa/test-matrix-ori.md) |
 
 ## Security
 
-| Document | Purpose |
+| Subject | Canonical source |
 |---|---|
-| [`../SECURITY.md`](../SECURITY.md) | Public vulnerability reporting policy |
-| [`security/threat-model.md`](security/threat-model.md) | Assets, trust boundaries, threats, and mitigations |
-| [`security/unsafe-code-policy.md`](security/unsafe-code-policy.md) | Rules for Rust `unsafe`, FFI, pointers, and ABI boundaries |
-| `spec/16-runtime-ffi-safety.md` | Normative runtime FFI safety contract |
+| Security domain index | [`security/README.md`](security/README.md) |
+| Public reporting | [`../SECURITY.md`](../SECURITY.md) |
+| Threat model | [`security/threat-model.md`](security/threat-model.md) |
+| Unsafe/FFI policy | [`security/unsafe-code-policy.md`](security/unsafe-code-policy.md) |
+| Supply chain | [`security/supply-chain.md`](security/supply-chain.md) |
+| Normative runtime FFI | [`spec/16-runtime-ffi-safety.md`](spec/16-runtime-ffi-safety.md) |
+| Normative ABI | [`spec/19-abi.md`](spec/19-abi.md) |
 
 ## Governance and decisions
 
-| Artifact | Use it when |
-|---|---|
-| Issue | The work is concrete, bounded, and does not need a durable design record |
-| ADR | A durable architecture or implementation decision has been accepted |
-| RFC | A language, ABI, package, tooling, or ecosystem proposal needs design review |
-| ExecPlan | A complex accepted change needs a staged implementation plan |
-| Changelog | A released or user-observable behavior changed |
+| Artifact | Purpose | Canonical source |
+|---|---|---|
+| Language evolution | Classify and review public changes | [`governance/language-evolution.md`](governance/language-evolution.md) |
+| RFC process | Evaluate significant proposals | [`governance/rfc-process.md`](governance/rfc-process.md) |
+| ADRs | Record durable accepted decisions | [`decisions/README.md`](decisions/README.md) |
+| RFC template | Structure a proposal | [`rfcs/0000-template.md`](rfcs/0000-template.md) |
+| ADR template | Structure a decision | [`decisions/TEMPLATE.md`](decisions/TEMPLATE.md) |
 
-See [`governance/language-evolution.md`](governance/language-evolution.md), [`governance/rfc-process.md`](governance/rfc-process.md), and [`decisions/README.md`](decisions/README.md).
+Current migrated ADRs:
+
+- [`ADR-0001`](decisions/adr/0001-s3-language-surface.md) — S3 surface;
+- [`ADR-0002`](decisions/adr/0002-arc-single-cascade-owner.md) — ARC cascade ownership;
+- [`ADR-0003`](decisions/adr/0003-defer-copy-on-write-collections.md) — defer implicit collection COW;
+- [`ADR-0004`](decisions/adr/0004-repository-and-project-layout.md) — repository/workspace/project layout.
 
 ## Planning
 
-`docs/planning/BACKLOG.md` remains the current implementation backlog during migration. New planning documents must follow [`plans/README.md`](plans/README.md).
+| Subject | Canonical source |
+|---|---|
+| Planning and ExecPlan policy | [`plans/README.md`](plans/README.md) |
+| Open outcomes | [`planning/BACKLOG.md`](planning/BACKLOG.md) during migration |
+| ExecPlan template | [`templates/EXEC_PLAN.md`](templates/EXEC_PLAN.md) |
+| Retired duplicate pending file | [`planning/PENDENTES.md`](planning/PENDENTES.md) |
 
 Rules:
 
-- the backlog contains open work, not a full history;
-- completed complex plans move to `docs/archive/plans/`;
-- accepted decisions move to `docs/decisions/adr/`;
-- discussion documents that never became contracts are archived;
-- plans must link to the contract they implement and the tests that prove completion.
+- backlog contains only open/in-progress/deferred outcomes;
+- complex accepted work uses `plans/active/`;
+- completed plans move to `archive/plans/`;
+- accepted decisions move to ADRs;
+- GitHub issues track operational work;
+- changelog records user-visible delivery.
 
 ## Operations
 
 | Procedure | Canonical source |
 |---|---|
-| Local development and validation | [`operations/development.md`](operations/development.md) |
-| Packaging and releases | [`operations/release.md`](operations/release.md) |
-| Installation for users | [`install.md`](install.md) |
+| Operations index | [`operations/README.md`](operations/README.md) |
+| Local development and troubleshooting | [`operations/development.md`](operations/development.md) |
+| Release creation/publication | [`operations/release.md`](operations/release.md) |
+| Reproducible builds/provenance | [`operations/reproducible-builds.md`](operations/reproducible-builds.md) |
 | Runtime staging details | [`../runtime/README.md`](../runtime/README.md) |
-| Standard library inventory | [`../stdlib/README.md`](../stdlib/README.md) |
+| End-user install | [`install.md`](install.md) |
 
 ## User documentation
 
-User-facing documentation is separate from implementation-facing contracts:
+| Need | Location |
+|---|---|
+| Language tour | `language/` |
+| Task-oriented guides | `guides/` |
+| CLI reference | `guides/cli-reference*.md` |
+| Long-form Portuguese book | `book/` |
+| Executable examples | `../examples/` |
+| Stdlib symbol documentation | `../stdlib/**/*.oridoc` |
 
-- `docs/language/` — language tour;
-- `docs/guides/` — task-oriented guides;
-- `docs/book/` — long-form Portuguese book;
-- `examples/` — executable examples;
-- root README files — concise project presentation.
+English is canonical for primary GitHub user docs. Maintained EN/PT siblings change together. The normative specification remains English-only.
 
-English is the canonical GitHub-facing language. Portuguese user documentation is maintained in parallel where a sibling `*.pt-BR.md` file exists. The normative specification remains English-only.
+## Archive
 
-## Archive policy
+Archive policy: [`archive/README.md`](archive/README.md).
 
-Archived content must contain or inherit these facts:
+```text
+archive/
+├── plans/
+├── audits/
+├── investigations/
+├── sessions/
+└── legacy/
+```
 
-- it is not a current source of truth;
-- its original date and purpose are preserved;
-- its replacement is linked when one exists;
-- commands, versions, and syntax in it may be obsolete;
-- active documents must not depend on archived instructions for current behavior.
+`planning/historico/` remains a transitional historical root. Migration must categorize files, update links, and avoid duplicate full copies.
+
+## Templates and machine context
+
+| Purpose | Source |
+|---|---|
+| Canonical document template | [`templates/DOCUMENT.md`](templates/DOCUMENT.md) |
+| ExecPlan template | [`templates/EXEC_PLAN.md`](templates/EXEC_PLAN.md) |
+| RFC template | [`rfcs/0000-template.md`](rfcs/0000-template.md) |
+| Machine catalog | [`catalog.yaml`](catalog.yaml) |
+| Portable AI routing | [`../.ai/README.md`](../.ai/README.md) |
+| Context packs | [`../.ai/context-packs/README.md`](../.ai/context-packs/README.md) |
 
 ## Change-impact routes
 
-| Change | Documents and evidence to inspect |
+| Change | Inspect/update |
 |---|---|
-| Syntax | Spec, parser, formatter, LSP, diagnostics, conformance, migration, changelog |
-| Type system | Spec, checker, HIR, backend support, diagnostics, conformance, changelog |
-| Runtime/ARC | Memory architecture, Specs 10/16/19, ABI tests, AOT/JIT parity, security |
-| Stdlib | Specs 12/15, stdlib architecture, manifest, `.orl`/`.oridoc`, LSP, tests |
-| CLI | CLI guide, operations, help text, integration tests, changelog |
-| Package/project format | Specs 17/18, versioning, project loader, lock tests, migration |
-| Diagnostic | Spec 13, diagnostic policy, catalog test, LSP behavior |
-| Release | Status, versioning, changelog, packaging, checksums, smoke matrix |
-| Documentation framework | ATLAS, catalog, links, metadata, archive state, CI validation |
+| Syntax | product accessibility · spec · lexer/AST/parser · formatter/migration · checker/HIR/backends · LSP · diagnostics · conformance · changelog |
+| Type/trait/generic | spec · checker · HIR · codegen/runtime if represented · backend matrix · diagnostics · conformance |
+| Runtime/ARC | runtime architecture/invariants · unsafe policy · Specs 10/16/19 · AOT/JIT · symbol/staging/package · memory/performance/security |
+| Standard library | stdlib architecture · Specs 12/15 · semantic catalog · runtime/`.orl`/`.oridoc` · LSP/export · tests/changelog |
+| Diagnostic | Spec 13 · diagnostic policy · emitting phase · CLI/LSP · catalog/golden/conformance |
+| Package/project | Spec 17/18 · versioning · supply chain · loader/lock/cache · migration · isolated smoke |
+| Target/release | support matrix · operations · runtime metadata · CI · reproducibility/provenance · install docs |
+| Documentation | ATLAS/catalog · canonical ownership · links/examples/translations · archive status · documentation CI |
+| Refactoring | architecture/invariants · implementation standard · characterization tests · performance/security · no semantic drift |
 
-## Machine-readable index
+## Documentation validation
 
-[`catalog.yaml`](catalog.yaml) records canonical documents, domains, owners, related code, and evidence. It is intended for validation scripts and context-pack generation. The Markdown ATLAS remains the human-readable entry point.
+Permanent validation:
 
-When adding a canonical document, update both the ATLAS and catalog in the same change.
+```bash
+python tools/docs/check_docs.py
+```
+
+CI workflow: `.github/workflows/documentation.yml`.
+
+When adding a canonical document, update this ATLAS and [`catalog.yaml`](catalog.yaml) in the same change.
