@@ -50,7 +50,7 @@
 | DONE-STDLIB-1…5 / 4b / 4k | Canonical stdlib + async I/O + poll reactor |
 | DONE-LANG-1 / LANG-2 | Native async subset + C/debug sync matrix slice |
 | DONE-PKG-1…4 | Path/git/registry (code exists; not market push) |
-| DONE-FREEZE-1 / ABI-1 | Freeze window open; ABI-1 in force; readiness checklist finalized |
+| DONE-FREEZE-1 / ABI-1 | Freeze window **closed 2026-07-19** (ran 2026-07-13→07-19, zero intentional surface breaks); line is now `0.4`. **ABI-1 stays in force.** Rules: `freeze-and-abi-gates.md` |
 | DONE-DIST-LINUX-DEB | Linux `.tar.gz` + `.deb` via `package_native_release` / `package_deb`; CI release assets |
 | DONE-LANG-DOC | User docs + examples aligned to S3 / current stdlib / editors local |
 | DONE-LANG-PERF | AOT/JIT, stage release, mold/lld PATH, microbench + ARC bench; living JIT lower only |

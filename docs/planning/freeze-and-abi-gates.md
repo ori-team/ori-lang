@@ -1,17 +1,45 @@
 # Freeze and ABI gates (FREEZE-1 / ABI-1)
 
-> **Status (2026-07-13):** both gates **done / in force** — process **finalized**.  
-> Calendar window: opened **2026-07-13** · remains open through pre-1.0 `0.3.x`
-> until an explicit exit is recorded in CHANGELOG + this file.  
+> **Status (2026-07-19):** **FREEZE-1 closed**; development line is now **`0.4`**.
+> **ABI-1 remains in force** — the `0.4` surface work does not change native
+> layouts, so `ori-native-abi-1` still holds and its rules below still apply.
 > This file also carries the **1.0 readiness checklist** (merged 2026-07-17 from
 > the former `freeze-1-0-readiness.md`; the FREEZE-1/ABI-1 rules were duplicated).
 
 ---
 
-## FREEZE-1 — **DONE** (window open)
+## FREEZE-1 — **CLOSED 2026-07-19** (window ran 2026-07-13 → 2026-07-19)
 
 **Opened:** 2026-07-13  
-**Exit:** not closed yet (intentional long pre-1.0 window on `0.3.x`)
+**Closed:** 2026-07-19 · next line: **`0.4`** (`compiler/Cargo.toml` = `0.4.0`)
+
+**Why now:** the freeze existed to stabilize the S3 surface, and it did its
+job — the `0.3.x` series shipped the ARC campaign, the incremental cycle
+collector, `ori update`, the CI native-route fix and the silent match-guard
+bug fix, with **no** intentional surface break. The queued work is different
+in kind: a set of *additive* reading-first surface features decided on
+2026-07-19 (`match` as an expression, `if ok(v) =`, `newtype`, or-patterns,
+compact `apply`, struct destructuring — see
+[`roadmap-maturidade-v0.4-v0.5.md`](roadmap-maturidade-v0.4-v0.5.md) §10).
+Those cannot land under a surface freeze, and holding them back no longer
+buys stability — it only splits the trunk.
+
+**What the `0.3.x` rules below still bought us (kept as the model for the
+next freeze):** every entry in "Not allowed" stayed unviolated for the whole
+window.
+
+### `0.4` line rules (in force from 2026-07-19)
+
+- Surface **additions** decided in the roadmap are allowed; each lands with
+  spec + book + tests, never syntax-only.
+- Surface **removals/renames** still need an explicit decision recorded in
+  the roadmap first (the S3 "one canonical form" norm did not relax).
+- **ABI-1 is untouched:** breaking `ori-native-abi-1` still requires a
+  version bump per the ABI section below.
+- Released `0.3.x` binaries keep working; `0.4` programs are not expected to
+  compile on `0.3.x` toolchains (that is the point of the new line).
+
+### Scope of the freeze that just closed (kept for the record)
 
 ### Scope of freeze (no intentional breaking)
 
@@ -33,11 +61,13 @@
 - Changing `ori.proj` / `ori.pkg.toml` required fields incompatibly
 - Breaking `ori-native-abi-1` without ABI version bump
 
-### How to exit freeze
+### How to exit freeze — **executed 2026-07-19**
 
-1. Decide end date and next version line (`0.4+` or approach to 1.0).
-2. Document in CHANGELOG (`FREEZE-1 closed YYYY-MM-DD`).
-3. Update BACKLOG (already **done** for opening the gate).
+1. ~~Decide end date and next version line~~ → closed 2026-07-19, line `0.4`.
+2. ~~Document in CHANGELOG~~ → recorded under `[Unreleased]` / `0.4.0`.
+3. ~~Update BACKLOG~~ → gate row updated.
+
+Reuse this same 3-step process for any future freeze window.
 
 ---
 
