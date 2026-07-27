@@ -16,7 +16,7 @@ Precedência: **este `AGENTS.md` > skills globais > defaults**.
 | **`compiler-dev`** | Front-end e processo: fase correta, diagnostics no catálogo, stdlib sync. |
 | **`lang-compiled`** | AOT: IR/SSA, multi-backend (native+C), ABI/link/runtime, opts, JIT-as-run, parity. |
 | **`ori-testing`** | Feature/fix: L1 `check` → L2 `compile` → L3 run → regressão em `ori-driver` + `diagnostic_catalog`. |
-| **`ori-lang-qa`** | QA diário/matriz de testes, residuals Spec 14, qualidade de diagnostics, FREEZE-1. Stages: `tools/qa/daily_fast.sh`. Agents: `.grok/agents/ori-lang-*.md`. |
+| **`ori-lang-qa`** | QA diário/matriz de testes, residuals Spec 14, qualidade de diagnostics, FREEZE-1. Stages: `tools/qa/daily_fast.sh`. |
 
 ### Sob demanda
 
@@ -60,7 +60,7 @@ ori-lang/
 │   ├── spec/                  #   Language specification (normative)
 │   └── planning/              #   Implementation plans
 ├── tests/                     # End-to-end Ori test programs (.orl)
-├── _reversa_sdd/              # Historical audit documents (reverse engineering)
+├── docs/archive/              # Historical audit documents (reverse engineering)
 ├── branding/                  # Logo and brand assets
 ├── examples/                  # Example Ori programs
 ├── extensions/vscode-orl/       # VS Code extension (LanguageClient → ori-lsp)
@@ -82,7 +82,7 @@ ori-lang/
 | **Bug fixes** | Always add regression test in `compiler/crates/ori-driver/tests/` |
 | **Pre-implementation** | Check `docs/planning/PLANO-MATURIDADE-COMPLETO.md` and `docs/planning/PENDENTES.md` |
 | **Stdlib changes** | Update `stdlib.rs`, `lower.rs` (stdlib_c_name + stdlib_c_func_ty), and changelog |
-| **Documentation** | Keep `spec/` (normative), `planning/` (plans), `_reversa_sdd/` (historical) |
+| **Documentation** | Keep `spec/` (normative), `planning/` (plans), `archive/` (historical) |
 | **Dedup** | Consolidate documents of same scope, avoid duplication |
 
 ## Key Files

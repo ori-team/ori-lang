@@ -8,7 +8,7 @@ stdlib, diagnósticos, LSP e ferramentas.
 Metodologia: leitura completa e análise cirúrgica de todos os 49 arquivos .rs
 do compilador, cruzando com a spec em `docs/spec/*.md`, com os documentos de
 planejamento em `docs/planning/*.md`, e com as auditorias anteriores em
-`_reversa_sdd/`.
+`docs/archive/`.
 
 > **Comparação com auditorias anteriores (12-13 Mai 2026):** Esta auditoria
 > confirma que muitos bugs críticos das auditorias anteriores JÁ FORAM

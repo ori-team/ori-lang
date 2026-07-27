@@ -384,7 +384,7 @@ ori-lang/
   tools/                  scripts de staging, smoke, export e validação
   tools/bench/polyglot/   microbench runtime Ori / Python / Rust
   branding/               assets de marca
-  _reversa_sdd/           auditorias históricas de engenharia reversa
+  docs/archive/           auditorias históricas de engenharia reversa
 ```
 
 ## Fluxo de desenvolvimento

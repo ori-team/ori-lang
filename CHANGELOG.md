@@ -542,8 +542,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Cranelift — no per-iter `ori_list_push` / `ori_list_get` call. Managed
   element types keep the runtime + ARC edge path. `list_sum` ~1.25× Rust on
   the benchmark host (was ~1.8× after reserve alone).
-- **Living QA kit:** `tools/qa/` daily stages, skill `.grok/skills/ori-lang-qa`,
-  agents `.grok/agents/ori-lang-*.md`, matrix
+- **Living QA kit:** `tools/qa/` daily stages and matrix
   [`docs/planning/qa/test-matrix-ori.md`](docs/planning/qa/test-matrix-ori.md);
   Spec 13 message-quality section + Spec index product facts.
 - **Examples polish:** `collections_demo` shows `with_capacity` / `reserve` /
@@ -996,7 +995,7 @@ Etapa 9 (Release e Publicação) do `docs/planning/PLANO-MATURIDADE-COMPLETO.md`
 - **Docs/Stdlib (Etapa 8.1):** Cap. 15 (`15-stdlib-maintenance.md`) reescrito com arquitetura SSOT (Single Source of Truth), `STDLIB_MODULE_ONLY_PATHS`, funções derivadas (`is_implemented_stdlib_module`, `implemented_stdlib_modules`, `stdlib_runtime_symbol`), testes de paridade completos e seção `.orl` futura. Cap. 12 mantém a visão de contrato público com a seção "Implementation Architecture (v1.x)".
 - **Docs/Runtime (Etapa 8.2):** `runtime/README.md` atualizado com tabela de staging para os 5 triples do CI (windows-msvc, windows-gnu, linux-gnu, macos-x86_64, macos-aarch64) + comando de staging para cada. `CONTRIBUTING.md` reescrito (era stale "Zenith"): política de triples versionados vs gerados em CI, layout do release package, gates de qualidade, smoke com `ORI_REQUIRE_PACKAGED_RUNTIME=1`, checklist de PR para mudanças stdlib/diagnósticos.
 - **Docs/Tests (Etapa 8.5):** `tests/README.md` reescrito com tabela de 7 suites de teste (ori_spec, multifile_imports, concurrency_async, memory_arc, method_resolution, diagnostic_catalog, LSP E2E) + caminhos + cobertura + instruções para adicionar novos testes. `tests/run/bytes_stdlib.orl` deletado (sintaxe obsoleta + redundante com `multifile_imports.rs`); diretório `tests/run/` vazio removido.
-- **Docs/Dedup (Etapa 8.6):** `docs/plano-correcao-implementacao-linguagem.md` deletado (duplicata stale sem banner; `_reversa_sdd/` já contém a versão completa de 44882 chars). `PENDENTES.md` Etapa 5 (Diagnósticos) atualizada para refletir a auditoria da Etapa 7: todos os 14 códigos marcados `[x]` (4 emitidos na Etapa 6.5 + 1 reserved alias + 9 removidos com justificativa); critério de passagem atualizado.
+- **Docs/Dedup (Etapa 8.6):** `docs/plano-correcao-implementacao-linguagem.md` deletado (duplicata stale sem banner; `docs/archive/` já contém a versão completa de 44882 chars). `PENDENTES.md` Etapa 5 (Diagnósticos) atualizada para refletir a auditoria da Etapa 7: todos os 14 códigos marcados `[x]` (4 emitidos na Etapa 6.5 + 1 reserved alias + 9 removidos com justificativa); critério de passagem atualizado.
 
 ### Corrigido
 - **Codegen/Cranelift:** Corrigido `collect_all_tys` para `Ty::Func { ret }` e cobertura de `HirStmt::Break`/`Continue` em `collect_tys_from_stmt`, desbloqueando compilação após extensão da state machine async.

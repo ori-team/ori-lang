@@ -1,8 +1,8 @@
 # Relatorio de fechamento da nova rodada
 
 Este relatorio fecha a rodada iniciada em
-`_reversa_sdd/analise-profunda-implementacao-linguagem.md` e executada em
-`_reversa_sdd/plano-correcao-implementacao-linguagem.md`.
+`docs/archive/analise-profunda-implementacao-linguagem.md` e executada em
+`docs/archive/plano-correcao-implementacao-linguagem.md`.
 
 ## Estado final
 

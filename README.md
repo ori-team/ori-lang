@@ -442,7 +442,7 @@ ori-lang/
   tools/                  staging, smoke, export, and validation scripts
   tools/bench/polyglot/   Ori / Python / Rust runtime microbench harness
   branding/               project logo assets
-  _reversa_sdd/           historical reverse-engineering audit documents
+  docs/archive/           historical reverse-engineering audit documents
 ```
 
 ## Development workflow

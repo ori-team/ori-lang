@@ -367,7 +367,7 @@ Pendencias reais:
   - [x] Adicionar teste de compilacao que cubra string length sem depender de fallback ausente.
 - [x] Corrigir ou arquivar `docs/analysis_results.md`.
   - [x] Resolver mojibake/encoding do arquivo.
-  - [x] Marcar achados obsoletos como resolvidos ou mover o conteudo para `_reversa_sdd/`.
+  - [x] Marcar achados obsoletos como resolvidos ou mover o conteudo para `docs/archive/`.
   - [x] Evitar que ele contradiga o plano atual.
 
 Critério de aceite:
@@ -381,7 +381,7 @@ Critério de aceite:
 
 ## Nova rodada - Pendencias da analise profunda
 
-Origem: `_reversa_sdd/analise-profunda-implementacao-linguagem.md`.
+Origem: `docs/archive/analise-profunda-implementacao-linguagem.md`.
 
 Observacao importante: P0-P10 ficam preservadas como historico de fechamento
 anterior. Os itens abaixo reabrem areas que ainda divergiram da documentacao
@@ -907,7 +907,7 @@ Critério de aceite:
 Objetivo: fechar todos os achados da analise profunda com validacao objetiva.
 
 - [x] Criar ou atualizar fixtures para cada achado de
-      `_reversa_sdd/analise-profunda-implementacao-linguagem.md`.
+      `docs/archive/analise-profunda-implementacao-linguagem.md`.
 - [x] Rodar testes focados de P11.
 - [x] Rodar testes focados de P12.
 - [x] Rodar testes focados de P13.
@@ -930,7 +930,7 @@ Objetivo: fechar todos os achados da analise profunda com validacao objetiva.
   - [x] `math.floor` bate com a spec atualizada.
   - [x] `?` no backend C funciona ou e rejeitado cedo.
 - [x] Atualizar este plano marcando itens concluidos.
-- [x] Criar relatorio de fechamento da nova rodada em `_reversa_sdd/`.
+- [x] Criar relatorio de fechamento da nova rodada em `docs/archive/`.
 
 Critério de aceite:
 

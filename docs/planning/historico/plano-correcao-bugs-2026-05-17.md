@@ -4,7 +4,7 @@
 # Plano de Correção — Bugs Remanescentes da Implementação Ori
 
 Data: 2026-05-17
-Fonte: Auditoria profunda de 2026-05-17 (`_reversa_sdd/auditoria-profunda-implementacao-2026-05-17.md`)
+Fonte: Auditoria profunda de 2026-05-17 (`docs/archive/auditoria-profunda-implementacao-2026-05-17.md`)
 Status: Plano de ação
 
 ---
@@ -203,18 +203,18 @@ corretamente com o tipo da coleção.
 | `docs/planning/IMPLEMENTATION_CHECKLIST_2.md` | Rota nativa 100% | Merge no principal OU manter como backlog separado |
 | `docs/planning/native-route.md` | Contrato native route | Já está bem separado, manter |
 | `docs/planning/native-abi.md` | ABI document | Já está bem separado, manter |
-| `_reversa_sdd/plano-correcao-implementacao-linguagem.md` | Plano antigo | Arquivar — substituído por este plano |
+| `docs/archive/plano-correcao-implementacao-linguagem.md` | Plano antigo | Arquivar — substituído por este plano |
 | `docs/plano-correcao-implementacao-linguagem.md` | Cópia do plano | Arquivar — substituído por este plano |
-| `_reversa_sdd/analise-profunda-implementacao-linguagem.md` | Auditoria 12 Mai | Arquivar como histórico |
-| `_reversa_sdd/auditoria-profunda-implementacao-linguagem-2026-05-13.md` | Auditoria 13 Mai | Arquivar como histórico |
-| `_reversa_sdd/relatorio-fechamento-correcao-implementacao-linguagem.md` | Fechamento | Arquivar como histórico |
-| `_reversa_sdd/relatorio-fechamento-nova-rodada.md` | Fechamento | Arquivar como histórico |
+| `docs/archive/analise-profunda-implementacao-linguagem.md` | Auditoria 12 Mai | Arquivar como histórico |
+| `docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md` | Auditoria 13 Mai | Arquivar como histórico |
+| `docs/archive/relatorio-fechamento-correcao-implementacao-linguagem.md` | Fechamento | Arquivar como histórico |
+| `docs/archive/relatorio-fechamento-nova-rodada.md` | Fechamento | Arquivar como histórico |
 | `docs/planning/analise-completa-implementacao-linguagem-ori.md` | Análise antiga | Arquivar como histórico |
 | `docs/planning/analise-limitacoes-collections-ori.md` | Coleções | Já coberto pelo checklist 2, arquivar |
 | `docs/planning/lacunas-reais-plano-correcao.md` | Lacunas antigas | Arquivar — bugs já corrigidos |
 | `docs/planning/walkthrough-correcoes.md` | Walkthrough | Atualizar com estado atual ou merge no README |
 | `docs/planning/analysis_results.md` | Resultados antigos | Arquivar |
-| `_reversa_sdd/auditoria-profunda-implementacao-2026-05-17.md` | Auditoria atual | Manter como referência mais recente |
+| `docs/archive/auditoria-profunda-implementacao-2026-05-17.md` | Auditoria atual | Manter como referência mais recente |
 
 ### Novo mapa documental proposto
 
@@ -237,7 +237,7 @@ docs/
   plano-correcao-bugs-2026-05-17.md      # NOVO — este plano
   plano-implementacao-lsp-avancado.md    # NOVO — plano do LSP
 
-_reversa_sdd/                            # Arquivo histórico (não mexer)
+docs/archive/                            # Arquivo histórico (não mexer)
   auditoria-profunda-implementacao-2026-05-17.md  # Auditoria mais recente
   auditoria-profunda-implementacao-linguagem-2026-05-13.md
   analise-profunda-implementacao-linguagem.md

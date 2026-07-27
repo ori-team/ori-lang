@@ -50,7 +50,6 @@ tmp/
 /t*.txt
 .vscode/
 .vscode/settings.json
-.windsurf/
 .ztc-tmp/
 
 # Embed smoke artifacts

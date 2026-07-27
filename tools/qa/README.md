@@ -38,5 +38,5 @@ export PATH="$PWD/compiler/target/release:$PATH"
 | Doc / skill | Role |
 |-------------|------|
 | [`docs/planning/qa/test-matrix-ori.md`](../../docs/planning/qa/test-matrix-ori.md) | Product-mapped test matrix |
-| [`.grok/skills/ori-lang-qa/`](../../.grok/skills/ori-lang-qa/) | Agent skill + residual/diagnostics policy |
+| [`docs/planning/qa/`](../../docs/planning/qa/) | Residual and diagnostics policy |
 | [`docs/planning/BACKLOG.md`](../../docs/planning/BACKLOG.md) | Open work (language-first queue) |

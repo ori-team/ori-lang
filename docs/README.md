@@ -28,7 +28,7 @@ Portuguese index: [README.pt-BR.md](README.pt-BR.md).
 | **Normative spec** (`docs/spec/`) | **English** | Single source of truth for implementers |
 | **Planning / backlog** (`docs/planning/`) | Portuguese or English (file’s existing language) | Not user-facing product docs |
 | **Book** (`docs/book/`) | Portuguese prose; S3 code samples | Draft narrative/reference; does **not** replace `spec/` |
-| **Historical** (`docs/planning/historico/`, `_reversa_sdd/`) | as written | Do not teach as current surface |
+| **Historical** (`docs/planning/historico/`, `docs/archive/`) | as written | Do not teach as current surface |
 | **Code + code comments** | English | Project matrix in `AGENTS.md` |
 
 **Rules:**

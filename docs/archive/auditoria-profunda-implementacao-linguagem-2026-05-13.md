@@ -9,12 +9,12 @@ Fontes comparadas:
 
 - `docs/spec/*.md`
 - `docs/IMPLEMENTATION_CHECKLIST.md`
-- `_reversa_sdd/plano-correcao-implementacao-linguagem.md`
-- `_reversa_sdd/analise-profunda-implementacao-linguagem.md`
+- `docs/archive/plano-correcao-implementacao-linguagem.md`
+- `docs/archive/analise-profunda-implementacao-linguagem.md`
 - Codigo atual em `compiler/crates/*`
 
 Regra desta auditoria: nenhum arquivo legado foi alterado. Este relatorio novo
-foi escrito somente em `_reversa_sdd/`.
+foi escrito somente em `docs/archive/`.
 
 ## Resumo executivo
 
