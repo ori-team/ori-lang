@@ -1330,7 +1330,10 @@ end
     let out = run_compile_with_options(
         &dir.path("main.orl"),
         Path::new(&exe),
-        CompileOptions { native_raw: true , lib: false },
+        CompileOptions {
+            native_raw: true,
+            lib: false,
+        },
     )
     .unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
@@ -1558,7 +1561,7 @@ struct Countdown
 end
 
 apply Countdown use core.Iterable
-    mut next() -> optional[int]
+    mut next(self) -> optional[int]
         if self.current < self.min
             return none
         end

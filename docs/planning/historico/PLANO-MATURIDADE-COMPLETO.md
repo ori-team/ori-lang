@@ -146,7 +146,7 @@ flowchart LR
 
 - [x] Expandir [`IMPLEMENTADOS.md`](IMPLEMENTADOS.md) com seção **"Etapa 2 — Sistema de tipos avançado"** (HKT, associated types, JSON, lazy, `any<Trait>` equality).
 - [x] Reconciliar [`PENDENTES.md`](PENDENTES.md) Etapa 4 com CHANGELOG `[Unreleased]` (LSP Sprints 1–5): marcar o que já foi entregue vs o que falta. — Etapa 3 (Runtime/ARC) e Etapa 4 (LSP) reconciliadas: itens entregues marcados `[x]` com referência ao sprint; pendentes mantidos `[ ]` com nota (completion type-aware, testes E2E LSP, diagnósticos project-level).
-- [x] Corrigir [`docs/planning/README.md`](README.md): CHANGELOG na **raiz** (não em `docs/`); `_reversa_sdd/` na **raiz** (não sob `docs/`).
+- [x] Corrigir [`docs/planning/README.md`](README.md): CHANGELOG na **raiz** (não em `docs/`); `docs/archive/` como arquivo histórico.
 - [x] Corrigir [`docs/spec/README.md`](../spec/README.md): remover links para `docs/public/` e `docs/reference/` ou criar stubs mínimos com redirect.
 - [x] Corrigir [`AGENTS.md`](../../AGENTS.md): substituir referência a `IMPLEMENTATION_CHECKLIST.md` por este plano + `PENDENTES.md`.
 - [x] Arquivar planos históricos (`docs/plano-implementacao-lsp-avancado.md`, `docs/plano-correcao-bugs-2026-05-17.md`) com banner **"Histórico — não usar como backlog ativo"** no topo.
@@ -482,7 +482,7 @@ Para **cada** código abaixo: implementar emissão → adicionar teste dedicado 
 
 ### 8.6 Dedup de documentos
 
-- [x] Mover `docs/plano-correcao-implementacao-linguagem.md` duplicado para `_reversa_sdd/` se ainda existir cópia ativa. — Deletado: `_reversa_sdd/` já contém a versão completa (44882 chars vs 14698 da cópia em `docs/`); a cópia em `docs/` era stale e sem banner "Histórico".
+- [x] Mover `docs/plano-correcao-implementacao-linguagem.md` duplicado para `docs/archive/` se ainda existir cópia ativa. — Deletado: o arquivo histórico já contém a versão completa; a cópia em `docs/` era stale e sem banner "Histórico".
 - [x] Garantir um único backlog ativo: **este plano** + `PENDENTES.md` (sincronizados). — `PENDENTES.md` Etapa 5 (Diagnósticos) atualizada para refletir a auditoria da Etapa 7: todos os 14 códigos marcados `[x]` (4 emitidos na Etapa 6.5 + 1 reserved alias + 9 removidos com justificativa); critério de passagem atualizado.
 
 ### ✅ Critérios de passagem para Etapa 9

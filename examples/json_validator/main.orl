@@ -8,13 +8,10 @@ imports
 end
 
 is_valid_json(text: string) -> bool
-    match json.parse(text)
-        case ok(_):
-            return true
-        case err(_):
-            return false
+    return match json.parse(text)
+        case ok(_): true
+        case err(_): false
     end
-    return false
 end
 
 status_for(text: string) -> string
@@ -26,7 +23,7 @@ end
 
 main()
     const fallback: string = "{\"name\":\"ori\",\"enabled\":true}"
-    const raw: string = config.read_text_or("config.local.json", fallback)
+    const raw = config.read_text_or("config.local.json", fallback)
 
     if is_valid_json(raw)
         log.info("config json is valid")

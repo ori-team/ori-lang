@@ -86,6 +86,9 @@ impl Item {
 pub struct FuncDecl {
     pub visibility: Visibility,
     pub is_async: bool,
+    /// `iter name(...) -> T` — a generator. `return_ty` is the *element* type,
+    /// and the body produces values with `suspend`.
+    pub is_iter: bool,
     pub is_mut: bool,
     pub name: Name,
     pub type_params: TypeParams,
@@ -101,6 +104,7 @@ pub struct FuncDecl {
 pub struct FuncSignature {
     pub visibility: Visibility,
     pub is_async: bool,
+    pub is_iter: bool,
     pub is_mut: bool,
     pub name: Name,
     pub type_params: TypeParams,
@@ -236,6 +240,12 @@ pub enum ApplyMember {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApplyUseSection {
     pub trait_name: QualifiedName,
+    /// Type arguments for a generic trait: `use Container[int]`.
+    ///
+    /// Empty for a non-generic trait. These bind the trait's own type
+    /// parameters, which is what lets one type implement `Container[int]` while
+    /// another implements `Container[string]`.
+    pub trait_args: Vec<Type>,
     pub members: Vec<ApplyMember>,
     pub associated_types: Vec<(Name, Type)>,
     pub span: Span,

@@ -157,6 +157,8 @@ These types are built into the language and require no import.
 | Type | Description |
 |---|---|
 | `list[T]` | Ordered, resizable sequence |
+| `array[T, size: N]` | Fixed-length sequence stored **inline** — see below |
+| `slice[T]` | A read-only **window** over a `list[T]` — see below |
 | `map[K, V]` | Key-value mapping. Current runtime supports `int`, `string`, and user-defined keys that implement `Hashable` and `Equatable` |
 | `set[T]` | Unordered unique values. Current runtime supports `int`, `string`, and user-defined elements that implement `Hashable` and `Equatable` |
 | `optional[T]` | A value that may be absent |
@@ -164,6 +166,136 @@ These types are built into the language and require no import.
 | `range[int]` | An inclusive integer range |
 | `lazy[T]` | Lazy value computed at most once through `lazy.once` and `lazy.force` |
 | `any[Trait]` | Dynamic dispatch over a trait |
+
+---
+
+## Slices (`slice[T]`)
+
+`slice[T]` is a read-only window over a `list[T]`. It holds the owning list plus
+a range, never a copy of the elements, so taking one is O(1) whatever the
+length.
+
+```ori
+import ori.list = lists
+import ori.slice = sl
+
+var xs: list[int] = [10, 20, 30, 40, 50]
+const w: slice[int] = lists.window(xs, 1, 4)
+
+const n: int = sl.len(w)        -- 3
+const first: int = sl.get(w, 0) -- 20
+```
+
+The two ways of taking part of a list are **named differently on purpose**:
+
+| Call | Result | Cost |
+|---|---|---|
+| `lists.slice(xs, a, b)` | a new `list[T]`, elements copied | O(n) |
+| `lists.window(xs, a, b)` | a `slice[T]` over `xs` | O(1) |
+
+Measured on a 100 000-element list: **2.4 ms** to copy, **12 µs** for a window.
+
+### It is a window, and that is observable
+
+```ori
+const w: slice[int] = lists.window(xs, 1, 4)
+lists.set(xs, 1, 999)
+const v: int = sl.get(w, 0)     -- 999, not 20
+```
+
+This is the whole point, and it is why the window is a **distinct type** rather
+than a faster `lists.slice`: sharing is visible in the source, at the call and
+in the type. Changing `xs[1..3]` to share silently was rejected for the same
+reason copy-on-write was (`docs/planning/adr-arc-cow-collections.md`).
+
+### Safety
+
+- **Read-only.** There is no `sl.set`. Writing through a window would make
+  aliasing mutable, which is a much larger surprise than reading through one.
+- **The owner cannot be freed underneath it.** Creating a window registers an
+  ARC edge to the list, so a window may outlive the binding that made it.
+- **The owner may be resized underneath it.** `lists.push` can move the element
+  buffer, so the window stores the *list object* and resolves the buffer on each
+  read. Reads past the owner's current length abort with a bounds message rather
+  than reading freed memory.
+- A window is not `Transferable`: it points at a list the sender owns, so it
+  cannot cross a task or channel boundary.
+
+---
+
+## Fixed-Size Arrays (`array[T, size: N]`)
+
+`array` is the counterpart of `list`: the length is part of the **type**, so the
+elements are stored inline — in the stack frame for a local, or inside the
+owning struct for a field. No heap block, no length field, no reference
+counting.
+
+```ori
+struct Grid
+    cells: array[int, size: 4]
+    label: string
+end
+
+main()
+    var xs: array[int, size: 3] = [1, 2, 3]
+    xs[1] = 99
+
+    const g: Grid = Grid { cells: [10, 20, 30, 40], label: "grid" }
+    const third: int = g.cells[2]
+end
+```
+
+The length is written as a **named** const argument for the same reason
+`Buffer[size: 8]` is (chapter 11): a bare `array[int, 4]` puts a loose number
+between brackets, which reads as an index everywhere else in Ori. Any other name
+is `parse.expected_array_size`.
+
+The value may be a concrete CT-0 expression. CT-0 is deliberately smaller than
+runtime Ori: integer literals, integer/boolean module constants, checked integer
+arithmetic, comparisons, boolean logic, and inline `if` are accepted. It cannot
+call functions, allocate, perform I/O, read the environment, or cross FFI.
+
+```ori
+const words: int = 4
+const page_size: int = if words == 4 then words * 2 else 1
+
+const page: array[int, size: page_size] = [1, 2, 3, 4, 5, 6, 7, 8]
+```
+
+### Rules
+
+- **The length is part of the identity.** `array[int, size: 4]` and
+  `array[int, size: 8]` are different types and do not substitute for each
+  other.
+- **A literal must match the length exactly** — `type.array_length_mismatch`
+  otherwise.
+- **A constant index is bounds-checked at compile time**
+  (`type.array_index_out_of_bounds`). `list` cannot do this, because its length
+  is not in the type.
+- **`ori.mem.size_of` reports the whole block**: `size_of` of an
+  `array[int, size: 4]` is 32, not the size of a pointer.
+- The length may be a `const` parameter, which is what makes const generics
+  useful. In CT-0 the parameter must be passed directly; symbolic arithmetic
+  such as `size: cap + 1` is reserved for a later monomorphization extension:
+
+  ```ori
+  struct InlineString[const cap: int]
+      data: array[u8, size: cap]
+      len: int
+  end
+  ```
+
+### Element types must be scalars
+
+Inline storage has no reference counting, so a managed element (`string`,
+`list`, a struct, …) would be stored without a retain and released by nobody.
+Those are rejected with `type.array_element_not_inline`; use `list[T]` when the
+elements are managed.
+
+### Backend support
+
+Native only. The C debug backend declines inline arrays rather than lowering
+them to a heap list that would behave differently (chapter 14).
 
 ---
 
@@ -188,7 +320,7 @@ try value                  -- unwrap or propagate from enclosing function
 
 Current status: `.or(fallback)` is accepted for `optional[T]` and
 `result[T, E]` in the checker, native backend, and C backend. The fallback is
-evaluated only when the receiver is `none` or `error(_)`. `.or_return()` is
+evaluated only when the receiver is `none` or `err(_)`. `.or_return()` is
 accepted as shorthand for propagation. The older `.or_return(expr)` form is
 not implemented.
 
@@ -218,11 +350,12 @@ end
 `result[T, E]` represents an operation that may succeed or fail.
 
 ```ori
-const ok: result[int, string]  = success(42)
-const bad: result[int, string] = error("something went wrong")
+const good: result[int, string] = ok(42)
+const bad: result[int, string]  = err("something went wrong")
 ```
 
-Constructors: `success(value)` and `error(value)`.
+Constructors: `ok(value)` and `err(value)`. The pre-S3 spellings `success` /
+`error` were removed and report `parse.result_ctor_renamed`.
 
 Supported operations:
 
@@ -234,8 +367,8 @@ try value                            -- unwrap success or propagate error
 ```
 
 Current status: `.or(fallback)` and `.or_return()` are accepted. `.or_wrap(...)`
-is accepted for `result[T, string]` and returns `success(v)` unchanged or
-`error(context + ": " + e)` for `error(e)`. The context expression is evaluated
+is accepted for `result[T, string]` and returns `ok(v)` unchanged or
+`err(context + ": " + e)` for `err(e)`. The context expression is evaluated
 only on the error path. Use `try` or `match` when explicit error handling is
 clearer. Postfix `expr?` was removed (S3); the compiler emits
 `parse.question_propagate_removed`.
@@ -244,9 +377,9 @@ Pattern matching:
 
 ```ori
 match load_config(path)
-case success(config):
+case ok(config):
     use_config(config)
-case error(msg):
+case err(msg):
     io.print(f"failed: {msg}")
 end
 ```
@@ -312,7 +445,9 @@ shape.draw()
 Rules:
 - `any[Trait]` values have heap-allocated vtable dispatch.
 - Prefer generics for performance-sensitive paths.
-- `==` on `any[Trait]` is supported when the trait constraint includes equality (runtime vtable dispatch to the concrete type's `Equatable` implementation).
+- `==` on `any[Trait]` is supported through the runtime vtable. Equal
+  concrete payloads compare structurally when their types provide equality;
+  values with different concrete types compare unequal.
 - Passing `any[Trait]` across FFI requires explicit ABI annotation.
 
 ---
@@ -376,25 +511,25 @@ Rules:
 
 ---
 
-## `success()` — Void Result
+## `ok()` — Void Result
 
-When a function returns `result[void, E]`, `success()` with no arguments is valid:
+When a function returns `result[void, E]`, `ok()` with no arguments is valid:
 
 ```ori
 ping() -> result[void, string]
     try send_packet()
-    return success()
+    return ok()
 end
 
 start() -> result[void, string]
     try ping()
-    return success()
+    return ok()
 end
 ```
 
 This is the exact analogue of `return` with no value in a `void` function.
-The `void` value is implicit. `success()` with no args is a compile error
-when the expected type is not `result[void, _]`.
+The `void` value is implicit. `ok()` with no args is a compile error when the
+expected type is not `result[void, _]`.
 
 ---
 
@@ -408,8 +543,9 @@ Current implementation status:
   `stack`, `linked_list`, etc.) when element types support equality, and
   non-generic structs whose fields also support equality.
 - Function values are not comparable.
-- `any[Trait]` values support structural equality via runtime vtable when the
-  trait constraint permits it.
+- `any[Trait]` values support structural equality via their runtime vtable;
+  the concrete payload type still determines whether a meaningful equality
+  operation exists.
 - Native and C/debug structural equality for `set[T]` and `map[K, V]` is
   implemented when keys/elements implement `Equatable` or builtin equality.
 
@@ -428,7 +564,7 @@ Current implementation status:
 | non-generic `struct` | Structural equality when all fields support equality |
 | generic `struct[T]` | Structural equality with generic substitution |
 | opaque collections | Structural equality when elements/keys support equality |
-| `any[Trait]` | Vtable equality when trait constraint allows |
+| `any[Trait]` | Vtable equality for compatible concrete payloads |
 | `func(...)` | Compile error |
 
 Structural equality rules:
@@ -438,14 +574,15 @@ Structural equality rules:
 - Sets compare elements independent of insertion order.
 - Tuples and structs compare fields in declaration order.
 
-**`Equatable` override:** use `apply T` / `use Equatable` for custom equality:
+**`Equatable` override:** apply `core.Equatable` for custom equality. Import
+the trait module first — a bare `use Equatable` reports `impl.trait_not_found`:
 
 ```ori
-apply User
-    use Equatable
-        equals(other: User) -> bool
-            return self.id == other.id
-        end
+import ori.core = core
+
+apply User use core.Equatable
+    equals(self, other: User) -> bool
+        return self.id == other.id
     end
 end
 ```
@@ -471,11 +608,13 @@ const b: u8   = u8(n)         -- explicit narrowing (runtime check)
 const w: int64 = int64(n)     -- explicit widening
 ```
 
-**Conversao para string:** o compilador aceita escalares built-in, `string`
-e valores concretos definidos pelo usuario que implementam
+**String conversion:** `string(value)` accepts built-in scalars, `string`
+itself, and concrete user-defined values that implement
 `ori.core.Displayable`.
 
 ```ori
+import ori.core = core
+
 const s: string = string(42)
 const t: string = string(3.14)
 const b: string = string(true)
@@ -485,9 +624,8 @@ struct Resource
     id: int
 end
 
-apply Resource
-    use ori.core.Displayable
-        display(self) -> string
+apply Resource use core.Displayable
+    display(self) -> string
         return "Resource#" + string(self.id)
     end
 end
@@ -496,6 +634,9 @@ const r: Resource = Resource { id: 7 }
 const label: string = string(r)
 const line: string = f"value={r}"
 ```
+
+A struct **without** `Displayable` is not convertible: `string(value)` reports
+`type.arg_type_mismatch`.
 
 **Type checking at runtime** (for `any[Trait]`):
 

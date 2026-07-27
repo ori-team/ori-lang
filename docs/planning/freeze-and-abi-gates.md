@@ -2,7 +2,7 @@
 
 > **Status (2026-07-19):** **FREEZE-1 closed**; development line is now **`0.4`**.
 > **ABI-1 remains in force** — the `0.4` surface work does not change native
-> layouts, so `ori-native-abi-1` still holds and its rules below still apply.  
+> layouts, so `ori-native-abi-1` still holds and its rules below still apply.
 > This file also carries the **1.0 readiness checklist** (merged 2026-07-17 from
 > the former `freeze-1-0-readiness.md`; the FREEZE-1/ABI-1 rules were duplicated).
 

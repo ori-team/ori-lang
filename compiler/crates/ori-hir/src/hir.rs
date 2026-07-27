@@ -67,6 +67,7 @@ pub struct HirTraitMethod {
     pub params: Vec<Ty>,
     pub return_ty: Ty,
     pub default_func_name: Option<SmolStr>,
+    pub has_self: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -353,6 +354,15 @@ pub enum HirExprKind {
         method: SmolStr,
         args: Vec<HirExpr>,
     },
+    /// Static dispatch through a constrained type parameter (`T.default()`).
+    ///
+    /// Monomorphization replaces `receiver_ty` with the concrete type. Unlike
+    /// `MethodCall`, no receiver value is passed to the implementation.
+    AssociatedCall {
+        receiver_ty: Ty,
+        method: SmolStr,
+        args: Vec<HirExpr>,
+    },
 
     // Construction
     StructLit {
@@ -365,6 +375,15 @@ pub enum HirExprKind {
         fields: Vec<(SmolStr, HirExpr)>,
     },
     ListLit {
+        elem_ty: Ty,
+        elements: Vec<HirExpr>,
+    },
+    /// `[1, 2, 3]` where the context expects `array[T, size: N]`.
+    ///
+    /// Distinct from `ListLit` because the storage is different: an array lives
+    /// inline in a stack slot (or inline inside the owning struct), with no
+    /// heap block, no length field, and no reference counting.
+    ArrayLit {
         elem_ty: Ty,
         elements: Vec<HirExpr>,
     },

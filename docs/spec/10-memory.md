@@ -132,17 +132,19 @@ Registered ARC edges are the **only** owner of a stored managed child
 > **store → register/update the edge → release the temporary's own +1 if
 > the stored expression produced an owned reference.**
 
-- Composite allocations (struct/enum/tuple literals) install **no**
-  destructor hook. When an owner's refcount reaches zero, the runtime
-  releases the owner's registered edges, which cascades through nested
-  managed children (structs, enums, tuples, optional/result payloads,
+- Composite allocations use no synthetic field-releasing destructor hook.
+  A struct or enum implementing `core.Destructor` may install a callback for
+  user cleanup, but registered edges remain the sole owners of its managed
+  fields. When an owner's refcount reaches zero, the runtime runs that callback,
+  frees the payload, and releases the registered edges, cascading through
+  nested managed children (structs, enums, tuples, optional/result payloads,
   collection elements, closure environments, async frames alike).
 - Borrowed references (loads from bindings or fields) keep their existing
   +1 untouched when stored; the edge adds its own +1.
-- The `ori_alloc` destructor hook remains reserved for runtime-internal
-  cleanup (for example a list's internal element storage). It must not
-  release compiler-registered children — that would reintroduce a double
-  release.
+- The `ori_alloc` destructor hook serves runtime-internal cleanup (for example
+  a list's internal element storage) and compiler-generated callbacks for
+  `core.Destructor`. Neither kind may release compiler-registered children —
+  that would reintroduce a double release.
 
 Historical note: before 2026-07-17 the backend also generated
 `__dtor_struct_*`/`__dtor_enum_*`/`__dtor_tuple_*` hooks that released the
@@ -150,6 +152,55 @@ same fields the edges owned. The double release could free a child shared
 with a live binding (use-after-free) and masked missing temporary releases
 in element stores. See the ADR and `ori-driver/tests/memory_arc.rs`
 (`shared_child_*`, `nested_list_*`, `*_owned_*` regression tests).
+
+### Release is one critical section
+
+`ori_arc_release` performs the decrement, the unregistration and the edge
+removal under a **single** ARC lock. The destructor and the recursive release of
+owned children run **after** the lock is dropped, because a destructor may
+re-enter runtime code and would otherwise deadlock.
+
+This shape is load-bearing for performance, not just tidiness. Before
+2026-07-20 the same work took up to **six** mutex acquisitions per released
+object (decrement, then unregister, take-edges and remove-incoming inside
+`free_registered_object`, plus a redundant `header_for_registered` lookup).
+Consolidating them removed **19%** of the wall time from a 2-million-iteration
+loop over managed temporaries (360 ns → 290 ns per temporary).
+
+### The ARC maps are keyed by pointers, and hashed as such
+
+`ArcState::allocations` and both edge indexes are keyed by payload address.
+They use a multiply-rotate hasher (the `FxHasher` construction) rather than the
+standard library default.
+
+That default is SipHash-1-3, which resists collision flooding from untrusted
+keys — a property with no meaning here, because the keys are pointers the
+runtime allocated itself. It cost more than the rest of a retain or release put
+together: switching the hasher took another **33%** off the same loop, and the
+project's own `tools/bench/arc_list_churn.orl` runs **39%** faster overall.
+
+### One allocation per string
+
+Runtime string constructors write their parts straight into the final
+`ori_alloc` block. They previously built a `Vec`, copied the parts into it,
+copied that into a fresh block and freed the `Vec` — two allocations, two
+copies and a free for every string produced, paid on every concatenation and
+every slice.
+
+Combined with the single-lock release and the pointer hasher above, a managed
+temporary went from **355 ns to 171 ns** — **52%** of the ARC overhead removed
+across the three changes.
+
+What remains is `malloc` plus one map insert and one removal. Removing those
+would mean not registering the allocation at all, which is what makes
+`ori_arc_retain` / `ori_arc_release` **safe no-ops on foreign pointers** — the
+property `@c_export` string parameters rely on (chapter 19 §8.3b). Any further
+gain here has to preserve that, or replace it with a check that never
+dereferences a pointer the runtime does not own. See `LANG-MEM-11b` in
+[`../planning/BACKLOG.md`](../planning/BACKLOG.md).
+
+Regression tests: `compile_runs_nested_owners_cascade_on_release`,
+`compile_runs_managed_temporaries_in_a_hot_loop_without_leaking`.
 
 ### Leak check mode
 
@@ -201,9 +252,9 @@ Current native status:
 - Failed/cancelled future states observed by the state machine are propagated by
   the generated async wrapper.
 - `using` inside `async func` is **allowed**. The async frame stores the
-  managed resource; `dispose()` is injected on scope exit. A residual compiler
-  TODO remains for every terminal path (cancelled future, some `break`/`continue`
-  combinations) — see master plan Etapa 4.
+  managed resource and injects `dispose()` on normal return, `try`
+  propagation, cancellation, failure, and loop exit. These paths are covered
+  by the native async regression suite.
 
 Async shapes outside the current state-machine subset are rejected before
 Cranelift with `backend.native_unsupported` instead of falling back to a sync
@@ -236,9 +287,9 @@ because entire subgraphs are **moved** between threads rather than shared.
 Cancel tokens mark associated futures as cancelled. The generated state
 machine observes the failed/cancelled status on resume, runs terminal
 cleanup (releasing the frame's managed edges) and propagates the status
-through the async wrapper. `using` disposal on every terminal path
-(cancelled future, some `break`/`continue` combinations) has a residual
-compiler TODO — see the note in "Async and ARC" above.
+through the async wrapper. `using` disposal runs on every supported terminal
+path, including cancellation, failure, propagation, and loop exit; the native
+async regression suite covers these cases.
 
 ---
 
@@ -263,7 +314,7 @@ When `file` goes out of scope, `file.dispose()` is called automatically.
 
 - Normal `end` of block
 - `return` statement
-- `try`/`?` propagation (error path)
+- `try` propagation (error path)
 - `break` or `continue` in a loop
 - Panic
 
@@ -291,7 +342,43 @@ end
 Attempting to use a type in `using` that does not implement `Disposable`
 is a compile error.
 
-### Interaction with `try` and `?`
+### `Destructor` Trait
+
+A struct or enum may opt into automatic last-reference cleanup by implementing
+`core.Destructor`:
+
+```ori
+import ori.core = core
+
+struct NativeHandle
+    id: int
+    label: string
+end
+
+apply NativeHandle use core.Destructor
+    mut destroy(self)
+        close_external(self.id)
+    end
+end
+```
+
+The required signature is `mut destroy(self) -> void`. The native backend calls
+it exactly once when the value's ARC lifetime ends, before the payload or its
+registered child fields are released. The callback may read those fields. It
+must not make `self` escape, resurrect it, manually release its fields, or
+perform asynchronous work.
+
+`Destructor` is automatic but not deterministic in the presence of cycles:
+cycle collection may delay the call. When a cycle is reclaimed, every custom
+destructor in that cycle runs while all cycle payloads are still allocated;
+only then are the payloads freed. Use `using` with `core.Disposable` whenever a
+resource must close at a specific lexical scope boundary.
+
+The C debug backend does not implement this lifecycle and rejects a module that
+applies `core.Destructor` with `backend.c_unsupported`. Native AOT and JIT share
+the same callback semantics.
+
+### Interaction with `try`
 
 ```ori
 using conn: Connection = try get_connection()

@@ -10,14 +10,29 @@ use crate::hir::*;
 pub(super) fn dce_module(module: &mut HirModule) {
     // Struct literals whose type has field contracts trap at runtime when a
     // contract is violated — an observable effect DCE must not remove.
-    let contract_structs: HashSet<DefId> = module
+    let mut effectful_structs: HashSet<DefId> = module
         .structs
         .iter()
         .filter(|s| s.fields.iter().any(|f| f.contract.is_some()))
         .map(|s| s.def_id)
         .collect();
+    // Creating an otherwise-unused value with a custom destructor is also
+    // observable: dropping the binding must still invoke user code.
+    let destructor_traits = module
+        .traits
+        .iter()
+        .filter(|trait_decl| trait_decl.name == "ori.core.Destructor")
+        .map(|trait_decl| trait_decl.def_id)
+        .collect::<HashSet<_>>();
+    effectful_structs.extend(
+        module
+            .trait_impls
+            .iter()
+            .filter(|implementation| destructor_traits.contains(&implementation.trait_def_id))
+            .map(|implementation| implementation.type_def_id),
+    );
     for f in &mut module.funcs {
-        dce_block(&mut f.body, &contract_structs);
+        dce_block(&mut f.body, &effectful_structs);
     }
 }
 
@@ -235,6 +250,7 @@ fn collect_expr_uses(expr: &HirExpr, used: &mut HashSet<SmolStr>) {
             }
         }
         HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {
@@ -315,12 +331,20 @@ fn expr_may_effect(expr: &HirExpr, contract_structs: &HashSet<DefId>) -> bool {
                         || expr_may_effect(&arm.body, contract_structs)
                 })
         }
-        HirExprKind::ListLit { elements, .. } | HirExprKind::TupleLit(elements) => elements
+        HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::TupleLit(elements) => elements
             .iter()
             .any(|e| expr_may_effect(e, contract_structs)),
         // Building a struct whose type carries field contracts runs those
         // contracts (and can trap): keep the binding even when unused.
         HirExprKind::StructLit { def_id, fields } => {
+            contract_structs.contains(def_id)
+                || fields
+                    .iter()
+                    .any(|(_, e)| expr_may_effect(e, contract_structs))
+        }
+        HirExprKind::EnumVariant { def_id, fields, .. } => {
             contract_structs.contains(def_id)
                 || fields
                     .iter()

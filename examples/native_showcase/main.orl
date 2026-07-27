@@ -22,8 +22,10 @@ struct User
 end
 
 struct Resource
-    id: int
+    id: ResourceId
 end
+
+newtype ResourceId = int
 
 enum Event
     Started(label: string)
@@ -46,7 +48,7 @@ end
 
 apply Resource use Disposable
     mut dispose(self)
-        io.print("disposed-" + string(self.id))
+        io.print("disposed-" + string(int(self.id)))
     end
 end
 
@@ -69,12 +71,13 @@ event(kind: int, user: User) -> Event
 end
 
 main()
-    using resource: Resource = Resource { id: 1 }
+    using resource: Resource = Resource { id: ResourceId(1) }
 
     const user: User = choose(
         User { name: "Ada", role: "guest" },
         User { name: "Grace", role: "admin" },
     )
+    const { name, role } = user
     const boxed: any[Labelled] = user
 
     var names: list[string] = ["seed"]
@@ -85,7 +88,7 @@ main()
 
     io.print(lists.get(names, 1))
     io.print(maps.get(labels, "owner"))
-    io.print(string(user))
+    io.print(f"{name} ({role})")
 
     match event(0, user)
     case Started(label):

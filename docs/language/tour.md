@@ -246,6 +246,22 @@ main()
 end
 ```
 
+Most code needs no manual memory handling. For the uncommon case where a value
+owns something outside Ori's managed heap, it may implement
+`core.Destructor`:
+
+```ori
+apply NativeHandle use core.Destructor
+    mut destroy(self)
+        close_external(self.id)
+    end
+end
+```
+
+`destroy` runs automatically when the last reference dies. Its timing may be
+delayed by a reference cycle, so use `using` + `core.Disposable` when a file,
+socket, or similar resource must close at the end of a specific scope.
+
 ---
 
 ## 7. Functions and style
@@ -263,14 +279,79 @@ end
 double(n: int) -> int => n * 2
 ```
 
-- Closures: `(x: int) => x + 1` or `(x: int) … end`.
+- Closures: `(x: int) => x + 1` or `(x: int) … end`. The parameter type may be
+  omitted when an annotated binding supplies it:
+  `const double: func(int) -> int = (x) => x * 2`.
 - Pipe: `value |> pure_fn` is typed as `pure_fn(value)`.
 - One-argument poetic call on the same line is allowed for readability; nested
   poetic calls are rejected.
 
+Generators — `iter` + `suspend`:
+
+```ori
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i        -- hand one value to the loop, resume here next step
+        i = i + 1
+    end
+end
+
+for n in counter(4)
+    io.println(f"{n}")   -- 0, 1, 2, 3
+end
+```
+
+The body is inlined into the `for` — no allocation, no state machine. An
+iterator can only be consumed by a `for` loop (free functions, same module,
+no generics for now).
+
 ---
 
-## 8. Projects
+## 8. Generics
+
+```ori
+identity[T](value: T) -> T
+    return value
+end
+
+struct Pair[A, B]
+    first: A
+    second: B
+end
+```
+
+Bounds use a `for` clause instead of a bracket list — the two never combine:
+
+```ori
+max for T: Comparable (a: T, b: T) -> T
+    if a.compare(b) > 0
+        return a
+    end
+    return b
+end
+```
+
+Const generics let a compile-time number be part of a type. The argument is
+**named**, because a bare `Buffer[8]` would read like the index `fruits[8]`:
+
+```ori
+struct Buffer[const size: int]
+    used: int
+end
+
+const small: Buffer[size: 8]  = Buffer { used: 0 }
+const large: Buffer[size: 16] = Buffer { used: 0 }   -- a different type
+```
+
+Two limits worth knowing: a generic **trait** can be declared but not applied,
+and higher-kinded types (a parameter standing for `list`/`optional` itself) are
+deliberately out of scope. See
+[spec/11-generics.md](../spec/11-generics.md).
+
+---
+
+## 9. Projects
 
 ```text
 my_app/
@@ -292,7 +373,7 @@ See [First project](../guides/first-project.md) and
 
 ---
 
-## 9. What not to write (pre-S3)
+## 10. What not to write (pre-S3)
 
 | Avoid | Use instead |
 |-------|-------------|
@@ -311,7 +392,7 @@ ori migrate-syntax path/to/sources
 
 ---
 
-## 10. Async (native)
+## 11. Async (native)
 
 ```ori
 module app.main
@@ -333,7 +414,7 @@ C/debug backend **rejects** async (native is the reference).
 
 ---
 
-## 11. Where to go next
+## 12. Where to go next
 
 | Goal | Doc |
 |------|-----|

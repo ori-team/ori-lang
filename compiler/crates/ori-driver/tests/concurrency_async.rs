@@ -1500,13 +1500,17 @@ end
                 .collect::<Vec<_>>()
                 .join("\n");
             assert!(
-                text.contains("native_unsupported") || text.contains("iterable") || text.contains("for"),
+                text.contains("native_unsupported")
+                    || text.contains("iterable")
+                    || text.contains("for"),
                 "{text}"
             );
         }
         Err(err) => {
             assert!(
-                err.contains("native_unsupported") || err.contains("iterable") || err.contains("for"),
+                err.contains("native_unsupported")
+                    || err.contains("iterable")
+                    || err.contains("for"),
                 "{err}"
             );
         }

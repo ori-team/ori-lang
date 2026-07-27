@@ -21,10 +21,12 @@
   ],
   "activationEvents": [
     "onLanguage:ori",
+    "onDebugResolve:ori",
     "onCommand:ori.runDoctor",
     "onCommand:ori.checkFile",
     "onCommand:ori.runFile",
     "onCommand:ori.testFile",
+    "onCommand:ori.debugFile",
     "onCommand:ori.formatFile",
     "onCommand:ori.summaryProject"
   ],
@@ -41,6 +43,17 @@
           ".orl"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "oridoc",
+        "aliases": [
+          "Ori Documentation",
+          "oridoc"
+        ],
+        "extensions": [
+          ".oridoc"
+        ],
+        "configuration": "./oridoc-language-configuration.json"
       }
     ],
     "grammars": [
@@ -48,6 +61,11 @@
         "language": "ori",
         "scopeName": "source.ori",
         "path": "./syntaxes/ori.tmLanguage.json"
+      },
+      {
+        "language": "oridoc",
+        "scopeName": "text.oridoc",
+        "path": "./syntaxes/oridoc.tmLanguage.json"
       }
     ],
     "snippets": [
@@ -128,6 +146,11 @@
         "category": "Ori"
       },
       {
+        "command": "ori.debugFile",
+        "title": "Debug Current File",
+        "category": "Ori"
+      },
+      {
         "command": "ori.formatFile",
         "title": "Format Document",
         "category": "Ori"
@@ -156,6 +179,10 @@
           "when": "editorLangId == ori"
         },
         {
+          "command": "ori.debugFile",
+          "when": "editorLangId == ori"
+        },
+        {
           "command": "ori.formatFile",
           "when": "editorLangId == ori"
         }
@@ -170,14 +197,58 @@
           "command": "ori.checkFile",
           "when": "editorLangId == ori",
           "group": "navigation@98"
+        },
+        {
+          "command": "ori.debugFile",
+          "when": "editorLangId == ori",
+          "group": "navigation@100"
         }
       ]
-    }
+    },
+    "debuggers": [
+      {
+        "type": "ori",
+        "label": "Ori Debugger",
+        "languages": ["ori"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the Ori source file.",
+                "default": "${file}"
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "ori",
+            "request": "launch",
+            "name": "Debug Ori file",
+            "program": "${file}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Ori: Debug current file",
+            "description": "Start the Ori cooperative DAP debugger.",
+            "body": {
+              "type": "ori",
+              "request": "launch",
+              "name": "Debug Ori file",
+              "program": "${file}"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package:vsix": "npm run compile && npx @vscode/vsce package --no-dependencies",
+    "package:vsix": "npm run compile && vsce package --dependencies",
     "install:local": "npm run package:vsix && node -e \"const v=require('./package.json').version; require('child_process').execSync('code --install-extension ./vscode-orl-'+v+'.vsix --force',{stdio:'inherit'})\"",
     "install:cursor": "npm run package:vsix && node -e \"const v=require('./package.json').version; require('child_process').execSync('cursor --install-extension ./vscode-orl-'+v+'.vsix --force',{stdio:'inherit'})\""
   },

@@ -86,6 +86,11 @@ const NATIVE_EXPR_COVERAGE: &[NativeHirCoverage] = &[
         note: "slice, trait object e chamada resolvida",
     },
     NativeHirCoverage {
+        variant: "AssociatedCall",
+        evidence: &["HirExprKind::AssociatedCall"],
+        note: "funcao associada concreta ou monomorfizada sem receptor",
+    },
+    NativeHirCoverage {
         variant: "StructLit",
         evidence: &["HirExprKind::StructLit"],
         note: "alloc + stores por layout nativo",
@@ -99,6 +104,11 @@ const NATIVE_EXPR_COVERAGE: &[NativeHirCoverage] = &[
         variant: "ListLit",
         evidence: &["HirExprKind::ListLit"],
         note: "ori.list runtime",
+    },
+    NativeHirCoverage {
+        variant: "ArrayLit",
+        evidence: &["HirExprKind::ArrayLit"],
+        note: "stack slot inline; elementos escalares copiados campo a campo",
     },
     NativeHirCoverage {
         variant: "ListSpreadLit",
@@ -1135,7 +1145,7 @@ fn leading_identifier(item: &str) -> Option<String> {
 fn missing_raw_native_linker_reports_native_linker_not_c_compiler() {
     let err = link_with_raw_native_command(
         Path::new("__ori_missing_native_linker_for_test__"),
-        Path::new("input.o"),
+        &[Path::new("input.o").to_path_buf()],
         Path::new("output.exe"),
         &[],
         NativeLinkOptions::default(),
@@ -2024,10 +2034,17 @@ fn managed_assignment_updates_arc_before_overwrite() {
         "self.emit_arc_update_edge_if_managed(&elem_ty, container, old, val)?;",
         ".get(\"ori_list_set\")",
     );
-    assert_order(
+    // The array element path stores earlier in the arm with the same store
+    // shape (scalars, no ARC edge), so anchor on the field path: the store
+    // must sit between the edge update and the owned-temporary release.
+    let field_store_tail = source_section(
         assign,
         "self.emit_arc_update_edge_if_managed(&field_layout.ty, owner, old, val)?;",
-        ".store(MemFlags::new(), val, addr, 0);",
+        "value_is_owned && is_managed_ty(&field_layout.ty)",
+    );
+    assert!(
+        field_store_tail.contains(".store(MemFlags::new(), val, addr, 0);"),
+        "field assignment must store only after the ARC edge update"
     );
 }
 

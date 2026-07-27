@@ -43,6 +43,25 @@ function Assert-JsonFile([string]$Path) {
     Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Out-Null
 }
 
+function Assert-ZipEntry([string]$ArchivePath, [string]$EntryName) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+    try {
+        $found = $false
+        foreach ($entry in $archive.Entries) {
+            if ($entry.FullName -eq $EntryName) {
+                $found = $true
+                break
+            }
+        }
+        if (-not $found) {
+            throw "$ArchivePath is missing $EntryName."
+        }
+    } finally {
+        $archive.Dispose()
+    }
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $extensionRoot = Join-Path $repoRoot "extensions/vscode-orl"
 $targetRoot = if ($env:CARGO_TARGET_DIR) {
@@ -60,6 +79,7 @@ $workspaceRootPath = Assert-SmokeRoot $WorkspaceRoot
 $oriExe = Join-Path $targetRoot (Join-Path "debug" (Get-OriExeName))
 $lspExe = Join-Path $targetRoot (Join-Path "debug" (Get-LspExeName))
 $projectRoot = Join-Path $workspaceRootPath "demo"
+$projectEntry = Join-Path $projectRoot "main.orl"
 
 Push-Location $repoRoot
 try {
@@ -79,11 +99,20 @@ try {
         if (-not $SkipNpmInstall -and -not (Test-Path -LiteralPath "node_modules" -PathType Container)) {
             Invoke-Checked { npm install } "npm install"
         }
-        Invoke-Checked { npm run compile } "npm run compile"
+        Invoke-Checked { npm run package:vsix } "npm run package:vsix"
         Assert-JsonFile (Join-Path $extensionRoot "package.json")
         Assert-JsonFile (Join-Path $extensionRoot "language-configuration.json")
+        Assert-JsonFile (Join-Path $extensionRoot "oridoc-language-configuration.json")
         Assert-JsonFile (Join-Path $extensionRoot "snippets/ori.json")
         Assert-JsonFile (Join-Path $extensionRoot "syntaxes/ori.tmLanguage.json")
+        Assert-JsonFile (Join-Path $extensionRoot "syntaxes/oridoc.tmLanguage.json")
+
+        $package = Get-Content -LiteralPath (Join-Path $extensionRoot "package.json") -Raw | ConvertFrom-Json
+        $vsixPath = Join-Path $extensionRoot ("vscode-orl-{0}.vsix" -f $package.version)
+        if (-not (Test-Path -LiteralPath $vsixPath -PathType Leaf)) {
+            throw "VSIX was not found at $vsixPath."
+        }
+        Assert-ZipEntry $vsixPath "extension/node_modules/vscode-languageclient/node.js"
     } finally {
         Pop-Location
     }
@@ -109,11 +138,11 @@ try {
     Set-Content -LiteralPath (Join-Path $settingsDir "settings.json") -Value $settings -Encoding ASCII
 
     Invoke-Checked { & $oriExe check (Join-Path $projectRoot "ori.proj") } "ori check outside repository"
-    Invoke-Checked { & $oriExe run (Join-Path $projectRoot "src/main.orl") } "ori run outside repository"
-    Invoke-Checked { & $oriExe test (Join-Path $projectRoot "src/main.orl") } "ori test outside repository"
+    Invoke-Checked { & $oriExe run $projectEntry } "ori run outside repository"
+    Invoke-Checked { & $oriExe test $projectEntry } "ori test outside repository"
     Invoke-Checked { & $oriExe doc check (Join-Path $projectRoot "ori.proj") } "ori doc check outside repository"
     Invoke-Checked { & $oriExe summary (Join-Path $projectRoot "ori.proj") } "ori summary outside repository"
-    Invoke-Checked { & $oriExe fmt (Join-Path $projectRoot "src/main.orl") } "ori fmt outside repository"
+    Invoke-Checked { & $oriExe fmt $projectEntry } "ori fmt outside repository"
 
     Write-Host "VS Code extension smoke passed: $workspaceRootPath"
 } finally {

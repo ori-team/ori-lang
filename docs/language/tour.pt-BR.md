@@ -198,6 +198,23 @@ main()
 end
 ```
 
+Quase todo código dispensa manipulação manual de memória. No caso incomum em
+que um valor possui algo fora do heap gerenciado de Ori, ele pode implementar
+`core.Destructor`:
+
+```ori
+apply NativeHandle use core.Destructor
+    mut destroy(self)
+        close_external(self.id)
+    end
+end
+```
+
+`destroy` roda automaticamente quando a última referência morre. Um ciclo de
+referências pode atrasar esse momento; use `using` + `core.Disposable` quando
+arquivo, socket ou recurso semelhante precisar fechar no fim de um escopo
+específico.
+
 ---
 
 ## 7. Funções
@@ -212,9 +229,78 @@ double(n: int) -> int => n * 2
 
 Pipe `|>` permanece e é tipado como `f(value)`.
 
+Em closures o tipo do parâmetro pode ser omitido quando uma anotação fornece o
+tipo da função: `const double: func(int) -> int = (x) => x * 2`. Sem contexto,
+escreva o tipo: `(x: int) => x + 1`.
+
+Geradores — `iter` + `suspend`:
+
+```ori
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i        -- entrega um valor ao laço e retoma daqui no próximo passo
+        i = i + 1
+    end
+end
+
+for n in counter(4)
+    io.println(f"{n}")   -- 0, 1, 2, 3
+end
+```
+
+O corpo é colado dentro do `for` — sem alocação, sem máquina de estados. Um
+iterador só pode ser consumido por um `for` (funções livres, mesmo módulo,
+sem genéricos por enquanto).
+
 ---
 
-## 8. Projetos
+## 8. Genéricos
+
+```ori
+identity[T](value: T) -> T
+    return value
+end
+
+struct Pair[A, B]
+    first: A
+    second: B
+end
+```
+
+Restrições usam a cláusula `for` no lugar da lista em colchetes — as duas
+formas nunca se combinam:
+
+```ori
+max for T: Comparable (a: T, b: T) -> T
+    if a.compare(b) > 0
+        return a
+    end
+    return b
+end
+```
+
+Const generics deixam um número de tempo de compilação fazer parte do tipo. O
+argumento é **nomeado**, porque um `Buffer[8]` puro seria lido como o índice
+`frutas[8]`:
+
+```ori
+struct Buffer[const size: int]
+    used: int
+end
+
+const pequeno: Buffer[size: 8]  = Buffer { used: 0 }
+const grande: Buffer[size: 16] = Buffer { used: 0 }   -- outro tipo
+```
+
+Dois limites que valem saber: um **trait genérico** pode ser declarado mas não
+aplicado, e tipos de ordem superior (um parâmetro que representa `list` ou
+`optional` em si) estão deliberadamente fora de escopo. Veja
+[spec/11-generics.md](../spec/11-generics.md).
+
+---
+
+## 9. Projetos
 
 ```text
 my_app/
@@ -232,7 +318,7 @@ Guia: [Primeiro projeto](../guides/first-project.pt-BR.md).
 
 ---
 
-## 9. O que não escrever (pré-S3)
+## 10. O que não escrever (pré-S3)
 
 | Evite | Use |
 |-------|-----|
@@ -249,7 +335,7 @@ ori migrate-syntax caminho/
 
 ---
 
-## 10. Async (nativo)
+## 11. Async (nativo)
 
 ```ori
 module app.main
@@ -270,7 +356,7 @@ end
 
 ---
 
-## 11. Próximos passos
+## 12. Próximos passos
 
 | Objetivo | Doc |
 |----------|------|

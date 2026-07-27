@@ -368,8 +368,8 @@ end
 }
 
 #[test]
-fn check_reports_implicit_self_mut_method_on_const_receiver() {
-    let dir = TestDir::new("implicit_self_const_receiver");
+fn check_reports_mut_method_on_const_receiver() {
+    let dir = TestDir::new("mut_method_const_receiver");
     dir.write(
         "main.orl",
         r#"module app.main
@@ -377,7 +377,7 @@ fn check_reports_implicit_self_mut_method_on_const_receiver() {
 struct Counter
     value: int
 
-    mut increment()
+    mut increment(self)
         self.value = self.value + 1
     end
 end

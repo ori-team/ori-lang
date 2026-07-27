@@ -1,9 +1,40 @@
 //! Source text formatter (`ori fmt`).
 //!
 //! Extracted from `pipeline.rs` as part of Etapa 8.3 monolith reduction.
-//! Pure string processing — no dependencies on pipeline types or other
-//! pipeline functions. The public entry point is re-exported from
-//! `pipeline.rs` as `format_source_text` to preserve the public API.
+//! The public entry points are re-exported from `pipeline.rs` to preserve the
+//! driver API while keeping formatting concerns out of the pipeline facade.
+
+use ori_diagnostics::{Diagnostic, DiagnosticSink, SourceCache};
+use std::path::Path;
+
+pub struct FmtOutput {
+    pub cache: SourceCache,
+    pub formatted: String,
+    pub diagnostics: Vec<Diagnostic>,
+    pub has_errors: bool,
+}
+
+pub fn run_fmt(path: &Path) -> Result<FmtOutput, String> {
+    let source = super::project::read_file(path)?;
+    let mut cache = SourceCache::default();
+    let mut sink = DiagnosticSink::default();
+    let file_id = cache.add(path, source.clone());
+    let tokens = ori_lexer::lex(&source, file_id, &mut sink);
+    let _ast = ori_parser::parse(&tokens, &source, file_id, &mut sink);
+    let formatted = if !sink.has_errors() {
+        format_source_text(&source)
+    } else {
+        String::new()
+    };
+    let has_errors = sink.has_errors();
+    let diagnostics = sink.into_diagnostics();
+    Ok(FmtOutput {
+        cache,
+        formatted,
+        diagnostics,
+        has_errors,
+    })
+}
 
 pub fn format_source_text(source: &str) -> String {
     let mut indent = 0usize;
@@ -47,17 +78,11 @@ enum BlockKind {
 }
 
 fn should_dedent_before(line: &str) -> bool {
-    is_end_line(line)
-        || line == "else"
-        || line.starts_with("elif ")
-        || line.starts_with("case ")
+    is_end_line(line) || line == "else" || line.starts_with("elif ") || line.starts_with("case ")
 }
 
 fn closes_current_block_before_opening(line: &str) -> bool {
-    is_end_line(line)
-        || line == "else"
-        || line.starts_with("elif ")
-        || line.starts_with("case ")
+    is_end_line(line) || line == "else" || line.starts_with("elif ") || line.starts_with("case ")
 }
 
 fn is_end_line(line: &str) -> bool {
@@ -127,6 +152,7 @@ fn declaration_line_without_modifiers(mut line: &str) -> &str {
         let next = line
             .strip_prefix("public ")
             .or_else(|| line.strip_prefix("async "))
+            .or_else(|| line.strip_prefix("iter "))
             .or_else(|| line.strip_prefix("mut "));
         let Some(next) = next else {
             return line;

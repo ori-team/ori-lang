@@ -255,3 +255,48 @@ still call the runtime. Managed elements keep push + ARC edge registration.
 
 ≈ **1.25×** Rust (was ~1.8×). Residual: capacity/bounds branches, version
 bump, process start — not ARC on `list[int]`.
+
+## Wave 9 (2026-07-23) — large-module compiler scalability
+
+The synthetic probe generates one source file with 10,000 scalar functions and
+an entry point that calls all of them. `ORI_INTERNAL_PIPELINE_TIMINGS=1`
+reports each compiler stage.
+
+### Root causes and changes
+
+1. Type checking and HIR lowering now index function signatures by `DefId`
+   instead of repeatedly scanning the complete signature list.
+2. Each scalar Cranelift body imports only the user/runtime symbols it actually
+   references; complex managed, trait and async bodies keep the conservative
+   full set.
+3. Named-function closure wrappers are declared and emitted only when a
+   function is used as a first-class value.
+4. The per-function selector performs indexed lookups instead of scanning the
+   entire symbol table.
+
+### Result (Linux x86_64 development host)
+
+| Probe | Before | After |
+|-------|-------:|------:|
+| `ori compile`, 1,000 functions | 24.4 s | 3.2 s before the final direct-lookup fix |
+| `ori compile`, 10,000 functions | ~4 min reported | **21.2 s** |
+| 10k frontend + type checking | not separated | **~5.0 s** |
+| 10k HIR lowering | 2.19 s before signature index | **1.20 s** |
+| 10k native codegen | >60 s before final lookup fix | **12.9–14.2 s** |
+
+The permanent ignored probe lives in
+`ori-driver/tests/performance_guard.rs`. Strict defaults are 10 seconds for
+`check` and 60 seconds for native `compile`.
+
+```bash
+ORI_PERF_STRICT=1 \
+ORI_PERF_LARGE_FUNCTION_COUNT=10000 \
+cargo test -p ori-driver --test performance_guard \
+  measure_check_large_single_file_scaling -- --ignored --nocapture
+
+ORI_PERF_STRICT=1 \
+ORI_PERF_LARGE_FUNCTION_COUNT=10000 \
+ORI_PERF_LARGE_COMPILE=1 \
+cargo test -p ori-driver --test performance_guard \
+  measure_check_large_single_file_scaling -- --ignored --nocapture
+```

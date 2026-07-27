@@ -1,3 +1,4 @@
+use ori_diagnostics::FileId;
 use ori_diagnostics::Span;
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -40,6 +41,37 @@ pub struct Def {
     pub span: Span,
 }
 
+/// A scalar value proven at compile time by the CT-0 evaluator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompileTimeValue {
+    Int(i64),
+    Bool(bool),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstEvalFailureKind {
+    UnsupportedExpression,
+    InvalidLiteral,
+    UndefinedName,
+    NonConstName,
+    PrivateName,
+    Cycle,
+    Overflow,
+    DivisionByZero,
+    TypeMismatch,
+}
+
+/// Why a module constant could not be used in a compile-time expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstEvalFailure {
+    pub kind: ConstEvalFailureKind,
+    pub file_id: FileId,
+    pub span: Span,
+    pub detail: String,
+}
+
+pub type ConstEvaluation = Result<CompileTimeValue, ConstEvalFailure>;
+
 /// Maps fully-qualified names to their definitions.
 ///
 /// Populated during name resolution; queried by the type checker.
@@ -47,6 +79,7 @@ pub struct Def {
 pub struct DefMap {
     defs: Vec<Def>,
     by_path: HashMap<SmolStr, DefId>,
+    const_evaluations: HashMap<DefId, ConstEvaluation>,
 }
 
 impl DefMap {
@@ -125,6 +158,14 @@ impl DefMap {
 
     pub fn all_defs(&self) -> &[Def] {
         &self.defs
+    }
+
+    pub(crate) fn set_const_evaluations(&mut self, evaluations: HashMap<DefId, ConstEvaluation>) {
+        self.const_evaluations = evaluations;
+    }
+
+    pub fn const_evaluation(&self, id: DefId) -> Option<&ConstEvaluation> {
+        self.const_evaluations.get(&id)
     }
 
     pub fn len(&self) -> usize {

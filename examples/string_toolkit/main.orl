@@ -1,7 +1,7 @@
 module app.string_toolkit
 
---- Demonstra todas as funções utilitárias de string da stdlib Ori.
---- Cobre: manipulação de texto, busca, formatação e validação.
+-- Demonstrates the Ori string utility module.
+-- Covers text manipulation, search, formatting, and validation.
 
 imports
     ori.io = io

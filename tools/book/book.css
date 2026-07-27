@@ -1,0 +1,225 @@
+@page {
+  size: A4;
+  margin: 18mm 16mm 20mm 16mm;
+
+  @bottom-center {
+    content: counter(page);
+    font-family: "DejaVu Sans", "Noto Sans", sans-serif;
+    font-size: 9pt;
+    color: #666;
+  }
+}
+
+:root {
+  --ink: #1a1a1a;
+  --muted: #555;
+  --border: #d8d8d8;
+  --code-bg: #f6f4f1;
+  --accent: #2c4a3e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 11pt;
+}
+
+body {
+  font-family: "DejaVu Sans", "Noto Sans", "Liberation Sans", sans-serif;
+  color: var(--ink);
+  line-height: 1.45;
+  max-width: 42rem;
+  margin: 0 auto;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: "DejaVu Serif", "Noto Serif", "Liberation Serif", serif;
+  color: var(--accent);
+  line-height: 1.25;
+  page-break-after: avoid;
+}
+
+h1 {
+  font-size: 1.7rem;
+  margin-top: 0;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 0.25rem;
+}
+
+h2 {
+  font-size: 1.25rem;
+  margin-top: 1.4rem;
+}
+
+h3 {
+  font-size: 1.05rem;
+}
+
+p,
+li {
+  orphans: 3;
+  widows: 3;
+}
+
+blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 0.8rem 0;
+  padding: 0.2rem 0 0.2rem 0.9rem;
+  color: var(--muted);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.8rem 0 1rem;
+  font-size: 0.92rem;
+  page-break-inside: avoid;
+}
+
+th,
+td {
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #eef2ef;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5rem 0;
+}
+
+/* chapter break */
+.chapter {
+  page-break-before: always;
+}
+
+.chapter:first-child {
+  page-break-before: avoid;
+}
+
+.titlepage {
+  page-break-after: always;
+  padding-top: 28vh;
+  text-align: center;
+}
+
+.titlepage h1 {
+  border: none;
+  font-size: 2.2rem;
+}
+
+.titlepage .meta {
+  color: var(--muted);
+  margin-top: 1rem;
+}
+
+code {
+  font-family: "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  padding: 0.08em 0.28em;
+  border-radius: 3px;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.75rem 0.9rem;
+  overflow-x: auto;
+  page-break-inside: avoid;
+  line-height: 1.35;
+  font-size: 0.84rem;
+}
+
+pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* highlight.js — github-ish warm theme tuned for print */
+.hljs {
+  color: #24292e;
+  background: transparent;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #6a737d;
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-addition {
+  color: #1f6f4a;
+  font-weight: 600;
+}
+
+.hljs-string,
+.hljs-meta .hljs-string,
+.hljs-attribute {
+  color: #0b5cab;
+}
+
+.hljs-literal,
+.hljs-number,
+.hljs-type {
+  color: #9a3412;
+}
+
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-title.class {
+  color: #6b3fa0;
+}
+
+.hljs-meta {
+  color: #a16207;
+  font-weight: 600;
+}
+
+.hljs-subst {
+  color: #b45309;
+}
+
+.hljs-operator {
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.hljs-title.function_,
+.hljs-title {
+  color: #1d4ed8;
+}
+
+.toc {
+  page-break-after: always;
+}
+
+.toc ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.toc li {
+  margin: 0.25rem 0;
+}

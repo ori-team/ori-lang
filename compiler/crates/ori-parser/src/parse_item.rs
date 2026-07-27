@@ -6,9 +6,18 @@ use ori_ast::item::{
     ItemWithAttrs, NamedField, NamespaceDecl, NewtypeDecl, Param, ParamKind, SourceFile,
     StructDecl, StructField, TopConst, TopVar, TraitDecl, TraitMember,
 };
+use ori_ast::ty::Type;
 use ori_diagnostics::Span;
 use ori_lexer::TokenKind;
 use std::collections::HashSet;
+
+/// Modifiers that may precede a function head: `async`, `iter`, `mut`.
+#[derive(Debug, Clone, Copy, Default)]
+struct FuncModifiers {
+    is_async: bool,
+    is_iter: bool,
+    is_mut: bool,
+}
 
 impl<'src> Parser<'src> {
     /// Entry point: parse a full source file.
@@ -390,7 +399,11 @@ impl<'src> Parser<'src> {
     /// Forms: `[async] [mut] name(…)` / `name[T](…)` / `name for T: Trait (…)` /
     /// legacy `name<T>(…)` (errors) / legacy `func …`.
     fn at_func_decl_start(&self) -> bool {
-        if self.at(&TokenKind::Func) || self.at(&TokenKind::Mut) || self.at_contextual("async") {
+        if self.at(&TokenKind::Func)
+            || self.at(&TokenKind::Mut)
+            || self.at_contextual("async")
+            || self.at_iter_modifier()
+        {
             return true;
         }
         self.at_named_func_head()
@@ -414,7 +427,7 @@ impl<'src> Parser<'src> {
 
     pub fn parse_func_decl(&mut self, vis: Visibility) -> Option<FuncDecl> {
         let start = self.current_span();
-        let (is_async, is_mut) = self.parse_func_modifiers();
+        let mods = self.parse_func_modifiers();
         self.reject_func_keyword_on_decl();
         let name = self.parse_name()?;
         let (type_params, where_clause) = self.parse_generic_header();
@@ -439,8 +452,9 @@ impl<'src> Parser<'src> {
             };
             return Some(FuncDecl {
                 visibility: vis,
-                is_async,
-                is_mut,
+                is_async: mods.is_async,
+                is_iter: mods.is_iter,
+                is_mut: mods.is_mut,
                 name,
                 type_params,
                 params,
@@ -454,8 +468,9 @@ impl<'src> Parser<'src> {
         let end = self.expect_block_end(start, "function")?;
         Some(FuncDecl {
             visibility: vis,
-            is_async,
-            is_mut,
+            is_async: mods.is_async,
+            is_iter: mods.is_iter,
+            is_mut: mods.is_mut,
             name,
             type_params,
             params,
@@ -468,7 +483,7 @@ impl<'src> Parser<'src> {
 
     fn parse_func_signature(&mut self, vis: Visibility) -> Option<FuncSignature> {
         let start = self.current_span();
-        let (is_async, is_mut) = self.parse_func_modifiers();
+        let mods = self.parse_func_modifiers();
         self.reject_func_keyword_on_decl();
         let name = self.parse_name()?;
         let (type_params, where_clause) = self.parse_generic_header();
@@ -482,8 +497,9 @@ impl<'src> Parser<'src> {
         let end = return_ty.as_ref().map(|t| t.span()).unwrap_or(name.span);
         Some(FuncSignature {
             visibility: vis,
-            is_async,
-            is_mut,
+            is_async: mods.is_async,
+            is_iter: mods.is_iter,
+            is_mut: mods.is_mut,
             name,
             type_params,
             params,
@@ -532,21 +548,42 @@ impl<'src> Parser<'src> {
         Some(params)
     }
 
-    fn parse_func_modifiers(&mut self) -> (bool, bool) {
-        let mut is_async = false;
-        let mut is_mut = false;
-        for _ in 0..2 {
-            if !is_async && self.eat_contextual("async") {
-                is_async = true;
+    fn parse_func_modifiers(&mut self) -> FuncModifiers {
+        let mut mods = FuncModifiers::default();
+        let mut iter_span = None;
+        for _ in 0..3 {
+            if !mods.is_async && self.eat_contextual("async") {
+                mods.is_async = true;
                 continue;
             }
-            if !is_mut && self.eat(&TokenKind::Mut) {
-                is_mut = true;
+            if !mods.is_iter && self.at_iter_modifier() {
+                iter_span = Some(self.current_span());
+                self.advance();
+                mods.is_iter = true;
+                continue;
+            }
+            if !mods.is_mut && self.eat(&TokenKind::Mut) {
+                mods.is_mut = true;
                 continue;
             }
             break;
         }
-        (is_async, is_mut)
+        if mods.is_async && mods.is_iter {
+            let span = iter_span.unwrap_or_else(|| self.current_span());
+            self.error(
+                "parse.async_iter_unsupported",
+                "an iterator cannot be `async`; `iter` produces values on demand \
+                 and does not await",
+                span,
+            );
+        }
+        mods
+    }
+
+    /// `iter` before a function head. Contextual: `iter.map(xs, f)` — the stdlib
+    /// module alias — must keep working, so require a name after it.
+    fn at_iter_modifier(&self) -> bool {
+        self.at_contextual("iter") && matches!(self.peek_nth_kind(1), Some(TokenKind::Ident))
     }
 
     fn parse_param(&mut self) -> Option<Param> {
@@ -802,6 +839,7 @@ impl<'src> Parser<'src> {
                 let decl = FuncDecl {
                     visibility: sig.visibility,
                     is_async: sig.is_async,
+                    is_iter: sig.is_iter,
                     is_mut: sig.is_mut,
                     name: sig.name.clone(),
                     type_params: sig.type_params.clone(),
@@ -825,6 +863,7 @@ impl<'src> Parser<'src> {
                 let decl = FuncDecl {
                     visibility: sig.visibility,
                     is_async: sig.is_async,
+                    is_iter: sig.is_iter,
                     is_mut: sig.is_mut,
                     name: sig.name.clone(),
                     type_params: sig.type_params.clone(),
@@ -1177,6 +1216,7 @@ impl<'src> Parser<'src> {
                 free_members: Vec::new(),
                 uses: vec![ApplyUseSection {
                     trait_name: first_name,
+                    trait_args: Vec::new(),
                     members,
                     associated_types,
                     span: use_span,
@@ -1201,6 +1241,7 @@ impl<'src> Parser<'src> {
             let use_start = self.current_span();
             self.advance(); // use
             let trait_name = self.parse_qualified_name()?;
+            let trait_args = self.parse_trait_args_opt();
             let (members, associated_types) = self.parse_apply_use_body_members()?;
             let end = self.expect_block_end(start, "apply")?;
             return Some(ApplyDecl {
@@ -1210,6 +1251,7 @@ impl<'src> Parser<'src> {
                 free_members: Vec::new(),
                 uses: vec![ApplyUseSection {
                     trait_name,
+                    trait_args,
                     members,
                     associated_types,
                     span: use_start.cover(end),
@@ -1322,6 +1364,7 @@ impl<'src> Parser<'src> {
             free_members: Vec::new(),
             uses: vec![ApplyUseSection {
                 trait_name,
+                trait_args: Vec::new(),
                 members,
                 associated_types,
                 span: use_span,
@@ -1330,13 +1373,29 @@ impl<'src> Parser<'src> {
         })
     }
 
+    /// Optional type arguments after a trait name: `use Container[int]`.
+    ///
+    /// A generic trait binds its own parameters here, which is what lets one
+    /// type implement `Container[int]` and another `Container[string]`.
+    fn parse_trait_args_opt(&mut self) -> Vec<Type> {
+        if !self.at(&TokenKind::LBracket) {
+            return Vec::new();
+        }
+        match self.parse_type_arg_list_free() {
+            Some((args, _)) => args,
+            None => Vec::new(),
+        }
+    }
+
     fn parse_apply_use_section(&mut self) -> Option<ApplyUseSection> {
         let start = self.advance().unwrap().span; // use
         let trait_name = self.parse_qualified_name()?;
+        let trait_args = self.parse_trait_args_opt();
         let (members, associated_types) = self.parse_apply_use_body_members()?;
         let end = self.expect_block_end(start, "use")?;
         Some(ApplyUseSection {
             trait_name,
+            trait_args,
             members,
             associated_types,
             span: start.cover(end),

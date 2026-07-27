@@ -187,20 +187,6 @@ impl StdlibCatalog {
         items
     }
 
-    pub fn module_completion_items(&self, prefix: &str) -> Vec<CompletionItem> {
-        self.modules()
-            // M2: do not teach ori.X.utils / ori.X.algorithms in the picker.
-            .filter(|m| !m.ends_with(".utils") && !m.ends_with(".algorithms"))
-            .filter(|m| prefix.is_empty() || m.starts_with(prefix))
-            .map(|m| CompletionItem {
-                label: m.clone(),
-                kind: Some(CompletionItemKind::MODULE),
-                detail: Some("Ori stdlib module".into()),
-                ..CompletionItem::default()
-            })
-            .collect()
-    }
-
     pub fn dot_completion_items(
         &self,
         receiver: &str,

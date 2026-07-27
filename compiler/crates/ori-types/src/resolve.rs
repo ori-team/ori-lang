@@ -18,6 +18,9 @@ pub struct FuncSig {
     pub where_constraints: Vec<WhereConstraintSig>,
     pub return_ty: Ty,
     pub is_mut: bool,
+    /// `iter name(...) -> T`: `return_ty` is the element type and the function
+    /// may only be consumed by a `for` loop (inlined at the loop site).
+    pub is_iter: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -65,12 +68,20 @@ pub struct TraitMethodSig {
     pub return_ty: Ty,
     pub is_mut: bool,
     pub has_default: bool,
+    /// Declared with an explicit `self` receiver. `false` marks an associated
+    /// function (`default() -> Self`), called as `Type.method(...)`.
+    pub has_self: bool,
     pub span: ori_diagnostics::Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct TraitSig {
     pub def_id: DefId,
+    /// The trait's own type parameters, in declaration order.
+    ///
+    /// `trait Container[Item]` records `["Item"]`. An `apply` binds them
+    /// positionally through `ImplSig::trait_args`.
+    pub type_params: Vec<SmolStr>,
     pub methods: Vec<TraitMethodSig>,
 }
 
@@ -84,6 +95,9 @@ pub struct ImplMethodSig {
 pub struct ImplSig {
     pub trait_def_id: DefId,
     pub type_def_id: DefId,
+    /// Arguments bound to the trait's type parameters: `use Container[int]`
+    /// records `[Int]`. Empty for a non-generic trait.
+    pub trait_args: Vec<Ty>,
     pub methods: Vec<ImplMethodSig>,
 }
 
@@ -182,6 +196,9 @@ pub fn resolve_many<S: Into<SmolStr>>(
 
     // ── Phase 2: lower function signatures ───────────────────────────────────
     let reexports = collect_reexports(files);
+    let const_evaluations =
+        crate::const_eval::collect_module_const_evaluations(files, &reexports, &def_map);
+    def_map.set_const_evaluations(const_evaluations);
 
     let mut func_sigs = Vec::new();
     let mut value_sigs = Vec::new();
@@ -242,7 +259,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                             all_tp.extend(m.type_params.iter().map(|p| p.name.text.clone()));
                             let mut m_aliases = aliases.clone();
                             m_aliases.insert(SmolStr::new("Self"), s.name.text.clone());
-                            let mut params: Vec<Ty> = m
+                            let params: Vec<Ty> = m
                                 .params
                                 .iter()
                                 .map(|p| {
@@ -252,9 +269,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                     )
                                 })
                                 .collect();
-                            if !has_explicit_self_param(&m.params) {
-                                params.insert(0, Ty::Named(def_id, Vec::new()));
-                            }
                             let return_ty = m
                                 .return_ty
                                 .as_ref()
@@ -287,6 +301,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                     where_constraints,
                                     return_ty,
                                     is_mut: m.is_mut,
+                                    is_iter: m.is_iter,
                                 });
                             }
                         }
@@ -372,10 +387,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                         .iter()
                         .map(|p| p.name.text.clone())
                         .collect();
-                    let self_ty = type_def_id
-                        .map(|def_id| Ty::Named(def_id, Vec::new()))
-                        .unwrap_or(Ty::Infer(0));
-
                     // Free methods + free binds: inherent on the type.
                     // Binds were aliased in phase 1b (`Type.slot` → free fn DefId);
                     // missing targets are already diagnosed there.
@@ -391,7 +402,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                 &aliases,
                                 &HashMap::new(),
                                 &def_map,
-                                self_ty.clone(),
                                 *file_id,
                                 sink,
                                 &mut func_sigs,
@@ -448,7 +458,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         &aliases,
                                         &section_assoc_types,
                                         &def_map,
-                                        self_ty.clone(),
                                         *file_id,
                                         sink,
                                         &mut func_sigs,
@@ -486,9 +495,22 @@ pub fn resolve_many<S: Into<SmolStr>>(
                         }
                         if let (Some(trait_def_id), Some(type_def_id)) = (trait_def_id, type_def_id)
                         {
+                            // `use Container[int]` binds the trait's own
+                            // parameters. Lowered here so the checker can
+                            // substitute them into the method signatures.
+                            let trait_args: Vec<Ty> = use_sec
+                                .trait_args
+                                .iter()
+                                .map(|ty| {
+                                    lower_type_with_aliases(
+                                        ty, &namespace, &tp, &def_map, *file_id, sink, &aliases,
+                                    )
+                                })
+                                .collect();
                             impl_sigs.push(ImplSig {
                                 trait_def_id,
                                 type_def_id,
+                                trait_args,
                                 methods: impl_methods,
                             });
                         }
@@ -512,7 +534,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                 all_tp.extend(sig.type_params.iter().map(|p| p.name.text.clone()));
                                 let mut m_aliases = aliases.clone();
                                 m_aliases.insert(SmolStr::new("Self"), t.name.text.clone());
-                                let mut params: Vec<Ty> = sig
+                                let params: Vec<Ty> = sig
                                     .params
                                     .iter()
                                     .map(|p| {
@@ -522,12 +544,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         )
                                     })
                                     .collect();
-                                if !has_explicit_self_param(&sig.params) {
-                                    let self_ty = trait_def_id
-                                        .map(|def_id| Ty::Named(def_id, Vec::new()))
-                                        .unwrap_or(Ty::Infer(0));
-                                    params.insert(0, self_ty);
-                                }
                                 let return_ty = sig
                                     .return_ty
                                     .as_ref()
@@ -545,6 +561,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                     return_ty: return_ty.clone(),
                                     is_mut: sig.is_mut,
                                     has_default: false,
+                                    has_self: has_explicit_self_param(&sig.params),
                                     span: sig.span,
                                 });
                                 let m_path =
@@ -569,6 +586,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         where_constraints,
                                         return_ty,
                                         is_mut: sig.is_mut,
+                                        is_iter: sig.is_iter,
                                     });
                                 }
                             }
@@ -577,7 +595,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                 all_tp.extend(func.type_params.iter().map(|p| p.name.text.clone()));
                                 let mut m_aliases = aliases.clone();
                                 m_aliases.insert(SmolStr::new("Self"), t.name.text.clone());
-                                let mut params: Vec<Ty> = func
+                                let params: Vec<Ty> = func
                                     .params
                                     .iter()
                                     .map(|p| {
@@ -587,12 +605,6 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         )
                                     })
                                     .collect();
-                                if !has_explicit_self_param(&func.params) {
-                                    let self_ty = trait_def_id
-                                        .map(|def_id| Ty::Named(def_id, Vec::new()))
-                                        .unwrap_or(Ty::Infer(0));
-                                    params.insert(0, self_ty);
-                                }
                                 let return_ty = func
                                     .return_ty
                                     .as_ref()
@@ -610,6 +622,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                     return_ty: return_ty.clone(),
                                     is_mut: func.is_mut,
                                     has_default: true,
+                                    has_self: has_explicit_self_param(&func.params),
                                     span: func.span,
                                 });
                                 let m_path =
@@ -634,6 +647,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         where_constraints,
                                         return_ty,
                                         is_mut: func.is_mut,
+                                        is_iter: func.is_iter,
                                     });
                                 }
                             }
@@ -650,7 +664,15 @@ pub fn resolve_many<S: Into<SmolStr>>(
                         sink,
                     );
                     if let Some(def_id) = trait_def_id {
-                        trait_sigs.push(TraitSig { def_id, methods });
+                        trait_sigs.push(TraitSig {
+                            def_id,
+                            type_params: t
+                                .type_params
+                                .iter()
+                                .map(|p| p.name.text.clone())
+                                .collect(),
+                            methods,
+                        });
                     }
                 }
                 Item::Func(f) => {
@@ -695,6 +717,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                             where_constraints,
                             return_ty,
                             is_mut: f.is_mut,
+                            is_iter: f.is_iter,
                         });
                     }
                 }
@@ -776,6 +799,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                         where_constraints: Vec::new(),
                                         return_ty: resolved_return_ty,
                                         is_mut: false,
+                                        is_iter: false,
                                     });
                                 }
                             }
@@ -1068,7 +1092,6 @@ fn resolve_apply_method_func_sig(
     // signature can name it. Empty for free members.
     associated_types: &HashMap<SmolStr, ori_ast::ty::Type>,
     def_map: &DefMap,
-    self_ty: Ty,
     file_id: FileId,
     sink: &mut DiagnosticSink,
     func_sigs: &mut Vec<FuncSig>,
@@ -1077,7 +1100,7 @@ fn resolve_apply_method_func_sig(
     all_tp.extend(m.type_params.iter().map(|p| p.name.text.clone()));
     let mut m_aliases = aliases.clone();
     m_aliases.insert(SmolStr::new("Self"), type_name.clone());
-    let mut params: Vec<Ty> = m
+    let params: Vec<Ty> = m
         .params
         .iter()
         .map(|p| {
@@ -1093,9 +1116,6 @@ fn resolve_apply_method_func_sig(
             )
         })
         .collect();
-    if !has_explicit_self_param(&m.params) {
-        params.insert(0, self_ty);
-    }
     let return_ty = m
         .return_ty
         .as_ref()
@@ -1137,6 +1157,7 @@ fn resolve_apply_method_func_sig(
             where_constraints,
             return_ty,
             is_mut: m.is_mut,
+            is_iter: m.is_iter,
         });
     }
 }
@@ -1147,28 +1168,19 @@ fn has_explicit_self_param(params: &[Param]) -> bool {
         .is_some_and(|param| param.name.text.as_str() == "self")
 }
 
+// A method without an explicit `self` parameter is an *associated function*
+// (`Type.method(...)`): its signature is exactly what was declared. Explicit
+// `self` is what makes a method an instance method.
 fn method_param_names(params: &[Param]) -> Vec<SmolStr> {
-    let mut names = param_names(params);
-    if !has_explicit_self_param(params) {
-        names.insert(0, SmolStr::new("self"));
-    }
-    names
+    param_names(params)
 }
 
 fn method_param_default_flags(params: &[Param]) -> Vec<bool> {
-    let mut flags = param_default_flags(params);
-    if !has_explicit_self_param(params) {
-        flags.insert(0, false);
-    }
-    flags
+    param_default_flags(params)
 }
 
 fn method_param_variadic_flags(params: &[Param]) -> Vec<bool> {
-    let mut flags = param_variadic_flags(params);
-    if !has_explicit_self_param(params) {
-        flags.insert(0, false);
-    }
-    flags
+    param_variadic_flags(params)
 }
 
 fn resolve_qualified_def_id(
@@ -1216,6 +1228,7 @@ const CORE_TRAIT_NAMES: &[&str] = &[
     "Comparable",
     "Hashable",
     "Disposable",
+    "Destructor",
     "Iterable",
     "Default",
     "Error",
@@ -1329,6 +1342,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: self_ty,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Subtractable" => vec![TraitMethodSig {
@@ -1337,6 +1351,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: self_ty,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Multiplicable" => vec![TraitMethodSig {
@@ -1345,6 +1360,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: self_ty,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Divisible" => vec![TraitMethodSig {
@@ -1353,6 +1369,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: self_ty,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Equatable" => vec![TraitMethodSig {
@@ -1361,6 +1378,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::Bool,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Comparable" => vec![TraitMethodSig {
@@ -1369,6 +1387,7 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::Int,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Disposable" => vec![TraitMethodSig {
@@ -1377,6 +1396,16 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::Void,
                     is_mut: true,
                     has_default: false,
+                    has_self: true,
+                    span: ori_diagnostics::Span::DUMMY,
+                }],
+                "Destructor" => vec![TraitMethodSig {
+                    name: SmolStr::new("destroy"),
+                    params: vec![self_ty],
+                    return_ty: Ty::Void,
+                    is_mut: true,
+                    has_default: false,
+                    has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 "Displayable" => vec![TraitMethodSig {
@@ -1385,12 +1414,49 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::String,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
+                    span: ori_diagnostics::Span::DUMMY,
+                }],
+                // `Error` describes a failure value. Without this signature the
+                // trait was a name with no contract: `use core.Error` compiled
+                // but the method it provided was never registered, so calling
+                // it reported `type.no_such_field`.
+                "Error" => vec![TraitMethodSig {
+                    name: SmolStr::new("message"),
+                    params: vec![self_ty],
+                    return_ty: Ty::String,
+                    is_mut: false,
+                    has_default: false,
+                    has_self: true,
+                    span: ori_diagnostics::Span::DUMMY,
+                }],
+                "Cloneable" => vec![TraitMethodSig {
+                    name: SmolStr::new("clone"),
+                    params: vec![self_ty.clone()],
+                    return_ty: self_ty,
+                    is_mut: false,
+                    has_default: false,
+                    has_self: true,
+                    span: ori_diagnostics::Span::DUMMY,
+                }],
+                // `default() -> Self` is an *associated function*: no `self`
+                // parameter, called as `Type.default()`. The empty param list
+                // is what marks it receiver-less.
+                "Default" => vec![TraitMethodSig {
+                    name: SmolStr::new("default"),
+                    params: Vec::new(),
+                    return_ty: self_ty,
+                    is_mut: false,
+                    has_default: false,
+                    has_self: false,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
                 _ => Vec::new(),
             };
             TraitSig {
                 def_id: *def_id,
+                // No core trait is generic today.
+                type_params: Vec::new(),
                 methods,
             }
         })
@@ -1691,6 +1757,33 @@ fn register_item(
                             file_id,
                             sink,
                         );
+                        // An associated function (no `self`) is called as
+                        // `Type.method(...)`, so it also answers at the
+                        // type-scoped path, like a free member.
+                        if !has_explicit_self_param(&m.params) {
+                            let short =
+                                SmolStr::new(format!("{}.{}.{}", ns, type_name, m.name.text));
+                            let full = SmolStr::new(format!("{}.{}", ns, m_name));
+                            if def_map.lookup(&short).is_some() {
+                                sink.emit(
+                                    Diagnostic::error(
+                                        "name.duplicate",
+                                        format!(
+                                            "duplicate definition `{}.{}`",
+                                            type_name, m.name.text
+                                        ),
+                                    )
+                                    .with_label(Label::primary(
+                                        file_id,
+                                        m.span,
+                                        "defined again here",
+                                    ))
+                                    .with_action("rename or remove one of the definitions"),
+                                );
+                            } else if let Some(target) = def_map.lookup(&full) {
+                                def_map.alias_path(short, target);
+                            }
+                        }
                     }
                 }
             }

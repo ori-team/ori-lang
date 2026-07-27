@@ -121,35 +121,29 @@ Examples of hybrid parents already in this style: `ori.string`, `ori.list`,
 
 ## Current Implementation Status
 
-Implemented and importable today:
-- `ori.core`
-- `ori.io`
-- `ori.fs`
-- `ori.files` compatibility alias
-- `ori.string`
-- `ori.bytes`
-- `ori.list`
-- `ori.map`
-- `ori.set`
-- `ori.math`
-- `ori.convert`
-- `ori.mem`
-- `ori.time`
-- `ori.args`
-- `ori.config`
-- `ori.format`
-- `ori.log`
-- `ori.os`
-- `ori.random`
-- `ori.crypto`
-- `ori.iter`
-- `ori.lazy`
-- `ori.concurrent`
-- `ori.task`
-- `ori.channel`
-- `ori.atomic`
-- `ori.Error`
-- `ori.json`
+Every module below is importable today. The list is verified against
+`is_implemented_stdlib_module` in `compiler/crates/ori-types/src/stdlib.rs`;
+`implemented_stdlib_modules()` returns it programmatically.
+
+| Group | Modules |
+|---|---|
+| Core / runtime | `ori.core`, `ori.Error`, `ori.mem`, `ori.convert` |
+| I/O and system | `ori.io`, `ori.fs`, `ori.files` *(compat alias for `ori.fs`)*, `ori.path`, `ori.os`, `ori.process`, `ori.args`, `ori.config`, `ori.log` |
+| Text and bytes | `ori.string`, `ori.bytes`, `ori.buffer`, `ori.format`, `ori.json` |
+| Collections | `ori.list`, `ori.map`, `ori.set`, `ori.iter` |
+| Data structures | `ori.stack`, `ori.queue`, `ori.deque`, `ori.linked_list`, `ori.doubly_linked_list`, `ori.hash_table`, `ori.tree`, `ori.graph`, `ori.heap` |
+| Numeric and time | `ori.math`, `ori.random`, `ori.time` |
+| Concurrency | `ori.concurrent`, `ori.task`, `ori.channel`, `ori.atomic`, `ori.lazy` |
+| Network | `ori.net` |
+| Other | `ori.crypto`, `ori.validate`, `ori.test` |
+
+Modules with a `.orl` source live in `stdlib/`; the rest (`ori.core`,
+`ori.mem`, `ori.atomic`, `ori.channel`, `ori.task`, `ori.lazy`, `ori.files`)
+are Layer 1 and implemented in the runtime with no `.orl` file.
+
+The sections later in this chapter do **not** cover every module. Data
+structures, `ori.path`, `ori.process`, `ori.buffer`, and `ori.validate` are
+importable but documented only by their `.orl` source and `ori doc`.
 
 Hybrid modules expose native runtime functions and selected `.orl` helpers
 under the **same** public module `ori.X`. Prefer:
@@ -163,13 +157,11 @@ import ori.string = str   -- alias; call str.is_empty when the parent defines it
 Compatibility imports such as `import ori.fs.utils = fu` still work; prefer
 `ori.fs` in new code.
 
-Partially importable modules:
-- `ori.test`
-
 No stdlib module listed above is intentionally blocked at import time. Importing
 a planned future module is a compile-time error with
 `bind.stdlib_module_unavailable`. Importing an unknown `ori.*` module is a
-compile-time error with `bind.stdlib_module_unknown`.
+compile-time error with `bind.stdlib_module_unknown` — including a submodule
+path that is not itself registered, such as `ori.io.sub`.
 
 ---
 
@@ -227,21 +219,40 @@ For diagnostics with messages, use `ori.string.parse_int` and
 `Equatable`, `Comparable`, `Hashable`, `Disposable`, `Iterable`, `Default`,
 `Error`, `Cloneable`, `Transferable`
 
-Status: these names are registered as real `ori.core` traits. `Disposable`
-is enforced by `using`. `Transferable` is enforced for values that cross task
-or channel boundaries. `Addable`, `Subtractable`, `Multiplicable`, `Divisible`,
-`Equatable`, and `Comparable` are used by operator overloading for user-defined
-concrete types.
-`Iterable` is recognized by `for` when the implementation exposes
-`mut next() -> optional[T]`. `Displayable` is used by `string(value)` and
-interpolated strings for user-defined concrete values that provide
-`func display(self) -> string`.
+All fourteen names are registered as real `ori.core` traits, but they fall into
+two groups that behave very differently.
+
+**Traits with registered method signatures.** Implementing one of these makes
+the method callable on the value (`value.display()`):
+
+| Trait | Method | Used by |
+|---|---|---|
+| `Displayable` | `display(self) -> string` | `string(value)` and f-string interpolation |
+| `Error` | `message(self) -> string` | error types (chapter 09) |
+| `Cloneable` | `clone(self) -> Self` | explicit copies; `Self` resolves to the implementing type |
+| `Default` | `default() -> Self` | an **associated function** (no `self`): implement it without a receiver and call it as `Type.default()` |
+| `Disposable` | `mut dispose(self)` | `using` |
+| `Equatable`, `Comparable` | comparison methods | operator overloading, `for T:` bounds |
+| `Addable`, `Subtractable`, `Multiplicable`, `Divisible` | arithmetic methods | operator overloading |
+
+**Marker traits with no registered methods.** A type may `use` these, but any
+method written inside that section is **not** registered as a trait method —
+calling it reports `type.no_such_field`:
+
+| Trait | Effect today |
+|---|---|
+| `Iterable` | Recognized by `for` when the type exposes `mut next() -> optional[T]` — checked structurally, not through the trait table (`type.iterable_next_missing`). **This is the lazy-iteration mechanism**; see chapter 06 |
+| `Transferable` | Enforced for values crossing task or channel boundaries (`concurrency.not_transferable`) |
+| `Hashable` | Checked structurally for `map` keys and `set` elements |
+
+If you need a callable contract that a marker does not provide, declare your
+own trait.
 
 ---
 
 ## `ori.io` — Basic Input/Output
 
-```ori
+```text
 import ori.io = io
 
 io.print(value: string)                              -> void
@@ -266,7 +277,7 @@ close_output(output: io.Output)                      -> void
 from the three standard streams (`stdin`, `stdout`, `stderr`) and support
 byte-oriented read/write with `result` error propagation.
 
-`read` returns `none` inside `success` on EOF, or `error(msg)` on failure.
+`read` returns `none` inside `ok` on EOF, or `err(msg)` on failure.
 `write` returns the number of bytes written on success.
 `flush` is a no-op on `stderr` in some backends but is provided for consistency.
 
@@ -275,7 +286,7 @@ return errors.
 
 ### Layer 2 helpers (on `ori.io`)
 
-```ori
+```text
 import ori.io = io
 
 io.read_text(input: io.Input, max_chars: int)       -> result[optional[string], string]
@@ -288,7 +299,7 @@ Nested `ori.io.utils` remains a silent compat module; prefer `ori.io`.
 
 ## `ori.fs` — File System
 
-```ori
+```text
 import ori.fs = fs
 
 fs.read_text(path: string)             -> result[string, string]
@@ -315,7 +326,7 @@ compatibility alias for the same functions.
 
 Additional `.orl` helpers are available directly under `ori.fs`:
 
-```ori
+```text
 import ori.fs (read_text_or, remove_file)
 
 read_text_or(path: string, fallback: string) -> string
@@ -329,18 +340,19 @@ The async variants complete on the native runtime and return the same
 `result[string,string]` shape after `await`.
 
 `read_all(path)` is a text convenience alias for `read_text(path)`.
-`read_bytes(path)` returns the current `bytes` representation. Because the
-current `bytes` ABI is NUL-terminated, files containing `0x00` return an error
-until `bytes` gains explicit length storage.
+`read_bytes(path)` returns the exact file bytes, including embedded `0x00`
+values. The runtime keeps the payload NUL-terminated for safe interop and tracks
+the logical length separately, so the terminator is not part of the value.
 
-Planned but not implemented in the current compiler/runtime: none of the above
-file-handle APIs are missing — see **Dedicated file handle** below.
+All file-handle APIs listed above are implemented in the current
+compiler/runtime; see **Dedicated file handle** below for the opaque handle
+variant.
 
 ### Dedicated file handle (`ori.fs.File`)
 
 Status: **implemented** in the native runtime.
 
-```ori
+```text
 import ori.fs = fs
 
 fs.open_read(path: string)  -> result[fs.File, string]
@@ -356,7 +368,7 @@ fs.close(file: fs.File)                  -> void
 
 ## `ori.string` — String Operations
 
-```ori
+```text
 import ori.string = string
 
 string.len(s: string)                         -> int
@@ -381,8 +393,8 @@ string.from_bytes(b: bytes)                   -> result[string, string]
 
 Additional `.orl` helpers are available directly under `ori.string`:
 
-```ori
-import ori.string (is_empty, truncate as cut)
+```text
+import ori.string (is_empty, truncate = cut)
 
 is_empty(s: string)                           -> bool
 blank(s: string)                              -> bool
@@ -392,12 +404,12 @@ join_non_empty(parts: list[string], separator: string) -> string
 truncate(s: string, max_len: int)             -> string
 ```
 
-Invalid input returns `error(message)`. The `ori.convert` parsing helpers are
+Invalid input returns `err(message)`. The `ori.convert` parsing helpers are
 kept for optional-style parsing where invalid input should become `none`.
 
 ## `ori.convert` - Type Conversion
 
-```ori
+```text
 import ori.convert = conv
 
 conv.float_to_string(n: float)        -> string
@@ -414,7 +426,7 @@ today (`float_to_string`, `bool_to_string`, `string_to_int`,
 
 ## `ori.bytes` — Byte Operations
 
-```ori
+```text
 import ori.bytes = bytes
 
 bytes.len(b: bytes)                          -> int
@@ -437,7 +449,7 @@ user-defined values that satisfy the checker rules for `Hashable` and
 
 `ori.list` also exposes small `.orl` helpers directly:
 
-```ori
+```text
 import ori.list (singleton, sum_int)
 
 get_or[T](items: list[T], index: int, fallback: T) -> T
@@ -449,7 +461,7 @@ binary_search_int(items: list[int], target: int) -> int
 all_equal_int(items: list[int], expected: int) -> bool
 ```
 
-```ori
+```text
 import ori.deque = deque
 import ori.doubly_linked_list = dll
 import ori.graph = graph
@@ -733,7 +745,7 @@ The C backend keeps the original `list[int]` coverage for the full iterator
 surface, with additional string-specialized `sort`, `unique`, and `group_by`
 helpers.
 
-```ori
+```text
 import ori.iter = iter
 
 iter.map[T, R](values: list[T], mapper: func(T) -> R) -> list[R]
@@ -793,7 +805,7 @@ Current implementation status:
 
 ## `ori.math` — Mathematics
 
-```ori
+```text
 import ori.math = math
 
 math.abs(x: int) -> int
@@ -826,7 +838,7 @@ call should use the float overload.
 
 ## `ori.mem` - Memory Inspection
 
-```ori
+```text
 import ori.mem = mem
 
 mem.size_of(value) -> int
@@ -839,7 +851,7 @@ The current parser does not support type-argument call syntax such as
 
 ## `ori.time` - Time
 
-```ori
+```text
 import ori.time = time
 import ori.time (Instant, Duration, instant_now, duration_seconds)
 
@@ -872,7 +884,7 @@ runtime ABI.
 
 ## `ori.format` - Presentation Formatting
 
-```ori
+```text
 import ori.format = format
 
 format.number(value: float, decimals: int) -> string
@@ -886,7 +898,8 @@ format.bytes_size(bytes: int, style: string) -> string
 
 Current status:
 
-- `decimals` is explicit because stdlib default arguments are not supported yet.
+- `decimals` is explicit by API design; default arguments are supported by the
+  language, but this formatter keeps its precision choice visible at each call.
 - `date` and `datetime` currently format UTC ISO output.
 - `bytes_size` accepts `"binary"` for KiB/MiB units. Other style values use
   decimal KB/MB units.
@@ -902,7 +915,7 @@ blocked.
 
 ## `ori.random` — Random Numbers
 
-```ori
+```text
 import ori.random = random
 
 random.int(min: int, max: int) -> int       -- inclusive range
@@ -982,7 +995,7 @@ const value: int = lz.force(delayed)
 
 Functions:
 
-```ori
+```text
 lazy.once[T](thunk: func() -> T) -> lazy[T]
 lazy.force[T](value: lazy[T]) -> T
 ```
@@ -1037,7 +1050,7 @@ Async bodies outside the current subset fail with `backend.native_unsupported`
 before Cranelift. `task.block_on` stays available only as an explicit sync
 bridge.
 
-```ori
+```text
 import ori.task = task
 
 task.spawn[T](work: func() -> T) -> task.Job[T]
@@ -1055,8 +1068,8 @@ Rules:
 
 - `task.spawn` runs a no-argument function or closure on a native thread.
 - Captured values and the return value must satisfy `Transferable`.
-- `task.join` returns `success(value)` when the task finishes normally.
-- `task.join` returns `error(...)` when the job was already joined, missing, or
+- `task.join` returns `ok(value)` when the task finishes normally.
+- `task.join` returns `err(...)` when the job was already joined, missing, or
   the native thread panicked. The error is an opaque `task.JoinError` value.
 - `task.detach` lets the native thread continue without requiring a join.
 - `task.sleep(ms)` creates a pending `future[void]` that becomes ready after
@@ -1088,7 +1101,7 @@ generated async frame reaches its terminal state.
 
 Status: implemented in the native runtime with real synchronization.
 
-```ori
+```text
 import ori.channel = channel
 
 channel.create[T]() -> channel.Channel[T]
@@ -1100,9 +1113,9 @@ channel.close[T](ch: channel.Channel[T]) -> void
 Behavior:
 
 - `channel.create` creates an unbounded FIFO channel.
-- `channel.send` enqueues a transferable value, or returns `error(...)` when
+- `channel.send` enqueues a transferable value, or returns `err(...)` when
   the channel is closed.
-- `channel.receive` waits until a value is available, or returns `error(...)`
+- `channel.receive` waits until a value is available, or returns `err(...)`
   when the channel is closed and empty.
 - `channel.close` closes the channel and wakes waiting receivers.
 
@@ -1115,7 +1128,7 @@ The error values are opaque handles: `channel.SendError` and
 
 Status: implemented in the native runtime.
 
-```ori
+```text
 import ori.atomic = atomic
 
 atomic.new(value: int) -> atomic.AtomicInt
@@ -1153,7 +1166,7 @@ json.stringify_pretty(value: json.Value) -> string
 Current behavior:
 
 - `json.parse(text)` returns `ok(Value)` for valid JSON.
-- `json.parse(text)` returns `error("invalid json")` for invalid JSON.
+- `json.parse(text)` returns `err("invalid json")` for invalid JSON.
 - `json.stringify` and `json.stringify_pretty` serialize the structured `Value`
   enum recursively.
 
@@ -1208,7 +1221,7 @@ standard-library features when generated C would not preserve Ori semantics.
 
 ## `ori.net` — Networking (TCP/TLS/UDP)
 
-```ori
+```text
 import ori.net = net
 
 net.connect(host, port, timeout_ms) -> result[net.Connection, string]
@@ -1257,7 +1270,7 @@ Current implementation notes:
 
 ## `ori.os` — Operating System
 
-```ori
+```text
 import ori.os = os
 
 os.args() -> list[string]        -- command-line arguments
@@ -1271,7 +1284,8 @@ os.arch() -> string              -- "x86_64", "aarch64", etc.
 Current implementation notes:
 
 - `os.args()` returns the process argument vector as reported by the host. The
-  first item is the executable path/name when the platform provides it.
+  first item is the executable path/name when the platform provides it. The
+  runtime keeps these host-owned strings valid for the process lifetime.
 - `os.env(name)` returns `some(value)` when the variable exists and `none`
   otherwise.
 - `os.platform()` currently normalizes known targets to `"windows"`, `"linux"`,
@@ -1283,7 +1297,7 @@ Current implementation notes:
 
 ## `ori.args` - CLI Arguments
 
-```ori
+```text
 import ori.args = args
 
 args.all() -> list[string]
@@ -1293,6 +1307,8 @@ args.program_name_or(fallback: string) -> string
 ```
 
 `ori.args` is a small `.orl` convenience layer over `ori.os.args`.
+`get_or` copies a selected argument before the temporary argument list is
+released, so the returned `string` can safely outlive the lookup expression.
 
 ---
 
@@ -1314,7 +1330,7 @@ The first version is intentionally simple and CLI-oriented. `info`, `warn`, and
 
 ## `ori.config` - Local Config Helpers
 
-```ori
+```text
 import ori.config = config
 
 config.read_text(path: string) -> result[string, string]
@@ -1332,7 +1348,7 @@ for local project/tool config, not for a full schema-validation framework.
 ## `ori.Error` — Standard Error Type
 
 Status: implemented base value type. `import ori.Error` is accepted. Prefer an
-alias when constructing the value, because `error(...)`/`Error(...)` are also
+alias when constructing the value, because `err(...)`/`Error(...)` are also
 result wrapper forms.
 
 ```ori

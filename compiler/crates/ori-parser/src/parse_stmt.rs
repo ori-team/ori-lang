@@ -4,7 +4,7 @@ use ori_ast::expr::Expr;
 use ori_ast::stmt::{
     AssignStmt, Block, CheckStmt, CompoundAssignStmt, CompoundOp, ForStmt, IfSomeStmt, IfStmt,
     LValue, LocalConst, LocalDestructure, LocalVar, LoopStmt, MatchCase, MatchStmt, RepeatStmt,
-    ReturnStmt, Stmt, UnwrapKind, UsingStmt, WhileSomeStmt, WhileStmt,
+    ReturnStmt, Stmt, SuspendStmt, UnwrapKind, UsingStmt, WhileSomeStmt, WhileStmt,
 };
 use ori_ast::ty::Type;
 use ori_diagnostics::Span;
@@ -65,6 +65,9 @@ impl<'src> Parser<'src> {
             TokenKind::Match => self.parse_match_stmt(),
             TokenKind::Using => self.parse_using_stmt(),
             TokenKind::Check => self.parse_check_stmt(),
+            // `suspend` is contextual: a keyword only at statement start, so it
+            // stays usable as a field or parameter name elsewhere.
+            TokenKind::Ident if self.at_suspend_stmt() => self.parse_suspend(),
             _ => {
                 // Expression statement or assignment
                 let expr = self.parse_expr()?;
@@ -221,6 +224,46 @@ impl<'src> Parser<'src> {
             .map(|v| start.cover(v.span()))
             .unwrap_or(start);
         Some(Stmt::Return(ReturnStmt { value, span }))
+    }
+
+    /// `suspend` at statement start opens a suspend statement — unless the
+    /// next token turns it into an ordinary expression over a binding named
+    /// `suspend` (`suspend = 5`, `suspend += 1`, `suspend.field`, calls,
+    /// indexing). Those keep working; `suspend value` wins everywhere else.
+    fn at_suspend_stmt(&self) -> bool {
+        if !self.at_contextual("suspend") {
+            return false;
+        }
+        !matches!(
+            self.peek_nth_kind(1),
+            Some(
+                TokenKind::Eq
+                    | TokenKind::PlusEq
+                    | TokenKind::MinusEq
+                    | TokenKind::StarEq
+                    | TokenKind::SlashEq
+                    | TokenKind::Dot
+                    | TokenKind::LParen
+                    | TokenKind::LBracket
+            )
+        )
+    }
+
+    /// `suspend expr` — hand one value to the consuming `for` loop and resume
+    /// on the next step. Only valid inside an `iter` function (checked later).
+    fn parse_suspend(&mut self) -> Option<Stmt> {
+        let start = self.advance().unwrap().span; // contextual `suspend`
+        if self.at_any(BLOCK_TERMINATORS) || self.at_eof() {
+            self.error(
+                "parse.suspend_missing_value",
+                "`suspend` needs a value to produce, as in `suspend i`",
+                start,
+            );
+            return None;
+        }
+        let value = Box::new(self.parse_expr()?);
+        let span = start.cover(value.span());
+        Some(Stmt::Suspend(SuspendStmt { value, span }))
     }
 
     fn parse_if_stmt(&mut self) -> Option<Stmt> {
@@ -580,6 +623,7 @@ fn stmt_span(s: &Stmt) -> Span {
         Stmt::Assign(a) => a.span,
         Stmt::CompoundAssign(c) => c.span,
         Stmt::Return(r) => r.span,
+        Stmt::Suspend(s) => s.span,
         Stmt::If(i) => i.span,
         Stmt::IfSome(i) => i.span,
         Stmt::While(w) => w.span,

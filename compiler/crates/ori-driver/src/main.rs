@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use ori_driver::{emit, explain, package, pipeline, update};
+use ori_driver::{debugger, emit, explain, package, pipeline, update};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -83,6 +83,18 @@ enum Commands {
         #[arg(long)]
         cache: Option<PathBuf>,
     },
+    /// Resolve package dependencies and write `ori.lock`.
+    Lock {
+        /// Package root or `ori.pkg.toml` path (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Validate the existing lockfile without modifying it.
+        #[arg(long)]
+        locked: bool,
+        /// Override the package cache root.
+        #[arg(long)]
+        cache: Option<PathBuf>,
+    },
     /// Publish an Ori package to the configured registry (`ORI_REGISTRY`).
     ///
     /// File registry (directory path): copies the package tree under
@@ -129,7 +141,7 @@ enum Commands {
     Compile {
         /// Path to the `.orl` source file.
         file: PathBuf,
-        /// Output path (default: source name; with `--lib`: `lib<name>.so` / `.dll` / `.dylib`).
+        /// Output path (with `--lib`, also writes the same path with a `.h` extension).
         #[arg(short, long)]
         out: Option<PathBuf>,
         /// Emit a shared library with C ABI exports (`@c_export`) for embed hosts.
@@ -143,6 +155,20 @@ enum Commands {
     Run {
         /// Path to the `.orl` source file.
         file: PathBuf,
+        /// Print full native linker stdout/stderr when link fails.
+        #[arg(long)]
+        native_raw: bool,
+    },
+    /// Debug an Ori source file or serve the Debug Adapter Protocol over stdio.
+    Debug {
+        /// Path to the `.orl` source file (omit with `--dap`).
+        file: Option<PathBuf>,
+        /// Run as a DAP adapter over stdin/stdout instead of the terminal adapter.
+        #[arg(long)]
+        dap: bool,
+        /// Source line to pause on; repeat for multiple breakpoints.
+        #[arg(short = 'b', long = "breakpoint")]
+        breakpoints: Vec<u32>,
         /// Print full native linker stdout/stderr when link fails.
         #[arg(long)]
         native_raw: bool,
@@ -438,6 +464,29 @@ fn main() {
             }
         }
 
+        Commands::Lock {
+            path,
+            locked,
+            cache,
+        } => match package::run_lock_package(package::LockPackageOptions {
+            path: path.clone(),
+            locked: *locked,
+            cache_root: cache.clone(),
+        }) {
+            Err(e) => {
+                eprintln!("ori: {}", e);
+                process::exit(2);
+            }
+            Ok(out) => {
+                let status = if out.changed { "updated" } else { "unchanged" };
+                eprintln!(
+                    "lockfile: {} ({status}, {} dependencies)",
+                    out.path.display(),
+                    out.dependencies
+                );
+            }
+        },
+
         Commands::Publish {
             path,
             registry,
@@ -454,13 +503,10 @@ fn main() {
                 process::exit(2);
             }
             Ok(out) => {
-                eprintln!(
-                    "published {} v{} → {}",
-                    out.name, out.version, out.location
-                );
+                eprintln!("published {} v{} → {}", out.name, out.version, out.location);
                 eprintln!("registry: {}", out.registry);
             }
-        }
+        },
 
         Commands::Test { file, filter } => match pipeline::run_test_with_options(
             file,
@@ -593,6 +639,20 @@ fn main() {
                     if !out.has_errors {
                         let label = if *lib { "library" } else { "binary" };
                         eprintln!("{label}: {}", out.exe_path.display());
+                        if out.reused {
+                            eprintln!("incremental: reused previous native output");
+                        } else if out.changed_modules > 0 {
+                            eprintln!(
+                                "incremental: rebuilding {} changed module(s)",
+                                out.changed_modules
+                            );
+                        }
+                        if let Some(debug_path) = &out.debug_path {
+                            eprintln!("debug symbols: {}", debug_path.display());
+                        }
+                        if let Some(header_path) = &out.header_path {
+                            eprintln!("header: {}", header_path.display());
+                        }
                     }
                     process::exit(if out.has_errors { 1 } else { 0 });
                 }
@@ -652,6 +712,38 @@ fn main() {
                         Ok(status) => process::exit(status.code().unwrap_or(1)),
                     }
                 }
+            }
+        }
+
+        Commands::Debug {
+            file,
+            dap,
+            breakpoints,
+            native_raw,
+        } => {
+            if *dap {
+                match debugger::run_dap_stdio() {
+                    Err(error) => {
+                        eprintln!("ori: {error}");
+                        process::exit(2);
+                    }
+                    Ok(code) => process::exit(code),
+                }
+            }
+            let Some(file) = file else {
+                eprintln!("ori: `debug` requires a source file unless `--dap` is used");
+                process::exit(2);
+            };
+            match debugger::run_terminal(&debugger::DebugOptions {
+                file: file.clone(),
+                breakpoints: breakpoints.clone(),
+                native_raw: *native_raw,
+            }) {
+                Err(error) => {
+                    eprintln!("ori: {error}");
+                    process::exit(2);
+                }
+                Ok(code) => process::exit(code),
             }
         }
 
@@ -774,7 +866,7 @@ fn main() {
             }
         }
 
-        Commands::Explain { code } => match explain::explain_code(&code) {
+        Commands::Explain { code } => match explain::explain_code(code) {
             Some(entry) => {
                 print!("{}", explain::format_explanation(entry));
             }
@@ -1068,6 +1160,11 @@ mod tests {
             .expect("run subcommand should exist")
             .render_long_help()
             .to_string();
+        let debug_help = command
+            .find_subcommand_mut("debug")
+            .expect("debug subcommand should exist")
+            .render_long_help()
+            .to_string();
 
         assert!(help.contains("packaged native runtime"), "{help}");
         assert!(!help.contains("requires `cc`"), "{help}");
@@ -1090,6 +1187,8 @@ mod tests {
             "{run_help}"
         );
         assert!(run_help.contains("--native-raw"), "{run_help}");
+        assert!(debug_help.contains("--dap"), "{debug_help}");
+        assert!(debug_help.contains("--breakpoint"), "{debug_help}");
         assert!(
             help.contains("Extract documentation comments as Markdown"),
             "{help}"

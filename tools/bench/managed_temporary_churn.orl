@@ -1,0 +1,25 @@
+module app.managed_temporary_churn
+
+-- Measures the managed allocation fast path without accumulating live values.
+-- This workload was used to evaluate and reject LANG-PERF-4c: glibc's tcache
+-- matched or slightly beat a runtime-local size-classed free list.
+
+imports
+    ori.io = io
+    ori.string = strings
+end
+
+temporary_length(prefix: string) -> int
+    const joined: string = prefix + "-x"
+    return strings.len(joined)
+end
+
+main()
+    var iteration: int = 0
+    var total: int = 0
+    while iteration < 2000000
+        total = total + temporary_length("name")
+        iteration = iteration + 1
+    end
+    io.println(string(total))
+end

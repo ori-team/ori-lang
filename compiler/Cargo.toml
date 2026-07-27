@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.3.8"
 edition = "2021"
 authors = ["Ori Language Contributors"]
 license = "MIT OR Apache-2.0"
@@ -47,6 +47,8 @@ libloading         = "0.8"
 # Self-update (`ori update`): HTTPS release download + archive checksum
 ureq = { version = "2", features = ["json"] }
 sha2 = "0.10"
+gimli = { version = "0.33", features = ["write", "std"] }
+object = { version = "0.39", default-features = false, features = ["read_core", "elf", "coff", "macho"] }
 
 # Internal crates
 ori-diagnostics = { path = "crates/ori-diagnostics" }

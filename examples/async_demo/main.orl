@@ -18,7 +18,7 @@ end
 
 async main()
     const answer: int = await delayed_answer()
-    io.println(string(answer))
+    io.println(f"answer: {answer}")
     const summed: int = await double_after(8)
-    io.println(string(summed))
+    io.println(f"double-after: {summed}")
 end

@@ -332,7 +332,7 @@ ori-lang/
   extensions/vscode-orl/  VS Code extension
   tools/                  staging, smoke, export, validation scripts
   branding/               project logo assets
-  _reversa_sdd/           reverse-engineering audit の履歴文書
+  docs/archive/           reverse-engineering audit の履歴文書
 ```
 
 ## 開発フロー

@@ -4,7 +4,15 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo=$(CDPATH= cd -- "$script_dir/../.." && pwd)
-ORI_BIN="${ORI_BIN:-ori}"
+if [ -z "${ORI_BIN:-}" ]; then
+  if [ -x "$repo/compiler/target/debug/ori" ]; then
+    ORI_BIN="$repo/compiler/target/debug/ori"
+  elif [ -x "$repo/compiler/target/release/ori" ]; then
+    ORI_BIN="$repo/compiler/target/release/ori"
+  else
+    ORI_BIN="ori"
+  fi
+fi
 export ORI_USE_SYSTEM_LINKER="${ORI_USE_SYSTEM_LINKER:-1}"
 
 ex_dir="$repo/examples"

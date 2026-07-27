@@ -1,0 +1,15 @@
+module app.tests
+
+imports
+    app.stats = stats
+    ori.test = test
+end
+
+@test
+stats_count_severity_lines()
+    const summary: stats.LogStats = stats.analyze("INFO boot\nWARN cache\nERROR disk\nINFO ready")
+    test.equal_int(summary.total, 4)
+    test.equal_int(summary.info, 2)
+    test.equal_int(summary.warn, 1)
+    test.equal_int(summary.failures, 1)
+end

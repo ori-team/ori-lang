@@ -197,6 +197,11 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.list.with_capacity", ["list.with_capacity"] => "ori_list_with_capacity"),
     stdlib!("ori.list.push", ["list.push"] => "ori_list_push"),
     stdlib!("ori.list.get", ["list.get"] => "ori_list_get"),
+    // `slice[T]` — a read-only **window**, distinct from `ori.list.slice`,
+    // which copies. The name says which one you get.
+    stdlib!("ori.list.window", ["list.window"] => "ori_slice_new"),
+    stdlib!("ori.slice.len", ["slice.len"] => "ori_slice_len"),
+    stdlib!("ori.slice.get", ["slice.get"] => "ori_slice_get"),
     stdlib!("ori.list.try_get", ["list.try_get"] => "ori_list_try_get"),
     stdlib!("ori.list.set", ["list.set"] => "ori_list_set"),
     stdlib!("ori.list.len", ["list.len"] => "ori_list_len"),
@@ -1000,6 +1005,15 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
         ),
         "ori.list.get" => (
             vec![Ty::List(Box::new(Ty::Infer(0))), Ty::Int],
+            Ty::Infer(0),
+        ),
+        "ori.list.window" => (
+            vec![Ty::List(Box::new(Ty::Infer(0))), Ty::Int, Ty::Int],
+            Ty::Slice(Box::new(Ty::Infer(0))),
+        ),
+        "ori.slice.len" => (vec![Ty::Slice(Box::new(Ty::Infer(0)))], Ty::Int),
+        "ori.slice.get" => (
+            vec![Ty::Slice(Box::new(Ty::Infer(0))), Ty::Int],
             Ty::Infer(0),
         ),
         "ori.list.try_get" => (
@@ -1868,6 +1882,9 @@ pub fn stdlib_native_abi(
         | "ori_doubly_linked_list_insert_after"
         | "ori_doubly_linked_list_insert_before" => (vec![Ptr, I64, I64], Some(I8)),
         "ori_list_get" | "ori_map_get" => (vec![Ptr, I64], Some(I64)),
+        "ori_slice_new" => (vec![Ptr, I64, I64], Some(Ptr)),
+        "ori_slice_len" => (vec![Ptr], Some(I64)),
+        "ori_slice_get" => (vec![Ptr, I64], Some(I64)),
         "ori_list_try_get" | "ori_map_try_get" | "ori_map_try_remove" => {
             (vec![Ptr, I64], Some(Ptr))
         }
@@ -2120,13 +2137,17 @@ pub fn stdlib_native_abi(
         "ori_bytes_from_list" => (vec![Ptr], Some(Ptr)),
         "ori_bytes_to_list" => (vec![Ptr], Some(Ptr)),
         "ori_process_run" | "ori_process_run_capture" => (vec![Ptr, Ptr], Some(Ptr)),
-        "ori_net_connect" | "ori_net_connect_tls" | "ori_net_connect_async"
+        "ori_net_connect"
+        | "ori_net_connect_tls"
+        | "ori_net_connect_async"
         | "ori_net_connect_tls_async" => (vec![Ptr, I64, I64], Some(Ptr)),
         "ori_net_listen" | "ori_net_udp_bind" => (vec![Ptr, I64], Some(Ptr)),
         "ori_net_accept" | "ori_net_accept_async" => (vec![Ptr], Some(Ptr)),
         "ori_net_close_listener" | "ori_net_udp_close" => (vec![Ptr], None),
         "ori_net_listener_port" | "ori_net_udp_local_port" => (vec![Ptr], Some(I64)),
-        "ori_net_udp_send_to" | "ori_net_udp_send_to_async" => (vec![Ptr, Ptr, I64, Ptr], Some(Ptr)),
+        "ori_net_udp_send_to" | "ori_net_udp_send_to_async" => {
+            (vec![Ptr, Ptr, I64, Ptr], Some(Ptr))
+        }
         "ori_net_udp_recv_from" | "ori_net_udp_recv_from_async" => (vec![Ptr, I64], Some(Ptr)),
         "ori_net_read_some" | "ori_net_read_some_async" => (vec![Ptr, I64], Some(Ptr)),
         "ori_net_set_read_timeout_ms" | "ori_net_set_write_timeout_ms" => {

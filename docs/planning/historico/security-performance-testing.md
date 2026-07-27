@@ -67,6 +67,14 @@ Os budgets abaixo so sao aplicados quando `ORI_PERF_STRICT=1`.
 | `ORI_PERF_FMT_SURFACE_BUDGET_MS` | `1500` |
 | `ORI_PERF_DOC_SURFACE_BUDGET_MS` | `1500` |
 | `ORI_PERF_RUNTIME_PROBE_BUDGET_MS` | `3500` |
+| `ORI_PERF_CHECK_LARGE_SCALE_BUDGET_MS` | `10000` |
+| `ORI_PERF_COMPILE_LARGE_SCALE_BUDGET_MS` | `60000` |
+
+O probe de escala fica ignorado na suíte normal. Ele aceita
+`ORI_PERF_LARGE_FUNCTION_COUNT` (10.000 por padrão),
+`ORI_PERF_LARGE_COMPILE=1` para medir AOT e
+`ORI_INTERNAL_PIPELINE_TIMINGS=1` para separar lexer/parser, resolução,
+checagem, HIR, codegen e link.
 
 ## CSV de metricas
 

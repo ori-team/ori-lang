@@ -45,7 +45,7 @@ import_form
     ;
 
 import_item
-    = IDENT [ "as" IDENT ]   (* member rename inside selective list only *)
+    = IDENT [ "=" IDENT ]    (* member rename inside selective list only *)
     ;
 
 imports_block
@@ -108,7 +108,9 @@ visibility
    ============================================================ *)
 
 func_decl
-    = visibility [ "async" ] [ "mut" ] IDENT
+    = visibility [ "async" | "iter" ] [ "mut" ] IDENT
+      (* `iter` declares a generator: the return type is the element type and
+         the body yields with `suspend` (chapter 06). `async iter` is rejected. *)
       [ type_params ]
       [ bound_clause ]                 (* for T: Trait after name / params region *)
       "(" [ param_list ] ")"
@@ -382,6 +384,7 @@ statement
     | assignment_stmt
     | compound_assign_stmt
     | return_stmt
+    | suspend_stmt
     | break_stmt
     | continue_stmt
     | if_stmt
@@ -416,6 +419,11 @@ lvalue
 
 return_stmt
     = "return" [ expression ]
+    ;
+
+(* Contextual: only at statement start inside an `iter` function body. *)
+suspend_stmt
+    = "suspend" expression
     ;
 
 break_stmt
@@ -491,8 +499,8 @@ pattern
     | IDENT "(" [ named_pattern { "," named_pattern } ] ")"
     | "some" "(" pattern ")"
     | "none"
-    | "success" "(" pattern ")"
-    | "error"   "(" pattern ")"
+    | "ok" "(" pattern ")"
+    | "err" "(" pattern ")"
     | "tuple" "(" pattern { "," pattern } ")"
     ;
 

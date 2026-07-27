@@ -1,5 +1,84 @@
 use crate::common::{Name, QualifiedName};
+use crate::expr::{BinaryOp, Expr, UnaryOp};
 use ori_diagnostics::Span;
+
+/// The side-effect-free expression behind a named const type argument.
+///
+/// This deliberately mirrors only the expression forms that CT-0 can evaluate.
+/// Keeping it separate from [`Expr`] prevents calls, allocation, I/O, and other
+/// runtime operations from reaching type lowering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstExpr {
+    Int {
+        raw: smol_str::SmolStr,
+        span: Span,
+    },
+    Bool(bool, Span),
+    Name(QualifiedName),
+    Unary {
+        op: UnaryOp,
+        operand: Box<ConstExpr>,
+        span: Span,
+    },
+    Binary {
+        op: BinaryOp,
+        lhs: Box<ConstExpr>,
+        rhs: Box<ConstExpr>,
+        span: Span,
+    },
+    If {
+        condition: Box<ConstExpr>,
+        then_expr: Box<ConstExpr>,
+        else_expr: Box<ConstExpr>,
+        span: Span,
+    },
+}
+
+impl ConstExpr {
+    /// Restrict a parsed runtime expression to the CT-0 expression subset.
+    pub fn from_expr(expr: Expr) -> Result<Self, Span> {
+        match expr {
+            Expr::IntLit { raw, span } => Ok(Self::Int { raw, span }),
+            Expr::BoolLit(value, span) => Ok(Self::Bool(value, span)),
+            Expr::Ident(name) => Ok(Self::Name(QualifiedName::single(name))),
+            Expr::QualifiedIdent(name) => Ok(Self::Name(name)),
+            Expr::Unary { op, operand, span } => Ok(Self::Unary {
+                op,
+                operand: Box::new(Self::from_expr(*operand)?),
+                span,
+            }),
+            Expr::Binary { op, lhs, rhs, span } => Ok(Self::Binary {
+                op,
+                lhs: Box::new(Self::from_expr(*lhs)?),
+                rhs: Box::new(Self::from_expr(*rhs)?),
+                span,
+            }),
+            Expr::IfExpr {
+                condition,
+                then_expr,
+                else_expr,
+                span,
+            } => Ok(Self::If {
+                condition: Box::new(Self::from_expr(*condition)?),
+                then_expr: Box::new(Self::from_expr(*then_expr)?),
+                else_expr: Box::new(Self::from_expr(*else_expr)?),
+                span,
+            }),
+            other => Err(other.span()),
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Int { span, .. }
+            | Self::Bool(_, span)
+            | Self::Unary { span, .. }
+            | Self::Binary { span, .. }
+            | Self::If { span, .. } => *span,
+            Self::Name(name) => name.span,
+        }
+    }
+}
 
 /// Every type that can appear in an Ori program.
 ///
@@ -37,7 +116,7 @@ pub enum Type {
     /// the same way call arguments and struct fields do.
     ConstArg {
         name: Name,
-        value: i64,
+        value: ConstExpr,
         span: Span,
     },
 
@@ -45,6 +124,18 @@ pub enum Type {
     Optional(Box<Type>, Span),
     Result(Box<Type>, Box<Type>, Span),
     List(Box<Type>, Span),
+    /// `slice[T]` — a read-only window over a `list[T]`.
+    Slice(Box<Type>, Span),
+    /// `array[T, size: N]` — fixed length, part of the type.
+    ///
+    /// Distinct from `list[T]`: the length is known at compile time, so the
+    /// elements live inline instead of behind a heap pointer, and two arrays of
+    /// different lengths are different types.
+    Array {
+        elem: Box<Type>,
+        size: ConstExpr,
+        span: Span,
+    },
     Map(Box<Type>, Box<Type>, Span),
     Set(Box<Type>, Span),
     Range(Box<Type>, Span),
@@ -93,8 +184,10 @@ impl Type {
             | Type::Void(s) => *s,
             Type::Named(q) => q.span,
             Type::ConstArg { span, .. } => *span,
+            Type::Array { span, .. } => *span,
             Type::Optional(_, s)
             | Type::List(_, s)
+            | Type::Slice(_, s)
             | Type::Set(_, s)
             | Type::Range(_, s)
             | Type::Lazy(_, s)

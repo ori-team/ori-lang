@@ -43,7 +43,7 @@ impl<'a> Checker<'a> {
                         constraint.param_name,
                         relation,
                         trait_name,
-                        actual.display()
+                        actual.display_in(self.def_map)
                     ),
                 )
                 .with_label(Label::primary(self.file_id, span, "generic call here"))

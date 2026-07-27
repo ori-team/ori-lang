@@ -192,7 +192,7 @@ import ori.string = str
 Users can import only the helper names needed from the unified root module:
 
 ```ori
-import ori.string (is_empty, truncate as cut)
+import ori.string (is_empty, truncate = cut)
 ```
 
 Normal alias imports such as `import ori.string = str` continue to expose the

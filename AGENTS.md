@@ -16,7 +16,7 @@ Precedência: **este `AGENTS.md` > skills globais > defaults**.
 | **`compiler-dev`** | Front-end e processo: fase correta, diagnostics no catálogo, stdlib sync. |
 | **`lang-compiled`** | AOT: IR/SSA, multi-backend (native+C), ABI/link/runtime, opts, JIT-as-run, parity. |
 | **`ori-testing`** | Feature/fix: L1 `check` → L2 `compile` → L3 run → regressão em `ori-driver` + `diagnostic_catalog`. |
-| **`ori-lang-qa`** | QA diário/matriz de testes, residuals Spec 14, qualidade de diagnostics, FREEZE-1. Stages: `tools/qa/daily_fast.sh`. Agents: `.grok/agents/ori-lang-*.md`. |
+| **`ori-lang-qa`** | QA diário/matriz de testes, residuals Spec 14, qualidade de diagnostics, FREEZE-1. Stages: `tools/qa/daily_fast.sh`. |
 
 ### Sob demanda
 
@@ -60,7 +60,7 @@ ori-lang/
 │   ├── spec/                  #   Language specification (normative)
 │   └── planning/              #   Implementation plans
 ├── tests/                     # End-to-end Ori test programs (.orl)
-├── _reversa_sdd/              # Historical audit documents (reverse engineering)
+├── docs/archive/              # Historical audit documents (reverse engineering)
 ├── branding/                  # Logo and brand assets
 ├── examples/                  # Example Ori programs
 ├── extensions/vscode-orl/       # VS Code extension (LanguageClient → ori-lsp)
@@ -82,7 +82,7 @@ ori-lang/
 | **Bug fixes** | Always add regression test in `compiler/crates/ori-driver/tests/` |
 | **Pre-implementation** | Check `docs/planning/PLANO-MATURIDADE-COMPLETO.md` and `docs/planning/PENDENTES.md` |
 | **Stdlib changes** | Update `stdlib.rs`, `lower.rs` (stdlib_c_name + stdlib_c_func_ty), and changelog |
-| **Documentation** | Keep `spec/` (normative), `planning/` (plans), `_reversa_sdd/` (historical) |
+| **Documentation** | Keep `spec/` (normative), `planning/` (plans), `archive/` (historical) |
 | **Dedup** | Consolidate documents of same scope, avoid duplication |
 
 ## Key Files
@@ -140,6 +140,8 @@ cargo run -p ori-driver -- run ../examples/hello
 | `ORI_USE_JIT=1` | Force JIT for `ori run` — execute Cranelift code in-process via `JITModule` with runtime symbols resolved from the staged cdylib through `libloading` (Rust removal Phase 3: no `.o` file, no linker, no subprocess). When unset, JIT is the default whenever a runtime cdylib is available. `ori compile` and `ori test` remain AOT. |
 | `ORI_USE_AOT=1` | Force AOT compile+link for `ori run` even when a runtime cdylib is available (opt-out of JIT default). |
 | `ORI_RUNTIME_CDYLIB` | Explicit path to the runtime cdylib (`ori_runtime.dll`/`libori_runtime.so`/`libori_runtime.dylib`) for the JIT path. When unset, resolves via packaged runtime → cargo fallback (same search order as `ORI_RUNTIME_LIB` but for the cdylib artifact). |
+| `ORI_DISABLE_INCREMENTAL=1` | Disable reuse of matching native outputs from `.ori/incremental.json`; dependency-bearing projects without `ori.lock` already rebuild conservatively. |
+| `ORI_OBJCOPY` | Override the `objcopy`/`llvm-objcopy` executable used to add Linux DWARF sections after linking. |
 | `ORI_REQUIRE_PACKAGED_RUNTIME=1` | Validate release package uses only packaged runtime |
 | `UPDATE_EXPECT=1` | Update expected diagnostic outputs in tests |
 | `ORI_TEST_LEAK_CHECK=1` | When set, `ori.test.assert_no_leaks(label)` aborts with a stderr diagnostic if live ARC allocations remain after running the cycle collector. Use in E2E tests to fail fast on memory leaks. |
@@ -161,11 +163,13 @@ Source (.orl)
   → Binary
 ```
 
-## Current Status (2026-07-13)
+## Current Status (2026-07-23)
 
 - **Rust:** 1.95.0 (via `rust-toolchain.toml`)
 - **Language surface:** **`0.3.0` S3** + **`0.3.1`** Nim-local inference + **option B** (field/index/call/pipe). Manifesto: `docs/spec/00-manifesto.md`. Decisões: `docs/planning/ori-surface-s3-auk9.md`. Spec: `04-types`, `05-expressions` (pipe), `06-statements`.
-- **Cargo workspace package version:** **`0.3.4`**. Tags through **`v0.3.4`** (Linux tar.gz + deb; full AOT package smoke).
+- **Cargo workspace package version:** **`0.3.8`** (living development baseline).
+  Released tags through **`v0.3.7`**; the current language branch contains the
+  0.3.7 fixes as equivalent cherry-picks plus the post-release language work.
 - **Etapas 0–9** do `PLANO-MATURIDADE-COMPLETO.md` (ciclo 0.2) concluídas; S3 PRs 1–10 + PR11 + 11b (B) = superfície atual.
 - **Pipe `|>`:** **mantido** e tipado no checker como `f(value)`; entra na inferência local B.
 - **Auk9:** produto **arquivado** (README no repo auk9-lang). Living surface is Ori S3.
@@ -173,8 +177,9 @@ Source (.orl)
   (VS Code + Zed under `extensions/`). **No** Marketplace/store publish and **no**
   multi-OS distribution push until that focus is done. Game/imgui packages do
   not exist and must not reappear in docs or plans.
-- **cargo check --workspace:** PASSES cleanly
-- **cargo test --workspace:** PASSES cleanly (~690+ tests, including stdlib Layer 2/3, net v2 E2E, io streams, JIT default)
+- **`tools/qa/daily_fast.sh`:** PASSES (2026-07-23: workspace check, frontend
+  units, 234 `ori_spec`, diagnostic catalog, ARC/memory, robustness, residual
+  product surface).
 - **Release smoke:** `tools/smoke_native_release.ps1 -SkipBuild` passes — `ori compile` + `ori test` validados em package isolado com runtime empacotada (Windows MSVC).
 - **Rust removal Phase 1 — Windows MSVC (unreleased):** `ORI_USE_BUNDLED_RUST_LLD=1` engaja estratégia `BundledRustLld` que invoca `rust-lld` diretamente (sem `rustc` driver). CRT discovery via `vswhere.exe` + Windows SDK layout. Validado end-to-end com `examples/hello_world.orl` em Windows MSVC. `tools/stage_native_runtime.ps1` agora copia `rust-lld.exe` para `runtime/bin/`.
 - **Rust removal Phase 1 — Linux GNU (unreleased):** Estratégia `BundledRustLld` estendida para `x86_64-unknown-linux-gnu`. CRT discovery via `cc -print-file-name` (crt1.o/crti.o/crtn.o) + `cc -print-search-dirs` (lib dirs) + fallback de paths comuns para dynamic linker. `tools/stage_native_runtime.sh` agora copia `rust-lld` para `runtime/bin/`.
@@ -183,6 +188,24 @@ Source (.orl)
 - **Rust removal Phase 3 — JIT Cranelift (unreleased):** `ori run` usa JIT por default quando cdylib disponível; `ORI_USE_JIT=1` força JIT; `ORI_USE_AOT=1` força AOT. Código Cranelift executado in-process via `JITModule` com símbolos `ori_*` resolvidos on-demand da cdylib do runtime através de `libloading`. Sem `.o` temporário, sem linker, sem subprocesso. `ori-runtime` builda 3 artefatos (`staticlib` + `rlib` + `cdylib`); stage scripts copiam cdylib para `runtime/<triple>/`; smoke release valida cdylib staged + `ori run` JIT no package isolado. `ori compile` e `ori test` permanecem AOT. **Híbrido A→B→D completo** para `ori run`.
 - **Stdlib Phase 0 + Gap parity (unreleased):** Prelude loading + **Layer 2/3 `.orl` fechados** para paridade `std.*` v1 (`docs/planning/stdlib-gap-parity.md`): 28 utils + 8 algorithms + `validate`/`path`; Layer 1 hot path Rust (FS metadados, `os.current_dir`, `process.*`, `net.*`, `lazy.is_consumed`, …). Lowering `ori.net.Connection`/`Listener`/`UdpSocket` e `ori.io.Input`/`Output` para módulos `.orl`. ~36 testes stdlib E2E em `multifile_imports.rs` (incl. rede v2).
 - **Stdlib/Rede v2 (unreleased):** `connect_tls`, servidor TCP (`listen`/`accept`), UDP síncrono, `task.run_blocking`; design `docs/planning/net-v2-design.md`; exemplo `examples/http_get.orl`.
+- **FFI aggregates ABI v1 scope (unreleased):** `@c_export` accepts non-empty,
+  non-generic scalar-field structs through portable pointer/out wrappers and
+  managed structs through typed opaque ARC handles, plus direct
+  `optional`/`result` through tag + payload/out bridges. Handle parameters are
+  borrowed through a wrapper retain; active managed returns transfer one owned
+  reference to the host. `ori compile --lib` generates the sibling C header
+  from HIR, including scalar typedefs, incomplete handle declarations,
+  `OriResultTag`, export signatures, runtime retain/release lifecycle, and C++
+  guards. Direct collection layouts remain private behind opaque handles.
+- **Custom destructors (unreleased):** `core.Destructor` exposes
+  `mut destroy(self) -> void` on structs/enums. Native AOT/JIT call it once
+  before payload/field cleanup; cycle collection finalizes all members before
+  freeing any payload. C/debug rejects the feature explicitly. Deterministic
+  resources still use `using` + `core.Disposable`.
+- **Medium language backlog closed (2026-07-23):** explicit `move` shelved by
+  language decision; the size-class free-list experiment was ~2% slower than
+  glibc tcache and reverted, with
+  `tools/bench/managed_temporary_churn.orl` retained as evidence.
 - **LSP/VS Code (unreleased):** Catálogo stdlib Layer 1+2, hover/goto stdlib, sync incremental, dot-complete via aliases, `ori doctor`, extensão `extensions/vscode-orl/`.
 - **Docs website (unreleased):** Site Starlight em [github.com/raillen/ori-website](https://github.com/raillen/ori-website) — i18n en/pt/es/ja, Pagefind + busca ⌘K, referência gerada via `ori doc export`. Deploy Vercel-ready (`vercel.json`).
 - **Master plan:** `docs/planning/PLANO-MATURIDADE-COMPLETO.md` — Etapas 0–9 concluídas; backlog v2 em Apêndice C. **M2 ✅** (stdlib + `public alias` de domínio); **M3 ✅** (`19-abi.md`); **M1 ✅** (`docs/install.md`, `tools/smoke_no_rust.sh`, CI smoke-no-rust). Próximo opcional: publicar package; **M4** self-host por último.
@@ -195,11 +218,11 @@ Source (.orl)
 |-----------|-------------|--------------|--------|
 | Zig | ~10 anos | 0.14 | Consolidada, ainda sem 1.0 |
 | Rust | ~6 anos (pre-1.0) | 1.0 em 2015 | Estável após 0.12 |
-| Ori | dias | **0.3.4** (Linux tar.gz + deb) | Pre-1.0, FREEZE-1 em 0.3.x |
+| Ori | dias | **0.3.8-dev** (`v0.3.7` released) | Pre-1.0, FREEZE-1 em 0.3.x |
 
 **Regras até 1.0:**
 - Superfície S3 = CHANGELOG **`[0.3.0]`**; inference = **`[0.3.1]`**; package/M1 = **`[0.3.2]`**; deb/freeze = **`[0.3.3]`**; link/smoke maintenance = **`[0.3.4]`**.
-- Cargo/`runtime-link.json` = versão atual do workspace (**0.3.4**).
+- Cargo/`runtime-link.json` = versão atual do workspace (**0.3.8**).
 - Patch versions (`0.3.5`, …) para correções e small additive features.
 - `0.4+` só com breaking real ou marco grande acordado.
 - `1.0` é critério de maturidade (anos, não dias), na **ordem tática**:

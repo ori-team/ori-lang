@@ -70,6 +70,16 @@
     ],
     "description": "Apply traits to a type (S3)"
   },
+  "compact apply": {
+    "prefix": "applyuse",
+    "body": ["apply ${1:Type} use ${2:Trait}", "    ${3:method}(self) -> ${4:void}", "        ${0}", "    end", "end"],
+    "description": "Apply one trait with the compact canonical header"
+  },
+  "newtype": {
+    "prefix": "newtype",
+    "body": "newtype ${1:Name} = ${2:int}",
+    "description": "Nominal zero-cost type"
+  },
   "import stdlib": {
     "prefix": "import",
     "body": "import ${1:ori.module} = ${2:alias}",
@@ -95,6 +105,16 @@
     ],
     "description": "If-else statement"
   },
+  "struct destructuring": {
+    "prefix": "destructure",
+    "body": "const ${1:Type} { ${2:field}, ${3:other} } = ${0:value}",
+    "description": "Bind named fields from a struct"
+  },
+  "if result binding": {
+    "prefix": "ifok",
+    "body": ["if ok(${1:value}) = ${2:result_value}", "    ${0}", "end"],
+    "description": "Bind a successful result payload conditionally"
+  },
   "for in": {
     "prefix": "for",
     "body": [
@@ -117,11 +137,23 @@
     "prefix": "match",
     "body": [
       "match ${1:expression}",
-      "    case ${2:pattern} -> ${3:action}",
-      "    case _ -> ${0}",
+      "    case ${2:pattern}:",
+      "        ${3}",
+      "    case else:",
+      "        ${0}",
       "end"
     ],
     "description": "Pattern matching"
+  },
+  "match expression": {
+    "prefix": "matchexpr",
+    "body": ["match ${1:expression}", "case ${2:pattern}: ${3:value}", "case else: ${0:fallback}", "end"],
+    "description": "Value-producing match expression"
+  },
+  "or pattern": {
+    "prefix": "caseor",
+    "body": "case ${1:First} or ${2:Second}: ${0}",
+    "description": "Match either of two patterns"
   },
   "using": {
     "prefix": "using",

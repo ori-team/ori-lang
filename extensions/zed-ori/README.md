@@ -2,7 +2,7 @@
 
 Language support for **Ori** (`.orl`) in [Zed](https://zed.dev).
 
-- Language config (`.orl`, `--` comments, brackets)
+- Language config (`.orl`, `--` and `--| |--` comments, all Ori delimiters)
 - **LSP** via `ori-lsp` on `PATH`
 
 Version **0.3.5** (matches language package).
@@ -54,6 +54,7 @@ Optional: force stdlib if auto-detect fails (extension sets `ORI_STDLIB_ROOT` wh
 |---------|--------|
 | Open `.orl` as language Ori | yes |
 | `ori-lsp` diagnostics / hover / complete | yes (if on PATH) |
+| Cooperative DAP debugger | available through `ori debug --dap`; automatic Zed wiring is not available in the current extension API |
 | Tree-sitter syntax colors | **not yet** |
 | Zed extension store | **not yet** (GitHub zip + dev install) |
 

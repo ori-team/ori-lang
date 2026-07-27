@@ -1,5 +1,5 @@
 use crate::parser::Parser;
-use ori_ast::ty::Type;
+use ori_ast::ty::{ConstExpr, Type};
 use ori_lexer::TokenKind;
 
 macro_rules! primitive_type {
@@ -36,6 +36,21 @@ macro_rules! single_bracket_type {
 impl<'src> Parser<'src> {
     pub fn parse_type(&mut self) -> Option<Type> {
         let span = self.current_span();
+
+        // `array` and `slice` are **contextual**: they name types here, and stay
+        // ordinary identifiers everywhere else. Reserving them outright would
+        // break any program with a variable called `slice`, which is a very
+        // plausible name — the language already treats `ok`, `err`, `try`,
+        // `async` and `await` the same way.
+        if self.at_contextual("array") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
+            return self.parse_array_type(span);
+        }
+        if self.at_contextual("slice") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
+            self.advance();
+            let (inner, end) = self.parse_single_type_arg()?;
+            return Some(Type::Slice(Box::new(inner), span.cover(end)));
+        }
+
         match self.peek_kind()? {
             // ── Primitive types ───────────────────────────────────────────────
             TokenKind::BoolTy => primitive_type!(self, span, Bool),
@@ -297,38 +312,73 @@ impl<'src> Parser<'src> {
         }
         let name = self.parse_name()?;
         self.expect(&TokenKind::Colon)?;
-        let tok = self.peek()?.clone();
-        let negative = tok.kind == TokenKind::Minus;
-        if negative {
-            self.advance();
+        let (value, value_span) = self.parse_const_arg_value()?;
+        let span = name.span.cover(value_span);
+        Some(Type::ConstArg { name, value, span })
+    }
+
+    /// The CT-0 expression after `name:` in a const type argument.
+    ///
+    /// Parsing starts through the normal expression grammar, then narrows the
+    /// result to the side-effect-free constant AST. Type lowering evaluates
+    /// concrete expressions and preserves a direct const parameter reference.
+    fn parse_const_arg_value(&mut self) -> Option<(ConstExpr, ori_diagnostics::Span)> {
+        let expr = self.parse_expr()?;
+        let span = expr.span();
+        match ConstExpr::from_expr(expr) {
+            Ok(const_expr) => Some((const_expr, span)),
+            Err(unsupported_span) => {
+                self.error(
+                    "parse.expected_const_expression",
+                    "a named type argument accepts only constants, integer arithmetic, comparisons, boolean logic, and inline `if`",
+                    unsupported_span,
+                );
+                None
+            }
         }
-        if !matches!(self.peek_kind(), Some(TokenKind::IntLit)) {
-            let span = self.current_span();
+    }
+
+    /// `array[T, size: N]` — element type, then the length as a named const.
+    ///
+    /// The length is named for the same reason `Buffer[size: 8]` is: a bare
+    /// `array[int, 4]` puts a loose number between brackets, which reads as an
+    /// index everywhere else in Ori.
+    fn parse_array_type(&mut self, start: ori_diagnostics::Span) -> Option<Type> {
+        self.advance(); // contextual `array`
+        self.expect(&TokenKind::LBracket)?;
+        let elem = self.parse_type()?;
+        self.expect(&TokenKind::Comma)?;
+
+        let size_span = self.current_span();
+        let Some(size_arg) = self.parse_named_const_arg() else {
             self.error(
-                "parse.expected_const_arg_value",
-                "a named type argument takes an integer constant, e.g. `size: 8`",
-                span,
+                "parse.expected_array_size",
+                "`array` needs its length as a named const argument: `array[int, size: 4]`",
+                size_span,
+            );
+            return None;
+        };
+        let Type::ConstArg { name, value, .. } = size_arg else {
+            return None;
+        };
+        if name.text.as_str() != "size" {
+            self.error(
+                "parse.expected_array_size",
+                format!(
+                    "`array` names its length `size`, not `{}`: write `array[int, size: 4]`",
+                    name.text
+                ),
+                name.span,
             );
             return None;
         }
-        let value_tok = self.advance().unwrap();
-        let text = self.slice(value_tok.span).replace('_', "");
-        let value: i64 = match text.parse() {
-            Ok(v) => v,
-            Err(_) => {
-                self.error(
-                    "parse.expected_const_arg_value",
-                    "integer constant is out of range for a type argument",
-                    value_tok.span,
-                );
-                return None;
-            }
-        };
-        let span = name.span.cover(value_tok.span);
-        Some(Type::ConstArg {
-            name,
-            value: if negative { -value } else { value },
-            span,
+
+        let end = self.current_span();
+        self.expect(&TokenKind::RBracket)?;
+        Some(Type::Array {
+            elem: Box::new(elem),
+            size: value,
+            span: start.cover(end),
         })
     }
 
@@ -421,7 +471,9 @@ impl<'src> Parser<'src> {
         Some((args, end))
     }
 
-    fn parse_type_arg_list_free(&mut self) -> Option<(Vec<Type>, ori_diagnostics::Span)> {
+    pub(crate) fn parse_type_arg_list_free(
+        &mut self,
+    ) -> Option<(Vec<Type>, ori_diagnostics::Span)> {
         let open = match self.peek_kind() {
             Some(TokenKind::LBracket) => TokenKind::LBracket,
             Some(TokenKind::Lt) => {

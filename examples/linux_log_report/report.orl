@@ -1,0 +1,15 @@
+module app.report
+
+imports
+    app.stats = stats
+end
+
+-- Keep presentation separate from file access so the analyzer is reusable.
+public render(log_path: string, summary: stats.LogStats) -> string
+    return f"log: {log_path}\n"
+        + f"total: {summary.total}\n"
+        + f"info: {summary.info}\n"
+        + f"warn: {summary.warn}\n"
+        + f"error: {summary.failures}\n"
+        + f"other: {summary.unclassified}"
+end

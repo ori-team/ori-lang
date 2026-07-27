@@ -4,7 +4,7 @@ Scripts for daily / weekly language quality (FREEZE-1 / 0.3.x).
 
 | Script | Role |
 |--------|------|
-| [`daily_fast.sh`](daily_fast.sh) | S0–S4 + residual surface gate (S8 subset) |
+| [`daily_fast.sh`](daily_fast.sh) | S0 compile + strict Clippy for runtime/codegen/driver, S1–S4, and residual surface gate (S8 subset) |
 | [`daily_full.sh`](daily_full.sh) | Fast + multifile + full async + workspace + examples + perf |
 | [`catalog_lint.sh`](catalog_lint.sh) | Spec 13 ↔ emitted diagnostic codes |
 | [`residual_audit.sh`](residual_audit.sh) | Product surface + intentional residual negatives |
@@ -38,5 +38,5 @@ export PATH="$PWD/compiler/target/release:$PATH"
 | Doc / skill | Role |
 |-------------|------|
 | [`docs/planning/qa/test-matrix-ori.md`](../../docs/planning/qa/test-matrix-ori.md) | Product-mapped test matrix |
-| [`.grok/skills/ori-lang-qa/`](../../.grok/skills/ori-lang-qa/) | Agent skill + residual/diagnostics policy |
+| [`docs/planning/qa/`](../../docs/planning/qa/) | Residual and diagnostics policy |
 | [`docs/planning/BACKLOG.md`](../../docs/planning/BACKLOG.md) | Open work (language-first queue) |

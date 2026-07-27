@@ -189,7 +189,8 @@ Snapshot completo do que entra na release `v0.2.0` (Etapa 9 do `PLANO-MATURIDADE
 ### Backlog v2 (não entra nesta release)
 
 - Stdlib escrita em `.orl` com bootstrap gradual (hoje embutida em Rust manifesto `STDLIB_RUNTIME_FUNCTIONS`).
-- Paridade C debug para async/concurrency (ou deprecar C backend).
+- Backend C mantido como rota síncrona parcial de debug, sem paridade
+  async/concurrency por decisão de 2026-07-23.
 - Suporte a triples adicionais além dos 5 do CI.
 - Publicação em registry / instalador.
 - `ori doc` com output HTML estático.

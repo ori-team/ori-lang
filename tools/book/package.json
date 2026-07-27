@@ -1,0 +1,14 @@
+{
+  "name": "ori-book-pdf",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pdf": "node build_pdf.mjs"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "marked": "^15.0.12",
+    "marked-highlight": "^2.2.1",
+    "puppeteer": "^24.10.2"
+  }
+}

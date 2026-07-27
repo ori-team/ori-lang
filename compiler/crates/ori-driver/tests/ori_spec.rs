@@ -843,6 +843,21 @@ end
 }
 
 #[test]
+fn type_accepts_equality_on_bytes() {
+    let dir = TestDir::new("type_bytes_equality");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+main()
+    check b"ori" == b"ori", "bytes equality"
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
 fn type_rejects_equality_on_function_types() {
     let dir = TestDir::new("type_eq_func");
     dir.write(
@@ -1971,7 +1986,7 @@ fn func_rejects_const_receiver_on_mut_func() {
         r#"module app.main
 struct Counter
     value: int
-    mut increment()
+    mut increment(self)
         self.value = self.value + 1
     end
 end
@@ -1998,7 +2013,7 @@ fn func_rejects_self_field_mutation_in_non_mut_method() {
         r#"module app.main
 struct Counter
     value: int
-    increment()
+    increment(self)
         self.value = self.value + 1
     end
 end
@@ -2214,7 +2229,7 @@ fn trait_default_accepts_labeled_end_function() {
         r#"module app.main
 import ori.io = io
 trait Greetable
-    greet() -> string
+    greet(self) -> string
         return "hi"
     end function
 end
@@ -2222,7 +2237,7 @@ struct Person
     name: string
 end
 apply Person use Greetable
-    greet() -> string
+    greet(self) -> string
         return self.name
     end
 end
@@ -2245,12 +2260,12 @@ fn trait_default_accepts_fat_arrow_body() {
         r#"module app.main
 import ori.io = io
 trait Doubler
-    double(x: int) -> int => x * 2
+    double(self, x: int) -> int => x * 2
 end
 struct S
 end
 apply S use Doubler
-    double(x: int) -> int => x * 2
+    double(self, x: int) -> int => x * 2
 end
 main()
     const s: S = S {}
@@ -3032,40 +3047,11 @@ end
     );
 }
 
-#[test]
-fn generic_accepts_hkt() {
-    let dir = TestDir::new("generic_hkt");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-trait Functor[F[_]]
-    fmap[A, B](fa: F[A], f: func(A) -> B) -> F[B]
-end
-main()
-end
-"#,
-    );
-    let out = run_check(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-}
-
-#[test]
-fn generic_accepts_associated_type_in_trait() {
-    let dir = TestDir::new("generic_assoc_type");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-trait Container
-    type Item
-    get(self) -> Item
-end
-main()
-end
-"#,
-    );
-    let out = run_check(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-}
+// `generic_accepts_hkt` and `generic_accepts_associated_type_in_trait` were
+// removed here. Both asserted only that a *declaration* parsed, so they passed
+// while neither feature could actually be implemented: HKT is out of scope
+// (see docs/spec/11-generics.md) and associated types are `alias Name = Type`
+// inside a `use` section, covered by `compile_runs_associated_types_in_apply_use`.
 
 #[test]
 fn generic_accepts_const_generic_param() {
@@ -4104,6 +4090,31 @@ end
 
     let out = run_check(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn compile_runs_args_get_or_without_dangling_payload() {
+    let dir = TestDir::new("args_get_or_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+imports
+    ori.args = args
+    ori.io = io
+end
+
+main()
+    io.println(args.get_or(1, "fallback"))
+end
+"#,
+    );
+    let exe = exe_path(&dir, "args_get_or");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).arg("provided").output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "provided");
 }
 
 #[test]
@@ -5729,6 +5740,1167 @@ end
     );
 }
 
+// ── Fixed-size arrays: type system ─────────────────────────────────────────
+//
+// `array[T, size: N]` carries its length in the type, so two lengths are two
+// types and a constant index can be bounds-checked at compile time. Codegen
+// does not store them inline yet — see the backend note in the backlog.
+
+#[test]
+fn check_accepts_array_types() {
+    let dir = TestDir::new("array_ok");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Grid
+    cells: array[int, size: 4]
+end
+
+struct InlineString[const cap: int]
+    data: array[u8, size: cap]
+    len: int
+end
+
+main()
+    const xs: array[int, size: 4] = [1, 2, 3, 4]
+    io.println(f"{xs[0]}")
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn compile_runs_ct0_const_expressions() {
+    let dir = TestDir::new("ct0_const_expressions");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+const words: int = 4
+const page_size: int = if words == 4 then words * 2 else 1
+
+struct Page
+    cells: array[int, size: page_size]
+end
+
+struct Marker[const size: int]
+    value: int
+end
+
+main()
+    const values: array[int, size: (2 + 2) * 2] = [1, 2, 3, 4, 5, 6, 7, 8]
+    const page: Page = Page { cells: values }
+    const marker: Marker[size: words * 2] = Marker { value: 9 }
+    io.println(f"{page.cells[7]}")
+    io.println(f"{marker.value}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let exe = exe_path(&dir, "ct0_const_expressions");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "8\n9\n");
+}
+
+#[test]
+fn check_reports_ct0_const_expression_failures() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "overflow",
+            "main()\n    const xs: array[int, size: 9223372036854775807 + 1] = []\nend\n",
+            "consteval.overflow",
+        ),
+        (
+            "division_by_zero",
+            "main()\n    const xs: array[int, size: 8 / 0] = []\nend\n",
+            "consteval.division_by_zero",
+        ),
+        (
+            "cycle",
+            "const left: int = right\nconst right: int = left\n\nmain()\n    const xs: array[int, size: left] = []\nend\n",
+            "consteval.cycle",
+        ),
+        (
+            "boolean_result",
+            "main()\n    const xs: array[int, size: 1 < 2] = []\nend\n",
+            "type.const_argument_not_integer",
+        ),
+        (
+            "runtime_initializer",
+            "capacity() -> int\n    return 4\nend\n\nconst cap: int = capacity()\n\nmain()\n    const xs: array[int, size: cap] = []\nend\n",
+            "consteval.unsupported_expression",
+        ),
+        (
+            "runtime_variable",
+            "var cap: int = 4\n\nmain()\n    const xs: array[int, size: cap + 1] = []\nend\n",
+            "consteval.non_const_name",
+        ),
+        (
+            "undefined_nested_name",
+            "main()\n    const xs: array[int, size: missing + 1] = []\nend\n",
+            "consteval.undefined_name",
+        ),
+        (
+            "non_boolean_condition",
+            "main()\n    const xs: array[int, size: if 1 then 2 else 3] = []\nend\n",
+            "consteval.type_mismatch",
+        ),
+        (
+            "unsigned_outside_ct0_range",
+            "main()\n    const xs: array[int, size: 18446744073709551615u64] = []\nend\n",
+            "consteval.invalid_literal",
+        ),
+        (
+            "symbolic_arithmetic",
+            "struct Buffer[const cap: int]\n    cells: array[int, size: cap + 1]\nend\n\nmain()\nend\n",
+            "type.const_param_expression_unsupported",
+        ),
+    ];
+
+    for (label, body, expected) in cases {
+        let dir = TestDir::new(&format!("ct0_bad_{label}"));
+        dir.write("main.orl", &format!("module app.main\n\n{body}"));
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(expected),
+            "`{label}` should report `{expected}`: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+#[test]
+fn check_rejects_bad_arrays() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "wrong_length",
+            "    const xs: array[int, size: 4] = [1, 2]\n",
+            "type.array_length_mismatch",
+        ),
+        (
+            "index_past_end",
+            "    const xs: array[int, size: 3] = [1, 2, 3]\n    const v: int = xs[7]\n",
+            "type.array_index_out_of_bounds",
+        ),
+        (
+            "negative_length",
+            "    const xs: array[int, size: -2] = [1]\n",
+            "type.negative_array_size",
+        ),
+        (
+            "unknown_const_param",
+            "    const xs: array[int, size: nope] = [1]\n",
+            "type.undefined_const_param",
+        ),
+        (
+            "wrong_arg_name",
+            "    const xs: array[int, len: 4] = [1, 2, 3, 4]\n",
+            "parse.expected_array_size",
+        ),
+    ];
+
+    for (label, body, expected) in cases {
+        let dir = TestDir::new(&format!("array_bad_{label}"));
+        dir.write(
+            "main.orl",
+            &format!("module app.main\n\nmain()\n{body}end\n"),
+        );
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(expected),
+            "`{label}` should report `{expected}`: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+#[test]
+fn check_treats_array_lengths_as_distinct_types() {
+    let dir = TestDir::new("array_distinct");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+takes_four(a: array[int, size: 4]) -> int
+    return 0
+end
+
+main()
+    const eight: array[int, size: 8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    const n: int = takes_four(eight)
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.arg_type_mismatch"),
+        "size 8 must not satisfy size 4: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn compile_reports_array_size_inline_not_pointer() {
+    let dir = TestDir::new("array_size_of");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.mem = mem
+
+main()
+    const xs: array[int, size: 4] = [1, 2, 3, 4]
+    io.println(f"{mem.size_of(xs)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "array_size_of");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    // 4 elements x 8 bytes, not one pointer.
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "32\n");
+}
+
+// ── Arrays: inline storage, end to end ─────────────────────────────────────
+
+#[test]
+fn compile_runs_inline_arrays() {
+    let dir = TestDir::new("array_inline");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Grid
+    cells: array[int, size: 4]
+    label: string
+end
+
+total(g: Grid) -> int
+    var i: int = 0
+    var sum: int = 0
+    while i < 4
+        sum = sum + g.cells[i]
+        i = i + 1
+    end
+    return sum
+end
+
+main()
+    var xs: array[int, size: 3] = [1, 2, 3]
+    xs[1] = 99
+    io.println(f"{xs[1]}")
+
+    const g: Grid = Grid { cells: [10, 20, 30, 40], label: "grid" }
+    io.println(f"{g.cells[2]}")
+    io.println(f"{total(g)}")
+
+    const fs: array[float, size: 2] = [1.5, 2.5]
+    io.println(f"{fs[1]}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "array_inline");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "99\n30\n100\n2.5\n"
+    );
+}
+
+#[test]
+fn check_rejects_managed_array_elements() {
+    let dir = TestDir::new("array_managed_elem");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+main()
+    const xs: array[string, size: 2] = ["a", "b"]
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.array_element_not_inline"),
+        "inline storage has no ARC, so managed elements must be refused: {:?}",
+        out.diagnostics
+    );
+}
+
+// ── Index assignment actually stores ───────────────────────────────────────
+//
+// The codegen chain for `container[i] = v` handled only `list` and fell through
+// silently for everything else, so `m["k"] = v` on a map compiled fine and did
+// nothing. The fallthrough is now a hard error, and maps are implemented.
+
+#[test]
+fn compile_runs_map_index_assignment() {
+    let dir = TestDir::new("map_index_assign");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.map = maps
+
+main()
+    var m: map[string, int] = { "a": 1 }
+    m["a"] = 42
+    m["b"] = 7
+    const a: int = maps.get_or(m, "a", 0)
+    const b: int = maps.get_or(m, "b", 0)
+    io.println(f"{a} {b}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "map_index_assign");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42 7\n");
+}
+
+// ── Unconditional recursion is a compile error ─────────────────────────────
+//
+// The general case is the halting problem, so only one shape is rejected: every
+// path through the body reaches a call to the same function. The analysis must
+// stay conservative — a false positive rejects a working program, which is far
+// worse than leaving the runtime stack guard to report the overflow.
+
+#[test]
+fn check_rejects_recursion_with_no_escape() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "direct",
+            "forever(n: int) -> int\n    return forever(n + 1)\nend\n",
+        ),
+        (
+            "inside_arithmetic",
+            "forever(n: int) -> int\n    return 1 + forever(n)\nend\n",
+        ),
+        (
+            "both_branches",
+            "forever(n: int) -> int\n    if n > 0\n        return forever(n - 1)\n    else\n        return forever(n + 1)\n    end\nend\n",
+        ),
+        (
+            "before_any_return",
+            "forever(n: int) -> int\n    forever(n)\n    return 0\nend\n",
+        ),
+    ];
+
+    for (label, body) in cases {
+        let dir = TestDir::new(&format!("uncond_rec_{label}"));
+        dir.write(
+            "main.orl",
+            &format!("module app.main\n\n{body}\nmain()\nend\n"),
+        );
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(&"control.unconditional_recursion"),
+            "`{label}` must be rejected: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+#[test]
+fn check_accepts_recursion_that_can_terminate() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "guard_then_recurse",
+            "countdown(n: int) -> int\n    if n <= 0\n        return 0\n    end\n    return 1 + countdown(n - 1)\nend\n",
+        ),
+        (
+            "two_recursive_calls",
+            "fib(n: int) -> int\n    if n < 2\n        return n\n    end\n    return fib(n - 1) + fib(n - 2)\nend\n",
+        ),
+        (
+            "one_branch_only",
+            "walk(n: int) -> int\n    if n > 0\n        return walk(n - 1)\n    else\n        return 0\n    end\nend\n",
+        ),
+        (
+            "inside_a_loop",
+            "retry(n: int) -> int\n    while n > 0\n        return retry(n - 1)\n    end\n    return 0\nend\n",
+        ),
+        (
+            "short_circuit",
+            "probe(n: int) -> bool\n    return n > 0 or probe(n + 1)\nend\n",
+        ),
+    ];
+
+    for (label, body) in cases {
+        let dir = TestDir::new(&format!("ok_rec_{label}"));
+        dir.write(
+            "main.orl",
+            &format!("module app.main\n\n{body}\nmain()\nend\n"),
+        );
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            !diagnostic_codes(&out).contains(&"control.unconditional_recursion"),
+            "`{label}` can terminate and must be accepted: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+// ── Stack overflow says so ─────────────────────────────────────────────────
+//
+// Runaway recursion used to die with a bare SIGSEGV: exit 139 and no output at
+// all. The runtime now catches the guard-page fault and names the cause.
+
+#[test]
+fn compile_reports_stack_overflow_instead_of_segfaulting_silently() {
+    let dir = TestDir::new("stack_overflow");
+    // The base case exists but is never reached: `n` only grows. That is the
+    // half `control.unconditional_recursion` cannot catch — proving the two
+    // defences are complementary rather than redundant.
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+climb(n: int) -> int
+    if n < 0
+        return 0
+    end
+    return climb(n + 1)
+end
+
+main()
+    io.println(f"{climb(1)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "stack_overflow");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(!output.status.success(), "runaway recursion must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("stack overflow"),
+        "a stack overflow must name itself, got: {stderr:?}"
+    );
+}
+
+#[test]
+fn compile_runs_deep_but_bounded_recursion() {
+    let dir = TestDir::new("bounded_recursion");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+countdown(n: int) -> int
+    if n <= 0
+        return 0
+    end
+    return 1 + countdown(n - 1)
+end
+
+main()
+    io.println(f"{countdown(10000)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "bounded_recursion");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "10000\n");
+}
+
+// ── Diagnostics name types, never internal ids ─────────────────────────────
+//
+// Messages used to print `<def DefId(18)>` wherever a `Ty::Named` reached a
+// `format!` through `display()` instead of `display_in(def_map)`.
+
+#[test]
+fn check_diagnostics_print_type_names_not_def_ids() {
+    let dir = TestDir::new("diag_type_names");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct User
+    id: int
+end
+
+takes_list(items: list[User]) -> int
+    return 0
+end
+
+takes_tuple(pair: tuple[User, int]) -> int
+    return 0
+end
+
+takes_func(cb: func(User) -> User) -> int
+    return 0
+end
+
+main()
+    const a: int = takes_list(1)
+    const b: int = takes_tuple(1)
+    const c: int = takes_func(1)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let rendered = format!("{:?}", out.diagnostics);
+    assert!(
+        !rendered.contains("<def DefId"),
+        "diagnostics must not leak internal def ids: {rendered}"
+    );
+    assert!(
+        rendered.contains("list[User]")
+            && rendered.contains("tuple[User, int]")
+            && rendered.contains("func(User) -> User"),
+        "nested type names must survive: {rendered}"
+    );
+}
+
+// ── Value contracts report what broke ──────────────────────────────────────
+//
+// A violated `if` contract used to emit a bare Cranelift trap: the process died
+// with a signal and printed nothing at all.
+
+#[test]
+fn compile_reports_violated_param_contract() {
+    let dir = TestDir::new("contract_param");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+scaled(value: float if it >= 0.0) -> float
+    return value * 2.0
+end
+
+main()
+    io.println(f"{scaled(0.0 - 5.0)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "contract_param");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(!output.status.success(), "a broken contract must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("contract.param_violation") && stderr.contains("value"),
+        "the message must name the code and the parameter: {stderr}"
+    );
+}
+
+#[test]
+fn compile_reports_violated_field_contract() {
+    let dir = TestDir::new("contract_field");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct User
+    name: string
+    age: int if it >= 0
+end
+
+main()
+    const u: User = User { name: "Ada", age: 0 - 5 }
+    io.println(u.name)
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "contract_field");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(!output.status.success(), "a broken contract must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("contract.field_violation") && stderr.contains("age"),
+        "the message must name the code and the field: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_when_contracts_hold() {
+    let dir = TestDir::new("contract_ok");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+scaled(value: float if it >= 0.0) -> float
+    return value * 2.0
+end
+
+main()
+    io.println(f"{scaled(5.0)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "contract_ok");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "10\n");
+}
+
+// ── Closure parameter types come from the expected function type ───────────
+//
+// `(x) => x * 2` bound to a `func(int) -> int` used to leave `x` unresolved:
+// the checker reported `type.arithmetic_type_mismatch` on `x * 2`, and the
+// block form additionally failed in codegen with `expression type _#0`.
+
+#[test]
+fn compile_runs_closures_with_inferred_parameter_types() {
+    let dir = TestDir::new("closure_param_inference");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const double: func(int) -> int = (x) => x * 2
+    io.println(f"{double(3)}")
+
+    const label: func(int) -> string = (n)
+        return f"n={n}"
+    end
+    io.println(label(7))
+
+    const add: func(int, int) -> int = (a, b) => a + b
+    io.println(f"{add(2, 5)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "closure_param_inference");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "6\nn=7\n7\n");
+}
+
+#[test]
+fn check_still_rejects_closure_body_that_breaks_the_expected_type() {
+    let dir = TestDir::new("closure_param_inference_bad");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+main()
+    const f: func(int) -> string = (x) => x * 2
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.type_mismatch"),
+        "inferring `x` must not silence a wrong body type: {:?}",
+        out.diagnostics
+    );
+}
+
+// ── `slice[T]`: a window, not a copy ───────────────────────────────────────
+//
+// `lists.slice` copies every element — 2.4 ms for a 100k list. `lists.window`
+// returns `(owner, start, len)` in O(1). It stores the **list object**, not its
+// element buffer, because `push` calls `list_ensure_capacity` and can move the
+// buffer; resolving through the owner on each read cannot dangle.
+
+#[test]
+fn compile_runs_slice_window_over_a_list() {
+    let dir = TestDir::new("slice_window");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+import ori.slice = sl
+
+main()
+    var xs: list[int] = [10, 20, 30, 40, 50]
+    const w: slice[int] = lists.window(xs, 1, 4)
+    io.println(f"{sl.len(w)}")
+    io.println(f"{sl.get(w, 0)}")
+    io.println(f"{sl.get(w, 2)}")
+
+    -- a window sees the owner, unlike a copy
+    lists.set(xs, 1, 999)
+    io.println(f"{sl.get(w, 0)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "slice_window");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "3\n20\n40\n999\n",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_slice_that_survives_owner_reallocation_and_scope() {
+    let dir = TestDir::new("slice_lifetime");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+import ori.slice = sl
+
+make_window() -> slice[int]
+    var local: list[int] = [7, 8, 9]
+    return lists.window(local, 0, 3)
+end
+
+main()
+    -- the owner's buffer moves many times underneath the window
+    var xs: list[int] = [1, 2, 3]
+    const w: slice[int] = lists.window(xs, 0, 3)
+    var i: int = 0
+    while i < 5000
+        lists.push(xs, i)
+        i = i + 1
+    end
+    io.println(f"{sl.get(w, 1)}")
+
+    -- and the window outlives the binding that created the list
+    const escaped: slice[int] = make_window()
+    io.println(f"{sl.get(escaped, 1)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "slice_lifetime");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "2\n8\n",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn check_keeps_slice_and_array_usable_as_identifiers() {
+    // Both are contextual: they name types in type position and stay ordinary
+    // names everywhere else. Reserving `slice` outright broke an existing test
+    // that had `const slice: list[string] = ...`.
+    let dir = TestDir::new("slice_identifier");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+
+main()
+    var values: list[int] = [1, 2, 3]
+    const slice: list[int] = lists.slice(values, 0, 2)
+    const array: int = 7
+    io.println(f"{lists.len(slice)} {array}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+// ── Generic traits can be applied ──────────────────────────────────────────
+//
+// `trait Container[Item]` declared fine but could not be used: `use Container[int]`
+// did not parse, and bare `use Container` left `Item` unbound. Four layers were
+// missing — `ApplyUseSection.trait_args`, the parser, `TraitSig.type_params`,
+// and `ImplSig.trait_args` — plus substitution in the checker *and* in lowering.
+
+#[test]
+fn compile_runs_generic_trait_with_two_instantiations() {
+    let dir = TestDir::new("generic_trait_applied");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+trait Container[Item]
+    first(self) -> Item
+end
+
+struct IntBox
+    v: int
+end
+
+struct TextBox
+    s: string
+end
+
+apply IntBox use Container[int]
+    first(self) -> int
+        return self.v
+    end
+end
+
+apply TextBox use Container[string]
+    first(self) -> string
+        return self.s
+    end
+end
+
+main()
+    const a: IntBox = IntBox { v: 42 }
+    const b: TextBox = TextBox { s: "hi" }
+    io.println(f"{a.first()}")
+    io.println(b.first())
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "generic_trait_applied");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\nhi\n");
+}
+
+#[test]
+fn check_rejects_bad_generic_trait_applications() {
+    let header = "module app.main\n\ntrait Container[Item]\n    first(self) -> Item\nend\n\nstruct C\n    v: int\nend\n\n";
+    for (label, body, expected) in [
+        (
+            "no_arguments",
+            "apply C use Container\n    first(self) -> int\n        return self.v\n    end\nend\n",
+            "impl.trait_args_missing",
+        ),
+        (
+            "too_many_arguments",
+            "apply C use Container[int, string]\n    first(self) -> int\n        return self.v\n    end\nend\n",
+            "impl.trait_arg_count_mismatch",
+        ),
+        (
+            "argument_does_not_match_impl",
+            "apply C use Container[string]\n    first(self) -> int\n        return self.v\n    end\nend\n",
+            "impl.wrong_signature",
+        ),
+    ] {
+        let dir = TestDir::new(&format!("generic_trait_bad_{label}"));
+        dir.write("main.orl", &format!("{header}{body}\nmain()\nend\n"));
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(&expected),
+            "`{label}` should report `{expected}`: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+// ── `Self` resolves to the implementing type ───────────────────────────────
+//
+// A trait signature carries `Self` as a stand-in for the trait's own DefId.
+// The generic-parameter path substituted it; the concrete-type path did not, so
+// `clone(self) -> Self` reported its return type as the *trait*
+// (`expected Config, found Cloneable`). That is why `core.Cloneable` shipped as
+// a method-less marker.
+
+#[test]
+fn compile_runs_core_cloneable() {
+    let dir = TestDir::new("core_cloneable");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+
+struct Config
+    timeout: int
+    retries: int
+end
+
+apply Config use core.Cloneable
+    clone(self) -> Config
+        return Config { timeout: self.timeout, retries: self.retries }
+    end
+end
+
+main()
+    const a: Config = Config { timeout: 5, retries: 2 }
+    const b: Config = a.clone()
+    io.println(f"{b.timeout} {b.retries}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "core_cloneable");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "5 2\n");
+}
+
+#[test]
+fn compile_runs_user_trait_returning_self() {
+    let dir = TestDir::new("user_trait_self");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+trait Duplicable
+    duplicate(self) -> Self
+end
+
+trait Rankable
+    higher(self, other: Self) -> bool
+end
+
+struct Point
+    x: int
+end
+
+apply Point
+    use Duplicable
+        duplicate(self) -> Point
+            return Point { x: self.x }
+        end
+    end
+
+    use Rankable
+        higher(self, other: Point) -> bool
+            return self.x > other.x
+        end
+    end
+end
+
+main()
+    const p: Point = Point { x: 7 }
+    const q: Point = p.duplicate()
+    io.println(f"{q.x}")
+    io.println(f"{p.higher(Point { x: 1 })}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "user_trait_self");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "7\ntrue\n");
+}
+
+#[test]
+fn check_still_enforces_the_cloneable_contract() {
+    for (label, body, expected) in [
+        (
+            "wrong_return",
+            "apply C use core.Cloneable\n    clone(self) -> int\n        return 1\n    end\nend\n",
+            "impl.wrong_signature",
+        ),
+        (
+            "missing",
+            "apply C use core.Cloneable\nend\n",
+            "impl.missing_method",
+        ),
+    ] {
+        let dir = TestDir::new(&format!("cloneable_bad_{label}"));
+        dir.write(
+            "main.orl",
+            &format!(
+                "module app.main\n\nimport ori.core = core\n\nstruct C\n    v: int\nend\n\n{body}\nmain()\nend\n"
+            ),
+        );
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(
+            diagnostic_codes(&out).contains(&expected),
+            "`{label}` should report `{expected}`: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+// ── `ori.core.Error` carries a real contract ───────────────────────────────
+//
+// `Error` used to be a registered trait name with zero methods: `use core.Error`
+// compiled, but the `message` written inside was never registered, so calling
+// it reported `type.no_such_field`. These tests pin the contract down.
+
+#[test]
+fn compile_runs_core_error_message_method() {
+    let dir = TestDir::new("core_error_message");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+
+struct ValidationError
+    field: string
+end
+
+apply ValidationError use core.Error
+    message(self) -> string
+        return f"invalid: {self.field}"
+    end
+end
+
+main()
+    const e: ValidationError = ValidationError { field: "name" }
+    io.println(e.message())
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "core_error_message");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "invalid: name\n");
+}
+
+#[test]
+fn check_rejects_core_error_without_message() {
+    let dir = TestDir::new("core_error_missing");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+
+struct E
+    f: string
+end
+
+apply E use core.Error
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"impl.missing_method"),
+        "`use core.Error` must require `message`: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_core_error_with_wrong_message_signature() {
+    let dir = TestDir::new("core_error_wrong_sig");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+
+struct E
+    f: string
+end
+
+apply E use core.Error
+    message(self) -> int
+        return 1
+    end
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"impl.wrong_signature"),
+        "`message` must return `string`: {:?}",
+        out.diagnostics
+    );
+}
+
 // ── Associated types in `apply … use …` (roadmap §3) ───────────────────────
 //
 // `type Item = int` was parsed but never consumed: the name was undefined in
@@ -5966,8 +7138,541 @@ end
 
     let out = run_check(&dir.path("main.orl")).unwrap();
     assert!(
-        diagnostic_codes(&out).contains(&"parse.expected_const_arg_value"),
+        diagnostic_codes(&out).contains(&"parse.expected_const_expression"),
         "a named type argument takes an integer constant: {:?}",
         out.diagnostics
     );
+}
+
+// ── iterator functions (`iter` + `suspend`) ──────────────────────────────────
+
+/// Basic generator: the body is inlined at the `for` site — the program must
+/// print the sequence with no callable `counter` function involved.
+#[test]
+fn compile_runs_iter_function_inline_basic() {
+    let dir = TestDir::new("iter_inline_basic");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i
+        i = i + 1
+    end
+end
+
+main()
+    for n, idx in counter(4)
+        io.println(f"{idx}:{n}")
+    end
+end
+"#,
+    );
+    let exe = exe_path(&dir, "iter_inline_basic");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        ["0:0", "1:1", "2:2", "3:3"]
+    );
+}
+
+/// Control flow across the inlining: user `break` exits the whole `for` from
+/// inside the iterator's nested loops, `continue` resumes the iterator, and a
+/// `suspend` after the iterator's loop must not run once the user broke.
+#[test]
+fn compile_runs_iter_function_break_continue_and_tail() {
+    let dir = TestDir::new("iter_break_continue_tail");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+iter pairs(n: int) -> int
+    var a: int = 0
+    while a < n
+        var b: int = 0
+        while b < n
+            suspend a * 10 + b
+            b = b + 1
+        end
+        a = a + 1
+    end
+    suspend 99
+end
+
+main()
+    for p in pairs(3)
+        if p == 1
+            continue
+        end
+        if p == 11
+            break
+        end
+        io.println(f"{p}")
+    end
+    io.println("---")
+    for p in pairs(1)
+        io.println(f"{p}")
+    end
+end
+"#,
+    );
+    let exe = exe_path(&dir, "iter_break_continue_tail");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    // break at 11 skips the rest of pairs(3) INCLUDING the tail suspend 99;
+    // full consumption of pairs(1) reaches it.
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        ["0", "2", "10", "---", "0", "99"]
+    );
+}
+
+/// An iterator consuming another iterator: the outer expansion becomes the
+/// user body of the inner one, and early `return` ends the sequence.
+#[test]
+fn compile_runs_iter_function_nested_and_early_return() {
+    let dir = TestDir::new("iter_nested_early_return");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+iter base(stop: int) -> int
+    var i: int = 0
+    loop
+        if i >= stop
+            return
+        end
+        suspend i
+        i = i + 1
+    end
+end
+
+iter doubled(stop: int) -> int
+    for x in base(stop)
+        suspend x * 2
+    end
+end
+
+run() -> int
+    for n in doubled(5)
+        if n == 4
+            return n
+        end
+        io.println(f"{n}")
+    end
+    return -1
+end
+
+main()
+    io.println(f"got {run()}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "iter_nested_early_return");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["0", "2", "got 4"]);
+}
+
+/// Each misuse has its own diagnostic: `suspend` outside `iter`, `return v`
+/// inside one, calling an iterator outside a `for`, and self-recursion.
+#[test]
+fn check_rejects_iter_misuse_with_dedicated_codes() {
+    let dir = TestDir::new("iter_misuse_codes");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+plain() -> int
+    suspend 3
+    return 1
+end
+
+iter bad_return() -> int
+    return 5
+end
+
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i
+        i = i + 1
+    end
+end
+
+iter echo(n: int) -> int
+    for x in echo(n)
+        suspend x
+    end
+end
+
+main()
+    const x: int = counter(4)
+    io.println(f"{x}")
+    for v in echo(1)
+        io.println(f"{v}")
+    end
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    for expected in [
+        "type.suspend_outside_iter",
+        "type.iter_return_value",
+        "type.iter_call_outside_for",
+    ] {
+        assert!(
+            codes.contains(&expected),
+            "missing {expected}: {:?}",
+            out.diagnostics
+        );
+    }
+    // Recursion is caught at lowering; compiling must fail with the dedicated
+    // code instead of hanging — and must NOT leave a binary behind (a failed
+    // lowering used to fall through to codegen + link).
+    let exe = exe_path(&dir, "iter_misuse_codes");
+    let compile = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(compile.has_errors);
+    assert!(
+        !Path::new(&exe).exists(),
+        "a failed compile must not write a binary"
+    );
+}
+
+/// Parameter contracts survive the inlining: a real call checks
+/// `stop: int if it > 0` at the call site; the inlined form synthesizes a
+/// `check`, so a violating argument still panics instead of passing silently.
+#[test]
+fn compile_runs_iter_function_param_contract() {
+    let dir = TestDir::new("iter_param_contract");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+iter counter(stop: int if it > 0) -> int
+    var i: int = 0
+    while i < stop
+        suspend i
+        i = i + 1
+    end
+end
+
+main()
+    for n in counter(2)
+        io.println(f"{n}")
+    end
+    io.println("done")
+    for n in counter(0 - 1)
+        io.println(f"{n}")
+    end
+    io.println("unreachable")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "iter_param_contract");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    // The second loop violates the contract: the program must trap there,
+    // after the valid loop ran to completion.
+    assert!(!output.status.success(), "contract violation must panic");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["0", "1", "done"]);
+}
+
+/// A failed `check` must say so on stderr before dying — a silent SIGILL
+/// trap tells the user nothing. With a message the message is included;
+/// without one, at least the fact that a `check` failed is.
+#[test]
+fn compile_runs_check_failure_prints_message() {
+    let dir = TestDir::new("check_failure_message");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const n: int = 0 - 1
+    io.println("before")
+    check n > 0, "n must be positive"
+    io.println("unreachable")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "check_failure_message");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["before"]);
+    assert!(
+        stderr.contains("check failed: n must be positive"),
+        "stderr must carry the check message, got: {stderr:?}"
+    );
+}
+
+// ── associated functions (no `self`) ─────────────────────────────────────────
+
+/// `core.Default` is a real trait now: `default() -> Self` has no receiver
+/// and is called as `Type.default()`.
+#[test]
+fn compile_runs_core_default_associated_function() {
+    let dir = TestDir::new("core_default_assoc_fn");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.core = core
+
+struct User
+    name: string
+    age: int
+end
+
+apply User use core.Default
+    default() -> User
+        return User { name: "?", age: 0 }
+    end
+end
+
+main()
+    const u: User = User.default()
+    io.println(f"{u.name} {u.age}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "core_default_assoc_fn");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["? 0"]);
+}
+
+/// A receiver-less trait function can be dispatched statically through a
+/// constrained type parameter. Monomorphization selects the concrete `apply`
+/// implementation without inventing a runtime receiver.
+#[test]
+fn compile_runs_generic_associated_function() {
+    let dir = TestDir::new("generic_assoc_fn");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.core = core
+
+struct User
+    age: int
+end
+
+apply User use core.Default
+    default() -> User
+        return User { age: 42 }
+    end
+end
+
+make_default for T: core.Default (prototype: T) -> T
+    return T.default()
+end
+
+main()
+    const prototype: User = User { age: 0 }
+    const user: User = make_default(prototype)
+    io.println(f"{user.age}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "generic_assoc_fn");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "42");
+}
+
+#[test]
+fn check_rejects_ambiguous_generic_associated_function() {
+    let dir = TestDir::new("ambiguous_generic_assoc_fn");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+trait Alpha
+    value() -> int
+end
+
+trait Beta
+    value() -> int
+end
+
+read_value for T: Alpha, T: Beta (prototype: T) -> int
+    return T.value()
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    assert!(
+        diagnostic_codes(&out).contains(&"type.ambiguous_method"),
+        "{:?}",
+        out.diagnostics
+    );
+}
+
+/// An inherent method without `self` is an associated function on the type:
+/// `User.make_empty()` works, and visibility follows the module (not a
+/// pseudo-namespace `app.main.User`).
+#[test]
+fn compile_runs_inherent_associated_function() {
+    let dir = TestDir::new("inherent_assoc_fn");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct User
+    name: string
+    age: int
+end
+
+apply User
+    make_empty() -> User
+        return User { name: "", age: 0 }
+    end
+end
+
+main()
+    const u: User = User.make_empty()
+    io.println(f"[{u.name}] {u.age}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "inherent_assoc_fn");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["[] 0"]);
+}
+
+/// Misuse has dedicated codes: `self` inside an associated function, and
+/// calling one on a value instead of the type.
+#[test]
+fn check_rejects_associated_function_misuse() {
+    let dir = TestDir::new("assoc_fn_misuse");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+
+struct User
+    age: int
+end
+
+apply User use core.Default
+    default() -> User
+        return User { age: 7 }
+    end
+end
+
+apply User
+    broken() -> int
+        return self.age
+    end
+end
+
+main()
+    const u: User = User.default()
+    const v: User = u.default()
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    for expected in ["bind.self_outside_method", "type.assoc_fn_instance_call"] {
+        assert!(
+            codes.contains(&expected),
+            "missing {expected}: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+/// The trait contract is enforced: omitting `default` or giving it a `self`
+/// receiver both fail with the impl diagnostics.
+#[test]
+fn check_rejects_wrong_default_impls() {
+    let dir = TestDir::new("default_wrong_impls");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+
+struct Missing
+    age: int
+end
+
+apply Missing use core.Default
+end
+
+struct WithSelf
+    age: int
+end
+
+apply WithSelf use core.Default
+    default(self) -> WithSelf
+        return WithSelf { age: 0 }
+    end
+end
+
+main()
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    for expected in ["impl.missing_method", "impl.wrong_signature"] {
+        assert!(
+            codes.contains(&expected),
+            "missing {expected}: {:?}",
+            out.diagnostics
+        );
+    }
 }

@@ -8,295 +8,285 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased] — linha `0.4`
+## [Unreleased]
 
-> **FREEZE-1 closed 2026-07-19.** A janela de congelamento da superfície
-> (aberta em 2026-07-13) cumpriu o papel: a série `0.3.x` inteira saiu sem
-> nenhuma quebra intencional de superfície. A linha de desenvolvimento passa
-> a ser **`0.4`** (`compiler/Cargo.toml` = `0.4.0`), onde entram as adições de
-> sintaxe decididas em 2026-07-19. **ABI-1 (`ori-native-abi-1`) continua em
-> vigor** — nada aqui muda layout nativo. Detalhes e regras da nova linha:
-> [`docs/planning/freeze-and-abi-gates.md`](docs/planning/freeze-and-abi-gates.md).
->
-> Programas `0.3.x` seguem compilando; programas que usam a superfície `0.4`
-> não compilam em toolchains `0.3.x` — é justamente o motivo da nova linha.
+### Changed
 
-### Adicionado
-- **`match` como expressão.** Cada braço tem um corpo de **uma expressão** e o
-  `match` inteiro produz um valor, então derivar um valor de um padrão não
-  exige mais uma variável mutável temporária — e some junto a classe de bug
-  "esqueci de atribuir em um dos braços" (a exaustividade já garante valor em
-  todo caminho).
+- **Cross-platform runtime ownership.** String-keyed maps now retain newly
+  inserted managed keys and values before producers release their temporaries,
+  fixing process-capture fields that could disappear on macOS and other
+  allocators. The Linux-only stack-overflow guard is now isolated behind its
+  platform boundary, so Windows and macOS builds keep their native crash
+  behavior without compiling unavailable `libc` signal APIs.
+- **Windows split-module linking.** Generated function-pointer wrappers are
+  emitted by every owning object and use external object linkage, so callbacks
+  can cross source-file boundaries. Portable Windows fallback metadata now
+  includes the system randomness libraries for both MSVC and GNU targets.
+  Versioned runtime metadata no longer contains a machine-specific raylib path.
+- **Native target selection.** Release packages now select the host
+  architecture for Linux, Windows, and macOS instead of assuming x86_64;
+  macOS Apple Silicon packages therefore find their staged `aarch64` runtime.
+- **No-Rust smoke checks.** CI now removes hosted-runner Rust locations from
+  `PATH` before validating packaged installs, so the smoke jobs test the
+  intended end-user environment instead of failing on preinstalled tools.
+- **Driver modularization.** Native runtime discovery, ABI metadata validation,
+  platform artifact naming, and linker argument construction now live in a
+  dedicated driver pipeline module. The compile, run, test, and doctor routes
+  keep their existing interfaces and behavior.
+- **Project loading modularization.** Manifest parsing, dependency scope
+  discovery, stdlib lookup, import resolution, and source-graph loading now
+  live in a dedicated project pipeline module while preserving the existing
+  compile, check, doc, test, and LSP behavior.
+- **Frontend modularization.** Lexing, parsing, source checking, and their
+  public driver entry points now live in a dedicated frontend module. Existing
+  diagnostics, timing hooks, and `ori-driver` APIs remain unchanged.
+- **HIR modularization.** Source lowering, stdlib enum registration, generic
+  preparation, and native module splitting now live in a dedicated HIR
+  pipeline module. Native compilation keeps the same object boundaries and
+  incremental cache behavior.
+- **Native execution modularization.** JIT execution and the native test
+  harness now live in a dedicated execution module. The public `run_jit`
+  route and `ori test` results remain unchanged.
+- **AOT compilation modularization.** Incremental reuse, HIR-to-object
+  generation, native linking, C-header emission, and debug-symbol sidecars
+  now live in a dedicated compile module. `ori compile`, `ori build`, and
+  shared-library output keep their existing behavior.
+- **Pipeline interface stabilization.** Source loading now returns one
+  `ResolvedSources` contract containing the loaded graph, semantic model, and
+  dependency context. Cross-cutting timing diagnostics moved out of the
+  project loader into their own internal module.
+- **Strict Rust quality gate.** Runtime, codegen, and driver now pass Clippy
+  with warnings denied across library, binary, and test targets. Runtime C ABI
+  exports keep stable `#[no_mangle]` symbols with minimal Rust visibility;
+  graph traversal, loop emission, linker, debugger, documentation, and source
+  loading now use domain state/request types instead of long parameter lists.
+  The combined command is enforced by `tools/qa/daily_fast.sh`.
+- **Bytes equality parity.** Native `bytes` equality now compares exact
+  lengths and payloads, including embedded NUL bytes, through a registered
+  runtime ABI function. The C/debug backend rejects this operation explicitly
+  instead of silently comparing raw pointers.
+- **Grammar/spec synchronization.** Corrected the normative EBNF to use the
+  implemented S3 selective-import rename (`=`) and result patterns (`ok`/`err`)
+  rather than the removed legacy spellings.
+- **Semantic documentation audit.** Synchronized the normative chapters with
+  the current runtime for embedded-NUL file reads, `ok`/`err` propagation,
+  async `using` cleanup, contracts, and formatter defaults.
+- **Audit regression matrix.** Added checker, runtime, native AOT, and C/debug
+  regressions for logical `bytes` equality, while retaining the existing S3
+  coverage for result patterns, trait receivers, async cleanup, contracts, and
+  formatter behavior.
+- **Linux integration project.** Added `examples/linux_log_report`, a
+  multi-module log analyzer with filesystem I/O, CLI handling, a deterministic
+  fixture, English/Portuguese usage notes, and a standalone native test module.
+- **CLI argument lifetime.** `ori.args.get_or` now copies process arguments
+  before the temporary argument list is released. The runtime keeps host argv
+  strings outside ARC for their process lifetime, and a native regression
+  covers passing a real argument to a compiled program.
+- **Thin pipeline façade.** Every driver command now has a domain-owned module
+  contract: frontend, project loading, HIR lowering, AOT compilation, native
+  execution, formatting, and documentation. The documentation index,
+  validation, signature extraction, Markdown rendering, and static HTML
+  rendering moved to `pipeline/docs.rs`; `pipeline.rs` is now a small
+  orchestration and re-export façade (392 lines) with no hidden child-module
+  aliases.
+- **Reproducible package builds.** Added `ori lock`, the deterministic
+  `ori.lock` snapshot format, `ori lock --locked` validation, Git revision
+  pinning, and automatic lock refresh from `ori get`. A present lockfile is
+  checked during project loading so stale dependency metadata fails before
+  code generation.
+- **Package namespace isolation.** Local imports now stop at the owning
+  package boundary. Modules from dependencies are addressed with their
+  package-qualified prefix (`package.module`), preventing same-named modules
+  from colliding across dependencies.
+- **Safe incremental native builds.** Successful native outputs are recorded
+  in `.ori/incremental.json` and reused when the complete source graph,
+  manifests, lockfile, compiler version, and build options match. Set
+  `ORI_DISABLE_INCREMENTAL=1` to force a rebuild. Dependency-bearing projects
+  without `ori.lock` rebuild conservatively; no partial HIR is restored.
+  A rebuild now emits content-addressed objects under `.ori/modules/`, one per
+  source file, and links all of them together. An implementation-only change
+  recompiles that file while unchanged callers reuse their objects; public
+  signature/layout changes naturally change the shared interface key. Shared
+  libraries, dynamic global initializers and explicit debug instrumentation
+  keep the safe monolithic route. The index reports how many source modules
+  changed during a rebuild.
+- **Native debug symbols.** Linux ELF output now receives a compact DWARF v4
+  line table mapped to Ori functions and source lines, with an accompanying
+  `*.debug.json` map for every platform. The map now includes each function's
+  visible parameters, locals, pattern bindings and closure captures with
+  source lines, so tooling has the same variable catalogue on Linux, macOS and
+  Windows. The cooperative DAP continues to provide live values (including
+  managed aggregates) on all three. Windows native linkers receive an explicit
+  deterministic `*.pdb` path and debug switch; rich CodeView local-variable
+  locations remain pending because Cranelift does not yet emit them. Missing
+  `objcopy` or equivalent tooling leaves the valid binary intact and reports a
+  warning.
 
-  ```ori
-  const nota: string = match score
-  case n if n >= 90: "A"
-  case else: "C"
-  end
-  ```
-
-  Não é uma segunda forma de escrever a mesma coisa: o `if` já tem esse par
-  (comando × expressão), e a **posição** decide qual vale — o escritor nunca
-  escolhe. Guards funcionam igual à forma de comando, os braços **não** são
-  avaliados especulativamente (exatamente um corpo executa), e todos precisam
-  produzir o mesmo tipo (diagnóstico novo `type.match_arm_mismatch`).
-  Implementação: Cranelift converge os braços num *block param* (phi) em vez
-  do `select` usado pelo `if` expressão; backend C usa temporária de resultado
-  + cadeia `if`/`goto`. ARC: o valor que sai é sempre *owned*.
-
-- **`if ok(v) =` e `if err(e) =` — binding condicional para `result`.** O
-  `if some(x) = expr` existia desde o S3, mas a mesma forma para
-  `result[T, E]` faltava — tratar um erro localmente exigia `match` mesmo
-  quando só um dos lados importava. A assimetria fecha aqui; não é forma
-  nova, é a mesma aplicada aos dois wrappers que faltavam.
-
-  ```ori
-  if ok(valor) = divide(10, 2)      -- liga T quando deu certo
-  if err(motivo) = divide(1, 0)     -- liga E quando NÃO deu certo
-  ```
-
-  As três formas dividem um nó só (`kind: UnwrapKind`), já que diferem
-  apenas em qual wrapper é inspecionado e qual lado é ligado. Diagnósticos
-  novos: `type.ifok_not_result` e `type.iferr_not_result`.
-
-- **Or-patterns — `case North or South:`.** Dois casos que fazem a mesma
-  coisa não precisam mais repetir o corpo.
-
-  ```ori
-  match direcao
-  case Norte or Sul:
-      io.println("vertical")
-  case Leste or Oeste:
-      io.println("horizontal")
-  end
-  ```
-
-  O separador é a palavra **`or`**, não `|`: a Ori já escreve os operadores
-  lógicos com palavras, e a vírgula já tem dono dentro do `case` (campos de
-  payload). Alternativas **não podem ligar valores**
-  (`match.or_pattern_binding`) — cada uma teria que ligar os mesmos nomes nos
-  mesmos tipos, e quem lê é que ficaria conferindo isso. Para exaustividade,
-  `case a or b:` conta exatamente como `case a:` mais `case b:`.
-
-- **`newtype` — tipos nominais com custo zero.** O `alias` dá nome a um tipo
-  existente e deixa os valores circularem livremente. Faltava dizer a outra
-  coisa: "tem a forma de um int, mas não é um int". Por isso valores de
-  domínio acabavam todos como `int`, e trocar dois deles compilava numa boa.
-
-  ```ori
-  newtype UserId = int
-  newtype AccountId = int
-
-  transfer(from: AccountId, to: AccountId, by: UserId)
-  ```
-
-  Agora essa assinatura é um contrato defendido pelo compilador, e o
-  diagnóstico nomeia os tipos: `argument 1 expects `AccountId`, found
-  `UserId``. Conversão escrita nos dois sentidos — `UserId(7)` entra,
-  `int(id)` / `string(mail)` sai.
-
-  **Custo zero de verdade:** o tipo é apagado no lowering para HIR, então um
-  `newtype` sobre `int` **é** um `int` em tempo de execução — sem struct
-  extra, sem alocação, e sem deixar rastro no código gerado (o backend C não
-  emite construtor nenhum, verificado por teste).
-
-- **Cabeçalho compacto `apply Type use Trait`.** Uma trait só é o caso comum,
-  e a forma aninhada gastava um nível inteiro de indentação para não dizer
-  nada a mais:
-
-  ```ori
-  apply Circle use Drawable
-      draw(self, canvas: Canvas)
-          canvas.draw_circle(self.center, self.radius)
-      end
-  end
-  ```
-
-  Qual forma vale é decidido pelo **conteúdo**, nunca pelo escritor — mesmo
-  princípio do `elif`. Um bloco aninhado cujo corpo inteiro é uma seção `use`
-  passa a ser rejeitado (`apply.redundant_use_block`); a forma aninhada
-  continua obrigatória quando o cabeçalho compacto não dá conta (duas ou mais
-  traits, ou membros próprios junto com a trait). Como newline não é token, a
-  forma é reconhecida pelo layout: `use` na mesma linha abre a compacta.
-
-  **Migração:** `ori migrate-syntax` colapsa a forma antiga sozinho — e só a
-  inequívoca (exige que a seção `use` seja dona do corpo inteiro), deixando o
-  resto para o diagnóstico, que imprime a linha exata a escrever. `stdlib` e
-  `examples` já migrados.
-
-- **Destructuring de struct.** Pegar três campos de uma struct obrigava a
-  repetir o nome dela em cada linha:
-
-  ```ori
-  const Point { x, y } = get_pos()      -- tipo escrito
-  const { x, y } = get_pos()            -- tipo inferido (regra da opção B)
-  const Point { x: px, y: py } = pos    -- renomeando ao ligar
-  var { x, y } = get_pos()              -- bindings mutáveis
-  ```
-
-  **Só campos de struct.** A Ori tem tuplas, mas `const (a, b) = …` devolveria
-  ao leitor a pergunta "o que era o campo 2 mesmo?" — exatamente o custo que
-  essa forma existe para remover, então ficam de fora.
-
-  O lowering desugara para uma temporária mais um acesso de campo por nome —
-  por isso a feature não precisou de nó novo no HIR nem de nada no codegen, e
-  campos gerenciados se comportam como qualquer outro binding (com teste de
-  vazamento). Diagnósticos novos: `type.destructure_not_struct`,
-  `type.unknown_field`, `parse.empty_destructure`.
-
-- **Const generics com argumentos nomeados.** Declarar
-  `struct Buffer[const size: int]` já parseava, mas o tipo não dava para
-  usar: `Buffer { used: 0 }` produzia `Buffer` sem argumento e nunca casava
-  com a anotação.
-
-  ```ori
-  struct Buffer[const size: int]
-      used: int
-  end
-
-  const b: Buffer[size: 8] = Buffer { used: 0 }
-  ```
-
-  **Por que nomeados:** `[]` serve tanto para argumento de tipo quanto para
-  índice, e um número solto entre colchetes (`Buffer[8]`) lê igualzinho a
-  `frutas[8]` — é o único ponto onde a posição deixa de desambiguar para
-  quem lê (e, como o sentinela mostrava, para o parser). Com nome, não há
-  confusão: índice nunca tem `nome:`. Colchetes angulares foram considerados
-  e recusados — `<` e `>` **são** operadores de comparação, então `Buffer<8>`
-  trocaria uma ambiguidade leve por uma dura no parser, e ainda deixaria um
-  número solto entre delimitadores.
-
-  O valor faz parte da identidade do tipo: `Buffer[size: 8]` e
-  `Buffer[size: 16]` são **tipos diferentes**. O literal herda os argumentos
-  **const** do tipo esperado (o valor só aparece na anotação) — argumentos de
-  tipo continuam vindo dos campos, de propósito. A constante é um marcador de
-  compilação: não ocupa espaço e não chega ao runtime.
-
-- **Associated types passam a usar `alias`; a palavra `type` saiu da
-  linguagem.** A linguagem tinha três palavras para dar nome a um tipo:
-  `alias` (transparente), `newtype` (nominal) e `type` (associado, só dentro
-  de `use`). As duas primeiras são um par justificado — significados opostos.
-  A terceira era uma segunda palavra para o que `alias` já significa: um nome
-  transparente para um tipo. Estar dentro de uma seção `use` é o que a torna
-  associada; isso não precisava de palavra própria.
-
-  ```ori
-  apply Bag use Container
-      alias Item = string
-      first_item(self) -> Item
-          return self.label
-      end
-  end
-  ```
-
-  `type Name = …` agora é rejeitado (`parse.associated_type_keyword_removed`)
-  e o `ori migrate-syntax` reescreve. Nada na stdlib ou nos examples usava a
-  forma antiga. Bônus: `type` volta a ser identificador comum (era uma
-  keyword contextual).
-
-### Corrigido
-- **Associated types em `apply … use …` eram parseados e ignorados.** Um
-  `type Item = int` dentro de uma seção `use Trait` era coletado pelo parser
-  e descartado: nada mais lia aquilo, então usar `Item` na assinatura da
-  própria seção dava `undefined type Item`.
-
-  ```ori
-  apply Bag use Container
-      type Item = string
-      first_item(self) -> Item
-          return self.label
-      end
-  end
-  ```
-
-  O lowering para HIR já tratava isso; faltava nas **duas** fases anteriores
-  (montagem das assinaturas no resolve, e comparação/checagem no checker) —
-  as duas precisavam da correção para o nome resolver. O escopo continua
-  estrito: os aliases valem só dentro da própria seção `use`, e um associated
-  type que resolve para o tipo errado continua reprovando na comparação com a
-  trait. Fecha o terceiro dos três bugs de sistema de tipos do §3 do roadmap
-  (const generics e HKT seguem abertos).
-- **Chamada de método ficava sem tipo de retorno quando o contexto não dava
-  um.** Ao resolver o método pelo caminho, o lowering preenchia `Ty::Infer` em
-  vez de ler a assinatura do próprio método. Resultado: `const d =
-  p.double()` (sem anotação) ou `f"{p.double()}"` chegavam ao codegen sem
-  tipo e falhavam com *"native interpolated strings do not support expression
-  type `_#0`"*. A f-string era só onde o problema aparecia — a anotação em
-  `const d: int = p.double()` vinha escondendo o bug.
-- **Análise de retorno exigia `case else` em `match` já exaustivo.** Um
-  `match` sobre enum que listava todas as variantes e retornava em todos os
-  braços ainda era reportado como "pode terminar sem retornar", obrigando a
-  escrever um `case else` morto só para satisfazer a checagem. A análise de
-  retorno não tem tipos (são funções livres) e não conseguia recalcular a
-  cobertura, então a exaustividade passou a ser **registrada pelo checker**
-  no momento em que ele já a calcula. A checagem segue estrita: `match` com
-  variante faltando, ou com braço que não retorna, continua sendo reportado.
-- **Diagnósticos de tipo vazavam `<def DefId(16)>` para o leitor.** Era a
-  primeira coisa que alguém veria ao usar um `newtype` errado — numa feature
-  que existe para tornar os tipos de domínio legíveis, uma mensagem ilegível
-  anula o propósito. Novo `Ty::display_in(def_map)` imprime os nomes
-  declarados; as mensagens de argumento e retorno passaram a usá-lo.
-  `display()` mantém o id cru como fallback (não tem def map à mão); a
-  limpeza ampla segue registrada no roadmap.
-- **DCE apagava binding usado só como escrutínio de expressão nova.** A
-  eliminação de código morto não contava usos dentro de tipos de expressão
-  recém-adicionados (a travessia tinha catch-all), então `const n = 2` seguido
-  de um `match n` em posição de valor perdia o `n` e o codegen falhava com
-  `undefined variable`. Achado ao implementar o `match` expressão.
-
-## [0.3.7] — 2026-07-19
-
-Patch release da janela FREEZE-1: `ori update` (self-update do toolchain),
-correção do bug silencioso dos guards de `match` (JIT, AOT e backend C),
-destrava do CI `native-route`, e spec/tour sincronizados com a implementação.
-Sem mudança de superfície da linguagem.
+- **Debugger cooperativo — `stackTrace` e `variables`.** O backend agora
+  registra entrada/saída das funções Ori instrumentadas e envia ao agente a
+  pilha de chamadas e variáveis escalares visíveis (`bool`, inteiros e floats)
+  em cada evento `stopped`. A coleta também expõe campos escalares de `struct`
+  (inclusive aninhados), `length`/`capacity` de listas por caminhos qualificados
+  (`user.name`, `items.length`), frames async entre suspensões/retomadas e
+  capturas de closures. Valores gerenciados sem leitura segura permanecem
+  resumidos como `<managed>`. Strings e bytes gerenciados agora mostram uma
+  prévia limitada e segura (bytes em hexadecimal); literais estáticos e buffers
+  estrangeiros só são lidos quando registram um comprimento exato, e ponteiros
+  não registrados continuam sem dereference. O protocolo JSON continua
+  compatível com adapters que ignoram campos adicionais. Elementos de listas
+  aparecem por referência DAP, com leitura limitada aos primeiros 64 itens na
+  raiz e 8 por nível aninhado; optional/result, enums, mapas, conjuntos e
+  coleções opacas expõem snapshots estruturados. O DAP também avalia
+  expressões locais puramente sobre o snapshot parado, sem executar código no
+  alvo. Regressão E2E: `ori-driver/tests/debugger.rs`.
+- **Adaptador de debugger no CLI.** `ori debug <arquivo>` agora compila com
+  instrumentação, conecta o agente cooperativo e oferece continue/step no
+  terminal; `ori debug --dap` expõe o mesmo fluxo por um servidor DAP mínimo,
+  incluindo breakpoints, pilha, escopos, variáveis escalares, snapshots de
+  structs/optional/result/enums e coleções, elementos indexados, frames async,
+  capturas de closures, prévias seguras de strings/bytes gerenciados e
+  `evaluate` limitado ao snapshot local do último stop.
+- **Integração do debugger no VS Code.** A extensão registra o tipo `ori`,
+  inicia `ori debug --dap`, adiciona o comando `Ori: Debug Current File` e
+  oferece uma configuração inicial de `launch.json`. O plugin Zed documenta o
+  comando manual porque sua API atual não expõe um descriptor de debugger.
+- Reduced large-module native compile time by indexing function signatures,
+  collecting Cranelift references per function, looking up selected symbols
+  directly, and generating named-function closure wrappers only on demand. The
+  10,000-function AOT probe now completes in about 21 seconds on the
+  development host instead of the previously reported roughly four minutes;
+  complex managed/trait/async bodies keep conservative symbol visibility.
+  Added opt-in pipeline-stage timings and strict ignored scaling guards for
+  both `check` and `compile`.
+- Shelved general scoped arenas until a real short-lived-allocation workload
+  demonstrates a bottleneck and a measured prototype justifies region/lifetime
+  semantics. A safe ID-based `Pool[T]` remains the preferred narrower design
+  if demand appears.
+- Defined the C emitter as a permanently partial synchronous debug/transpile
+  route. Cranelift AOT/JIT remains the product and semantic reference; C
+  maintenance covers invalid output, crashes, and wrong semantics inside the
+  documented subset rather than async/concurrency parity.
+- Shelved implicit first-class iterator objects. Inline `iter` + `suspend`
+  remains the zero-allocation path for direct `for` consumption, and an
+  explicit state struct implementing `core.Iterable` already covers stored,
+  passed, and returned lazy producers.
+- Established `0.3.8` as the living development baseline after the published
+  `v0.3.7`; synchronized the Cargo workspace and packaged runtime metadata.
+- Backend diagnostics now render declared type names instead of leaking
+  internal `<def DefId(N)>` values, including names nested in collection and
+  function types.
+- Generic associated-function calls now reject ambiguous matches when more
+  than one bound provides the same receiver-less method, instead of selecting
+  whichever bound happened to appear first.
+- The C backend reports an ordinary unsupported-operation diagnostic if an
+  opaque collection reaches an invalid equality path instead of panicking.
+- Updated the VS Code/Cursor and Zed extensions for the current Ori surface: canonical match cases, compact trait application, `newtype`, struct destructuring, conditional payload bindings, current literals, and delimiter pairing.
+- Refreshed the examples catalog and source programs for the current language surface: match-expressions, or-patterns, struct destructuring, `newtype`, local inference, capacity-aware collections, and readable English comments. Fixed the standalone const-generic probe and validated every `.orl` example with `ori check`.
 
 ### Adicionado
-- **`ori update` — self-update do toolchain (LANG-CLI-1).** Instalações via
-  pacote (tar.gz/zip) se atualizam sozinhas: `ori update --check` informa se
-  há release novo; `ori update` baixa o pacote da plataforma, verifica o
-  sha256 do manifest do release (divergência aborta antes de tocar em
-  qualquer arquivo), extrai com o `tar` do sistema e faz swap in-place com
-  staging + rollback no mesmo filesystem. Recusa instalações do gerenciador
-  do sistema (`.deb`) e builds de desenvolvimento. Testes: 5 unit + E2E
-  hermético contra servidor HTTP local (`tests/self_update.rs`). Docs:
-  seção "Updating" em `docs/install.md`/`install.pt-BR.md`.
-
-### Corrigido
-- **Guards de `match` eram silenciosamente ignorados.** `case padrão if
-  condição:` parseava e passava no type check, mas o lowering AST→HIR
-  descartava o guard — o primeiro braço com binding capturava qualquer
-  valor em tempo de execução, nos três caminhos (JIT, AOT e backend C),
-  ao contrário do que a Spec 06 §match promete. O guard agora é avaliado
-  com os bindings do padrão em escopo; quando falso, a execução cai para
-  o teste do braço seguinte (liberando apenas os retains dos bindings do
-  braço rejeitado — o scrutinee segue vivo para os próximos testes).
-  Regressão coberta nos três caminhos (`ori_spec`, `jit_run`, emissão C).
-- **CI: fallback de build do runtime nativo rodava fora do workspace.** Sem
-  o `runtime/<target>/libori_runtime.a` staged (caso do CI), o driver
-  tentava `cargo build -p ori-runtime --lib` na raiz do repositório — que
-  não tem `Cargo.toml` (o workspace fica em `compiler/`) — e todo teste
-  que executa binário nativo falhava com `native.runtime_missing`. O
-  fallback (e a resolução de `target/`) agora usa a raiz do workspace
-  cargo; a busca do runtime staged continua na raiz do repo. Isso
-  destrava o workflow `native-route`, vermelho desde a separação do
-  runtime staged.
-
-### Documentação
-- **Spec 05 §`is` reescrito para o comportamento real:** teste de tipo com
-  resultado `bool` (`any[Trait]` em runtime via vtable; LHS concreto
-  estático), **sem** narrowing e **sem** operandos enum — variantes se
-  discriminam com `match`/`case`. O texto antigo prometia narrowing e
-  enums, nenhum dos dois implementado.
-- **Tour (EN/PT) ganhou três recursos já implementados e invisíveis:**
-  guards de `match` com `case else`, binding condicional
-  `if some(x) = expr`, e a update expression `base with { … } end`.
-
-## [0.3.6] — 2026-07-19
-
-Patch release da janela FREEZE-1 (correções de memória/codegen, sem mudança
-de superfície da linguagem): campanha ARC do estudo Nim (LANG-MEM-0…9),
-DCE de closures, shadowing de builtins e ABI de argumentos sub-32-bit.
+- **CT-0: expressões constantes sem keyword nova.** Argumentos constantes de
+  tipos e comprimentos de `array` agora aceitam constantes inteiras/booleanas
+  de módulo (inclusive importadas), aritmética inteira checada, comparações,
+  lógica booleana e `if` inline. O avaliador roda antes do lowering de tipos e
+  independe do backend. Overflow, divisão por zero, ciclos, inicializadores que exigem
+  runtime, incompatibilidade escalar e resultado final não inteiro têm
+  diagnósticos próprios. Chamadas, alocação, I/O, ambiente, FFI e macros ficam
+  fora do CT-0; parâmetros const simbólicos continuam aceitos diretamente, mas
+  `cap + 1` foi adiado para uma futura etapa de monomorfização.
+- **Destrutores customizados com `core.Destructor`.** Structs e enums podem
+  implementar `mut destroy(self)` para executar limpeza automática quando a
+  última referência ARC morre. O callback roda uma vez, enquanto o payload e
+  seus campos ainda estão legíveis; depois o runtime libera o payload e
+  propaga a liberação pelas arestas registradas. A DCE preserva construções
+  cujo descarte é observável, inclusive quando o binding não é lido. Em ciclos,
+  todos os callbacks rodam antes que qualquer payload do ciclo seja liberado.
+  O backend C rejeita o recurso com `backend.c_unsupported`, em vez de omitir a
+  limpeza silenciosamente. Para fechamento determinístico, `using` +
+  `core.Disposable` continua sendo a ferramenta apropriada.
+- **`optional` e `result` diretos em `@c_export`.** O ABI gerado divide
+  `optional[T]` em tag `bool` + payload e `result[T, E]` em `OriResultTag` +
+  payloads `ok`/`error`; retornos usam parâmetros `out`. Somente a variante
+  ativa é lida ou escrita. Strings e handles ativos transferidos ao host
+  seguem o mesmo contrato ARC dos retornos diretos. O header gerado declara
+  `OriResultTag`, as assinaturas expandidas e o ownership. Um host C real cobre
+  `some`/`none`, `ok`/`error`, handles gerenciados, strings estrangeiras e
+  retorno ao baseline de alocações.
+- **Handles opacos para structs gerenciadas em `@c_export`.** Structs não
+  genéricas e não vazias com `string`, structs aninhadas ou coleções agora
+  aparecem no header como tipos incompletos `OriTypeHandle`. Parâmetros são
+  emprestados — o wrapper retém uma referência temporária — e retornos
+  transferem uma referência ARC ao host, liberada com `ori_arc_release`.
+  A mesma retenção torna seguro repassar como parâmetro uma `string` antes
+  retornada por Ori. O host C E2E cobre empréstimos repetidos, alias retornado,
+  liberação de campos internos e contador de alocações de volta ao baseline.
+- **Header C gerado para `ori compile --lib`.** Todo build de biblioteca
+  bem-sucedido agora grava também o `.h` irmão, com guards C/C++, tipos
+  escalares portáveis, `typedef` das structs exportadas, assinaturas
+  pointer/out, lifecycle do runtime e nota de ownership para retornos
+  `string`. Os hosts C E2E incluem esse arquivo em vez de repetir a ABI à mão.
+  Nomes customizados de `@c_export` agora precisam ser identificadores C
+  portáveis (`attr.c_export_bad_name`).
+- **`@c_export` de structs escalares.** Structs não genéricas e não vazias,
+  compostas apenas por números e `bool`, atravessam a ABI por ponteiros:
+  parâmetros usam `const Type *` e retornos usam um último `Type *out`. O
+  wrapper traduz o layout C naturalmente alinhado para o layout interno Ori,
+  libera temporárias de retorno e mantém ownership no host. O teste E2E com um
+  host C real cobre padding misto, ida/volta e ausência de crescimento nas
+  alocações vivas. O contrato também explicita `int` como `int64_t` portátil
+  (em vez do `long` dependente de plataforma usado na documentação anterior).
+- **Benchmark de churn de temporárias gerenciadas.**
+  `tools/bench/managed_temporary_churn.orl` reproduz dois milhões de
+  concatenações curtas. Uma free list local por classes de tamanho foi
+  implementada e medida, mas ficou cerca de 2% mais lenta que o `tcache` da
+  glibc (0,355 s contra 0,348 s); a implementação foi revertida e o benchmark
+  ficou como guarda para não reabrir a otimização sem uma carga diferente.
+- **Funções associadas em bounds genéricos.** Uma função genérica pode chamar
+  uma função associada declarada pelo bound, como `T.default()` sob
+  `for T: core.Default`. A monomorfização resolve o `apply` concreto e ambos os
+  backends emitem uma chamada estática sem receptor ou vtable.
+- **Geradores: `iter` + `suspend` (inline, estilo Nim).** `iter counter(stop: int) -> int`
+  declara um gerador; `suspend v` entrega um valor ao `for` consumidor e retoma
+  no próximo passo. O corpo é **colado no laço** (transform AST→AST em
+  `ori-hir/lower.rs`): zero função, zero alocação, zero máquina de estados —
+  `break`/`continue`/`return` do corpo consumidor atravessam o inlining com a
+  semântica de um `for` comum (cascata via flag, sem labeled breaks). Bench:
+  cadeia `iter.map`+`iter.filter` ansiosa 330 ms vs gerador 24 ms (200k × 20).
+  `iter` e `suspend` são contextuais (`import ori.iter = iter` e variáveis
+  chamadas `suspend` seguem válidos). Limites B1 com diagnóstico dedicado:
+  só funções livres, mesmo módulo, sem genéricos/variádicos/recursão, não
+  `async`. Contratos de parâmetro (`stop: int if it > 0`) atravessam o
+  inlining via `check` sintetizado no ponto de bind. Specs 02/03/06/07/13 +
+  tour atualizados; 6 testes e2e novos.
+- **Funções associadas: método sem `self` = sem receptor (destrava `core.Default`).**
+  A regra agora é explícita: `self` declarado = método de instância; sem
+  `self` = função associada, chamada como `User.default()`. `core.Default`
+  virou trait real (`default() -> Self`), validado por `impl.missing_method`
+  / `impl.wrong_signature`. Chamar associada numa instância dá
+  `type.assoc_fn_instance_call`; `self` dentro de associada dá
+  `bind.self_outside_method`. **Quebra intencional pré-freeze:** o `self`
+  implícito (corpo de `greet()` lendo `self.name` sem declarar) foi
+  removido — contradizia todos os exemplos da spec; 6 testes internos
+  atualizados para `self` explícito. Binds (`compare = compare_points`)
+  inalterados. Specs 08/12/13/18 atualizadas; 4 testes e2e novos.
+- **`check` que falha agora imprime o motivo.** Uma asserção violada gerava
+  trap silencioso (SIGILL, exit 132, zero output). Agora o backend nativo
+  roteia a falha por `ori_panic`: `ori panic: check failed: <mensagem>`
+  no stderr (ou `check failed` sem mensagem) e aborta. `ori test` passa a
+  mostrar o motivo da asserção que derrubou o teste.
+- **Driver: erro de lowering não grava mais binário.** `ori compile` e
+  `ori emit c` prosseguiam para codegen/link mesmo com diagnóstico emitido
+  no lowering (ex.: iterador recursivo), deixando um binário órfão com
+  exit code 1. Agora o gate `sink.has_errors()` é reavaliado após o
+  lowering, como o JIT e o `ori test` já faziam.
+- **Livro Ori (rascunho `0.3.x-book.2`).** Narrativa + processo + prática +
+  consulta em português sob [`docs/book/`](docs/book/README.md) (22 capítulos,
+  apêndices, template e mapa de exemplos). Índices
+  [`docs/README.md`](docs/README.md) / [`docs/README.pt-BR.md`](docs/README.pt-BR.md)
+  apontam para o livro. Não substitui a spec normativa em `docs/spec/`.
+  Revisão: snippets principais validados com `ori check`; caps 3/10/12/13/15/17
+  e soluções de exercícios aprofundados; multiarquivo documenta `ori.proj`+`entry`.
+  PDF com syntax highlight: [`docs/book/dist/ori-livro.pdf`](docs/book/dist/ori-livro.pdf)
+  gerado via [`tools/book/`](tools/book/) (marked + highlight.js Ori + Puppeteer).
 
 ### Mudado
 - **ARC: elisão de RC no return (LANG-MEM-4, ação 1).** `return x` de um
@@ -320,6 +310,31 @@ DCE de closures, shadowing de builtins e ABI de argumentos sub-32-bit.
   [`docs/planning/historico/nim-study-2026-07-17-c3.md`](docs/planning/historico/nim-study-2026-07-17-c3.md).
 
 ### Corrigido
+- **ARC de payloads gerenciados em `optional`.** O wrapper nativo registrava o
+  payload como uma aresta ARC e também o liberava manualmente no destrutor; a
+  cascata genérica liberava a mesma referência uma segunda vez. A aresta
+  registrada agora é a única dona da liberação em cascata. Regressões no
+  runtime, AOT e JIT cobrem `path.relative("a/b/c", "a/b")`, que antes
+  abortava ou retornava texto corrompido.
+- **Inventário interno da ABI nativa.** O símbolo `ori_bytes_eq` agora integra
+  a lista testada de imports diretos do codegen, restaurando a guarda que exige
+  documentação explícita para cada dependência interna do runtime.
+- **Smoke local dos exemplos.** `tools/qa/examples_smoke.sh` agora escolhe o
+  binário Ori de desenvolvimento ou release dentro de `compiler/target`
+  quando `ORI_BIN` não é informado, sem exigir uma instalação global durante
+  o QA do repositório.
+- **VS Code/Cursor:** o VSIX volta a incluir `vscode-languageclient` e suas
+  dependências de runtime. O pacote `0.3.5` era gerado com
+  `--no-dependencies`, falhava ao ativar com `Cannot find module
+  'vscode-languageclient/node'` e, por consequência, deixava autocomplete,
+  hover, diagnostics e comandos LSP inoperantes. O smoke agora empacota o
+  VSIX e verifica explicitamente a presença do módulo. A extensão também
+  reconhece `.oridoc` com grammar própria e destaca expressões dentro de
+  f-strings simples e multilinha como código Ori. O sidecar `ori.io` também
+  deixou de duplicar três símbolos Layer 1, restaurando `ori doc check` no
+  projeto temporário do smoke; os fixtures E2E do LSP agora usam o import S3
+  canônico (`import path = alias`) e executam o `ori-lsp` recém-compilado por
+  Cargo, não um binário antigo encontrado por fallback em `target/debug`.
 - **ARC: args owned nas coleções restantes + arestas de graph canônicas.**
   Os emissores especiais de `hash_table`/`graph`/`heap`/`tree`/
   `linked_list.find` e as listas-fonte de `maps.from_entries`/
@@ -420,6 +435,7 @@ DCE de closures, shadowing de builtins e ABI de argumentos sub-32-bit.
   `field_assign_owned_*`).
 
 ### Notas
+- Working tree after **v0.3.5**.
 - **Web stack feature freeze v1** documented in
   [`packages/FREEZE-WEB.md`](packages/FREEZE-WEB.md) and
   [`packages/README.md`](packages/README.md). Ready for polish + official
@@ -543,8 +559,7 @@ DCE de closures, shadowing de builtins e ABI de argumentos sub-32-bit.
   Cranelift — no per-iter `ori_list_push` / `ori_list_get` call. Managed
   element types keep the runtime + ARC edge path. `list_sum` ~1.25× Rust on
   the benchmark host (was ~1.8× after reserve alone).
-- **Living QA kit:** `tools/qa/` daily stages, skill `.grok/skills/ori-lang-qa`,
-  agents `.grok/agents/ori-lang-*.md`, matrix
+- **Living QA kit:** `tools/qa/` daily stages and matrix
   [`docs/planning/qa/test-matrix-ori.md`](docs/planning/qa/test-matrix-ori.md);
   Spec 13 message-quality section + Spec index product facts.
 - **Examples polish:** `collections_demo` shows `with_capacity` / `reserve` /
@@ -997,7 +1012,7 @@ Etapa 9 (Release e Publicação) do `docs/planning/PLANO-MATURIDADE-COMPLETO.md`
 - **Docs/Stdlib (Etapa 8.1):** Cap. 15 (`15-stdlib-maintenance.md`) reescrito com arquitetura SSOT (Single Source of Truth), `STDLIB_MODULE_ONLY_PATHS`, funções derivadas (`is_implemented_stdlib_module`, `implemented_stdlib_modules`, `stdlib_runtime_symbol`), testes de paridade completos e seção `.orl` futura. Cap. 12 mantém a visão de contrato público com a seção "Implementation Architecture (v1.x)".
 - **Docs/Runtime (Etapa 8.2):** `runtime/README.md` atualizado com tabela de staging para os 5 triples do CI (windows-msvc, windows-gnu, linux-gnu, macos-x86_64, macos-aarch64) + comando de staging para cada. `CONTRIBUTING.md` reescrito (era stale "Zenith"): política de triples versionados vs gerados em CI, layout do release package, gates de qualidade, smoke com `ORI_REQUIRE_PACKAGED_RUNTIME=1`, checklist de PR para mudanças stdlib/diagnósticos.
 - **Docs/Tests (Etapa 8.5):** `tests/README.md` reescrito com tabela de 7 suites de teste (ori_spec, multifile_imports, concurrency_async, memory_arc, method_resolution, diagnostic_catalog, LSP E2E) + caminhos + cobertura + instruções para adicionar novos testes. `tests/run/bytes_stdlib.orl` deletado (sintaxe obsoleta + redundante com `multifile_imports.rs`); diretório `tests/run/` vazio removido.
-- **Docs/Dedup (Etapa 8.6):** `docs/plano-correcao-implementacao-linguagem.md` deletado (duplicata stale sem banner; `_reversa_sdd/` já contém a versão completa de 44882 chars). `PENDENTES.md` Etapa 5 (Diagnósticos) atualizada para refletir a auditoria da Etapa 7: todos os 14 códigos marcados `[x]` (4 emitidos na Etapa 6.5 + 1 reserved alias + 9 removidos com justificativa); critério de passagem atualizado.
+- **Docs/Dedup (Etapa 8.6):** `docs/plano-correcao-implementacao-linguagem.md` deletado (duplicata stale sem banner; `docs/archive/` já contém a versão completa de 44882 chars). `PENDENTES.md` Etapa 5 (Diagnósticos) atualizada para refletir a auditoria da Etapa 7: todos os 14 códigos marcados `[x]` (4 emitidos na Etapa 6.5 + 1 reserved alias + 9 removidos com justificativa); critério de passagem atualizado.
 
 ### Corrigido
 - **Codegen/Cranelift:** Corrigido `collect_all_tys` para `Ty::Func { ret }` e cobertura de `HirStmt::Break`/`Continue` em `collect_tys_from_stmt`, desbloqueando compilação após extensão da state machine async.

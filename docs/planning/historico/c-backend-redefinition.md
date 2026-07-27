@@ -1,8 +1,9 @@
 # Redefinicao do C Backend
 
-> Status: proposta de alteracao
+> Status: implementado; escopo síncrono permanente decidido em 2026-07-23
 > Data: 2026-06-30
-> Escopo: planejamento. Este documento nao remove codigo por si so.
+> Escopo: registro histórico da redefinição. O contrato vigente está em
+> `docs/spec/14-backend-support.md`.
 
 ## Decisao proposta
 
@@ -23,8 +24,10 @@ ou:
 ori debug c <file.orl>
 ```
 
-A escolha entre manter ou remover totalmente a emissao C deve ser feita em uma
-segunda etapa, depois de medir quais testes e fluxos ainda dependem dela.
+A segunda etapa foi encerrada em 2026-07-23: a emissão C continua disponível
+como ferramenta de debug/transpilação síncrona, sem promessa de paridade.
+Corrigem-se crashes, C inválido e semântica incorreta dentro do subconjunto
+documentado; recursos novos podem emitir `backend.c_unsupported`.
 
 ## Por que mudar
 

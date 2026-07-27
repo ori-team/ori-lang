@@ -88,7 +88,7 @@ end
 
 | Intent | Form | Effect |
 |--------|------|--------|
-| Selective | `import ori.fs (readText, writeText)` | Names enter the local scope |
+| Selective | `import ori.fs (read_text, write_text)` | Names enter the local scope; rename with `read_text = rt` |
 | Module alias | `import ori.io = io` | Use `io.print(...)` — **path left, alias right** |
 | Whole module | `import ori.io` | Only fully-qualified `ori.io.print(...)` (no implicit alias) |
 
@@ -154,11 +154,9 @@ struct User
     age: int if it >= 0
 end
 
-apply User
-    use core.Displayable
-        display(self) -> string
-            return f"{self.name} ({self.age})"
-        end
+apply User use core.Displayable
+    display(self) -> string
+        return f"{self.name} ({self.age})"
     end
 end
 
@@ -171,7 +169,7 @@ end
 
 main() -> result[void, string]
     const user: User = try load_user(1)
-    io.print(string(user))
+    io.print(user.display())
     return ok()
 end
 ```
@@ -185,7 +183,8 @@ end
 | No `func` keyword | `load_user(...) -> …` / `main()` |
 | Types | `result[User, string]`, brackets not angles |
 | Struct literal | `User { name: …, age: … }` |
-| Traits | `import ori.core = core` · `apply User` + `use core.Displayable` |
+| Traits | compact header `apply User use core.Displayable` (one trait, nothing else) |
+| Field contract | `age: int if it >= 0` — checked at runtime |
 | Propagation | `try load_user(1)` only (`?` removed) |
 
 ---
@@ -250,7 +249,6 @@ compatible with Zenith.
 | 00 | Manifesto (identity and purpose) |
 | 01 | Overview (this chapter) |
 | 02 | Lexical Structure |
-| 03 | Grammar (EBNF) |
 | 04 | Type System |
 | 05 | Expressions |
 | 06 | Statements and Control Flow |
@@ -261,3 +259,13 @@ compatible with Zenith.
 | 11 | Generics and Constraints |
 | 12 | Standard Library Contracts |
 | 13 | Diagnostic Error Catalog |
+| 14 | Backend Support Matrix |
+| 15 | Stdlib Maintenance |
+| 16 | Runtime FFI Safety |
+| 17 | Project Layout and `.oridoc` |
+| 18 | Stability and Compatibility |
+| 19 | Native ABI (`ori-native-abi-1`) |
+
+There is no chapter 03. A standalone EBNF grammar was planned and never
+written; the grammar is defined by chapters 02 and 04–08 together. The number
+is left unused so existing chapter references stay stable.

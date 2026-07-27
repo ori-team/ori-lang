@@ -260,6 +260,108 @@ Custom iterable contract:
 - the `for` binding has type `T`;
 - the second binding is the zero-based `int` index.
 
+### This is how lazy iteration is written
+
+`next` is called once per step, so values are produced **on demand** — nothing
+is materialised up front, and the sequence may be unbounded or expensive:
+
+```ori
+import ori.core = core
+import ori.io = io
+
+struct Counter
+    current: int
+    stop: int
+end
+
+apply Counter use core.Iterable
+    mut next(self) -> optional[int]
+        if self.current >= self.stop
+            return none
+        end
+        const value: int = self.current
+        self.current = self.current + 1
+        return some(value)
+    end
+end
+
+main()
+    var c: Counter = Counter { current: 0, stop: 4 }
+    for n in c
+        io.println(f"{n}")
+    end
+end
+```
+
+This matters because `ori.iter` is **eager**: `iter.map`, `iter.filter` and the
+rest take a `list[T]` and return a fully built `list[R]` (chapter 12). They are
+convenient, not lazy. When the point is to avoid building the whole sequence,
+write an `iter` function (below) or a type implementing `Iterable`.
+
+### `iter` functions — generators
+
+An `iter` function produces a sequence with `suspend` instead of managing
+position state by hand. The declared type is the **element** type:
+
+```ori
+iter counter(stop: int) -> int
+    var i: int = 0
+    while i < stop
+        suspend i
+        i = i + 1
+    end
+end
+
+main()
+    for n in counter(4)
+        io.println(f"{n}")    -- 0, 1, 2, 3
+    end
+end
+```
+
+Semantics:
+
+- `suspend expr` hands one value to the consuming `for` loop and resumes on
+  the next step. The value must match the declared element type
+  (`type.suspend_mismatch`).
+- Bare `return` ends the sequence early. `return value` is rejected
+  (`type.iter_return_value`).
+- An iterator is **not a value**: calling it anywhere except directly in a
+  `for` head is `type.iter_call_outside_for`. There is no iterator object to
+  store or pass — see limits below.
+- `for x, i in counter(4)` gives the zero-based step index as the second
+  binding, like every other iterable.
+
+**Implementation is inlining** (Nim-style inline iterators): the compiler
+splices the iterator body into the loop site and each `suspend` becomes the
+user's loop body. No function call, no allocation, no state machine — a
+generator costs the same as writing the loop by hand. Consequently `break`,
+`continue`, and `return` in the consuming body behave exactly as in a plain
+`for`.
+
+Parameter contracts (`stop: int if it > 0`) are still enforced: with no call
+site to guard, the compiler synthesizes the equivalent `check` where the
+argument is bound, so a violating argument panics exactly as it would on a
+real call.
+
+Current limits (each has a dedicated diagnostic):
+
+| Limit | Diagnostic |
+|---|---|
+| Free functions only, no methods | `type.iter_method_unsupported` |
+| Same module as the consuming `for` | `type.iter_cross_module_unsupported` |
+| No generic iterators | `type.iter_generic_unsupported` |
+| No variadic parameters | `type.iter_variadic_unsupported` |
+| No self-recursion | `type.iter_recursive_unsupported` |
+| Not `async` | `parse.async_iter_unsupported` |
+
+`iter` and `suspend` are contextual keywords: `iter` remains a valid module
+alias (`import ori.iter = iter`) and `suspend` a valid binding name.
+
+When the producer must be a *value* — stored, passed around, or consumed one
+element at a time from arbitrary call sites — implement `core.Iterable` with
+an explicit state struct instead; that is the mechanism above.
+
 **With index:**
 
 ```ori
@@ -354,7 +456,8 @@ case East or West:
 end
 ```
 
-- `case a or b:` matches when any alternative matches.
+- `case a or b:` matches when any alternative matches. `or` is the **only**
+  separator — `case a, b:` is a parse error (`expected ':', found ','`).
 - Alternatives **may not bind values** (`match.or_pattern_binding`): each
   branch would otherwise have to bind the same names at the same types.
   Use one `case` per alternative, or a guard, when the payload is needed.
@@ -437,6 +540,12 @@ A failed `check` is a non-recoverable panic — it is not meant for business
 logic error handling.
 
 The optional second argument is a message string for the panic message.
+On failure the program prints to stderr and aborts:
+
+```text
+ori panic: check failed: index out of expected range
+ori panic: check failed                                 -- no message given
+```
 
 Use `result[T, E]` for expected, recoverable failures.
 
@@ -474,11 +583,11 @@ The most common use is a function call with side effects:
 ```ori
 io.print("hello")
 counter.increment()
-list.push(item)
+lists.push(items, item)
 ```
 
 If a function returns `result[T, E]` and the result is discarded without
-propagation or handling, the compiler emits a warning: `unused result`.
+propagation or handling, the compiler emits the warning `type.unused_result`.
 
 ---
 

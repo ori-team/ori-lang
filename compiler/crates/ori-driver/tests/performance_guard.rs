@@ -4,7 +4,9 @@ use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use common::{assert_check_output_is_well_formed, TestDir};
-use ori_driver::pipeline::{run_check, run_doc_with_options, run_fmt, DocFormat, DocOptions};
+use ori_driver::pipeline::{
+    run_check, run_compile, run_doc_with_options, run_fmt, DocFormat, DocOptions,
+};
 
 #[test]
 fn check_large_single_file_project_has_stable_performance_shape() {
@@ -18,6 +20,47 @@ fn check_large_single_file_project_has_stable_performance_shape() {
     assert!(!out.has_errors, "{:?}", out.diagnostics);
     assert_check_output_is_well_formed(&out);
     assert_strict_budget("ORI_PERF_CHECK_SINGLE_FILE_BUDGET_MS", elapsed, 2_000);
+}
+
+#[test]
+#[ignore = "large-source scaling probe; set `ORI_PERF_LARGE_FUNCTION_COUNT` and run explicitly"]
+fn measure_check_large_single_file_scaling() {
+    let function_count = std::env::var("ORI_PERF_LARGE_FUNCTION_COUNT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(10_000);
+    let call_all_functions = std::env::var_os("ORI_PERF_LARGE_DECLARATIONS_ONLY").is_none();
+    let compile = std::env::var_os("ORI_PERF_LARGE_COMPILE").is_some();
+    assert!(
+        function_count > 0,
+        "ORI_PERF_LARGE_FUNCTION_COUNT must be greater than zero"
+    );
+
+    let dir = TestDir::new("perf_large_single_file_scaling");
+    dir.write(
+        "main.orl",
+        &large_single_file_source_with_calls(function_count, call_all_functions),
+    );
+
+    let started = Instant::now();
+    if compile {
+        let out = run_compile(&dir.path("main.orl"), &dir.path("large_scale")).unwrap();
+        assert!(!out.has_errors, "{:?}", out.diagnostics);
+    } else {
+        let out = run_check(&dir.path("main.orl")).unwrap();
+        assert!(!out.has_errors, "{:?}", out.diagnostics);
+        assert_check_output_is_well_formed(&out);
+    }
+    let elapsed = started.elapsed();
+    eprintln!(
+        "ORI_PERF_LARGE_FUNCTION_COUNT={function_count}, call_all_functions={call_all_functions}, compile={compile}: elapsed={}ms",
+        elapsed.as_millis()
+    );
+    if compile {
+        assert_strict_budget("ORI_PERF_COMPILE_LARGE_SCALE_BUDGET_MS", elapsed, 60_000);
+    } else {
+        assert_strict_budget("ORI_PERF_CHECK_LARGE_SCALE_BUDGET_MS", elapsed, 10_000);
+    }
 }
 
 #[test]
@@ -244,6 +287,10 @@ end
 }
 
 fn large_single_file_source(function_count: usize) -> String {
+    large_single_file_source_with_calls(function_count, true)
+}
+
+fn large_single_file_source_with_calls(function_count: usize, call_all_functions: bool) -> String {
     let mut source = String::from(
         r#"module app.main
 
@@ -271,8 +318,10 @@ end
         );
     }
     source.push_str("main()\n    const item: Item = Item {id: 1, label: \"ori\"}\n    var total: int = item.id\n");
-    for index in 0..function_count {
-        let _ = writeln!(source, "    total = step_{index}(total)");
+    if call_all_functions {
+        for index in 0..function_count {
+            let _ = writeln!(source, "    total = step_{index}(total)");
+        }
     }
     source.push_str("    check total > 0, item.name()\nend\n");
     source

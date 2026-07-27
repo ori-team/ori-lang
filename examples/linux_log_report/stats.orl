@@ -1,0 +1,45 @@
+module app.stats
+
+imports
+    ori.string = str
+end
+
+public struct LogStats
+    total: int
+    info: int
+    warn: int
+    failures: int
+    unclassified: int
+end
+
+-- Count the severity prefix used by common Linux service logs.
+public analyze(text: string) -> LogStats
+    var total: int = 0
+    var info: int = 0
+    var warn: int = 0
+    var failures: int = 0
+    var unclassified: int = 0
+
+    for line in str.lines(text)
+        if not str.is_empty(str.trim(line))
+            if str.has_prefix(line, "INFO")
+                info = info + 1
+            elif str.has_prefix(line, "WARN")
+                warn = warn + 1
+            elif str.has_prefix(line, "ERROR")
+                failures = failures + 1
+            else
+                unclassified = unclassified + 1
+            end
+            total = total + 1
+        end
+    end
+
+    return LogStats {
+        total: total,
+        info: info,
+        warn: warn,
+        failures: failures,
+        unclassified: unclassified,
+    }
+end

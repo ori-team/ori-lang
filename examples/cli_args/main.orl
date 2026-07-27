@@ -31,12 +31,14 @@ end
 
 print_tasks(tasks: list[Task])
     for task in tasks
-        io.print(marker(task) + " " + task.title)
+        const { title, done } = task
+        const mark = if done then "[x]" else "[ ]"
+        io.println(mark + " " + title)
     end
 end
 
 main()
-    var tasks: list[Task] = []
+    var tasks: list[Task] = lists.with_capacity(3)
     lists.push(tasks, Task { title: "write example", done: true })
     lists.push(tasks, Task { title: "run tests", done: false })
     lists.push(tasks, Task { title: "update docs", done: false })

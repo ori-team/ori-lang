@@ -58,7 +58,7 @@ Estas regras evitam crescimento confuso:
 2. **Não esconder breaking change.** Se mudar contrato público, registrar migração e decidir se justifica `0.3.0`.
 3. **Stdlib primeiro para uso real.** Priorizar tarefas comuns de CLI, arquivos, JSON, tempo, config e testes.
 4. **Ferramenta local antes de registry remoto.** Primeiro `ori new`, manifest e dependência por caminho; depois registry hospedado.
-5. **Docs seguem implementação.** Spec é normativa; planning é plano; `_reversa_sdd/` é histórico.
+5. **Docs seguem implementação.** Spec é normativa; planning é plano; `docs/archive/` é histórico.
 
 ## Fase 1 — Sintaxe e modelo mental da linguagem
 

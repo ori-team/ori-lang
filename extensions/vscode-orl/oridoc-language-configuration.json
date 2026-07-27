@@ -1,0 +1,15 @@
+{
+  "comments": {
+    "lineComment": "--"
+  },
+  "autoClosingPairs": [
+    { "open": "`", "close": "`" }
+  ],
+  "surroundingPairs": [
+    ["`", "`"]
+  ],
+  "indentationRules": {
+    "increaseIndentPattern": "^\\s*doc\\s+\\S+\\s+\\S+\\s*$",
+    "decreaseIndentPattern": "^\\s*end\\s*$"
+  }
+}

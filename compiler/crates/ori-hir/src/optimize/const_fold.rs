@@ -143,6 +143,11 @@ fn fold_expr(expr: &mut HirExpr) {
                 fold_expr(a);
             }
         }
+        HirExprKind::AssociatedCall { args, .. } => {
+            for arg in args {
+                fold_expr(arg);
+            }
+        }
         HirExprKind::MatchExpr { scrutinee, arms } => {
             fold_expr(scrutinee);
             for arm in arms {
@@ -168,6 +173,7 @@ fn fold_expr(expr: &mut HirExpr) {
             }
         }
         HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {

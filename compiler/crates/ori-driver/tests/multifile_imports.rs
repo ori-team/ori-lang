@@ -8,6 +8,7 @@ use ori_driver::pipeline::{
     run_doc_with_options, run_fmt, run_test, run_test_with_options, CheckOutput, CompileOptions,
     DocCheckOutput, DocFormat, DocOptions, TestOptions,
 };
+use serde_json::Value;
 
 static NEXT_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -906,6 +907,68 @@ end
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.trim(), "21");
+}
+
+#[test]
+fn compile_uses_imported_constant_expression_in_array_type() {
+    let dir = TestDir::new("compile_imported_const_type");
+    dir.write(
+        "config.orl",
+        r#"module app.config
+
+public const WORDS: int = 2 * 4
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import app.config = config
+import ori.io = io
+
+main()
+    const values: array[int, size: config.WORDS] = [1, 2, 3, 4, 5, 6, 7, 8]
+    io.println(f"{values[7]}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "imported_const_type");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(normalize_stdout(output.stdout), "8\n");
+}
+
+#[test]
+fn check_rejects_private_imported_constant_in_array_type() {
+    let dir = TestDir::new("private_imported_const_type");
+    dir.write(
+        "config.orl",
+        r#"module app.config
+
+const WORDS: int = 8
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import app.config = config
+
+main()
+    const values: array[int, size: config.WORDS] = [1, 2, 3, 4, 5, 6, 7, 8]
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"name.private"),
+        "{:?}",
+        out.diagnostics
+    );
 }
 
 #[test]
@@ -3564,6 +3627,33 @@ end
     compile_c_source(&dir, "c_string_equality", &out.c_source);
 }
 
+#[test]
+fn build_c_backend_rejects_byte_equality_instead_of_emitting_pointer_comparison() {
+    let dir = TestDir::new("c_bytes_equality");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const same: bool = b"ori" == b"ori"
+    io.println(string(same))
+end
+"#,
+    );
+
+    let out = run_build(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "C backend must reject byte equality");
+    assert!(
+        out.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "backend.c_unsupported"),
+        "{:?}",
+        out.diagnostics
+    );
+}
+
 /// LANG-2: C/debug compiles string helpers + int conversion builtins.
 #[test]
 fn build_c_backend_compiles_string_helpers_and_int_to_string() {
@@ -3753,6 +3843,48 @@ end
         out.diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "backend.c_unsupported"),
+        "{:?}",
+        out.diagnostics
+    );
+    assert!(out.c_source.is_empty());
+}
+
+#[test]
+fn build_c_backend_rejects_custom_destructor_instead_of_omitting_cleanup() {
+    let dir = TestDir::new("c_backend_custom_destructor_unsupported");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+
+struct Resource
+    id: int
+end
+
+apply Resource use core.Destructor
+    mut destroy(self)
+    end
+end
+
+main()
+    const resource: Resource = Resource { id: 1 }
+end
+"#,
+    );
+
+    let out = run_build(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "expected C backend feature diagnostic");
+    let diagnostic = out
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "backend.c_unsupported")
+        .expect("expected backend.c_unsupported");
+    assert!(
+        diagnostic
+            .notes
+            .iter()
+            .any(|note| note.contains("core.Destructor")),
         "{:?}",
         out.diagnostics
     );
@@ -4220,12 +4352,11 @@ fn compile_runs_native_showcase_example() {
     let output = Command::new(&exe).output().unwrap();
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
-    // `io.print(string(user))` renders via core.Displayable — the
-    // "Grace <admin>" line was silently swallowed while closure captures
-    // were broken (the old expectation was calibrated to that bug).
+    // The showcase intentionally exercises inferred struct destructuring in
+    // the third line, while the first two still cover trait dispatch.
     assert_eq!(
         stdout.replace("\r\n", "\n"),
-        "Grace:admin\nGrace:admin\nGrace <admin>\nboot\nGrace\n7\nseven\ndisposed-1\n"
+        "Grace:admin\nGrace:admin\nGrace (admin)\nboot\nGrace\n7\nseven\ndisposed-1\n"
     );
 }
 
@@ -5083,7 +5214,6 @@ end
     assert!(out.has_errors);
     assert!(diagnostic_codes(&out).contains(&"parse.func_removed"));
 }
-
 
 #[test]
 fn check_reports_removed_angle_type() {
@@ -8253,7 +8383,7 @@ import ori.io = io
 struct Counter
     value: int
 
-    mut increment()
+    mut increment(self)
         self.value = self.value + 1
     end
 end
@@ -9928,7 +10058,6 @@ end
     );
 }
 
-
 #[test]
 fn compile_lib_c_export_produces_shared_object_on_linux() {
     if !cfg!(target_os = "linux") {
@@ -9956,7 +10085,772 @@ end
     )
     .expect("compile --lib");
     assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out_so.is_file(), "expected shared library at {}", out_so.display());
+    assert!(
+        out_so.is_file(),
+        "expected shared library at {}",
+        out_so.display()
+    );
+    let header_path = dir.path("libexport.h");
+    assert_eq!(out.header_path.as_deref(), Some(header_path.as_path()));
+    let header = std::fs::read_to_string(&header_path).expect("read generated C header");
+    assert!(
+        header.contains("int64_t add_scores(int64_t a, int64_t b);"),
+        "{header}"
+    );
+}
+
+// ── `@c_export` accepts `string` and scalar structs ────────────────────────
+//
+// An Ori `string` value is already a NUL-terminated `const char*`, so it can
+// cross the C boundary directly. Scalar structs use pointer/out wrappers.
+
+#[test]
+fn check_c_export_accepts_string_params_and_return() {
+    let dir = TestDir::new("c_export_string_ok");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.string = str
+
+@c_export
+public shout(name: string) -> string
+    return "hello, " + name
+end
+
+@c_export
+public name_len(name: string) -> int
+    return str.len(name)
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_c_export_accepts_scalar_structs() {
+    let dir = TestDir::new("c_export_scalar_struct");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Point
+    enabled: bool
+    primary: int
+    fallback: int
+end
+
+@c_export
+public choose(point: Point) -> int
+    if point.enabled
+        return point.primary
+    end
+    return point.fallback
+end
+
+@c_export
+public make_point(enabled: bool, primary: int, fallback: int) -> Point
+    return Point { enabled: enabled, primary: primary, fallback: fallback }
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_c_export_accepts_managed_struct_handles() {
+    let dir = TestDir::new("c_export_managed_struct");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Label
+    text: string
+end
+
+struct Holder
+    label: Label
+    items: list[int]
+end
+
+@c_export
+public read_label(label: Label) -> string
+    return label.text
+end
+
+@c_export
+public keep_holder(holder: Holder) -> Holder
+    return holder
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_c_export_accepts_optional_and_result_bridges() {
+    let dir = TestDir::new("c_export_optional_result");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Profile
+    name: string
+end
+
+@c_export
+public keep_optional(value: optional[int]) -> optional[int]
+    return value
+end
+
+@c_export
+public keep_result(value: result[Profile, string]) -> result[Profile, string]
+    return value
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_c_export_still_rejects_empty_generic_and_direct_collection_aggregates() {
+    let dir = TestDir::new("c_export_aggregate");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Empty end
+
+struct Envelope[T]
+    value: T
+end
+
+@c_export
+public read_empty(value: Empty) -> int
+    return 0
+end
+
+@c_export
+public read_envelope(envelope: Envelope[int]) -> int
+    return 0
+end
+
+@c_export
+public total(items: list[int]) -> int
+    return 0
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let bad_type_count = diagnostic_codes(&out)
+        .into_iter()
+        .filter(|code| *code == "attr.c_export_bad_type")
+        .count();
+    assert!(
+        bad_type_count >= 3,
+        "empty structs, generic structs, and direct collections must stay rejected: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn compile_lib_c_export_scalar_struct_round_trips_through_a_c_host() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let dir = TestDir::new("c_export_scalar_struct_host");
+    dir.write(
+        "lib.orl",
+        r#"module app.lib_struct_export
+
+struct Point
+    enabled: bool
+    primary: int
+    fallback: int
+end
+
+@c_export
+public choose_point(point: Point) -> int
+    if point.enabled
+        return point.primary
+    end
+    return point.fallback
+end
+
+@c_export
+public make_point(enabled: bool, primary: int, fallback: int) -> Point
+    return Point { enabled: enabled, primary: primary, fallback: fallback }
+end
+"#,
+    );
+
+    let out_so = dir.path("libstructexport.so");
+    let out = run_compile_with_options(
+        &dir.path("lib.orl"),
+        &out_so,
+        CompileOptions {
+            native_raw: false,
+            lib: true,
+        },
+    )
+    .expect("compile --lib");
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    dir.write(
+        "host.c",
+        r#"#include "libstructexport.h"
+#include <stdio.h>
+#include <dlfcn.h>
+
+int main(int argc, char **argv) {
+    void *handle = dlopen(argv[1], RTLD_NOW);
+    if (!handle) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 1; }
+    int32_t (*runtime_init_fn)(void) = dlsym(handle, "ori_rt_init");
+    if (runtime_init_fn && runtime_init_fn() != 0) {
+        fprintf(stderr, "runtime init\n");
+        return 1;
+    }
+
+    int64_t (*choose_point_fn)(const OriPoint *) = dlsym(handle, "choose_point");
+    void (*make_point_fn)(bool, int64_t, int64_t, OriPoint *) = dlsym(handle, "make_point");
+    int64_t (*live_allocations_fn)(void) = dlsym(handle, "ori_arc_live_allocations");
+    if (!choose_point_fn || !make_point_fn || !live_allocations_fn) {
+        fprintf(stderr, "dlsym\n");
+        return 1;
+    }
+    int64_t allocations_before = live_allocations_fn();
+
+    OriPoint input = { true, 41, 7 };
+    if (choose_point_fn(&input) != 41) { fprintf(stderr, "parameter\n"); return 1; }
+
+    OriPoint output = { false, 0, 0 };
+    make_point_fn(false, 11, 29, &output);
+    if (output.enabled || output.primary != 11 || output.fallback != 29) {
+        fprintf(stderr, "return\n");
+        return 1;
+    }
+    if (choose_point_fn(&output) != 29) { fprintf(stderr, "roundtrip\n"); return 1; }
+    if (live_allocations_fn() != allocations_before) {
+        fprintf(stderr, "leak\n");
+        return 1;
+    }
+
+    puts("ok");
+    return 0;
+}
+"#,
+    );
+
+    let host_bin = dir.path("host");
+    let cc = Command::new("cc")
+        .arg("-o")
+        .arg(&host_bin)
+        .arg(dir.path("host.c"))
+        .arg("-I")
+        .arg(dir.path(""))
+        .arg("-ldl")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc failed: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+
+    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    assert!(
+        run.status.success(),
+        "C host failed: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "ok");
+}
+
+#[test]
+fn compile_lib_c_export_managed_struct_handle_preserves_host_ownership() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let dir = TestDir::new("c_export_managed_struct_host");
+    dir.write(
+        "lib.orl",
+        r#"module app.lib_managed_export
+
+struct Profile
+    name: string
+    score: int
+end
+
+@c_export
+public make_profile(name: string, score: int) -> Profile
+    return Profile { name: "user:" + name, score: score }
+end
+
+@c_export
+public profile_name(profile: Profile) -> string
+    return profile.name
+end
+
+@c_export
+public profile_score(profile: Profile) -> int
+    return profile.score
+end
+
+@c_export
+public same_profile(profile: Profile) -> Profile
+    return profile
+end
+"#,
+    );
+
+    let out_so = dir.path("libmanagedexport.so");
+    let out = run_compile_with_options(
+        &dir.path("lib.orl"),
+        &out_so,
+        CompileOptions {
+            native_raw: false,
+            lib: true,
+        },
+    )
+    .expect("compile --lib");
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let header = std::fs::read_to_string(dir.path("libmanagedexport.h"))
+        .expect("read generated managed handle header");
+    assert!(
+        header.contains("typedef struct OriProfileHandle OriProfileHandle;"),
+        "{header}"
+    );
+    assert!(
+        header.contains("OriProfileHandle *make_profile(const char *name, int64_t score);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("int64_t profile_score(const OriProfileHandle *profile);"),
+        "{header}"
+    );
+
+    dir.write(
+        "host.c",
+        r#"#include "libmanagedexport.h"
+#include <stdio.h>
+#include <string.h>
+#include <dlfcn.h>
+
+int main(int argc, char **argv) {
+    void *handle = dlopen(argv[1], RTLD_NOW);
+    if (!handle) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 1; }
+
+    int32_t (*runtime_init_fn)(void) = dlsym(handle, "ori_rt_init");
+    OriProfileHandle *(*make_profile_fn)(const char *, int64_t) =
+        dlsym(handle, "make_profile");
+    const char *(*profile_name_fn)(const OriProfileHandle *) =
+        dlsym(handle, "profile_name");
+    int64_t (*profile_score_fn)(const OriProfileHandle *) =
+        dlsym(handle, "profile_score");
+    OriProfileHandle *(*same_profile_fn)(const OriProfileHandle *) =
+        dlsym(handle, "same_profile");
+    void (*release_fn)(void *) = dlsym(handle, "ori_arc_release");
+    int64_t (*live_allocations_fn)(void) = dlsym(handle, "ori_arc_live_allocations");
+    if (!runtime_init_fn || !make_profile_fn || !profile_name_fn
+        || !profile_score_fn || !same_profile_fn || !release_fn
+        || !live_allocations_fn) {
+        fprintf(stderr, "dlsym\n");
+        return 1;
+    }
+    if (runtime_init_fn() != 0) { fprintf(stderr, "runtime init\n"); return 1; }
+    int64_t allocations_before = live_allocations_fn();
+
+    OriProfileHandle *profile = make_profile_fn("Ada", 42);
+    if (!profile) { fprintf(stderr, "null handle\n"); return 1; }
+    if (profile_score_fn(profile) != 42 || profile_score_fn(profile) != 42) {
+        fprintf(stderr, "borrowed handle\n");
+        return 1;
+    }
+
+    const char *name = profile_name_fn(profile);
+    if (strcmp(name, "user:Ada") != 0) {
+        fprintf(stderr, "name: %s\n", name);
+        return 1;
+    }
+    release_fn((void *) name);
+
+    OriProfileHandle *alias = same_profile_fn(profile);
+    if (alias != profile) { fprintf(stderr, "identity\n"); return 1; }
+    release_fn(alias);
+    if (profile_score_fn(profile) != 42) {
+        fprintf(stderr, "host ownership\n");
+        return 1;
+    }
+
+    release_fn(profile);
+    if (live_allocations_fn() != allocations_before) {
+        fprintf(stderr, "leak\n");
+        return 1;
+    }
+
+    puts("ok");
+    return 0;
+}
+"#,
+    );
+
+    let host_bin = dir.path("host");
+    let cc = Command::new("cc")
+        .arg("-o")
+        .arg(&host_bin)
+        .arg(dir.path("host.c"))
+        .arg("-I")
+        .arg(dir.path(""))
+        .arg("-ldl")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc failed: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+
+    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    assert!(
+        run.status.success(),
+        "C host failed: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "ok");
+}
+
+#[test]
+fn compile_lib_c_export_optional_and_result_round_trip_through_c_host() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let dir = TestDir::new("c_export_optional_result_host");
+    dir.write(
+        "lib.orl",
+        r#"module app.lib_optional_result_export
+
+struct Profile
+    name: string
+end
+
+@c_export
+public keep_optional(value: optional[int]) -> optional[int]
+    return value
+end
+
+@c_export
+public make_profile_result(name: string, accepted: bool) -> result[Profile, string]
+    if accepted
+        return ok(Profile { name: "user:" + name })
+    end
+    return err("rejected:" + name)
+end
+
+@c_export
+public keep_profile_result(value: result[Profile, string]) -> result[Profile, string]
+    return value
+end
+
+@c_export
+public profile_name(profile: Profile) -> string
+    return profile.name
+end
+"#,
+    );
+
+    let out_so = dir.path("liboptionalresult.so");
+    let out = run_compile_with_options(
+        &dir.path("lib.orl"),
+        &out_so,
+        CompileOptions {
+            native_raw: false,
+            lib: true,
+        },
+    )
+    .expect("compile --lib");
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let header = std::fs::read_to_string(dir.path("liboptionalresult.h"))
+        .expect("read generated optional/result header");
+    assert!(
+        header.contains(
+            "bool keep_optional(bool value_has_value, int64_t value_value, int64_t *out);"
+        ),
+        "{header}"
+    );
+    assert!(
+        header.contains(
+            "OriResultTag make_profile_result(const char *name, bool accepted, OriProfileHandle **ok_out, const char **error_out);"
+        ),
+        "{header}"
+    );
+    assert!(
+        header.contains(
+            "OriResultTag keep_profile_result(OriResultTag value_tag, const OriProfileHandle *value_ok, const char *value_error, OriProfileHandle **ok_out, const char **error_out);"
+        ),
+        "{header}"
+    );
+
+    dir.write(
+        "host.c",
+        r#"#include "liboptionalresult.h"
+#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+
+int main(int argc, char **argv) {
+    void *handle = dlopen(argv[1], RTLD_NOW);
+    if (!handle) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 1; }
+
+    int32_t (*runtime_init_fn)(void) = dlsym(handle, "ori_rt_init");
+    bool (*keep_optional_fn)(bool, int64_t, int64_t *) =
+        dlsym(handle, "keep_optional");
+    OriResultTag (*make_profile_result_fn)(
+        const char *, bool, OriProfileHandle **, const char **) =
+        dlsym(handle, "make_profile_result");
+    OriResultTag (*keep_profile_result_fn)(
+        OriResultTag, const OriProfileHandle *, const char *,
+        OriProfileHandle **, const char **) =
+        dlsym(handle, "keep_profile_result");
+    const char *(*profile_name_fn)(const OriProfileHandle *) =
+        dlsym(handle, "profile_name");
+    void (*release_fn)(void *) = dlsym(handle, "ori_arc_release");
+    int64_t (*live_allocations_fn)(void) = dlsym(handle, "ori_arc_live_allocations");
+    if (!runtime_init_fn || !keep_optional_fn || !make_profile_result_fn
+        || !keep_profile_result_fn || !profile_name_fn || !release_fn
+        || !live_allocations_fn) {
+        fprintf(stderr, "dlsym\n");
+        return 1;
+    }
+    if (runtime_init_fn() != 0) { fprintf(stderr, "runtime init\n"); return 1; }
+
+    int64_t optional_out = -1;
+    if (!keep_optional_fn(true, 42, &optional_out) || optional_out != 42) {
+        fprintf(stderr, "optional some\n");
+        return 1;
+    }
+    optional_out = -1;
+    if (keep_optional_fn(false, 0, &optional_out) || optional_out != -1) {
+        fprintf(stderr, "optional none\n");
+        return 1;
+    }
+
+    int64_t allocations_before = live_allocations_fn();
+    OriProfileHandle *profile = NULL;
+    const char *error = NULL;
+    if (make_profile_result_fn("Ada", true, &profile, &error) != ORI_RESULT_OK
+        || !profile || error) {
+        fprintf(stderr, "result ok\n");
+        return 1;
+    }
+    const char *name = profile_name_fn(profile);
+    if (strcmp(name, "user:Ada") != 0) {
+        fprintf(stderr, "profile name: %s\n", name);
+        return 1;
+    }
+    release_fn((void *)name);
+
+    OriProfileHandle *alias = NULL;
+    if (keep_profile_result_fn(
+            ORI_RESULT_OK, profile, NULL, &alias, &error) != ORI_RESULT_OK
+        || alias != profile) {
+        fprintf(stderr, "result parameter ok\n");
+        return 1;
+    }
+    release_fn(profile);
+    name = profile_name_fn(alias);
+    if (strcmp(name, "user:Ada") != 0) {
+        fprintf(stderr, "transferred alias\n");
+        return 1;
+    }
+    release_fn((void *)name);
+    release_fn(alias);
+
+    profile = NULL;
+    error = NULL;
+    if (make_profile_result_fn("Bob", false, &profile, &error) != ORI_RESULT_ERR
+        || profile || !error || strcmp(error, "rejected:Bob") != 0) {
+        fprintf(stderr, "result err\n");
+        return 1;
+    }
+    release_fn((void *)error);
+
+    const char *foreign_error = "foreign";
+    error = NULL;
+    if (keep_profile_result_fn(
+            ORI_RESULT_ERR, NULL, foreign_error, &profile, &error) != ORI_RESULT_ERR
+        || error != foreign_error) {
+        fprintf(stderr, "result parameter err\n");
+        return 1;
+    }
+    release_fn((void *)error);
+
+    if (live_allocations_fn() != allocations_before) {
+        fprintf(stderr, "leak: before=%lld after=%lld\n",
+            (long long)allocations_before, (long long)live_allocations_fn());
+        return 1;
+    }
+    puts("ok");
+    return 0;
+}
+"#,
+    );
+
+    let host_bin = dir.path("host");
+    let cc = Command::new("cc")
+        .arg("-o")
+        .arg(&host_bin)
+        .arg(dir.path("host.c"))
+        .arg("-I")
+        .arg(dir.path(""))
+        .arg("-ldl")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc failed: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+
+    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    assert!(
+        run.status.success(),
+        "C host failed: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "ok");
+}
+
+/// End-to-end: a real C host loads the library, passes a `const char*`, reads
+/// the returned string, and frees it through `ori_arc_release`.
+#[test]
+fn compile_lib_c_export_string_round_trips_through_a_c_host() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    // Skip rather than fail when the box has no C compiler.
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let dir = TestDir::new("c_export_string_host");
+    dir.write(
+        "lib.orl",
+        r#"module app.lib_string_export
+
+import ori.string = str
+
+@c_export
+public shout(name: string) -> string
+    return "hello, " + name
+end
+
+@c_export
+public name_len(name: string) -> int
+    return str.len(name)
+end
+"#,
+    );
+
+    let out_so = dir.path("libstrexport.so");
+    let out = run_compile_with_options(
+        &dir.path("lib.orl"),
+        &out_so,
+        CompileOptions {
+            native_raw: false,
+            lib: true,
+        },
+    )
+    .expect("compile --lib");
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    dir.write(
+        "host.c",
+        r#"#include "libstrexport.h"
+#include <stdio.h>
+#include <string.h>
+#include <dlfcn.h>
+
+int main(int argc, char **argv) {
+    void *h = dlopen(argv[1], RTLD_NOW);
+    if (!h) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 1; }
+    int32_t (*rt_init_fn)(void) = dlsym(h, "ori_rt_init");
+    if (rt_init_fn && rt_init_fn() != 0) { fprintf(stderr, "runtime init\n"); return 1; }
+    const char *(*shout_fn)(const char *) = dlsym(h, "shout");
+    int64_t (*name_len_fn)(const char *) = dlsym(h, "name_len");
+    void (*release_fn)(void *) = dlsym(h, "ori_arc_release");
+    int64_t (*live_allocations_fn)(void) = dlsym(h, "ori_arc_live_allocations");
+    if (!shout_fn || !name_len_fn || !release_fn || !live_allocations_fn) {
+        fprintf(stderr, "dlsym\n");
+        return 1;
+    }
+
+    if (name_len_fn("Ada") != 3) { fprintf(stderr, "len\n"); return 1; }
+
+    int64_t allocations_before = live_allocations_fn();
+    const char *s = shout_fn("Ada");
+    if (strcmp(s, "hello, Ada") != 0) { fprintf(stderr, "got %s\n", s); return 1; }
+    if (name_len_fn(s) != 10) { fprintf(stderr, "returned len\n"); return 1; }
+    if (live_allocations_fn() != allocations_before + 1) {
+        fprintf(stderr, "borrowed string ownership\n");
+        return 1;
+    }
+    release_fn((void *) s);
+    if (live_allocations_fn() != allocations_before) {
+        fprintf(stderr, "string leak\n");
+        return 1;
+    }
+
+    printf("ok\n");
+    return 0;
+}
+"#,
+    );
+
+    let host_bin = dir.path("host");
+    let cc = Command::new("cc")
+        .arg("-o")
+        .arg(&host_bin)
+        .arg(dir.path("host.c"))
+        .arg("-I")
+        .arg(dir.path(""))
+        .arg("-ldl")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc failed: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+
+    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    assert!(
+        run.status.success(),
+        "C host failed: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "ok");
 }
 
 #[test]
@@ -9979,6 +10873,37 @@ end
         "{:?}",
         out.diagnostics
     );
+}
+
+#[test]
+fn check_c_export_requires_a_portable_c_symbol_name() {
+    let dir = TestDir::new("c_export_bad_name");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@c_export("score-total")
+public score_total(value: int) -> int
+    return value
+end
+
+@c_export("switch")
+public choose(value: int) -> int
+    return value
+end
+
+@c_export("class")
+public classify(value: int) -> int
+    return value
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let bad_name_count = diagnostic_codes(&out)
+        .into_iter()
+        .filter(|code| *code == "attr.c_export_bad_name")
+        .count();
+    assert_eq!(bad_name_count, 3, "{:?}", out.diagnostics);
 }
 
 #[test]
@@ -10480,6 +11405,26 @@ end
         stdout,
         "baz.txt\ntxt\nbaz\ntrue\ntrue\na/b/c\ndir/file.txt\nc\n"
     );
+}
+
+#[test]
+fn compile_runs_stdlib_path_relative_keeps_list_segments_alive() {
+    let dir = TestDir::new("stdlib_path_relative_lifetime");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.path = path
+
+main()
+    io.print(path.relative("a/b/c", "a/b"))
+end
+"#,
+    );
+
+    let stdout = compile_and_run(&dir, "stdlib_path_relative_lifetime");
+    assert_eq!(stdout, "c\n");
 }
 
 #[test]
@@ -11251,7 +12196,10 @@ end
     assert!(normalized.contains("true"), "stdout: {stdout:?}");
     assert!(normalized.contains("42"), "stdout: {stdout:?}");
     assert!(normalized.contains("10"), "queue peek, stdout: {stdout:?}");
-    assert!(normalized.contains("1\n") || normalized.contains("\n1\n"), "set size, stdout: {stdout:?}");
+    assert!(
+        normalized.contains("1\n") || normalized.contains("\n1\n"),
+        "set size, stdout: {stdout:?}"
+    );
     assert!(normalized.contains("ok"), "stdout: {stdout:?}");
 }
 
@@ -11572,10 +12520,13 @@ fn build_accepts_handle_type() {
     let dir = TestDir::new("handle_type");
     dir.write(
         "main.orl",
+        // `return_handle` used to satisfy its return type by calling itself,
+        // which `control.unconditional_recursion` now rejects. The test is
+        // about `handle[int]` in signatures, so it delegates instead.
         r#"module app.main
 
-return_handle() -> handle[int]
-    return return_handle()
+return_handle(seed: handle[int]) -> handle[int]
+    return use_handle(seed)
 end
 
 use_handle(h: handle[int]) -> handle[int]
@@ -11685,10 +12636,7 @@ end
     let output = Command::new(&exe).output().unwrap();
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        stdout.contains("hello-stream"),
-        "stdout={stdout:?}"
-    );
+    assert!(stdout.contains("hello-stream"), "stdout={stdout:?}");
 }
 
 #[test]
@@ -11883,4 +12831,82 @@ end
 
     let out = run_check(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn native_incremental_reuses_unchanged_module_objects() {
+    let dir = TestDir::new("incremental_module_objects");
+    dir.write(
+        "helper.orl",
+        r#"module app.helper
+
+public answer() -> int
+    return 41
+end
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import app.helper
+
+main()
+    const value: int = app.helper.answer()
+end
+"#,
+    );
+    let output = exe_path(&dir, "incremental_modules");
+    let first = run_compile(&dir.path("main.orl"), &output).expect("first native build");
+    assert!(!first.has_errors, "{:?}", first.diagnostics);
+
+    let record_path = dir.path(".ori/incremental.json");
+    let before: Value = serde_json::from_str(
+        &std::fs::read_to_string(&record_path).expect("read incremental module index"),
+    )
+    .expect("decode incremental module index");
+    let before_modules = before["modules"].as_array().expect("module records");
+    assert_eq!(before_modules.len(), 2);
+    let artifact_for = |records: &[Value], suffix: &str| {
+        records
+            .iter()
+            .find(|record| {
+                record["path"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with(suffix))
+            })
+            .and_then(|record| record["artifact"].as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| panic!("missing artifact for {suffix}"))
+    };
+    let main_before = artifact_for(before_modules, "main.orl");
+    let helper_before = artifact_for(before_modules, "helper.orl");
+
+    // Changing only a function body changes the helper object fingerprint;
+    // the caller keeps its object because the public interface is unchanged.
+    dir.write(
+        "helper.orl",
+        r#"module app.helper
+
+public answer() -> int
+    return 42
+end
+"#,
+    );
+    let second = run_compile(&dir.path("main.orl"), &output).expect("second native build");
+    assert!(!second.has_errors, "{:?}", second.diagnostics);
+    assert!(
+        !second.reused,
+        "the changed project should not be a full cache hit"
+    );
+
+    let after: Value = serde_json::from_str(
+        &std::fs::read_to_string(&record_path).expect("read refreshed module index"),
+    )
+    .expect("decode refreshed module index");
+    let after_modules = after["modules"]
+        .as_array()
+        .expect("refreshed module records");
+    assert_eq!(artifact_for(after_modules, "main.orl"), main_before);
+    assert_ne!(artifact_for(after_modules, "helper.orl"), helper_before);
 }

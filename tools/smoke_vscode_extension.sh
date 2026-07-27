@@ -93,6 +93,7 @@ if [ -z "$workspace_root" ]; then
 fi
 workspace_root=$(assert_smoke_root "$workspace_root")
 project_root="$workspace_root/demo"
+project_entry="$project_root/main.orl"
 ori_exe="$target_root/debug/$(output_exe_name ori)"
 lsp_exe="$target_root/debug/$(output_exe_name ori-lsp)"
 
@@ -120,11 +121,25 @@ fi
 if [ "$skip_npm_install" -eq 0 ] && [ ! -d "$extension_root/node_modules" ]; then
     run_checked "npm install" sh -c "cd '$extension_root' && npm install"
 fi
-run_checked "npm run compile" sh -c "cd '$extension_root' && npm run compile"
+run_checked "npm run package:vsix" sh -c "cd '$extension_root' && npm run package:vsix"
 assert_json_file "$extension_root/package.json"
 assert_json_file "$extension_root/language-configuration.json"
+assert_json_file "$extension_root/oridoc-language-configuration.json"
 assert_json_file "$extension_root/snippets/ori.json"
 assert_json_file "$extension_root/syntaxes/ori.tmLanguage.json"
+assert_json_file "$extension_root/syntaxes/oridoc.tmLanguage.json"
+
+extension_version=$(node -e "console.log(require('$extension_root/package.json').version)")
+vsix_path="$extension_root/vscode-orl-${extension_version}.vsix"
+if [ ! -f "$vsix_path" ]; then
+    echo "VSIX was not found at $vsix_path" >&2
+    exit 1
+fi
+if ! unzip -Z1 "$vsix_path" | grep -Fqx \
+    "extension/node_modules/vscode-languageclient/node.js"; then
+    echo "VSIX is missing the vscode-languageclient runtime dependency" >&2
+    exit 1
+fi
 
 if [ "$skip_lsp_e2e" -eq 0 ]; then
     run_checked "cargo test -p ori-lsp --test e2e" \
@@ -145,10 +160,10 @@ cat > "$project_root/.vscode/settings.json" <<EOF
 EOF
 
 run_checked "ori check outside repository" "$ori_exe" check "$project_root/ori.proj"
-run_checked "ori run outside repository" "$ori_exe" run "$project_root/src/main.orl"
-run_checked "ori test outside repository" "$ori_exe" test "$project_root/src/main.orl"
+run_checked "ori run outside repository" "$ori_exe" run "$project_entry"
+run_checked "ori test outside repository" "$ori_exe" test "$project_entry"
 run_checked "ori doc check outside repository" "$ori_exe" doc check "$project_root/ori.proj"
 run_checked "ori summary outside repository" "$ori_exe" summary "$project_root/ori.proj"
-run_checked "ori fmt outside repository" "$ori_exe" fmt "$project_root/src/main.orl"
+run_checked "ori fmt outside repository" "$ori_exe" fmt "$project_entry"
 
 printf 'VS Code extension smoke passed: %s\n' "$workspace_root"

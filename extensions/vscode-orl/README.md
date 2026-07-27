@@ -1,6 +1,6 @@
 # Ori — VS Code / Cursor extension
 
-Language support for **Ori** (`.orl`): LSP, grammar, snippets, doctor.
+Language support for **Ori** (`.orl` and `.oridoc`): LSP, grammar, snippets, doctor.
 
 **Surface:** S3 + inference B · version **0.3.5** (matches language package).
 
@@ -37,8 +37,11 @@ cd extensions/vscode-orl && npm install && npm run package:vsix && npm run insta
 - **LSP** via `ori-lsp`: diagnostics, hover, go-to-definition, completion (stdlib), rename, format, semantic tokens, inlay hints
 - **Local inference (option B):** inlays for obvious local types
 - **Pipe `|>`**
-- **Commands:** Check, Run, Test, Format, Doctor (`ori doctor`), Project Summary
-- TextMate grammar + snippets (`--` comments, S3 keywords)
+- **Commands:** Check, Run, Test, Debug, Format, Doctor (`ori doctor`), Project Summary
+- **Debugger:** the `Ori: Debug Current File` command registers the `ori` debug type and starts `ori debug --dap`; breakpoints, continue/step, call stack, scalar locals, struct field paths, list metadata, async frames, and closure captures appear in the VS Code debug view
+- Current-surface TextMate grammar and snippets for `newtype`, compact `apply … use …`, match expressions, or-patterns, conditional bindings, and struct destructuring
+- `.oridoc` file detection and highlighting for namespaces, documentation blocks, sections, and inline code
+- Interpolated expression highlighting inside single-line and triple-quoted f-strings
 
 ## Settings
 
@@ -54,6 +57,26 @@ cd extensions/vscode-orl && npm install && npm run package:vsix && npm run insta
 
 Binary discovery (when paths empty): `PATH`, then monorepo  
 `compiler/target/{debug,release}/`, then root `target/{debug,release}/`.
+
+To create a workspace launch configuration, use **Run and Debug → create a
+`launch.json` file → Ori**. The generated configuration is equivalent to:
+
+```json
+{
+  "type": "ori",
+  "request": "launch",
+  "name": "Debug Ori file",
+  "program": "${file}"
+}
+```
+
+The adapter currently exposes synchronous and async stack frames, scalar locals,
+structured `struct`/`optional`/`result`/enum and collection paths, bounded list
+length/capacity and indexed children, closure captures, and bounded previews
+for managed strings and bytes (bytes are shown in hexadecimal). Static or
+foreign buffers require an exact registered length. The `evaluate` request
+supports side-effect-free scalar arithmetic, comparisons, boolean logic, and
+strings from the latest stopped snapshot; it never executes target code.
 
 ## Development
 

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ori Documentation",
+  "scopeName": "text.oridoc",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#version" },
+    { "include": "#namespace" },
+    { "include": "#doc-block" }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.double-dash.oridoc",
+      "match": "--.*$"
+    },
+    "version": {
+      "match": "^(\\s*)(oridoc)(\\s+)(1)\\s*$",
+      "captures": {
+        "2": { "name": "keyword.other.version.oridoc" },
+        "4": { "name": "constant.numeric.version.oridoc" }
+      }
+    },
+    "namespace": {
+      "match": "^(\\s*)(namespace)(\\s+)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*$",
+      "captures": {
+        "2": { "name": "keyword.declaration.namespace.oridoc" },
+        "4": { "name": "entity.name.namespace.oridoc" }
+      }
+    },
+    "doc-block": {
+      "name": "comment.block.documentation.oridoc",
+      "begin": "^(\\s*)(doc)(\\s+)([A-Za-z_][A-Za-z0-9_]*)(\\s+)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*$",
+      "beginCaptures": {
+        "2": { "name": "keyword.declaration.documentation.oridoc" },
+        "4": { "name": "storage.type.documentation.oridoc" },
+        "6": { "name": "entity.name.function.oridoc" }
+      },
+      "end": "^(\\s*)(end)\\s*$",
+      "endCaptures": {
+        "2": { "name": "keyword.control.end.oridoc" }
+      },
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#section" },
+        { "include": "#inline-code" }
+      ]
+    },
+    "section": {
+      "match": "^(\\s*)(summary|details|returns?|param(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)(:)\\s*",
+      "captures": {
+        "2": { "name": "keyword.other.documentation.section.oridoc" },
+        "3": { "name": "punctuation.separator.key-value.oridoc" }
+      }
+    },
+    "inline-code": {
+      "name": "markup.inline.raw.string.oridoc",
+      "begin": "`",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.raw.begin.oridoc" }
+      },
+      "end": "`",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.raw.end.oridoc" }
+      }
+    }
+  }
+}

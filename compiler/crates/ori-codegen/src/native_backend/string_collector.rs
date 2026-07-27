@@ -50,6 +50,11 @@ fn collect_strings_expr(expr: &HirExpr, out: &mut StringCollector) {
                 collect_strings_expr(&a.value, out);
             }
         }
+        HirExprKind::AssociatedCall { args, .. } => {
+            for arg in args {
+                collect_strings_expr(arg, out);
+            }
+        }
         HirExprKind::Binary { lhs, rhs, .. } => {
             collect_strings_expr(lhs, out);
             collect_strings_expr(rhs, out);
@@ -76,7 +81,7 @@ fn collect_strings_expr(expr: &HirExpr, out: &mut StringCollector) {
         | HirExprKind::Some_(e)
         | HirExprKind::Ok_(e)
         | HirExprKind::Err_(e) => collect_strings_expr(e, out),
-        HirExprKind::ListLit { elements, .. } => {
+        HirExprKind::ListLit { elements, .. } | HirExprKind::ArrayLit { elements, .. } => {
             for e in elements {
                 collect_strings_expr(e, out);
             }

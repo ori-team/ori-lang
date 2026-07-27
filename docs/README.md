@@ -9,6 +9,7 @@ This tree is the product documentation for Ori. Use it by audience:
 | Audience | Start here |
 |----------|------------|
 | **New user** | [Install](install.md) → [Language tour](language/tour.md) → [First project](guides/first-project.md) |
+| **Book (draft, PT)** | **[Ori book](book/README.md)** · [PDF](book/dist/ori-livro.pdf) (`0.3.x-book.2`) |
 | **Everyday coding** | [Cookbook](guides/cookbook.md) · [Errors / optional / result](guides/errors-null-void.md) · [Examples](../examples/) |
 | **Performance** | [Performance microbench](guides/performance.md) (Ori vs Python vs Rust) · [PT](guides/performance.pt-BR.md) |
 | **Language contract** | [Specification](spec/README.md) (normative, English) |
@@ -26,7 +27,8 @@ Portuguese index: [README.pt-BR.md](README.pt-BR.md).
 | **Portuguese parallel** | **`*.pt-BR.md` sibling** or `README.pt-BR.md` | Same structure and version as EN; no orphan PT-only user guides |
 | **Normative spec** (`docs/spec/`) | **English** | Single source of truth for implementers |
 | **Planning / backlog** (`docs/planning/`) | Portuguese or English (file’s existing language) | Not user-facing product docs |
-| **Historical** (`docs/planning/historico/`, `_reversa_sdd/`) | as written | Do not teach as current surface |
+| **Book** (`docs/book/`) | Portuguese prose; S3 code samples | Draft narrative/reference; does **not** replace `spec/` |
+| **Historical** (`docs/planning/historico/`, `docs/archive/`) | as written | Do not teach as current surface |
 | **Code + code comments** | English | Project matrix in `AGENTS.md` |
 
 **Rules:**
@@ -60,6 +62,7 @@ docs/
 │   ├── performance.md     # Ori / Python / Rust microbench (EN + .pt-BR)
 │   └── language-comparison.md  # older multi-lang suite (historical notes)
 ├── spec/                  # normative language + ABI (EN)
+├── book/                  # Ori book draft (PT narrative + reference)
 └── planning/              # maintainers only (not a tutorial)
     └── historico/         # completed / archived plans
 ```

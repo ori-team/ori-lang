@@ -117,6 +117,63 @@ end
     assert_eq!(stdout.trim(), "hello\nleaks:0");
 }
 
+#[test]
+fn compile_runs_custom_destructor_before_field_cleanup() {
+    let dir = TestDir::new("custom_destructor");
+    let (stdout, stderr, success) = compile_and_run_with_leak_check(
+        &dir,
+        r#"module app.main
+
+import ori.io = io
+import ori.core = core
+
+var destroyed_total: int = 0
+
+struct Resource
+    id: int
+    label: string
+end
+
+enum ResourceState
+    Open(id: int, label: string)
+    Closed
+end
+
+apply Resource use core.Destructor
+    mut destroy(self)
+        destroyed_total = destroyed_total + self.id
+        io.println("destroy:" + self.label)
+    end
+end
+
+apply ResourceState use core.Destructor
+    mut destroy(self)
+        match self
+            case Open(id, label):
+                destroyed_total = destroyed_total + id
+                io.println("destroy-state:" + label)
+            case Closed:
+                io.println("destroy-state:closed")
+        end
+    end
+end
+
+consume()
+    const resource: Resource = Resource { id: 7, label: "socket" + "-1" }
+    const state: ResourceState = ResourceState.Open(id: 3, label: "socket" + "-2")
+end
+
+main()
+    consume()
+    io.println(f"{destroyed_total}")
+end
+"#,
+        "custom_destructor",
+    );
+    assert!(success, "stdout={stdout:?} stderr={stderr:?}");
+    assert_eq!(stdout, "destroy-state:socket-2\ndestroy:socket-1\n10\n");
+}
+
 /// A single list created and dropped in a helper function should leave no
 /// live allocations. The list is created inside `exercise_list`, which
 /// returns only an `int` (non-managed), so the list is released by scope
@@ -1967,6 +2024,249 @@ end
     assert_eq!(
         String::from_utf8(output.stdout).unwrap().trim(),
         "done",
+        "stderr: {stderr}"
+    );
+}
+
+// ── Release consolidated into one critical section (LANG-MEM-10) ───────────
+//
+// `ori_arc_release` used to take the ARC mutex up to six times to drop a single
+// object: once to decrement, then again inside `free_registered_object` for
+// unregister, take-edges and remove-incoming, plus a redundant
+// `header_for_registered`. Dropping one string dominated the cost of every
+// managed temporary (~360 ns/iteration).
+//
+// The decrement, unregister and edge removal now share one lock; the destructor
+// and the recursive child releases stay outside it, because a destructor
+// re-enters `ori_arc_release`. These tests pin the behaviour that must survive
+// that restructuring: nested owners still cascade, and nothing leaks.
+
+#[test]
+fn compile_runs_nested_owners_cascade_on_release() {
+    let dir = TestDir::new("nested_cascade_release");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Inner
+    label: string
+end
+
+struct Outer
+    inner: Inner
+    name: string
+end
+
+build(n: int) -> Outer
+    return Outer {
+        inner: Inner { label: "deep" },
+        name: "outer"
+    }
+end
+
+main()
+    var i: int = 0
+    while i < 300
+        const o: Outer = build(i)
+        const joined: string = o.name + o.inner.label
+        i = i + 1
+    end
+    io.println("done")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "nested_cascade");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "done",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_managed_temporaries_in_a_hot_loop_without_leaking() {
+    let dir = TestDir::new("hot_loop_temporaries");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.string = str
+
+work(prefix: string) -> int
+    const full: string = prefix + "-x"
+    return str.len(full)
+end
+
+main()
+    var i: int = 0
+    var total: int = 0
+    while i < 2000
+        total = total + work("name")
+        i = i + 1
+    end
+    io.println(f"{total}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "hot_loop_temporaries");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "12000",
+        "stderr: {stderr}"
+    );
+}
+
+// ── Strings are built with one allocation (LANG-PERF-4b) ───────────────────
+//
+// `ori_string_concat_parts` and friends used to build a `Vec`, copy the parts
+// in, copy the `Vec` into a fresh `ori_alloc` block, then free the `Vec` — two
+// mallocs, two copies and a free for every string the runtime produced. The
+// parts are now written straight into the final block. These cases pin the
+// behaviour that the rewrite could have broken: empty operands, chained
+// concatenation, and multi-byte characters across a slice boundary.
+
+#[test]
+fn compile_runs_string_building_edge_cases() {
+    let dir = TestDir::new("string_one_alloc");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.string = str
+
+main()
+    io.println("[" + "" + "x" + "][" + "x" + "" + "][" + "" + "" + "]")
+    io.println("a" + "b" + "c" + "d")
+
+    const u: string = "café" + " ☕"
+    io.println(u)
+    io.println(f"{str.len(u)}")
+
+    io.println(str.slice("abcdef", 1, 4))
+    io.println(str.slice("café☕", 0, 4))
+
+    var s: string = ""
+    var i: int = 0
+    while i < 200
+        s = s + "ab"
+        i = i + 1
+    end
+    io.println(f"{str.len(s)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "string_one_alloc");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[x][x][]\nabcd\ncafé ☕\n6\nbcd\ncafé\n400\n",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_bytes_concat_and_slice() {
+    let dir = TestDir::new("bytes_one_alloc");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.bytes = by
+
+main()
+    const joined: bytes = by.concat(b"abc", b"def")
+    const sliced: bytes = by.slice(joined, 1, 4)
+    const from_empty: bytes = by.concat(b"", b"z")
+    io.println(f"{by.len(joined)}")
+    io.println(f"{by.len(sliced)}")
+    io.println(f"{by.len(from_empty)}")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "bytes_one_alloc");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "leak check failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "6\n3\n1\n",
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn compile_runs_bytes_equality_with_embedded_nul_native() {
+    let dir = TestDir::new("bytes_equality_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const same_left: bytes = b"A\x00B"
+    const same_right: bytes = b"A\x00B"
+    const different: bytes = b"A\x00C"
+    io.println(string(same_left == same_right))
+    io.println(string(same_left != different))
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "bytes_equality_native");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "bytes equality failed: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "true\ntrue\n",
         "stderr: {stderr}"
     );
 }

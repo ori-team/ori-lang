@@ -1,0 +1,14 @@
+module app.test_generics
+
+-- Const generic declarations are supported; value construction remains explicit.
+-- Keep this example focused on the type-level contract.
+struct Matrix[const N: int]
+    value: int
+end
+
+inspect_small(matrix: Matrix[4]) -> int
+    return matrix.value
+end
+
+main()
+end

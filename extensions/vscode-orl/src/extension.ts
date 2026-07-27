@@ -15,6 +15,17 @@ const execFileAsync = promisify(execFile);
 let client: LanguageClient | undefined;
 let doctorChannel: vscode.OutputChannel | undefined;
 
+class OriDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
+  public constructor(private readonly context: vscode.ExtensionContext) {}
+
+  public createDebugAdapterDescriptor(): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+    const compilerPath = resolveOriCompiler(this.context) ?? "ori";
+    return new vscode.DebugAdapterExecutable(compilerPath, ["debug", "--dap"], {
+      env: buildDebugAdapterEnv(),
+    });
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   doctorChannel = vscode.window.createOutputChannel("Ori Doctor");
   context.subscriptions.push(doctorChannel);
@@ -24,9 +35,17 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("ori.checkFile", () => runOriOnActive(context, "check")),
     vscode.commands.registerCommand("ori.runFile", () => runOriOnActive(context, "run")),
     vscode.commands.registerCommand("ori.testFile", () => runOriOnActive(context, "test")),
+    vscode.commands.registerCommand("ori.debugFile", () => debugActiveFile(context)),
     vscode.commands.registerCommand("ori.summaryProject", () => runSummary(context)),
     vscode.commands.registerCommand("ori.formatFile", () =>
       vscode.commands.executeCommand("editor.action.formatDocument")
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.debug.registerDebugAdapterDescriptorFactory(
+      "ori",
+      new OriDebugAdapterDescriptorFactory(context)
     )
   );
 
@@ -103,6 +122,16 @@ function buildOriEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+function buildDebugAdapterEnv(): { [key: string]: string } {
+  const environment: { [key: string]: string } = {};
+  for (const [key, value] of Object.entries(buildOriEnv())) {
+    if (value !== undefined) {
+      environment[key] = value;
+    }
+  }
+  return environment;
+}
+
 async function runDoctor(context: vscode.ExtensionContext): Promise<void> {
   const oriPath = resolveOriCompiler(context) ?? "ori";
   const channel = doctorChannel ?? vscode.window.createOutputChannel("Ori Doctor");
@@ -168,6 +197,25 @@ async function runOriOnActive(context: vscode.ExtensionContext, subcommand: stri
   const term = vscode.window.createTerminal({ name: `Ori ${subcommand}`, env: buildOriEnv() });
   term.show();
   term.sendText(`${quote(oriPath)} ${subcommand} ${quote(file)}`);
+}
+
+async function debugActiveFile(context: vscode.ExtensionContext): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.languageId !== "ori") {
+    void vscode.window.showWarningMessage("Open an Ori (.orl) file first.");
+    return;
+  }
+
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+  const started = await vscode.debug.startDebugging(workspaceFolder, {
+    type: "ori",
+    request: "launch",
+    name: "Debug Ori file",
+    program: editor.document.uri.fsPath,
+  });
+  if (!started) {
+    void vscode.window.showErrorMessage("Ori debugger failed to start.");
+  }
 }
 
 async function suggestWorkspaceBinaries(context: vscode.ExtensionContext): Promise<void> {

@@ -75,6 +75,7 @@ Legend: **Y** = first-class / suite exists or required · **P** = partial / subs
 
 | Stage | Covers rows (approx) |
 |-------|----------------------|
+| S0 | Workspace compile + strict Clippy for runtime/codegen/driver |
 | S1 | 1–4 |
 | S2 | 3–4, 49–50, 52 |
 | S3 | 12, 15, 22, 25, 54 |

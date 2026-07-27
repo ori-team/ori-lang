@@ -1,5 +1,6 @@
 use crate::def::{DefId, DefKind, DefMap};
 use smol_str::SmolStr;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpaqueTy {
@@ -91,6 +92,19 @@ pub enum Ty {
     Optional(Box<Ty>),
     Result(Box<Ty>, Box<Ty>),
     List(Box<Ty>),
+    /// `slice[T]` — a read-only window over a `list[T]`.
+    ///
+    /// Holds the owning list plus a range, never a copy of the elements, so
+    /// taking a window is O(1) whatever the length. Reads resolve through the
+    /// owner because `push` can move the element buffer.
+    Slice(Box<Ty>),
+    /// `array[T, size: N]` — element type and length.
+    ///
+    /// The length is carried as a `Ty` so it reuses the const-generic
+    /// machinery: it is `ConstInt("size", n)` once known, or a `Param` while
+    /// still generic (`array[byte, size: cap]` inside `Buffer[const cap: int]`).
+    /// Two arrays of different length are different types.
+    Array(Box<Ty>, Box<Ty>),
     Map(Box<Ty>, Box<Ty>),
     Set(Box<Ty>),
     Range(Box<Ty>),
@@ -137,9 +151,9 @@ pub enum Ty {
     /// A compile-time constant standing in a type argument position:
     /// `Buffer[size: 8]` is `Named(Buffer, [ConstInt("size", 8)])`.
     ///
-    /// Purely a type-level tag today: two buffers with different sizes are
-    /// different types, and nothing about the value reaches runtime (fixed
-    /// size arrays, which would use it, do not exist yet).
+    /// Two buffers with different sizes are different types. `array[T, size: N]`
+    /// consumes the value for its layout; elsewhere it stays a compile-time tag
+    /// that never reaches runtime.
     ConstInt(SmolStr, i64),
 }
 
@@ -199,6 +213,7 @@ impl Ty {
             Ty::String
                 | Ty::Bytes
                 | Ty::List(_)
+                | Ty::Slice(_)
                 | Ty::Map(_, _)
                 | Ty::Set(_)
                 | Ty::Range(_)
@@ -244,6 +259,7 @@ impl Ty {
             Ty::Infer(_) => true,
             Ty::Optional(t)
             | Ty::List(t)
+            | Ty::Slice(t)
             | Ty::Set(t)
             | Ty::Range(t)
             | Ty::Lazy(t)
@@ -253,6 +269,7 @@ impl Ty {
             | Ty::Channel(t) => t.contains_infer(),
             Ty::Any(_) => false,
             Ty::Result(a, b) | Ty::Map(a, b) => a.contains_infer() || b.contains_infer(),
+            Ty::Array(elem, size) => elem.contains_infer() || size.contains_infer(),
             Ty::Opaque { args, .. } => args.iter().any(|arg| arg.contains_infer()),
             Ty::Tuple(ts) => ts.iter().any(|t| t.contains_infer()),
             Ty::Func { params, ret } => {
@@ -306,6 +323,7 @@ impl Ty {
                 a_ok.is_assignable_to(b_ok) && a_err.is_assignable_to(b_err)
             }
             (List(a), List(b))
+            | (Slice(a), Slice(b))
             | (Set(a), Set(b))
             | (Range(a), Range(b))
             | (Lazy(a), Lazy(b))
@@ -376,6 +394,18 @@ impl Ty {
     /// wherever a def map is in reach.
     pub fn display_in(&self, def_map: &DefMap) -> std::string::String {
         match self {
+            // An *applied* type parameter (`F[A]`) is encoded as a sentinel id
+            // that carries no name, so there is nothing to look up. Printing the
+            // raw id here is what produced `<def DefId(1073741824)>`. This shape
+            // only arises from higher-kinded syntax, which is out of scope.
+            Ty::Named(id, args) if (id.0 & 0x4000_0000) != 0 => {
+                let inner = args
+                    .iter()
+                    .map(|a| a.display_in(def_map))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("<type parameter>[{inner}]")
+            }
             Ty::Named(id, args) => {
                 let name = def_map.get(*id).name.clone();
                 let name = if name.is_empty() {
@@ -401,8 +431,128 @@ impl Ty {
                 err.display_in(def_map)
             ),
             Ty::List(inner) => format!("list[{}]", inner.display_in(def_map)),
+            Ty::Slice(inner) => format!("slice[{}]", inner.display_in(def_map)),
+            Ty::Array(elem, size) => match &**size {
+                Ty::ConstInt(_, n) => format!("array[{}, size: {}]", elem.display_in(def_map), n),
+                other => format!(
+                    "array[{}, size: {}]",
+                    elem.display_in(def_map),
+                    other.display_in(def_map)
+                ),
+            },
             Ty::Set(inner) => format!("set[{}]", inner.display_in(def_map)),
             Ty::Map(k, v) => format!("map[{}, {}]", k.display_in(def_map), v.display_in(def_map)),
+            Ty::Range(inner) => format!("range[{}]", inner.display_in(def_map)),
+            Ty::Lazy(inner) => format!("lazy[{}]", inner.display_in(def_map)),
+            Ty::Handle(inner) => format!("handle[{}]", inner.display_in(def_map)),
+            Ty::Future(inner) => format!("future[{}]", inner.display_in(def_map)),
+            Ty::TaskJob(inner) => format!("task.Job[{}]", inner.display_in(def_map)),
+            Ty::Channel(inner) => format!("channel.Channel[{}]", inner.display_in(def_map)),
+            Ty::Tuple(items) => {
+                let inner = items
+                    .iter()
+                    .map(|t| t.display_in(def_map))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("tuple[{}]", inner)
+            }
+            Ty::Func { params, ret } => {
+                let ps = params
+                    .iter()
+                    .map(|p| p.display_in(def_map))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("func({}) -> {}", ps, ret.display_in(def_map))
+            }
+            Ty::Opaque { kind, args } if !args.is_empty() => {
+                let args = args
+                    .iter()
+                    .map(|arg| arg.display_in(def_map))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}[{}]", kind.display_name(), args)
+            }
+            // Remaining variants carry no nested type, so `display` is exact.
+            _ => self.display(),
+        }
+    }
+
+    /// Human-readable display name backed by a code-generation name table.
+    ///
+    /// Backends intentionally do not retain the resolver's full [`DefMap`].
+    /// Their compact name table is sufficient to keep internal `DefId` values
+    /// out of diagnostics while preserving declared names in nested types.
+    pub fn display_with_names(&self, names: &HashMap<DefId, SmolStr>) -> std::string::String {
+        match self {
+            Ty::Named(id, args) => {
+                let Some(name) = names.get(id) else {
+                    return self.display();
+                };
+                if args.is_empty() {
+                    name.to_string()
+                } else {
+                    let inner = args
+                        .iter()
+                        .map(|arg| arg.display_with_names(names))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{name}[{inner}]")
+                }
+            }
+            Ty::Optional(inner) => format!("optional[{}]", inner.display_with_names(names)),
+            Ty::Result(ok, err) => format!(
+                "result[{}, {}]",
+                ok.display_with_names(names),
+                err.display_with_names(names)
+            ),
+            Ty::List(inner) => format!("list[{}]", inner.display_with_names(names)),
+            Ty::Slice(inner) => format!("slice[{}]", inner.display_with_names(names)),
+            Ty::Array(elem, size) => match &**size {
+                Ty::ConstInt(_, value) => {
+                    format!("array[{}, size: {value}]", elem.display_with_names(names))
+                }
+                other => format!(
+                    "array[{}, size: {}]",
+                    elem.display_with_names(names),
+                    other.display_with_names(names)
+                ),
+            },
+            Ty::Set(inner) => format!("set[{}]", inner.display_with_names(names)),
+            Ty::Map(key, value) => format!(
+                "map[{}, {}]",
+                key.display_with_names(names),
+                value.display_with_names(names)
+            ),
+            Ty::Range(inner) => format!("range[{}]", inner.display_with_names(names)),
+            Ty::Lazy(inner) => format!("lazy[{}]", inner.display_with_names(names)),
+            Ty::Handle(inner) => format!("handle[{}]", inner.display_with_names(names)),
+            Ty::Future(inner) => format!("future[{}]", inner.display_with_names(names)),
+            Ty::TaskJob(inner) => format!("task.Job[{}]", inner.display_with_names(names)),
+            Ty::Channel(inner) => format!("channel.Channel[{}]", inner.display_with_names(names)),
+            Ty::Tuple(items) => {
+                let inner = items
+                    .iter()
+                    .map(|item| item.display_with_names(names))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("tuple[{inner}]")
+            }
+            Ty::Func { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|param| param.display_with_names(names))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("func({params}) -> {}", ret.display_with_names(names))
+            }
+            Ty::Opaque { kind, args } if !args.is_empty() => {
+                let args = args
+                    .iter()
+                    .map(|arg| arg.display_with_names(names))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}[{args}]", kind.display_name())
+            }
             _ => self.display(),
         }
     }
@@ -430,6 +580,11 @@ impl Ty {
             Ty::Optional(t) => format!("optional[{}]", t.display()),
             Ty::Result(ok, err) => format!("result[{}, {}]", ok.display(), err.display()),
             Ty::List(t) => format!("list[{}]", t.display()),
+            Ty::Slice(t) => format!("slice[{}]", t.display()),
+            Ty::Array(elem, size) => match &**size {
+                Ty::ConstInt(_, n) => format!("array[{}, size: {}]", elem.display(), n),
+                other => format!("array[{}, size: {}]", elem.display(), other.display()),
+            },
             Ty::Map(k, v) => format!("map[{}, {}]", k.display(), v.display()),
             Ty::Set(t) => format!("set[{}]", t.display()),
             Ty::Range(t) => format!("range[{}]", t.display()),
@@ -524,6 +679,13 @@ pub fn substitute_ty_params(ty: &Ty, args: &[Ty]) -> Ty {
             Box::new(substitute_ty_params(err, args)),
         ),
         Ty::List(elem) => Ty::List(Box::new(substitute_ty_params(elem, args))),
+        Ty::Slice(elem) => Ty::Slice(Box::new(substitute_ty_params(elem, args))),
+        // Substituting the length is the point: `array[byte, size: cap]` becomes
+        // `array[byte, size: 8]` once `cap` is bound.
+        Ty::Array(elem, size) => Ty::Array(
+            Box::new(substitute_ty_params(elem, args)),
+            Box::new(substitute_ty_params(size, args)),
+        ),
         Ty::Map(k, v) => Ty::Map(
             Box::new(substitute_ty_params(k, args)),
             Box::new(substitute_ty_params(v, args)),
@@ -686,4 +848,107 @@ pub fn erase_newtypes(
             None
         }
     })
+}
+
+/// Replace a trait's `Self` stand-in with the implementing type.
+///
+/// A trait signature carries `Self` as `Named(trait_def_id, [])`. Both the
+/// checker (call sites and impl validation) and HIR lowering need to bind it,
+/// which is why this lives here rather than inside the checker.
+pub fn substitute_trait_self(ty: &Ty, trait_def_id: DefId, self_ty: &Ty) -> Ty {
+    match ty {
+        Ty::Named(id, args) if *id == trait_def_id && args.is_empty() => self_ty.clone(),
+        Ty::Named(id, args) => Ty::Named(
+            *id,
+            args.iter()
+                .map(|arg| substitute_trait_self(arg, trait_def_id, self_ty))
+                .collect(),
+        ),
+        Ty::Optional(inner) => Ty::Optional(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Result(ok, err) => Ty::Result(
+            Box::new(substitute_trait_self(ok, trait_def_id, self_ty)),
+            Box::new(substitute_trait_self(err, trait_def_id, self_ty)),
+        ),
+        Ty::List(inner) => Ty::List(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Map(key, value) => Ty::Map(
+            Box::new(substitute_trait_self(key, trait_def_id, self_ty)),
+            Box::new(substitute_trait_self(value, trait_def_id, self_ty)),
+        ),
+        Ty::Set(inner) => Ty::Set(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Range(inner) => Ty::Range(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Lazy(inner) => Ty::Lazy(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Future(inner) => Ty::Future(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::TaskJob(inner) => Ty::TaskJob(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Channel(inner) => Ty::Channel(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Opaque { kind, args } => Ty::Opaque {
+            kind: *kind,
+            args: args
+                .iter()
+                .map(|arg| substitute_trait_self(arg, trait_def_id, self_ty))
+                .collect(),
+        },
+        Ty::Tuple(items) => Ty::Tuple(
+            items
+                .iter()
+                .map(|item| substitute_trait_self(item, trait_def_id, self_ty))
+                .collect(),
+        ),
+        Ty::Func { params, ret } => Ty::Func {
+            params: params
+                .iter()
+                .map(|param| substitute_trait_self(param, trait_def_id, self_ty))
+                .collect(),
+            ret: Box::new(substitute_trait_self(ret, trait_def_id, self_ty)),
+        },
+        _ => ty.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DefId, HashMap, SmolStr, Ty};
+
+    #[test]
+    fn codegen_type_display_uses_declared_names_recursively() {
+        let user_id = DefId(7);
+        let names = HashMap::from([(user_id, SmolStr::new("User"))]);
+        let ty = Ty::Result(
+            Box::new(Ty::List(Box::new(Ty::Named(user_id, Vec::new())))),
+            Box::new(Ty::String),
+        );
+
+        assert_eq!(ty.display_with_names(&names), "result[list[User], string]");
+    }
 }

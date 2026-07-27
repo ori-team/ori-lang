@@ -9,7 +9,7 @@ example-name/
   *.orl         # optional sibling modules (see multi_module)
 ```
 
-**Surface:** S3 + inference B · **`ok`/`err`** · imports `ori.X` (not `ori.X.utils`).
+**Surface:** S3 + inference B · **`ok`/`err`** · `match` expressions · struct destructuring · imports `ori.X` (not `ori.X.utils`).
 
 ## Run
 
@@ -43,8 +43,8 @@ Suggested order for newcomers:
 | Step | Example | What you learn |
 |------|---------|----------------|
 | 1 | [`hello/`](hello/) | Minimal app, `ori run` |
-| 2 | [`language_features/`](language_features/) | Structs, enums, traits, generics, match, pipe, `check` |
-| 3 | [`error_handling/`](error_handling/) | `result` / `ok` / `err` |
+| 2 | [`language_features/`](language_features/) | Structs, enums, traits, generics, newtypes, destructuring, match-expressions, pipe, `check` |
+| 3 | [`error_handling/`](error_handling/) | `result`, `try`, `ok`/`err`, and match |
 | 4 | [`tests_demo/`](tests_demo/) | `@test` + `ori.test` (`ori test`) |
 | 5 | [`cli_args/`](cli_args/) | `ori.args` |
 | 6 | [`string_toolkit/`](string_toolkit/) · [`bytes_usage/`](bytes_usage/) | Text and bytes |
@@ -60,8 +60,9 @@ Suggested order for newcomers:
 | 16 | [`http_get/`](http_get/) | `ori.net.http` + TLS |
 | 17 | [`multi_module/`](multi_module/) | Local modules (`import app.greeter`) |
 | 18 | [`native_showcase/`](native_showcase/) | Traits, `any[T]`, generics, `using`, `Displayable` |
+| 19 | [`linux_log_report/`](linux_log_report/) | Medium Linux log report with modules, filesystem I/O, and tests |
 
-## Catalog (all 21)
+## Catalog (all 22 mini-projects)
 
 | Example | Topic |
 |---------|--------|
@@ -85,7 +86,14 @@ Suggested order for newcomers:
 | [`random_format_iter/`](random_format_iter/) | Random / format / iter |
 | [`http_get/`](http_get/) | HTTP GET + TLS |
 | [`multi_module/`](multi_module/) | Multi-file project (`greeter.orl`) |
-| [`native_showcase/`](native_showcase/) | Traits, generics, enums, dispose |
+| [`native_showcase/`](native_showcase/) | Traits, generics, nominal IDs, enums, dispose |
+| [`linux_log_report/`](linux_log_report/) | Medium Linux log report (multi-module + filesystem I/O) |
+
+### Standalone probe
+
+[`test_generics.orl`](test_generics.orl) is a focused compiler probe for const-generic
+type declarations. It intentionally does not construct a `Matrix[N]` value until
+that constructor path is supported by the backend.
 
 ## Policy
 

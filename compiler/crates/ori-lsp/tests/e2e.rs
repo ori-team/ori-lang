@@ -184,7 +184,7 @@ fn e2e_lsp_session_covers_8_scenarios() {
     let root_uri = uri_for(&dir, "");
 
     let source = "module app.main\n\
-import ori.io as io\n\
+import ori.io = io\n\
 main()\n\
     io.print(string(42))\n\
 end\n";
@@ -371,7 +371,7 @@ fn e2e_lsp_returns_document_symbols() {
     let doc_uri = uri_for(&dir, "e2e_sym.orl");
     let root_uri = uri_for(&dir, "");
     let source = "module app.main\n\
-import ori.io as io\n\
+import ori.io = io\n\
 greet(name: string) -> string\n\
     return \"hi \" + name\n\
 end\n\
@@ -430,8 +430,8 @@ fn e2e_lsp_formatting_is_idempotent() {
     let root_uri = uri_for(&dir, "");
     // Unformatted: body statements at column 0 instead of indented.
     let unformatted = "module app.main\n\
-import ori.io as io\n\
-import ori.task as task\n\
+import ori.io = io\n\
+import ori.task = task\n\
 \n\
 async work(n: int) -> int\n\
 await task.sleep(1)\n\
@@ -518,7 +518,7 @@ fn e2e_lsp_formatting_emits_edits_for_unformatted() {
     let root_uri = uri_for(&dir, "");
     // Unformatted: body statements at column 0 instead of indented.
     let unformatted = "module app.main\n\
-import ori.io as io\n\
+import ori.io = io\n\
 \n\
 main()\n\
 io.print(string(42))\n\
@@ -558,12 +558,12 @@ end\n";
     );
 }
 
-/// Resolve the `ori-lsp` binary path. Cargo sets `CARGO_BIN_EXE_ori_lsp` at
-/// runtime for integration tests; if absent (older Cargo or unusual setup),
-/// fall back to the workspace `target/debug` dir relative to this crate.
+/// Resolve the `ori-lsp` binary path. Cargo exposes the freshly built binary
+/// to integration tests at compile time. The target name keeps its hyphen in
+/// the environment key (`CARGO_BIN_EXE_ori-lsp`).
 fn lsp_exe() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_ori_lsp") {
-        return std::path::PathBuf::from(p);
+    if let Some(path) = option_env!("CARGO_BIN_EXE_ori-lsp") {
+        return std::path::PathBuf::from(path);
     }
     let manifest = env!("CARGO_MANIFEST_DIR");
     let exe_name = if cfg!(windows) {
@@ -572,7 +572,7 @@ fn lsp_exe() -> std::path::PathBuf {
         "ori-lsp"
     };
     std::path::Path::new(manifest)
-        .join("../../../target/debug")
+        .join("../../target/debug")
         .join(exe_name)
 }
 
@@ -737,7 +737,7 @@ fn e2e_lsp_cross_file_goto_definition() {
         "crossdef_lib.orl",
         "module app.crossdef_lib\nstruct Point\n    x: int\n    y: int\nend\n",
     );
-    let main_src = "module app.crossdef_main\nimport app.crossdef_lib as lib\nmain()\n    var p: lib.Point = Point { x: 1, y: 2 }\nend\n";
+    let main_src = "module app.crossdef_main\nimport app.crossdef_lib = lib\nmain()\n    var p: lib.Point = Point { x: 1, y: 2 }\nend\n";
     let main_uri = uri_for(&dir, "crossdef_main.orl");
     let lib_uri = uri_for(&dir, "crossdef_lib.orl");
 
@@ -876,7 +876,7 @@ fn e2e_lsp_cross_file_find_references() {
         "findref_lib.orl",
         "module app.findref_lib\nstruct Point\n    x: int\n    y: int\nend\n",
     );
-    let main_src = "module app.findref_main\nimport app.findref_lib as lib\nmain()\n    var p: lib.Point = Point { x: 1, y: 2 }\nend\n";
+    let main_src = "module app.findref_main\nimport app.findref_lib = lib\nmain()\n    var p: lib.Point = Point { x: 1, y: 2 }\nend\n";
     let main_uri = uri_for(&dir, "findref_main.orl");
 
     let mut lsp = LspClient::new().expect("spawn ori-lsp");
@@ -946,7 +946,7 @@ fn e2e_lsp_stdlib_layer2_hover() {
     let dir = tempfile_dir();
     let root_uri = uri_for(&dir, "");
     let src =
-        "module app.main\nimport ori.string as su\nmain() -> void\n    su.is_empty(\"x\")\nend\n";
+        "module app.main\nimport ori.string = su\nmain() -> void\n    su.is_empty(\"x\")\nend\n";
     let main_uri = uri_for(&dir, "stdlib_hover.orl");
 
     let mut lsp = LspClient::new().expect("spawn ori-lsp");
@@ -999,7 +999,7 @@ fn e2e_lsp_stdlib_layer2_hover() {
 fn e2e_lsp_incremental_edit_completion() {
     let dir = tempfile_dir();
     let root_uri = uri_for(&dir, "");
-    let initial = "module app.main\nimport ori.io as io\nmain() -> void\n    io.\nend\n";
+    let initial = "module app.main\nimport ori.io = io\nmain() -> void\n    io.\nend\n";
     let main_uri = uri_for(&dir, "incr.orl");
 
     let mut lsp = LspClient::new().expect("spawn ori-lsp");

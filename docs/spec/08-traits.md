@@ -20,11 +20,11 @@ Traits are Ori's mechanism for polymorphism. There is no class inheritance.
 
 ```ori
 trait Drawable
-    draw(canvas: Canvas)
+    draw(self, canvas: Canvas)
 end
 
 trait Serializable
-    serialize() -> bytes
+    serialize(self) -> bytes
     deserialize(raw: bytes) -> result[Self, string]
 end
 ```
@@ -63,11 +63,11 @@ the trait:
 
 ```ori
 trait Cloneable
-    clone() -> Self
+    clone(self) -> Self
 end
 
 trait Equatable
-    equals(other: Self) -> bool
+    equals(self, other: Self) -> bool
 end
 ```
 
@@ -146,12 +146,12 @@ end
 Compile-time method provision via a free function (not a runtime assignment):
 
 ```ori
-comparePoints(a: Point, b: Point) -> int
+compare_points(a: Point, b: Point) -> int
     return a.x - b.x
 end
 
 apply Point use Comparable
-    compare = comparePoints
+    compare = compare_points
 end
 ```
 
@@ -159,6 +159,60 @@ end
 
 `apply Type` may contain only free methods/binds (no `use`). Those methods are
 available as inherent methods on the type.
+
+### Associated functions (no `self`)
+
+**An explicit `self` parameter is what makes a method an instance method.**
+A method declared without `self` — in an `apply` block or in a trait — is an
+*associated function*: it has no receiver and is called through the type name:
+
+```ori
+apply User use core.Default
+    default() -> User
+        return User { name: "?", age: 0 }
+    end
+end
+
+apply User
+    make_empty() -> User          -- inherent associated function
+        return User { name: "", age: 0 }
+    end
+end
+
+const a: User = User.default()
+const b: User = User.make_empty()
+```
+
+Associated trait functions also use static dispatch through a constrained type
+parameter:
+
+```ori
+make_default for T: core.Default (prototype: T) -> T
+    return T.default()
+end
+```
+
+The parameter is monomorphized at the call site; no runtime receiver or vtable
+is involved.
+
+If more than one bound on the same type parameter declares `default`, the call
+`T.default()` is ambiguous and is rejected with `type.ambiguous_method`. Keep
+only one bound that provides that associated function, or give the functions
+distinct names.
+
+Rules:
+
+- `self` inside an associated function is `bind.self_outside_method`.
+- Calling one on a value (`u.default()`) is `type.assoc_fn_instance_call` —
+  there is no receiver to pass.
+- Associated trait functions are excluded from `any[Trait]` dispatch: dynamic
+  dispatch needs a receiver's vtable.
+- Bind slots (`compare = compare_points`) are unchanged: the bound free
+  function receives the value as its first argument.
+
+There is no implicit `self`: a body that uses `self` without declaring it does
+not compile. (Earlier drafts tolerated `greet()` reading `self.name`; that
+leniency was removed when associated functions landed.)
 
 ### Rules
 
@@ -177,37 +231,78 @@ available as inherent methods on the type.
 ## `mut` in Traits and Apply
 
 ```ori
-trait Stackable[T]
-    mut push(self, item: T)
-    mut pop(self) -> optional[T]
-    peek(self) -> optional[T]
+trait Counter
+    mut increment(self, by: int)
+    mut reset(self)
+    total(self) -> int
 end
 
-apply IntStack
-    use Stackable[int]
-        mut push(self, item: int)
-            self.items.push(item)
-        end
+struct Tally
+    count: int
+end
 
-        mut pop(self) -> optional[int]
-            return self.items.pop()
-        end
+apply Tally use Counter
+    mut increment(self, by: int)
+        self.count = self.count + by
+    end
 
-        peek(self) -> optional[int]
-            return self.items.last()
-        end
+    mut reset(self)
+        self.count = 0
+    end
+
+    total(self) -> int
+        return self.count
     end
 end
 ```
 
-`mut` on a trait method requires the applied method to also be `mut`.
+`mut` on a trait method requires the applied method to also be `mut`. A method
+without `mut` cannot assign to a field of `self`.
+
+Note that collections have **no methods**: `list`, `map`, and `set` are
+manipulated through their modules (`lists.push(items, v)`), not
+`items.push(v)`. See chapter 12.
 
 ---
 
 ## Generic Traits
 
-Traits may be generic over a type parameter (`Trait[T]`). Bounds use
-`for T: Trait` on generic methods (see chapter 11).
+A trait may be generic over a type parameter, and an `apply` binds that
+parameter positionally:
+
+```ori
+trait Container[Item]
+    first(self) -> Item
+end
+
+apply IntBox use Container[int]
+    first(self) -> int
+        return self.v
+    end
+end
+
+apply TextBox use Container[string]
+    first(self) -> string
+        return self.s
+    end
+end
+```
+
+The same trait can therefore be implemented at several types in one program.
+
+Rules:
+
+- The arguments are **required**: `use Container` on a generic trait reports
+  `impl.trait_args_missing`, because the parameter would stay unbound and no
+  implementation could match.
+- The count must match the declaration — otherwise
+  `impl.trait_arg_count_mismatch`.
+- The implementation's signature is checked against the **bound** trait
+  signature: `use Container[string]` with `first(self) -> int` is
+  `impl.wrong_signature`.
+
+Bounds on generic *functions* (`for T: Trait`) are a separate mechanism — see
+chapter 11.
 
 ---
 

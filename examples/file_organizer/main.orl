@@ -13,17 +13,12 @@ struct PlannedMove
 end
 
 folder_for(file_path: string) -> string
-    const ext: string = path.extension(file_path)
-    if ext == "jpg" or ext == "png"
-        return "images"
+    return match path.extension(file_path)
+        case "jpg" or "png": "images"
+        case "md" or "txt": "text"
+        case "json": "data"
+        case else: "other"
     end
-    if ext == "md" or ext == "txt"
-        return "text"
-    end
-    if ext == "json"
-        return "data"
-    end
-    return "other"
 end
 
 destination_for(file_path: string, output_root: string) -> string
@@ -31,7 +26,7 @@ destination_for(file_path: string, output_root: string) -> string
 end
 
 plan_moves(files: list[string], output_root: string) -> list[PlannedMove]
-    var moves: list[PlannedMove] = []
+    var moves: list[PlannedMove] = lists.with_capacity(lists.len(files))
     for file_path in files
         lists.push(moves, PlannedMove {
             from: file_path,
@@ -48,10 +43,11 @@ main()
         "downloads/settings.json",
         "downloads/archive.zip",
     ]
-    const moves: list[PlannedMove] = plan_moves(files, "organized")
+    const moves = plan_moves(files, "organized")
 
     log.info("planned file moves")
     for planned in moves
-        io.print(planned.from + " -> " + planned.to)
+        const { from, to } = planned
+        io.println(from + " -> " + to)
     end
 end
