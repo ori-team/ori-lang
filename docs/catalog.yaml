@@ -427,10 +427,10 @@ canonical_documents:
     audience: [contributor, maintainer, agent]
     owns: [planning-policy, execplan-policy, archive-rules]
 
-  - id: plans.backlog-transitional
+  - id: plans.backlog
     path: docs/planning/BACKLOG.md
     domain: planning
-    status: transitional
+    status: current
     audience: [contributor, maintainer, agent]
     owns: [open-work-list]
 
@@ -468,6 +468,14 @@ canonical_documents:
     status: current
     audience: [contributor, maintainer, agent]
     owns: [archive-policy, historical-migration-routing]
+
+
+  - id: archive.migration-report
+    path: docs/archive/MIGRATION_REPORT.md
+    domain: archive
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [historical-migration-report, archive-move-map]
 
 normative_roots:
   - path: docs/spec
