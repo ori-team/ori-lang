@@ -35,7 +35,15 @@ O mapa canônico da documentação é o [`ATLAS.md`](ATLAS.md). Ele conecta docu
 - `operations/` — desenvolvimento e releases;
 - `language/` e `guides/` — documentação de uso;
 - `book/` — livro em português;
-- `archive/` — evidência histórica, não instrução atual.
+- `archive/` — evidência histórica categorizada, não instrução atual.
+
+A migração histórica foi concluída:
+
+- `docs/planning/BACKLOG.md` é a lista canônica de trabalho aberto;
+- decisões aceitas estão em `docs/decisions/adr/`;
+- planos concluídos, auditorias, investigações e sessões estão categorizados em `docs/archive/`;
+- o antigo diretório `docs/planning/historico/` foi removido;
+- o mapa completo dos movimentos está em [`archive/MIGRATION_REPORT.md`](archive/MIGRATION_REPORT.md).
 
 ## Regras canônicas
 
