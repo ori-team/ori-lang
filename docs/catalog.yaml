@@ -479,8 +479,6 @@ normative_roots:
 
 historical_roots:
   - path: docs/archive
-  - path: docs/planning/historico
-    migration_target: docs/archive
 
 validation_expectations:
   unique_canonical_owner: true

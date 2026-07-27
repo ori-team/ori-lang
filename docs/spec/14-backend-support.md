@@ -1,7 +1,7 @@
 # Backend support matrix
 
 Status: current as of 2026-07-23 (FREEZE-1 / 0.3.x).
-Residual cleanup: [`../planning/qa/residual-cleanup-2026-07-13.md`](../planning/qa/residual-cleanup-2026-07-13.md) · audit `tools/qa/residual_audit.sh`.
+Residual cleanup: [`../planning/qa/residual-cleanup-2026-07-13.md`](../archive/audits/residual-cleanup-2026-07-13.md) · audit `tools/qa/residual_audit.sh`.
 
 This page separates three things:
 
@@ -198,5 +198,5 @@ language decision explicitly promotes C to a product backend.
 - **LANG-RES (2026-07-13):** closed for product surface — no known
   product-blocking native residual. Gate test:
   `compile_runs_lang_res_product_surface_native`. Closure write-up:
-  `docs/planning/historico/lang-res-closure.md`. Reopen only with a concrete blocker
+  `docs/archive/audits/lang-res-closure.md`. Reopen only with a concrete blocker
   program (valid language surface + `backend.native_unsupported`).

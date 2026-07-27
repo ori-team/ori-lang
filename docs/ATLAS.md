@@ -198,7 +198,7 @@ archive/
 └── legacy/
 ```
 
-`planning/historico/` remains a transitional historical root. Migration must categorize files, update links, and avoid duplicate full copies.
+The former `planning/historico/` root has been removed. Historical files now live only in the categorized archive directories. See [`archive/MIGRATION_REPORT.md`](archive/MIGRATION_REPORT.md).
 
 ## Templates and machine context
 

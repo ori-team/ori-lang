@@ -69,7 +69,7 @@ runtime_shutdown();
 sh tools/qa/embed_smoke.sh
 ```
 
-## Phases (see `docs/planning/PLANO-CDYLIB-EMBED.md`)
+## Phases (see `docs/archive/plans/PLANO-CDYLIB-EMBED.md`)
 
 | Phase | Status |
 |-------|--------|

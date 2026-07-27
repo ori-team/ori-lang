@@ -13,7 +13,7 @@ docs/archive/
   legacy/            obsolete product identities, retired syntax, and superseded structures
 ```
 
-Existing files directly under `docs/archive/` and `docs/planning/historico/` should migrate gradually into these categories.
+Historical files are organized into these categories. The completed migration is recorded in [`MIGRATION_REPORT.md`](MIGRATION_REPORT.md).
 
 ## Archive header
 
@@ -35,9 +35,9 @@ Archived files should begin with a notice containing:
 - Moving a file requires updating inbound links.
 - Do not keep duplicate full copies in both active and archived locations.
 
-## Migration from `docs/planning/historico/`
+## Completed migration from `docs/planning/historico/`
 
-Classify each file by purpose, not only by its original directory:
+The migration classified each file by purpose, not only by its original directory:
 
 - PR plans and maturity plans → `archive/plans/`;
 - bugcheck, benchmark, or research notes → `archive/investigations/`;
@@ -45,7 +45,7 @@ Classify each file by purpose, not only by its original directory:
 - machine-switch/resume notes → `archive/sessions/`;
 - retired product/syntax material → `archive/legacy/`.
 
-The migration should be performed in focused batches with link validation rather than one unreviewable mass move.
+The migration was completed with an explicit inventory, link rewriting, category indexes, and permanent CI validation.
 
 ## Finding current information
 

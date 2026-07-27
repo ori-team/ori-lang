@@ -184,6 +184,17 @@ def main() -> int:
     if ATLAS.is_file() and "catalog.yaml" not in ATLAS.read_text(encoding="utf-8"):
         fail(errors, "ATLAS does not route to docs/catalog.yaml")
 
+    retired_history_root = ROOT / "docs/planning/historico"
+    if retired_history_root.exists() and any(retired_history_root.rglob("*.md")):
+        fail(errors, "retired historical root contains Markdown files: docs/planning/historico")
+
+    loose_archive = ROOT / "docs/archive"
+    allowed_loose = {"README.md", "MIGRATION_REPORT.md"}
+    if loose_archive.exists():
+        for archive_file in loose_archive.glob("*.md"):
+            if archive_file.name not in allowed_loose:
+                fail(errors, f"uncategorized archive document: {archive_file.relative_to(ROOT)}")
+
     check_identity(errors)
     check_markdown_links(errors, paths)
 

@@ -31,8 +31,6 @@ Planning policy: [`../plans/README.md`](../plans/README.md).
 
 | ID | Outcome | P | Size | Status | Completion evidence |
 |---|---|---:|:---:|---|---|
-| **DOC-FRAMEWORK-1** | Establish `PROJECT_START.md`, short `AGENTS.md`, canonical ATLAS/catalog, domain documentation, templates, archive policy, and documentation CI | P1 | L | in_progress | Framework PR merged; validator green; root and normative entry docs use 0.3.8; retired identity absent |
-| **DOC-MIGRATE-1** | Categorize remaining `docs/planning/historico/` and loose `docs/archive/` files without breaking inbound links | P2 | L | todo | Files classified into plans/audits/investigations/sessions/legacy; compatibility pointers or updated links; docs validator green |
 | **DOC-CONFORMANCE-1** | Build a machine-readable specification-to-test conformance registry | P2 | L | todo | Stable rule IDs, chapter coverage report, positive/negative/backend/tooling mappings, CI drift check |
 | **DOC-METADATA-1** | Apply canonical metadata to maintained domain documents and validate owners/status/related code/evidence | P2 | M | todo | Metadata checker; no duplicate canonical ownership; paths/evidence resolve |
 | **COMP-RUNTIME-MOD-1** | Incrementally split the runtime monolith into ABI/ARC/value/collection/I/O/network/async domain modules | P1 | L | todo | Characterization tests first; exported symbols/layouts unchanged; AOT/JIT/runtime/package gates and performance baselines green |

@@ -29,7 +29,7 @@ Do not create a second backlog or treat completed plans as current work.
 
 - [`BACKLOG.md`](BACKLOG.md) — current open-work list during migration.
 - [`PENDENTES.md`](PENDENTES.md) — retired compatibility pointer; not a backlog.
-- `historico/` — historical tree pending categorized migration into `docs/archive/`.
+- The former `historico/` tree has been migrated into categorized directories under `docs/archive/`.
 - ADR files in this directory — pending migration into `docs/decisions/adr/`.
 
 ## Rules

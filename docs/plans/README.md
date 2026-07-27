@@ -76,7 +76,7 @@ Completed and cancelled plans move to `docs/archive/plans/` with their final sta
 
 ## Historical migration
 
-The existing `docs/planning/historico/` tree should migrate into `docs/archive/` by category:
+The former `docs/planning/historico/` tree was migrated into `docs/archive/` by category:
 
 - completed plans → `archive/plans/`;
 - investigations and bug checks → `archive/investigations/`;
