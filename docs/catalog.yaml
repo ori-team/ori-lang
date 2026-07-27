@@ -12,11 +12,27 @@ status_values:
   - draft
   - proposed
   - accepted
+  - rejected
   - deprecated
   - superseded
   - archived
+  - transitional
 
 canonical_documents:
+  - id: project.readme
+    path: README.md
+    domain: product
+    status: current
+    audience: [user, contributor]
+    owns: [public-project-entry]
+
+  - id: project.readme-pt
+    path: README.pt-BR.md
+    domain: product
+    status: current
+    audience: [user]
+    owns: [public-project-entry-pt]
+
   - id: project.start
     path: PROJECT_START.md
     domain: project
@@ -30,6 +46,34 @@ canonical_documents:
     status: current
     audience: [contributor, maintainer, agent]
     owns: [operational-rules, validation-gates, pr-policy]
+
+  - id: project.contributing
+    path: CONTRIBUTING.md
+    domain: project
+    status: current
+    audience: [contributor]
+    owns: [contribution-workflow]
+
+  - id: project.security-public
+    path: SECURITY.md
+    domain: security
+    status: current
+    audience: [user, security-researcher, maintainer]
+    owns: [vulnerability-reporting]
+
+  - id: docs.index
+    path: docs/README.md
+    domain: documentation
+    status: current
+    audience: [user, contributor, maintainer, agent]
+    owns: [documentation-domain-entry]
+
+  - id: docs.index-pt
+    path: docs/README.pt-BR.md
+    domain: documentation
+    status: current
+    audience: [user, contributor]
+    owns: [documentation-domain-entry-pt]
 
   - id: docs.atlas
     path: docs/ATLAS.md
@@ -50,10 +94,8 @@ canonical_documents:
     domain: product
     status: current
     audience: [user, contributor, maintainer]
-    owns: [current-version, maturity, supported-paths, current-limitations]
-    verified_by:
-      - compiler/Cargo.toml
-      - CHANGELOG.md
+    owns: [current-version, maturity, priorities, current-limitations]
+    verified_by: [compiler/Cargo.toml, CHANGELOG.md]
 
   - id: product.versioning
     path: docs/product/versioning.md
@@ -61,6 +103,14 @@ canonical_documents:
     status: current
     audience: [maintainer, contributor]
     owns: [version-model, compatibility-classes, release-number-policy]
+
+  - id: product.support-matrix
+    path: docs/product/support-matrix.md
+    domain: product
+    status: current
+    audience: [user, contributor, release-manager]
+    owns: [backend-support-levels, target-support, tooling-support]
+    verified_by: [.github/workflows, runtime, tools]
 
   - id: product.accessibility
     path: docs/product/accessibility-principles.md
@@ -82,10 +132,15 @@ canonical_documents:
     status: current
     audience: [contributor, maintainer, agent]
     owns: [system-boundaries, component-map]
-    related_code:
-      - compiler/crates
-      - stdlib
-      - runtime
+    related_code: [compiler/crates, stdlib, runtime]
+
+  - id: architecture.crate-map
+    path: docs/architecture/crate-map.md
+    domain: architecture
+    status: current
+    audience: [compiler-contributor, maintainer, agent]
+    owns: [crate-responsibilities, dependency-direction]
+    related_code: [compiler/Cargo.toml, compiler/crates]
 
   - id: architecture.pipeline
     path: docs/architecture/compiler-pipeline.md
@@ -114,9 +169,7 @@ canonical_documents:
     status: current
     audience: [runtime-contributor, maintainer, security-reviewer]
     owns: [runtime-boundaries, arc-model, cycle-collection, ffi-memory-contract]
-    related_code:
-      - compiler/crates/ori-runtime
-      - compiler/crates/ori-codegen
+    related_code: [compiler/crates/ori-runtime, compiler/crates/ori-codegen]
     verified_by:
       - compiler/crates/ori-driver/tests/memory_arc.rs
       - compiler/crates/ori-runtime/src/tests.rs
@@ -127,9 +180,7 @@ canonical_documents:
     status: current
     audience: [stdlib-contributor, compiler-contributor, maintainer]
     owns: [stdlib-layers, manifest-flow, source-discovery]
-    related_code:
-      - compiler/crates/ori-types/src/stdlib.rs
-      - stdlib
+    related_code: [compiler/crates/ori-types/src/stdlib.rs, stdlib]
 
   - id: architecture.repository-layout
     path: docs/architecture/repository-and-project-layout.md
@@ -137,10 +188,35 @@ canonical_documents:
     status: current
     audience: [contributor, maintainer, agent]
     owns: [repository-layout, user-project-layout, generated-content-policy]
-    related_code:
-      - compiler/Cargo.toml
-      - compiler/crates/ori-driver
-      - tools
+    related_code: [compiler/Cargo.toml, compiler/crates/ori-driver, tools]
+
+  - id: specification.index
+    path: docs/spec/README.md
+    domain: specification
+    status: current
+    audience: [language-designer, compiler-contributor, maintainer]
+    owns: [normative-specification-routing]
+
+  - id: specification.overview
+    path: docs/spec/01-overview.md
+    domain: specification
+    status: current
+    audience: [language-user, language-designer, compiler-contributor]
+    owns: [language-overview, core-model]
+
+  - id: specification.stdlib-maintenance
+    path: docs/spec/15-stdlib-maintenance.md
+    domain: specification
+    status: current
+    audience: [stdlib-contributor, runtime-contributor, maintainer]
+    owns: [stdlib-maintenance-contract, stdlib-parity-requirements]
+
+  - id: specification.stability
+    path: docs/spec/18-stability-and-compatibility.md
+    domain: specification
+    status: current
+    audience: [user, contributor, maintainer]
+    owns: [public-contract, experimental-contract, compatibility-classes]
 
   - id: implementation.index
     path: docs/implementation/README.md
@@ -170,6 +246,30 @@ canonical_documents:
     audience: [compiler-contributor, language-designer, agent]
     owns: [syntax-change-path, cross-toolchain-syntax-checklist]
 
+  - id: implementation.type-checker
+    path: docs/implementation/compiler/type-checker.md
+    domain: implementation
+    status: current
+    audience: [compiler-contributor, maintainer, agent]
+    owns: [type-checker-extension, type-checker-refactoring]
+    related_code: [compiler/crates/ori-types/src/check.rs, compiler/crates/ori-types/src/check]
+
+  - id: implementation.runtime-refactoring
+    path: docs/implementation/runtime/refactoring.md
+    domain: implementation
+    status: current
+    audience: [runtime-contributor, backend-contributor, maintainer]
+    owns: [runtime-modularization-path, abi-preserving-refactor]
+    related_code: [compiler/crates/ori-runtime]
+
+  - id: implementation.stdlib-api
+    path: docs/implementation/stdlib/adding-api.md
+    domain: implementation
+    status: current
+    audience: [stdlib-contributor, runtime-contributor, maintainer]
+    owns: [stdlib-api-delivery]
+    related_code: [compiler/crates/ori-types/src/stdlib.rs, compiler/crates/ori-runtime, stdlib]
+
   - id: quality.index
     path: docs/quality/README.md
     domain: quality
@@ -183,9 +283,7 @@ canonical_documents:
     status: current
     audience: [contributor, maintainer, agent]
     owns: [test-layers, required-gates, regression-policy]
-    related_code:
-      - tools/qa
-      - compiler/crates/ori-driver/tests
+    related_code: [tools/qa, compiler/crates/ori-driver/tests]
 
   - id: quality.conformance
     path: docs/quality/language-conformance.md
@@ -200,9 +298,7 @@ canonical_documents:
     status: current
     audience: [compiler-contributor, lsp-contributor, maintainer]
     owns: [diagnostic-design, code-stability, message-accessibility]
-    related_code:
-      - compiler/crates/ori-diagnostics
-      - docs/spec/13-error-catalog.md
+    related_code: [compiler/crates/ori-diagnostics, docs/spec/13-error-catalog.md]
 
   - id: quality.performance
     path: docs/quality/performance-policy.md
@@ -210,6 +306,35 @@ canonical_documents:
     status: current
     audience: [contributor, maintainer]
     owns: [benchmark-method, regression-thresholds, performance-evidence]
+
+  - id: quality.fuzzing
+    path: docs/quality/fuzzing.md
+    domain: quality
+    status: current
+    audience: [compiler-contributor, runtime-contributor, security-reviewer]
+    owns: [fuzz-target-policy, corpus-and-triage]
+
+  - id: quality.differential
+    path: docs/quality/differential-testing.md
+    domain: quality
+    status: current
+    audience: [compiler-contributor, backend-contributor, maintainer]
+    owns: [aot-jit-differential, optimization-differential, backend-comparison]
+
+  - id: quality.property
+    path: docs/quality/property-testing.md
+    domain: quality
+    status: current
+    audience: [compiler-contributor, runtime-contributor]
+    owns: [property-test-policy, generator-and-shrinker-rules]
+
+  - id: quality.documentation
+    path: docs/quality/documentation-quality.md
+    domain: quality
+    status: current
+    audience: [documentation-contributor, maintainer, agent]
+    owns: [documentation-quality, metadata-policy, documentation-ci]
+    related_code: [tools/docs, .github/workflows/documentation.yml]
 
   - id: security.index
     path: docs/security/README.md
@@ -231,6 +356,13 @@ canonical_documents:
     status: current
     audience: [runtime-contributor, backend-contributor, reviewer]
     owns: [unsafe-rules, ffi-preconditions, safety-comments]
+
+  - id: security.supply-chain
+    path: docs/security/supply-chain.md
+    domain: security
+    status: current
+    audience: [package-contributor, release-manager, security-reviewer]
+    owns: [dependency-security, package-integrity, updater-and-release-security]
 
   - id: governance.index
     path: docs/governance/README.md
@@ -260,12 +392,47 @@ canonical_documents:
     audience: [contributor, maintainer, agent]
     owns: [adr-index, decision-status-policy]
 
+  - id: decision.s3-surface
+    path: docs/decisions/adr/0001-s3-language-surface.md
+    domain: decisions
+    status: accepted
+    audience: [language-designer, compiler-contributor, maintainer]
+    owns: [decision-s3-surface]
+
+  - id: decision.arc-cascade
+    path: docs/decisions/adr/0002-arc-single-cascade-owner.md
+    domain: decisions
+    status: accepted
+    audience: [runtime-contributor, backend-contributor, maintainer]
+    owns: [decision-arc-cascade-ownership]
+
+  - id: decision.collection-cow
+    path: docs/decisions/adr/0003-defer-copy-on-write-collections.md
+    domain: decisions
+    status: accepted
+    audience: [language-designer, runtime-contributor, maintainer]
+    owns: [decision-collection-cow]
+
+  - id: decision.repository-layout
+    path: docs/decisions/adr/0004-repository-and-project-layout.md
+    domain: decisions
+    status: accepted
+    audience: [contributor, maintainer, agent]
+    owns: [decision-repository-layout, decision-project-layout]
+
   - id: plans.index
     path: docs/plans/README.md
     domain: planning
     status: current
     audience: [contributor, maintainer, agent]
     owns: [planning-policy, execplan-policy, archive-rules]
+
+  - id: plans.backlog-transitional
+    path: docs/planning/BACKLOG.md
+    domain: planning
+    status: transitional
+    audience: [contributor, maintainer, agent]
+    owns: [open-work-list]
 
   - id: operations.index
     path: docs/operations/README.md
@@ -286,7 +453,14 @@ canonical_documents:
     domain: operations
     status: current
     audience: [maintainer, release-manager]
-    owns: [release-process, artifact-validation, provenance]
+    owns: [release-process, artifact-validation, publication]
+
+  - id: operations.reproducible-builds
+    path: docs/operations/reproducible-builds.md
+    domain: operations
+    status: current
+    audience: [release-manager, build-engineer, security-reviewer]
+    owns: [reproducible-builds, provenance, sbom-and-attestation]
 
   - id: archive.index
     path: docs/archive/README.md
@@ -314,6 +488,5 @@ validation_expectations:
   catalog_entry_required_for_canonical_docs: true
   active_docs_must_not_depend_on_archive: true
   public_version: 0.3.8
-  forbidden_identity_terms:
-    - retired predecessor project
-    - ori-lang
+  identity_migration_complete: true
+  forbid_retired_project_identity: true
