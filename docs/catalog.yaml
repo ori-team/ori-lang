@@ -315,5 +315,5 @@ validation_expectations:
   active_docs_must_not_depend_on_archive: true
   public_version: 0.3.8
   forbidden_identity_terms:
-    - zenith
-    - zenithlang
+    - retired predecessor project
+    - ori-lang
