@@ -1,0 +1,499 @@
+{
+  "schema_version": 1,
+  "generated_for": "DOC-MIGRATE-1",
+  "candidate_count": 39,
+  "categories": {
+    "audits": 7,
+    "investigations": 10,
+    "legacy": 0,
+    "plans": 11,
+    "sessions": 11
+  },
+  "records": [
+    {
+      "path": "docs/archive/analise-profunda-implementacao-linguagem.md",
+      "title": "Analise profunda da implementacao da linguagem Ori",
+      "lines": 764,
+      "bytes": 30272,
+      "sha256": "5f434ca1bfe3e92555c926b3faee40b34f9c99f3b927a9d304abb3ca90807295",
+      "suggested_category": "investigations",
+      "classification_reason": "investigation/experiment terminology",
+      "inbound_references": [
+        "docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md",
+        "docs/archive/plano-correcao-implementacao-linguagem.md",
+        "docs/archive/relatorio-fechamento-nova-rodada.md",
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+      ]
+    },
+    {
+      "path": "docs/archive/auditoria-profunda-implementacao-2026-05-17.md",
+      "title": "Auditoria Profunda da Implementação da Linguagem Ori",
+      "lines": 528,
+      "bytes": 23939,
+      "sha256": "fa404ff9b2efeec4c42bd7d0579a6741fb943de89632226f25bc4bfadb3bd4c5",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": [
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+      ]
+    },
+    {
+      "path": "docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md",
+      "title": "Auditoria profunda da implementacao da linguagem Ori",
+      "lines": 619,
+      "bytes": 24308,
+      "sha256": "ce2df74c3c6c4f5f060dd404499fa3e9c56376c2e86c2e00cbef4629fb20c473",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": [
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+      ]
+    },
+    {
+      "path": "docs/archive/plano-correcao-implementacao-linguagem.md",
+      "title": "Plano de correcao da implementacao da linguagem Ori",
+      "lines": 1075,
+      "bytes": 44882,
+      "sha256": "a06e90d91ec892000c3751962dbf4494c6ab21246de21be5b59269b3ec597796",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/archive/auditoria-profunda-implementacao-linguagem-2026-05-13.md",
+        "docs/archive/relatorio-fechamento-nova-rodada.md",
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+      ]
+    },
+    {
+      "path": "docs/archive/relatorio-fechamento-correcao-implementacao-linguagem.md",
+      "title": "Relatorio de fechamento - correcao da implementacao da linguagem",
+      "lines": 50,
+      "bytes": 1980,
+      "sha256": "438c62d963aa3a9c65d39935ab3e854b5e72b123342405b1ec741dbbe0940aa6",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": [
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+      ]
+    },
+    {
+      "path": "docs/archive/relatorio-fechamento-nova-rodada.md",
+      "title": "Relatorio de fechamento da nova rodada",
+      "lines": 111,
+      "bytes": 6328,
+      "sha256": "fa654b46fbf844d6d8db698ac4d4be583493e59b60233759e69c6eb9ec2d87a7",
+      "suggested_category": "investigations",
+      "classification_reason": "investigation/experiment terminology",
+      "inbound_references": [
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+      ]
+    },
+    {
+      "path": "docs/planning/IMPLEMENTADOS.md",
+      "title": "Recursos Implementados e Resolvidos — Ori Language",
+      "lines": 197,
+      "bytes": 14118,
+      "sha256": "bc68bd9ac76fc4fb09227babff079c974cdda04cd4cbd75de186e14c517b89c7",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/archive/plans/maturity-plan-2026-06.md"
+      ]
+    },
+    {
+      "path": "docs/planning/PLANO-CDYLIB-EMBED.md",
+      "title": "Plano: `ori compile --lib` — shared library embarcável (cdylib)",
+      "lines": 117,
+      "bytes": 5082,
+      "sha256": "c50320c1412a531249a1dc7901681b1bcd7693bda70a1413e46e42f341d4e61f",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "examples/embed/README.md",
+        "examples/embed/godot/README.md"
+      ]
+    },
+    {
+      "path": "docs/planning/eco-game-imgui-raylib3d-plan.md",
+      "title": "Plano ECO — pacotes de jogo Ori (stack code-first)",
+      "lines": 651,
+      "bytes": 27503,
+      "sha256": "877f4554e0f99817c95e3e05c2a445a22f6505539172f698747507e3ab8df272",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": []
+    },
+    {
+      "path": "docs/planning/historico/PLANO-MATURIDADE-COMPLETO.md",
+      "title": "Maturity plan — archived",
+      "lines": 19,
+      "bytes": 750,
+      "sha256": "ab24d9a7baf95a05d6d667008e90ffad69c1c7cb2928a46bd72c6e53834c451f",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/IMPLEMENTADOS.md",
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
+        "docs/planning/historico/plano-implementacao-lsp-avancado.md",
+        "docs/planning/uso-real-pequeno-medio.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/bugcheck-native-ori-ide-2026-07-18.md",
+      "title": "Verificação dos 4 bugs reportados pelo native-ori-ide (Ori 0.3.5)",
+      "lines": 78,
+      "bytes": 4889,
+      "sha256": "3ed4de78c458dc224862c4ebcd81da0271f9c68577bf6c0c90c8342f483e1fde",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/historico/lang-mem-9-runtime-wrappers-2026-07-18.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/c-backend-redefinition.md",
+      "title": "Redefinicao do C Backend",
+      "lines": 110,
+      "bytes": 4396,
+      "sha256": "acedf458e3b2e6ca37613d7a1e51c69fe2afbea7c36e5f12c4cd8c31dc24362b",
+      "suggested_category": "investigations",
+      "classification_reason": "investigation/experiment terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/uso-real-pequeno-medio.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/design-close-backlog-linux-2026-07-13.md",
+      "title": "Design: Close remaining backlog (Linux-only product path)",
+      "lines": 125,
+      "bytes": 7788,
+      "sha256": "ff695045f651f3541ca899e295323e166687dc8f5996de8fbe9e9893cbcd46c9",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": [
+        "CHANGELOG.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/ideias-programas-avancados.md",
+      "title": "Ideias de Programas Avançados para Validar a Linguagem Ori",
+      "lines": 54,
+      "bytes": 3685,
+      "sha256": "419e3e70826967ea15602b1140fe661e7fa55f09e2346aa150475425aafb3be0",
+      "suggested_category": "investigations",
+      "classification_reason": "default historical evidence classification",
+      "inbound_references": []
+    },
+    {
+      "path": "docs/planning/historico/io-streams-design.md",
+      "title": "I/O streams design",
+      "lines": 56,
+      "bytes": 1755,
+      "sha256": "6a3655d4015a466f029bdf844da2e6fc792edf480ac40c843b4b5f9a15c85627",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": [
+        "docs/planning/uso-real-pequeno-medio.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/issue-ffi-dispatch-large-binary-2026-07-16.md",
+      "title": "Issue LANG-PERF-3 — custo de chamada FFI explode em binário grande",
+      "lines": 155,
+      "bytes": 7653,
+      "sha256": "b027a8b8d8ecc190a56ecda3793a8191c5239473b3b0a6ea4b218266d0fb73df",
+      "suggested_category": "investigations",
+      "classification_reason": "default historical evidence classification",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/historico/sessao-nim-arc-2026-07-16.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/lang-mem-9-runtime-wrappers-2026-07-18.md",
+      "title": "LANG-MEM-9 — wrappers result/optional do runtime nativo sob ARC",
+      "lines": 66,
+      "bytes": 3150,
+      "sha256": "aeedfbf7945372752b8a0887d98299a5f7c772860a93b623676a62b94449ab38",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": []
+    },
+    {
+      "path": "docs/planning/historico/lang-res-closure.md",
+      "title": "LANG-RES closure (native residuals)",
+      "lines": 56,
+      "bytes": 2115,
+      "sha256": "7eca7cc709d4330c58d135154034528ee3ef0eb068da0dbdf7e736fcc642f6b6",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/qa/residual-cleanup-2026-07-13.md",
+        "docs/spec/14-backend-support.md",
+        "tools/qa/residual_audit.sh"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/net-v2-design.md",
+      "title": "Rede v2 — TLS, servidor TCP, UDP e I/O blocking",
+      "lines": 73,
+      "bytes": 3038,
+      "sha256": "b303a0ae7b37031540d5ebb2b6a3c2657aad8a59ab90cdbaab30b51ee930a3f6",
+      "suggested_category": "investigations",
+      "classification_reason": "default historical evidence classification",
+      "inbound_references": [
+        "docs/planning/historico/io-streams-design.md",
+        "docs/planning/historico/stdlib-gap-parity.md",
+        "docs/planning/uso-real-pequeno-medio.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/nim-study-2026-07-16-c0.md",
+      "title": "Nota Nim → Ori",
+      "lines": 222,
+      "bytes": 13207,
+      "sha256": "ceb6044d463b4d6046285464e69f89035cf248f029cee4185ff6321cbf668689",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
+        "docs/planning/plano-arc-nim-2026-07-16.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/nim-study-2026-07-17-c1.md",
+      "title": "Nota Nim → Ori — C1: paridade de destrutores e cascata",
+      "lines": 163,
+      "bytes": 8986,
+      "sha256": "7783259b28a8312912f0ab812c019a997191c42641905b99240114409ce65ddf",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        "compiler/crates/ori-driver/tests/memory_arc.rs"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/nim-study-2026-07-17-c2.md",
+      "title": "Nota Nim → Ori — C2: completude de edges e contabilidade de temporários",
+      "lines": 131,
+      "bytes": 7365,
+      "sha256": "99f0430dd9691de3d19263989f70438ae9cc4b426626009ac91f2d2ff257f645",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        "CHANGELOG.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/nim-study-2026-07-17-c3.md",
+      "title": "Nota Nim → Ori — C3: collector incremental (suspeitos + threshold adaptativo)",
+      "lines": 95,
+      "bytes": 5579,
+      "sha256": "383e46d1795bd6b4f988622b98eff79e0f7ea27690f5b529a59cb3f8460d6360",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        "CHANGELOG.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/nim-study-2026-07-17-c4-c7.md",
+      "title": "Nota Nim → Ori — C7 (`ORI_DUMP_ARC`) + C4 início (elisão de RC)",
+      "lines": 75,
+      "bytes": 3959,
+      "sha256": "49afea1b036237c5b4aee748f8d33e68a6aa0855b54975b237a504ae7b72d951",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        "docs/planning/roadmap-maturidade-v0.4-v0.5.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/perf-runtime-midend-plan.md",
+      "title": "Plan: runtime / mid-end performance (LANG-PERF-2)",
+      "lines": 429,
+      "bytes": 18411,
+      "sha256": "513021aea64dd98786ba5b7ed579a8aa91dd39cbb9a7d2e500db024c5a19289a",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/guides/performance.md",
+        "docs/guides/performance.pt-BR.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/plano-correcao-bugs-2026-05-17.md",
+      "title": "Plano de Correção — Bugs Remanescentes da Implementação Ori",
+      "lines": 273,
+      "bytes": 11685,
+      "sha256": "773f5e2b0b1afad987483fd31678c2bdde878d4227cd7003993fdadeebaf4d22",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": []
+    },
+    {
+      "path": "docs/planning/historico/plano-implementacao-lsp-avancado.md",
+      "title": "Plano de Implementação Avançada do Ori LSP",
+      "lines": 613,
+      "bytes": 21349,
+      "sha256": "dfd322cb9808769eaa89b3cae2d5ab79886476a38bbdfae132be17d305ccbc39",
+      "suggested_category": "investigations",
+      "classification_reason": "investigation/experiment terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/historico/plano-correcao-bugs-2026-05-17.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/porting-raylib-sqlite-cimgui.md",
+      "title": "Plano Estratégico: Port de Bibliotecas Nativas (Raylib, SQLite, cimgui)",
+      "lines": 86,
+      "bytes": 4167,
+      "sha256": "4404587a69c96d551ba649accfaf69190d1f57abd1f487c30ea1eaae348fc9ef",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": []
+    },
+    {
+      "path": "docs/planning/historico/pr-plan-ori-surface-s3.md",
+      "title": "PR Plan — Ori Surface S3 (Auk9-inspired)",
+      "lines": 271,
+      "bytes": 12283,
+      "sha256": "3d4adbe46377ada6e4c34e6bac2ced613e4bbd22d714907fb3b87cf738d46d9a",
+      "suggested_category": "investigations",
+      "classification_reason": "investigation/experiment terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/ori-surface-s3-auk9.md",
+        "docs/spec/00-manifesto.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/registry-v2.md",
+      "title": "Ori Package Registry (v2 backlog)",
+      "lines": 95,
+      "bytes": 3036,
+      "sha256": "adb5bd15a92d377b73c9abbc23740930f552a097624037ba189500450bd093da",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/historico/stdlib-gap-parity.md",
+        "docs/planning/registry-v1.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/result-ctors-ok-err.md",
+      "title": "M2.result-ctors — `success`/`error` → `ok`/`err`",
+      "lines": 95,
+      "bytes": 4069,
+      "sha256": "98f5bf20e0b822345c57d4a06d7e53864f7e8b7282735d8ae4014adf474c9b11",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": []
+    },
+    {
+      "path": "docs/planning/historico/rust-independence.md",
+      "title": "Estratégia de Independência do Rust — Ori Language",
+      "lines": 140,
+      "bytes": 6909,
+      "sha256": "c9d4e88bf31043c341724f2b60de880d7237d621420d99257f631d089564e894",
+      "suggested_category": "plans",
+      "classification_reason": "plan/implementation terminology",
+      "inbound_references": []
+    },
+    {
+      "path": "docs/planning/historico/security-performance-testing.md",
+      "title": "Testes de seguranca e performance",
+      "lines": 133,
+      "bytes": 3810,
+      "sha256": "7e56a649c19080f1eecb672467b41702eff8e9c2b1875b1221e6909f4a592450",
+      "suggested_category": "investigations",
+      "classification_reason": "default historical evidence classification",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/guides/testing.pt-BR.md"
+      ]
+    },
+    {
+      "path": "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
+      "title": "Sessão 2026-07-16 — estudo Nim→Ori (C0) + plano ARC + LANG-PERF-3",
+      "lines": 75,
+      "bytes": 3940,
+      "sha256": "9e88ba67fe383a45bb7aaff18ec8a7782b597a28025225c0924806570a64090e",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": []
+    },
+    {
+      "path": "docs/planning/historico/stdlib-gap-parity.md",
+      "title": "Stdlib Gap Parity — Referência `std.*` vs Ori `ori.*`",
+      "lines": 170,
+      "bytes": 8519,
+      "sha256": "44f431fe5033e6f816e00ff363dd279f7b8c47121cc20a2cec47d7fe74a135e1",
+      "suggested_category": "investigations",
+      "classification_reason": "default historical evidence classification",
+      "inbound_references": [
+        "CHANGELOG.md"
+      ]
+    },
+    {
+      "path": "docs/planning/plano-arc-nim-2026-07-16.md",
+      "title": "Plano ARC/ORC — implementação e correção a partir do estudo Nim",
+      "lines": 323,
+      "bytes": 14698,
+      "sha256": "8965df54666aa8138081f591501275c2ee0bff53a8d16c2f3fd7b6cc2844fd9e",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
+        "docs/planning/roadmap-maturidade-v0.4-v0.5.md"
+      ]
+    },
+    {
+      "path": "docs/planning/prompt-analisar-nim-para-ori.md",
+      "title": "Prompt: analisar Nim para evoluir a Ori",
+      "lines": 445,
+      "bytes": 17438,
+      "sha256": "0711791c8cdd0679aa80c93d92e5e028dbf42147b6cb800e01872b6ae84fb228",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        "docs/planning/historico/sessao-nim-arc-2026-07-16.md",
+        "docs/planning/plano-arc-nim-2026-07-16.md"
+      ]
+    },
+    {
+      "path": "docs/planning/roadmap-maturidade-v0.4-v0.5.md",
+      "title": "Visão de Maturidade e Evolução (v0.4.x / v0.5.x)",
+      "lines": 147,
+      "bytes": 41961,
+      "sha256": "fc35f6ff00d724dede3022d01024dff2be0bdcd2f6a1de8a0078f94fe980177a",
+      "suggested_category": "audits",
+      "classification_reason": "audit/assessment terminology",
+      "inbound_references": [
+        "docs/planning/freeze-and-abi-gates.md"
+      ]
+    },
+    {
+      "path": "docs/planning/web-templates-discussion-roadmap.md",
+      "title": "Roadmap de discussão — ori-templates / ori-web / HTML-first",
+      "lines": 1935,
+      "bytes": 66037,
+      "sha256": "267e81b1a9242fcd96e3d1bc240cd5c6be92a183bcd9751edb57db0baf6805e5",
+      "suggested_category": "sessions",
+      "classification_reason": "session/resume terminology",
+      "inbound_references": [
+        "CHANGELOG.md",
+        "docs/planning/web-framework-learning-course.md"
+      ]
+    }
+  ]
+}
