@@ -6627,6 +6627,11 @@ impl<'a> Checker<'a> {
         if from.is_never() {
             return;
         }
+        // An error type is the residue of a diagnostic already reported; a
+        // second complaint about `<error>` only buries the real one.
+        if from.contains_error() || to.contains_error() {
+            return;
+        }
         if !self.unify(from, to) {
             self.sink.emit(
                 Diagnostic::error(
