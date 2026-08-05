@@ -855,6 +855,30 @@ static inline ori_string_t ori_int_to_string(int64_t v) {
     snprintf(buf, 32, "%" PRId64, v);
     return (ori_string_t){ .data = buf, .len = strlen(buf) };
 }
+static inline void ori_abort_division_by_zero(void) {
+    fputs("ori integer division or remainder by zero\n", stderr);
+    abort();
+}
+static inline void ori_abort_division_overflow(void) {
+    fputs("ori integer division overflow: the minimum value has no positive counterpart\n", stderr);
+    abort();
+}
+/* Compile-time signedness probe, so the `MIN / -1` arm stays off for unsigned
+   operands where `(type)-1` is simply the largest representable value. */
+#define ORI_IS_SIGNED(x) (((__typeof__(x))-1) < ((__typeof__(x))0))
+#define ORI_SIGNED_MIN(x) ((__typeof__(x))(((unsigned long long)1) << (sizeof(x) * 8 - 1)))
+#define ORI_DIV_CHECK(a, b) \
+    do { \
+        if ((b) == 0) ori_abort_division_by_zero(); \
+        if (ORI_IS_SIGNED(b) && (b) == (__typeof__(b))(-1) && (a) == ORI_SIGNED_MIN(a)) \
+            ori_abort_division_overflow(); \
+    } while (0)
+
+static inline ori_string_t ori_uint_to_string(uint64_t v) {
+    char* buf = (char*)malloc(32);
+    snprintf(buf, 32, "%" PRIu64, v);
+    return (ori_string_t){ .data = buf, .len = strlen(buf) };
+}
 static inline ori_string_t ori_float_to_string(double v) {
     int needed = snprintf(NULL, 0, "%.17g", v);
     if (needed < 0) abort();
@@ -3223,6 +3247,17 @@ impl CCodegen {
                         BinaryOp::Add => format!("ori_string_concat({}, {})", l, r),
                         _ => format!("({} {} {})", l, binop_to_c(*op), r),
                     }
+                } else if matches!(op, BinaryOp::Div | BinaryOp::Rem) && lhs.ty.is_integer() {
+                    // Integer `/` and `%` trap in C exactly as they do natively,
+                    // so both backends must report the same message instead of
+                    // dying on an unexplained `SIGFPE`.
+                    let a = self.fresh_tmp();
+                    let b = self.fresh_tmp();
+                    format!(
+                        "({{ __typeof__({l}) {a} = ({l}); __typeof__({r}) {b} = ({r}); \
+                         ORI_DIV_CHECK({a}, {b}); ({a} {} {b}); }})",
+                        binop_to_c(*op)
+                    )
                 } else {
                     format!("({} {} {})", l, binop_to_c(*op), r)
                 }
@@ -3266,6 +3301,17 @@ impl CCodegen {
                     }
                     if is_set_runtime_symbol(n.as_str()) {
                         return self.emit_set_runtime_call(n.as_str(), args, &expr.ty);
+                    }
+                    // `string(x)` lowers to `ori_to_string` for every integer
+                    // width; unsigned arguments must not go through the signed
+                    // formatter or `u64` values above `i64::MAX` print negative.
+                    if n.as_str() == "ori_to_string"
+                        && args
+                            .first()
+                            .is_some_and(|arg| arg.value.ty.is_unsigned_integer())
+                    {
+                        let value = self.expr_to_c(&args[0].value);
+                        return format!("ori_uint_to_string((uint64_t)({value}))");
                     }
                 }
                 let params = match &callee.ty {
@@ -4560,6 +4606,15 @@ impl CCodegen {
                             // Use PRId64 via C string concatenation in the emitted format
                             fmt.push_str("%\" PRId64 \"");
                             prelude.push(format!("int64_t {tmp} = (int64_t)({val});"));
+                            args.push(tmp);
+                        }
+                        // Unsigned scalars need `PRIu64`: widening them through
+                        // `int64_t` would print every `u64` above `i64::MAX`
+                        // as a negative number.
+                        Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 => {
+                            let tmp = self.fresh_tmp();
+                            fmt.push_str("%\" PRIu64 \"");
+                            prelude.push(format!("uint64_t {tmp} = (uint64_t)({val});"));
                             args.push(tmp);
                         }
                         Ty::Float | Ty::Float32 | Ty::Float64 => {

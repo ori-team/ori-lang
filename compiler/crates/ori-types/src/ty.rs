@@ -195,6 +195,11 @@ impl Ty {
                 | Ty::U64
         )
     }
+    /// `true` for the unsigned integer types, which need `udiv`/`urem` and
+    /// unsigned comparisons instead of their signed counterparts.
+    pub fn is_unsigned_integer(&self) -> bool {
+        matches!(self, Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64)
+    }
     pub fn is_float(&self) -> bool {
         matches!(self, Ty::Float | Ty::Float32 | Ty::Float64)
     }
@@ -276,6 +281,37 @@ impl Ty {
                 params.iter().any(|p| p.contains_infer()) || ret.contains_infer()
             }
             Ty::Named(_, args) => args.iter().any(|a| a.contains_infer()),
+            _ => false,
+        }
+    }
+
+    /// `true` when `Ty::Error` appears anywhere in the type.
+    ///
+    /// A type that already carries an error is the *result* of a diagnostic
+    /// that was reported earlier; comparing it against anything else can only
+    /// produce follow-on noise, so callers use this to stay silent.
+    pub fn contains_error(&self) -> bool {
+        match self {
+            Ty::Error => true,
+            Ty::Optional(t)
+            | Ty::List(t)
+            | Ty::Slice(t)
+            | Ty::Set(t)
+            | Ty::Range(t)
+            | Ty::Lazy(t)
+            | Ty::Handle(t)
+            | Ty::Future(t)
+            | Ty::TaskJob(t)
+            | Ty::Channel(t) => t.contains_error(),
+            Ty::Any(_) => false,
+            Ty::Result(a, b) | Ty::Map(a, b) => a.contains_error() || b.contains_error(),
+            Ty::Array(elem, size) => elem.contains_error() || size.contains_error(),
+            Ty::Opaque { args, .. } => args.iter().any(|arg| arg.contains_error()),
+            Ty::Tuple(ts) => ts.iter().any(|t| t.contains_error()),
+            Ty::Func { params, ret } => {
+                params.iter().any(|p| p.contains_error()) || ret.contains_error()
+            }
+            Ty::Named(_, args) => args.iter().any(|a| a.contains_error()),
             _ => false,
         }
     }
