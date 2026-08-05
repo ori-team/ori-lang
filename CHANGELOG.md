@@ -10,7 +10,63 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Constant folding no longer corrupts sized integers.** Folding rewrote every
+  result to `int`, which widened `int8`/`int16`/`int32` and the unsigned types
+  and desynchronised HIR from the narrower backend slot. Folding now wraps in
+  the declared width and keeps the declared type, so `100i8 + 100i8` produces
+  `-56` and `250u8 + 10u8` produces `4` at every `ORI_OPT` level. Collapsing an
+  `if` expression is likewise limited to branches whose type already matches
+  the expression's.
+- **Constant folding no longer aborts on trapping division.** `x / 0` and
+  `MIN / -1` overflowed inside the folder itself and killed the compiler with a
+  Rust panic. Both are now left in the program for the runtime guard to report.
+- **Loop strength reduction is guarded.** The closed form `n * (n - 1) / 2`
+  (and its nested `n * n` variant) was applied unconditionally, so a loop with a
+  negative or overflowing bound produced a different result from the loop it
+  replaced. The rewrite now emits the closed form only for a bound in the range
+  where it is exact, keeps the original loop as the fallback branch, and only
+  substitutes bounds that are pure `int` expressions.
+- **Unsigned integers use unsigned instructions.** `u8`–`u64` division,
+  remainder, and the four ordering comparisons emitted the signed forms, so any
+  `u64` above `i64::MAX` compared and divided as a negative number and printed
+  with a minus sign. Both the native and the C backend now emit the unsigned
+  operations and format `u64` unsigned.
+- **Integer division reports the trap.** A zero divisor, or `MIN / -1`, raised
+  `SIGFPE` and killed the process with no message. Both backends now check the
+  operands and abort through the runtime with a named error.
+- **Collection growth cannot overflow the allocator.** `list`, `set`, `map`,
+  the trees, the graph, and the heap doubled their capacity without an upper
+  bound and passed the wrapped byte count to `realloc`. Every growth path now
+  shares one checked helper that reports `ori collection capacity exceeds the
+  addressable maximum` and treats a null allocation as an error.
+- **`ori compile` derives usable output paths.** A bare file name
+  (`ori compile main.orl`) produced an empty project root and failed the
+  incremental input scan; a project root (`ori compile .`) named the directory
+  itself as the link target. `compile` now derives its default output the same
+  way `build` does, and `--lib` places the library inside a project root
+  instead of beside it.
+- **Type errors no longer cascade.** A binding whose initialiser failed to
+  resolve produced a second `expected 'int', found '<error>'` mismatch that
+  buried the real diagnostic. Assignability checks now stay silent when either
+  side already carries an error type.
+
+### Added
+
+- **`parse.nesting_too_deep`.** Deeply nested expressions, blocks, or types
+  exhausted the stack and killed the process without a diagnostic. The parser
+  now bounds nesting at 128 levels and reports it once. The CLI and the
+  language server additionally run the front end on a thread with an explicit
+  stack budget (`pipeline::with_frontend_stack`), so the bound does not depend
+  on the platform's default stack size.
+
 ### Changed
+
+- **Mid-end fixed point without re-serialisation.** The optimiser detected its
+  fixed point by formatting the whole module through `Debug` twice per round,
+  which cost time and memory proportional to program size on every build. Each
+  pass now reports whether it rewrote anything.
 
 - **Cross-platform runtime ownership.** String-keyed maps now retain newly
   inserted managed keys and values before producers release their temporaries,
