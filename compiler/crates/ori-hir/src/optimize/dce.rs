@@ -7,7 +7,9 @@ use smol_str::SmolStr;
 
 use crate::hir::*;
 
-pub(super) fn dce_module(module: &mut HirModule) {
+/// Returns `true` when at least one dead binding was removed, so the pipeline
+/// can detect its fixed point without re-serialising the module.
+pub(super) fn dce_module(module: &mut HirModule) -> bool {
     // Struct literals whose type has field contracts trap at runtime when a
     // contract is violated — an observable effect DCE must not remove.
     let mut effectful_structs: HashSet<DefId> = module
@@ -31,14 +33,16 @@ pub(super) fn dce_module(module: &mut HirModule) {
             .filter(|implementation| destructor_traits.contains(&implementation.trait_def_id))
             .map(|implementation| implementation.type_def_id),
     );
+    let mut changed = false;
     for f in &mut module.funcs {
-        dce_block(&mut f.body, &effectful_structs);
+        dce_block(&mut f.body, &effectful_structs, &mut changed);
     }
+    changed
 }
 
-fn dce_block(block: &mut HirBlock, contract_structs: &HashSet<DefId>) {
+fn dce_block(block: &mut HirBlock, contract_structs: &HashSet<DefId>, changed: &mut bool) {
     for stmt in &mut block.stmts {
-        dce_stmt_nested(stmt, contract_structs);
+        dce_stmt_nested(stmt, contract_structs, changed);
     }
 
     let mut used = HashSet::<SmolStr>::new();
@@ -46,6 +50,7 @@ fn dce_block(block: &mut HirBlock, contract_structs: &HashSet<DefId>) {
         collect_stmt_uses(stmt, &mut used);
     }
 
+    let before = block.stmts.len();
     block.stmts.retain(|stmt| match stmt {
         HirStmt::Let {
             name,
@@ -63,9 +68,10 @@ fn dce_block(block: &mut HirBlock, contract_structs: &HashSet<DefId>) {
         }
         _ => true,
     });
+    *changed |= block.stmts.len() != before;
 }
 
-fn dce_stmt_nested(stmt: &mut HirStmt, contract_structs: &HashSet<DefId>) {
+fn dce_stmt_nested(stmt: &mut HirStmt, contract_structs: &HashSet<DefId>, changed: &mut bool) {
     match stmt {
         HirStmt::If {
             then,
@@ -73,23 +79,23 @@ fn dce_stmt_nested(stmt: &mut HirStmt, contract_structs: &HashSet<DefId>) {
             else_,
             ..
         } => {
-            dce_block(then, contract_structs);
+            dce_block(then, contract_structs, changed);
             for (_, b) in else_ifs {
-                dce_block(b, contract_structs);
+                dce_block(b, contract_structs, changed);
             }
             if let Some(b) = else_ {
-                dce_block(b, contract_structs);
+                dce_block(b, contract_structs, changed);
             }
         }
         HirStmt::While { body, .. }
         | HirStmt::For { body, .. }
         | HirStmt::Loop { body, .. }
         | HirStmt::Repeat { body, .. }
-        | HirStmt::WhileSome { body, .. } => dce_block(body, contract_structs),
+        | HirStmt::WhileSome { body, .. } => dce_block(body, contract_structs, changed),
         HirStmt::IfSome { then, else_, .. } => {
-            dce_block(then, contract_structs);
+            dce_block(then, contract_structs, changed);
             if let Some(b) = else_ {
-                dce_block(b, contract_structs);
+                dce_block(b, contract_structs, changed);
             }
         }
         HirStmt::Match { arms, .. } => {
@@ -98,7 +104,7 @@ fn dce_stmt_nested(stmt: &mut HirStmt, contract_structs: &HashSet<DefId>) {
                     stmts: std::mem::take(&mut arm.body),
                     span: arm.span,
                 };
-                dce_block(&mut nested, contract_structs);
+                dce_block(&mut nested, contract_structs, changed);
                 arm.body = nested.stmts;
             }
         }
