@@ -447,8 +447,11 @@ fn project_root(source_path: &Path) -> PathBuf {
     let start = if source_path.is_dir() {
         source_path.to_path_buf()
     } else {
+        // A bare file name such as `main.orl` has an *empty* parent, not
+        // `None`; scanning `""` fails, so both cases collapse to the cwd.
         source_path
             .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."))
     };
