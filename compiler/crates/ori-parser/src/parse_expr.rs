@@ -77,6 +77,17 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_expr_prec(&mut self, min_prec: u8) -> Option<Expr> {
+        // Every nesting level of the grammar funnels through here, so this is
+        // the single place the depth bound has to be enforced for expressions.
+        if !self.enter_nesting() {
+            return None;
+        }
+        let parsed = self.parse_expr_prec_inner(min_prec);
+        self.leave_nesting();
+        parsed
+    }
+
+    fn parse_expr_prec_inner(&mut self, min_prec: u8) -> Option<Expr> {
         let mut lhs = self.parse_unary()?;
 
         loop {

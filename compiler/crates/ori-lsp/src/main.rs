@@ -1585,10 +1585,23 @@ fn server_capabilities() -> ServerCapabilities {
     }
 }
 
-#[tokio::main]
-async fn main() {
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-    let (service, socket) = LspService::new(Backend::new);
-    Server::new(stdin, stdout, socket).serve(service).await;
+fn main() {
+    // Request handlers call the recursive front end, so both the thread that
+    // drives the runtime and its workers need the compiler's stack budget
+    // rather than tokio's 2 MiB default.
+    ori_driver::pipeline::with_frontend_stack(run_server)
+}
+
+fn run_server() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(ori_driver::pipeline::FRONTEND_STACK_SIZE)
+        .build()
+        .expect("failed to build the language server runtime");
+    runtime.block_on(async {
+        let stdin = tokio::io::stdin();
+        let stdout = tokio::io::stdout();
+        let (service, socket) = LspService::new(Backend::new);
+        Server::new(stdin, stdout, socket).serve(service).await;
+    });
 }

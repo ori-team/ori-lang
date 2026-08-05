@@ -99,6 +99,7 @@ when the compiler starts producing it.
 | `parse.end_label_mismatch` | error | Optional labeled `end` (`end if`, `end match`, …) does not match the opening construct |
 | `parse.do_removed` | error | Source used removed `do` closure keyword; write `(params) => expr` or `(params) … end` |
 | `parse.tuple_arity` | error | Tuple type or expression has invalid arity |
+| `parse.nesting_too_deep` | error | Expressions, blocks, or types are nested past the compiler's recursion bound (128 levels) |
 | `parse.unterminated_block` | error | End-delimited block reaches end of file before `end` |
 | `parse.unterminated_string` | error | String literal starts but is not closed |
 | `parse.unexpected_token` | error | Parser found a token that is not valid here |
