@@ -55,6 +55,7 @@ end
 
 Core ideas include:
 
+- explicit `module` headers that identify each source file;
 - explicit module identity and imports;
 - explicit public contracts and local types;
 - `optional[T]` for absence;

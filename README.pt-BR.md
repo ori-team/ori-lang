@@ -53,6 +53,7 @@ end
 
 Ideias centrais:
 
+- cabeçalhos `module` explícitos que identificam cada arquivo-fonte;
 - identidade de módulo e imports explícitos;
 - contratos públicos e tipos visíveis;
 - `optional[T]` para ausência;
