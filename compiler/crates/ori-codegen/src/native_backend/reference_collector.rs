@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 
+use ori_ast::expr::BinaryOp;
 use ori_hir::hir::*;
 use ori_types::Ty;
 use smol_str::SmolStr;
@@ -72,7 +73,15 @@ impl FunctionReferences {
                     self.collect_expr(arg);
                 }
             }
-            HirExprKind::Binary { lhs, rhs, .. } => {
+            HirExprKind::Binary { op, lhs, rhs } => {
+                // Integer `/` and `%` lower to a guarded division that calls
+                // the abort helpers on a zero divisor or on `MIN / -1`.
+                if matches!(op, BinaryOp::Div | BinaryOp::Rem) && lhs.ty.is_integer() {
+                    self.functions
+                        .insert(SmolStr::new("ori_abort_division_by_zero"));
+                    self.functions
+                        .insert(SmolStr::new("ori_abort_division_overflow"));
+                }
                 self.collect_expr(lhs);
                 self.collect_expr(rhs);
             }

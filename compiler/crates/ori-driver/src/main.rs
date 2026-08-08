@@ -274,6 +274,12 @@ enum DocFormatCli {
 }
 
 fn main() {
+    // The front end recurses once per syntactic level; run it on a stack the
+    // compiler controls instead of whatever the platform gives `main`.
+    pipeline::with_frontend_stack(run_cli)
+}
+
+fn run_cli() {
     let cli = Cli::parse();
     let color = !cli.no_color && std::env::var("NO_COLOR").is_err();
 
@@ -613,10 +619,14 @@ fn main() {
             lib,
             native_raw,
         } => {
+            // `compile` accepts the same inputs as `build` (source file,
+            // `ori.proj`, or project root), so it must derive the default
+            // output the same way; `with_extension` on a directory would name
+            // the directory itself as the link target.
             let default_out = if *lib {
                 pipeline::default_shared_lib_path(file)
             } else {
-                file.with_extension(if cfg!(windows) { "exe" } else { "" })
+                default_build_exe_path(file)
             };
             let exe = out.as_deref().unwrap_or(&default_out);
             match pipeline::run_compile_with_options(

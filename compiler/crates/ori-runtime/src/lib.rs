@@ -2182,6 +2182,21 @@ unsafe extern "C" fn ori_to_string(n: i64) -> *mut u8 {
     ori_int_to_cstr(n)
 }
 
+/// Unsigned counterpart of [`ori_int_to_cstr`]: the payload fills the whole
+/// slot, so `u64` values above `i64::MAX` must not be read as negative.
+#[no_mangle]
+unsafe extern "C" fn ori_uint_to_cstr(n: i64) -> *mut u8 {
+    let mut ptr = std::ptr::null_mut();
+    let mut len = 0;
+    ori_uint_to_string_parts(n, &mut ptr, &mut len);
+    ptr
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_uint_to_string(n: i64) -> *mut u8 {
+    ori_uint_to_cstr(n)
+}
+
 #[no_mangle]
 pub extern "C" fn ori_to_int(value: i64) -> i64 {
     value
@@ -2190,6 +2205,20 @@ pub extern "C" fn ori_to_int(value: i64) -> i64 {
 #[no_mangle]
 unsafe extern "C" fn ori_to_string_parts(n: i64, out_ptr: *mut *mut u8, out_len: *mut i64) {
     write_string_parts(n.to_string(), out_ptr, out_len);
+}
+
+/// Render an unsigned integer whose bit pattern is carried in the `i64` ABI slot.
+///
+/// `u64` values above `i64::MAX` reach here as negative `i64`s, so they must be
+/// reinterpreted rather than formatted as signed.
+///
+/// # Safety
+///
+/// `out_ptr` and `out_len` must point to writable storage for one pointer and
+/// one `i64`, as in [`ori_to_string_parts`].
+#[no_mangle]
+unsafe extern "C" fn ori_uint_to_string_parts(n: i64, out_ptr: *mut *mut u8, out_len: *mut i64) {
+    write_string_parts((n as u64).to_string(), out_ptr, out_len);
 }
 
 #[no_mangle]
@@ -2551,6 +2580,60 @@ unsafe extern "C" fn ori_list_dtor(ptr: *mut u8) {
     }
 }
 
+/// Double `current` until it reaches `min_cap`, without ever wrapping.
+///
+/// A capacity that overflows would advertise storage the allocation does not
+/// have, turning the next write into a heap overflow, so an unreachable request
+/// aborts here instead of being silently truncated.
+fn grown_capacity(current: i64, min_cap: i64, elem_size: usize) -> i64 {
+    let ceiling = (isize::MAX as usize / elem_size) as i64;
+    if min_cap > ceiling {
+        abort_bounds("ori collection capacity exceeds the addressable maximum");
+    }
+    let mut next_cap = current.max(8);
+    while next_cap < min_cap {
+        next_cap = next_cap.saturating_mul(2).min(ceiling);
+    }
+    next_cap
+}
+
+/// Byte size of `cap` elements, aborting when the product is not addressable.
+fn capacity_bytes(cap: i64, elem_size: usize) -> usize {
+    let Some(bytes) = (cap.max(0) as usize).checked_mul(elem_size) else {
+        abort_bounds("ori collection capacity exceeds the addressable maximum");
+    };
+    bytes
+}
+
+/// `realloc` that aborts on failure instead of returning null.
+///
+/// On failure the original block stays owned by the caller, so callers must not
+/// overwrite their pointer before this returns.
+///
+/// # Safety
+///
+/// `ptr` must be null or a live allocation from the same allocator.
+unsafe fn checked_realloc(ptr: *mut libc::c_void, bytes: usize) -> *mut libc::c_void {
+    let grown = libc::realloc(ptr, bytes);
+    if grown.is_null() && bytes > 0 {
+        abort_bounds("ori out of memory while growing a collection");
+    }
+    grown
+}
+
+/// `malloc` that aborts on failure instead of returning null.
+///
+/// # Safety
+///
+/// Always safe to call; the result must be freed with `libc::free`.
+unsafe fn checked_malloc(bytes: usize) -> *mut libc::c_void {
+    let ptr = libc::malloc(bytes);
+    if ptr.is_null() && bytes > 0 {
+        abort_bounds("ori out of memory while allocating a collection");
+    }
+    ptr
+}
+
 /// Grow list storage so `cap >= min_cap` (no-op when already large enough).
 unsafe fn list_ensure_capacity(list: *mut OriList, min_cap: i64) {
     if list.is_null() {
@@ -2560,20 +2643,17 @@ unsafe fn list_ensure_capacity(list: *mut OriList, min_cap: i64) {
     if min_cap <= (*list).cap {
         return;
     }
-    let mut next_cap = (*list).cap.max(8);
-    while next_cap < min_cap {
-        next_cap = (next_cap * 2).max(1);
-    }
-    let bytes = next_cap as usize * std::mem::size_of::<i64>();
-    (*list).data = libc::realloc((*list).data as *mut libc::c_void, bytes) as *mut i64;
+    let next_cap = grown_capacity((*list).cap, min_cap, std::mem::size_of::<i64>());
+    let bytes = capacity_bytes(next_cap, std::mem::size_of::<i64>());
+    (*list).data = checked_realloc((*list).data as *mut libc::c_void, bytes) as *mut i64;
     (*list).cap = next_cap;
 }
 
 #[no_mangle]
 unsafe extern "C" fn ori_list_new() -> *mut OriList {
     let cap = 8_i64;
-    let bytes = cap as usize * std::mem::size_of::<i64>();
-    let data = libc::malloc(bytes) as *mut i64;
+    let bytes = capacity_bytes(cap, std::mem::size_of::<i64>());
+    let data = checked_malloc(bytes) as *mut i64;
     let list = ori_alloc(std::mem::size_of::<OriList>(), Some(ori_list_dtor)) as *mut OriList;
     if !list.is_null() {
         (*list).data = data;
@@ -3467,18 +3547,18 @@ unsafe extern "C" fn ori_tree_dtor(ptr: *mut u8) {
 }
 
 unsafe fn tree_realloc_i64(ptr: *mut i64, cap: i64) -> *mut i64 {
-    let bytes = cap as usize * std::mem::size_of::<i64>();
-    libc::realloc(ptr as *mut libc::c_void, bytes) as *mut i64
+    let bytes = capacity_bytes(cap, std::mem::size_of::<i64>());
+    checked_realloc(ptr as *mut libc::c_void, bytes) as *mut i64
 }
 
 unsafe fn tree_realloc_children(ptr: *mut *mut OriList, cap: i64) -> *mut *mut OriList {
-    let bytes = cap as usize * std::mem::size_of::<*mut OriList>();
-    libc::realloc(ptr as *mut libc::c_void, bytes) as *mut *mut OriList
+    let bytes = capacity_bytes(cap, std::mem::size_of::<*mut OriList>());
+    checked_realloc(ptr as *mut libc::c_void, bytes) as *mut *mut OriList
 }
 
 unsafe fn tree_realloc_alive(ptr: *mut c_uchar, cap: i64) -> *mut c_uchar {
-    let bytes = cap as usize * std::mem::size_of::<c_uchar>();
-    libc::realloc(ptr as *mut libc::c_void, bytes) as *mut c_uchar
+    let bytes = capacity_bytes(cap, std::mem::size_of::<c_uchar>());
+    checked_realloc(ptr as *mut libc::c_void, bytes) as *mut c_uchar
 }
 
 unsafe fn tree_reserve(tree: *mut OriTree, min_cap: i64) {
@@ -3486,10 +3566,7 @@ unsafe fn tree_reserve(tree: *mut OriTree, min_cap: i64) {
         return;
     }
     let old_cap = (*tree).cap;
-    let mut next_cap = if old_cap <= 0 { 8 } else { old_cap * 2 };
-    while next_cap < min_cap {
-        next_cap *= 2;
-    }
+    let next_cap = grown_capacity(old_cap, min_cap, std::mem::size_of::<*mut OriList>());
     (*tree).values = tree_realloc_i64((*tree).values, next_cap);
     (*tree).parents = tree_realloc_i64((*tree).parents, next_cap);
     (*tree).children = tree_realloc_children((*tree).children, next_cap);
@@ -4563,9 +4640,10 @@ unsafe fn set_rebuild_ht(set: *mut OriSet) {
 }
 
 unsafe fn set_grow(set: *mut OriSet) {
-    let new_ht_cap = (*set).ht_cap as usize * 2;
-    let ht_bytes = new_ht_cap * std::mem::size_of::<i64>();
-    let new_ht = libc::realloc((*set).ht as *mut libc::c_void, ht_bytes) as *mut i64;
+    let new_ht_cap =
+        grown_capacity((*set).ht_cap, (*set).ht_cap + 1, std::mem::size_of::<i64>()) as usize;
+    let ht_bytes = capacity_bytes(new_ht_cap as i64, std::mem::size_of::<i64>());
+    let new_ht = checked_realloc((*set).ht as *mut libc::c_void, ht_bytes) as *mut i64;
     (*set).ht = new_ht;
     (*set).ht_cap = new_ht_cap as i64;
     set_rebuild_ht(set);
@@ -4576,9 +4654,9 @@ unsafe fn set_reserve_capacity(set: *mut OriSet, capacity: i64) {
         return;
     }
     let target_cap = capacity.max(1);
-    (*set).items = libc::realloc(
+    (*set).items = checked_realloc(
         (*set).items as *mut libc::c_void,
-        target_cap as usize * std::mem::size_of::<i64>(),
+        capacity_bytes(target_cap, std::mem::size_of::<i64>()),
     ) as *mut i64;
     (*set).cap = target_cap;
 
@@ -4588,8 +4666,8 @@ unsafe fn set_reserve_capacity(set: *mut OriSet, capacity: i64) {
         target_ht_cap = target_ht_cap.saturating_mul(2);
     }
     if target_ht_cap > (*set).ht_cap as usize {
-        let ht_bytes = target_ht_cap * std::mem::size_of::<i64>();
-        (*set).ht = libc::realloc((*set).ht as *mut libc::c_void, ht_bytes) as *mut i64;
+        let ht_bytes = capacity_bytes(target_ht_cap as i64, std::mem::size_of::<i64>());
+        (*set).ht = checked_realloc((*set).ht as *mut libc::c_void, ht_bytes) as *mut i64;
         (*set).ht_cap = target_ht_cap as i64;
         set_rebuild_ht(set);
     }
@@ -4623,10 +4701,10 @@ unsafe fn ori_set_add_raw(set: *mut OriSet, value: i64, item_kind: u8) {
     }
     // Grow dense array if full
     if (*set).len >= (*set).cap {
-        let new_cap = (*set).cap * 2;
-        (*set).items = libc::realloc(
+        let new_cap = grown_capacity((*set).cap, (*set).cap + 1, std::mem::size_of::<i64>());
+        (*set).items = checked_realloc(
             (*set).items as *mut libc::c_void,
-            new_cap as usize * std::mem::size_of::<i64>(),
+            capacity_bytes(new_cap, std::mem::size_of::<i64>()),
         ) as *mut i64;
         (*set).cap = new_cap;
     }
@@ -5031,9 +5109,10 @@ unsafe fn map_rebuild_ht(map: *mut OriMap) {
 }
 
 unsafe fn map_grow(map: *mut OriMap) {
-    let new_ht_cap = (*map).ht_cap as usize * 2;
-    let ht_bytes = new_ht_cap * std::mem::size_of::<i64>();
-    let new_ht = libc::realloc((*map).ht as *mut libc::c_void, ht_bytes) as *mut i64;
+    let new_ht_cap =
+        grown_capacity((*map).ht_cap, (*map).ht_cap + 1, std::mem::size_of::<i64>()) as usize;
+    let ht_bytes = capacity_bytes(new_ht_cap as i64, std::mem::size_of::<i64>());
+    let new_ht = checked_realloc((*map).ht as *mut libc::c_void, ht_bytes) as *mut i64;
     (*map).ht = new_ht;
     (*map).ht_cap = new_ht_cap as i64;
     map_rebuild_ht(map);
@@ -5044,9 +5123,9 @@ unsafe fn map_reserve_capacity(map: *mut OriMap, capacity: i64) {
         return;
     }
     let target_cap = capacity.max(1);
-    let bytes = target_cap as usize * std::mem::size_of::<i64>();
-    (*map).keys = libc::realloc((*map).keys as *mut libc::c_void, bytes) as *mut i64;
-    (*map).values = libc::realloc((*map).values as *mut libc::c_void, bytes) as *mut i64;
+    let bytes = capacity_bytes(target_cap, std::mem::size_of::<i64>());
+    (*map).keys = checked_realloc((*map).keys as *mut libc::c_void, bytes) as *mut i64;
+    (*map).values = checked_realloc((*map).values as *mut libc::c_void, bytes) as *mut i64;
     (*map).cap = target_cap;
 
     let mut target_ht_cap = INITIAL_MAP_HT_CAP;
@@ -5055,8 +5134,8 @@ unsafe fn map_reserve_capacity(map: *mut OriMap, capacity: i64) {
         target_ht_cap = target_ht_cap.saturating_mul(2);
     }
     if target_ht_cap > (*map).ht_cap as usize {
-        let ht_bytes = target_ht_cap * std::mem::size_of::<i64>();
-        (*map).ht = libc::realloc((*map).ht as *mut libc::c_void, ht_bytes) as *mut i64;
+        let ht_bytes = capacity_bytes(target_ht_cap as i64, std::mem::size_of::<i64>());
+        (*map).ht = checked_realloc((*map).ht as *mut libc::c_void, ht_bytes) as *mut i64;
         (*map).ht_cap = target_ht_cap as i64;
         map_rebuild_ht(map);
     }
@@ -5093,10 +5172,10 @@ unsafe fn ori_map_set_raw(map: *mut OriMap, key: i64, value: i64, key_kind: u8) 
     }
     // Grow dense arrays if needed
     if (*map).len >= (*map).cap {
-        let new_cap = (*map).cap * 2;
-        let bytes = new_cap as usize * std::mem::size_of::<i64>();
-        (*map).keys = libc::realloc((*map).keys as *mut libc::c_void, bytes) as *mut i64;
-        (*map).values = libc::realloc((*map).values as *mut libc::c_void, bytes) as *mut i64;
+        let new_cap = grown_capacity((*map).cap, (*map).cap + 1, std::mem::size_of::<i64>());
+        let bytes = capacity_bytes(new_cap, std::mem::size_of::<i64>());
+        (*map).keys = checked_realloc((*map).keys as *mut libc::c_void, bytes) as *mut i64;
+        (*map).values = checked_realloc((*map).values as *mut libc::c_void, bytes) as *mut i64;
         (*map).cap = new_cap;
     }
     // Grow hash table at 50% load
@@ -5634,16 +5713,9 @@ unsafe fn graph_reserve_nodes(graph: *mut OriGraph, min_cap: i64) {
     if graph.is_null() || (*graph).cap >= min_cap {
         return;
     }
-    let mut next_cap = if (*graph).cap <= 0 {
-        8
-    } else {
-        (*graph).cap * 2
-    };
-    while next_cap < min_cap {
-        next_cap *= 2;
-    }
-    let bytes = next_cap as usize * std::mem::size_of::<i64>();
-    (*graph).nodes = libc::realloc((*graph).nodes as *mut libc::c_void, bytes) as *mut i64;
+    let next_cap = grown_capacity((*graph).cap, min_cap, std::mem::size_of::<i64>());
+    let bytes = capacity_bytes(next_cap, std::mem::size_of::<i64>());
+    (*graph).nodes = checked_realloc((*graph).nodes as *mut libc::c_void, bytes) as *mut i64;
     (*graph).cap = next_cap;
 }
 
@@ -5651,19 +5723,13 @@ unsafe fn graph_reserve_edges(graph: *mut OriGraph, min_cap: i64) {
     if graph.is_null() || (*graph).edge_cap >= min_cap {
         return;
     }
-    let mut next_cap = if (*graph).edge_cap <= 0 {
-        8
-    } else {
-        (*graph).edge_cap * 2
-    };
-    while next_cap < min_cap {
-        next_cap *= 2;
-    }
-    let bytes = next_cap as usize * std::mem::size_of::<i64>();
-    (*graph).edge_from = libc::realloc((*graph).edge_from as *mut libc::c_void, bytes) as *mut i64;
-    (*graph).edge_to = libc::realloc((*graph).edge_to as *mut libc::c_void, bytes) as *mut i64;
+    let next_cap = grown_capacity((*graph).edge_cap, min_cap, std::mem::size_of::<i64>());
+    let bytes = capacity_bytes(next_cap, std::mem::size_of::<i64>());
+    (*graph).edge_from =
+        checked_realloc((*graph).edge_from as *mut libc::c_void, bytes) as *mut i64;
+    (*graph).edge_to = checked_realloc((*graph).edge_to as *mut libc::c_void, bytes) as *mut i64;
     (*graph).edge_weight =
-        libc::realloc((*graph).edge_weight as *mut libc::c_void, bytes) as *mut i64;
+        checked_realloc((*graph).edge_weight as *mut libc::c_void, bytes) as *mut i64;
     (*graph).edge_cap = next_cap;
 }
 
@@ -6716,12 +6782,9 @@ unsafe fn heap_reserve(heap: *mut OriHeap, min_cap: i64) {
     if heap.is_null() || (*heap).cap >= min_cap {
         return;
     }
-    let mut next_cap = if (*heap).cap <= 0 { 8 } else { (*heap).cap * 2 };
-    while next_cap < min_cap {
-        next_cap *= 2;
-    }
-    let bytes = next_cap as usize * std::mem::size_of::<i64>();
-    (*heap).data = libc::realloc((*heap).data as *mut libc::c_void, bytes) as *mut i64;
+    let next_cap = grown_capacity((*heap).cap, min_cap, std::mem::size_of::<i64>());
+    let bytes = capacity_bytes(next_cap, std::mem::size_of::<i64>());
+    (*heap).data = checked_realloc((*heap).data as *mut libc::c_void, bytes) as *mut i64;
     (*heap).cap = next_cap;
 }
 
@@ -7284,6 +7347,7 @@ unsafe extern "C" fn ori_os_env(name: *const u8) -> *mut u8 {
 
 #[no_mangle]
 pub extern "C" fn ori_os_exit(code: i64) {
+    flush_stdout();
     std::process::exit(code as i32);
 }
 
@@ -7558,6 +7622,7 @@ mod test_harness;
 
 #[no_mangle]
 unsafe extern "C" fn ori_panic(message: *const u8) {
+    flush_stdout();
     eprintln!("ori panic: {}", cstr_str(message));
     std::process::abort();
 }
@@ -8180,8 +8245,17 @@ unsafe extern "C" fn ori_bytes_get(ptr: *const u8, index: i64) -> u8 {
 }
 
 fn abort_bounds(message: &str) -> ! {
+    flush_stdout();
     eprintln!("{message}");
     std::process::abort();
+}
+
+/// `abort` does not run the destructors that flush buffered output, so anything
+/// the program printed before the failure would be lost whenever stdout is a
+/// pipe or a file. Flushing first keeps the error in context.
+fn flush_stdout() {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
 }
 
 fn checked_slice_bounds(len: i64, start: i64, end: i64, message: &str) -> (usize, usize) {
@@ -8215,6 +8289,19 @@ unsafe extern "C" fn ori_string_from_bytes(ptr: *const u8) -> *mut u8 {
 #[no_mangle]
 unsafe extern "C" fn ori_abort_concurrent_modification() -> ! {
     abort_bounds("concurrent modification during iteration");
+}
+
+/// Reported instead of the hardware trap raised by `sdiv`/`udiv`, which kills
+/// the process with `SIGFPE` and no explanation of what went wrong.
+#[no_mangle]
+unsafe extern "C" fn ori_abort_division_by_zero() -> ! {
+    abort_bounds("ori integer division or remainder by zero");
+}
+
+/// `MIN / -1` overflows the signed range and traps on the same instruction.
+#[no_mangle]
+unsafe extern "C" fn ori_abort_division_overflow() -> ! {
+    abort_bounds("ori integer division overflow: the minimum value has no positive counterpart");
 }
 
 #[repr(C)]

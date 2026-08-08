@@ -35,6 +35,16 @@ macro_rules! single_bracket_type {
 
 impl<'src> Parser<'src> {
     pub fn parse_type(&mut self) -> Option<Type> {
+        // Generic arguments nest arbitrarily (`list[list[list[...]]]`).
+        if !self.enter_nesting() {
+            return None;
+        }
+        let parsed = self.parse_type_inner();
+        self.leave_nesting();
+        parsed
+    }
+
+    fn parse_type_inner(&mut self) -> Option<Type> {
         let span = self.current_span();
 
         // `array` and `slice` are **contextual**: they name types here, and stay

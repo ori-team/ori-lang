@@ -35,13 +35,16 @@ pub fn optimize_module(module: &mut HirModule, level: OptLevel) {
         OptLevel::None => {}
         OptLevel::Default | OptLevel::Aggressive => {
             // Bounded fixed-point: fold → strength reduce → DCE.
+            //
+            // Each pass reports whether it rewrote anything; the alternative —
+            // serialising the whole module through `Debug` twice per round —
+            // costs time and memory proportional to the program size on every
+            // build, even when nothing is left to optimise.
             for _ in 0..4 {
-                let before = format!("{module:?}");
-                fold_module(module);
-                strength_reduce_module(module);
-                dce_module(module);
-                let after = format!("{module:?}");
-                if before == after {
+                let mut changed = fold_module(module);
+                changed |= strength_reduce_module(module);
+                changed |= dce_module(module);
+                if !changed {
                     break;
                 }
             }

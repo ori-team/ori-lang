@@ -49,10 +49,12 @@ pub fn diagnostic_codes(out: &CheckOutput) -> Vec<&'static str> {
     out.diagnostics.iter().map(|d| d.code).collect()
 }
 
+#[allow(dead_code)]
 pub fn assert_check_output_is_well_formed(out: &CheckOutput) {
     assert_diagnostic_spans_within_sources(&out.cache, &out.diagnostics);
 }
 
+#[allow(dead_code)]
 pub fn assert_diagnostic_spans_within_sources(cache: &SourceCache, diagnostics: &[Diagnostic]) {
     for diagnostic in diagnostics {
         for label in &diagnostic.labels {

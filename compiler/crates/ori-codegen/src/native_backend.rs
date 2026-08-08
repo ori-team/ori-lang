@@ -51,6 +51,8 @@ const DEBUG_MAX_NESTED_LIST_ELEMENTS: usize = 8;
 #[cfg(test)]
 const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_abort_concurrent_modification",
+    "ori_abort_division_by_zero",
+    "ori_abort_division_overflow",
     "ori_arc_collect_cycles",
     "ori_arc_maybe_collect_cycles",
     "ori_arc_register_edge",
@@ -163,6 +165,8 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_tree_find_string",
     "ori_string_concat_parts",
     "ori_to_string_parts",
+    "ori_uint_to_cstr",
+    "ori_uint_to_string_parts",
 ];
 
 // == Type mapping ==
@@ -3892,10 +3896,22 @@ impl<M: Module> NativeBackend<M> {
         self.stdlib_ids
             .entry(SmolStr::new("ori_to_string"))
             .or_insert(id);
+        let id = decl("ori_uint_to_cstr", &[types::I64], vec![], Some(pt))?;
+        self.stdlib_ids
+            .entry(SmolStr::new("ori_uint_to_string"))
+            .or_insert(id);
         // Length-aware numeric conversion used by direct print/interpolation paths.
         let id = decl("ori_to_string_parts", &[types::I64, pt, pt], vec![], None)?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_to_string_parts"), id);
+        let id = decl(
+            "ori_uint_to_string_parts",
+            &[types::I64, pt, pt],
+            vec![],
+            None,
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_uint_to_string_parts"), id);
         // strlen(ptr: *u8) -> i64
         let id = decl("strlen", &[pt], vec![], Some(types::I64))?;
         self.stdlib_ids.insert(SmolStr::new("strlen"), id);
@@ -4741,6 +4757,12 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_abort_concurrent_modification", &[], vec![], None)?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_abort_concurrent_modification"), id);
+        let id = decl("ori_abort_division_by_zero", &[], vec![], None)?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_abort_division_by_zero"), id);
+        let id = decl("ori_abort_division_overflow", &[], vec![], None)?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_abort_division_overflow"), id);
 
         let id = decl("ori_deque_iterator_new", &[pt], vec![], Some(pt))?;
         self.stdlib_ids
@@ -7697,6 +7719,10 @@ impl<'a> FuncCodegen<'a> {
         self.call_string_parts_function("ori_to_string_parts", value)
     }
 
+    fn uint_to_string_parts(&mut self, value: ir::Value) -> Result<StringParts, String> {
+        self.call_string_parts_function("ori_uint_to_string_parts", value)
+    }
+
     fn float_to_string_parts(&mut self, value: ir::Value) -> Result<StringParts, String> {
         self.call_string_parts_function("ori_float_to_string_parts", value)
     }
@@ -7712,14 +7738,15 @@ impl<'a> FuncCodegen<'a> {
         let HirExprKind::Var(name) = &callee.kind else {
             return Ok(None);
         };
+        let Some(arg) = args.first() else {
+            return Ok(None);
+        };
         let parts_function = match name.as_str() {
             "ori_to_string" => "ori_to_string_parts",
+            "ori_uint_to_string" => "ori_uint_to_string_parts",
             "ori_float_to_string" => "ori_float_to_string_parts",
             "ori_bool_to_string" => "ori_bool_to_string_parts",
             _ => return Ok(None),
-        };
-        let Some(arg) = args.first() else {
-            return Ok(None);
         };
         let value = self.emit_expr(&arg.value)?;
         let value = match &arg.value.ty {
@@ -7747,7 +7774,9 @@ impl<'a> FuncCodegen<'a> {
                 let len = self.str_len_from_ptr(value)?;
                 Ok(StringParts { ptr: value, len })
             }
-            Ty::Int | Ty::Int64 | Ty::U64 => self.int_to_string_parts(value),
+            Ty::Int | Ty::Int64 => self.int_to_string_parts(value),
+            // `u64` fills the whole slot, so it must be rendered unsigned.
+            Ty::U64 => self.uint_to_string_parts(value),
             Ty::Int8 | Ty::Int16 | Ty::Int32 => {
                 let widened = self.builder.ins().sextend(types::I64, value);
                 self.int_to_string_parts(widened)
@@ -15234,6 +15263,71 @@ impl<'a> FuncCodegen<'a> {
         Ok(self.builder.block_params(merge_block)[0])
     }
 
+    /// Jump to a runtime abort helper that never returns.
+    fn emit_abort_call(&mut self, symbol: &str) -> Result<(), String> {
+        let abort_ref = *self
+            .func_refs
+            .get(symbol)
+            .ok_or_else(|| format!("missing runtime function `{symbol}`"))?;
+        self.builder.ins().call(abort_ref, &[]);
+        self.builder.ins().trap(ir::TrapCode::user(2).unwrap());
+        Ok(())
+    }
+
+    /// Divert the two trapping integer division cases to a diagnosed abort.
+    ///
+    /// Cranelift lowers `sdiv`/`udiv` straight to the hardware instruction, so
+    /// a zero divisor (or `MIN / -1` on signed types) raises `SIGFPE` and kills
+    /// the process without printing anything the programmer can act on.
+    fn emit_division_guard(
+        &mut self,
+        lv: ir::Value,
+        rv: ir::Value,
+        signed: bool,
+    ) -> Result<(), String> {
+        use ir::condcodes::IntCC;
+
+        let zero_block = self.builder.create_block();
+        let nonzero_block = self.builder.create_block();
+        let divisor_is_zero = self.builder.ins().icmp_imm(IntCC::Equal, rv, 0);
+        self.builder
+            .ins()
+            .brif(divisor_is_zero, zero_block, &[], nonzero_block, &[]);
+
+        self.builder.seal_block(zero_block);
+        self.builder.switch_to_block(zero_block);
+        self.emit_abort_call("ori_abort_division_by_zero")?;
+
+        self.builder.seal_block(nonzero_block);
+        self.builder.switch_to_block(nonzero_block);
+
+        if signed {
+            let min = match self.builder.func.dfg.value_type(lv).bits() {
+                8 => i8::MIN as i64,
+                16 => i16::MIN as i64,
+                32 => i32::MIN as i64,
+                _ => i64::MIN,
+            };
+            let lhs_is_min = self.builder.ins().icmp_imm(IntCC::Equal, lv, min);
+            let rhs_is_neg_one = self.builder.ins().icmp_imm(IntCC::Equal, rv, -1);
+            let overflows = self.builder.ins().band(lhs_is_min, rhs_is_neg_one);
+
+            let overflow_block = self.builder.create_block();
+            let ok_block = self.builder.create_block();
+            self.builder
+                .ins()
+                .brif(overflows, overflow_block, &[], ok_block, &[]);
+
+            self.builder.seal_block(overflow_block);
+            self.builder.switch_to_block(overflow_block);
+            self.emit_abort_call("ori_abort_division_overflow")?;
+
+            self.builder.seal_block(ok_block);
+            self.builder.switch_to_block(ok_block);
+        }
+        Ok(())
+    }
+
     fn emit_binary(
         &mut self,
         op: BinaryOp,
@@ -15245,6 +15339,10 @@ impl<'a> FuncCodegen<'a> {
         use BinaryOp::*;
         let float = is_float_ty(ty);
         let string = matches!(ty, Ty::String);
+        // Unsigned scalars share the integer instructions but need the unsigned
+        // division and comparison forms; `sdiv`/`SignedLessThan` would reinterpret
+        // values above the signed maximum as negative.
+        let unsigned = ty.is_unsigned_integer();
         Ok(match op {
             Add => {
                 if matches!(ty, Ty::String) {
@@ -15283,11 +15381,23 @@ impl<'a> FuncCodegen<'a> {
             Div => {
                 if float {
                     self.builder.ins().fdiv(lv, rv)
+                } else if unsigned {
+                    self.emit_division_guard(lv, rv, false)?;
+                    self.builder.ins().udiv(lv, rv)
                 } else {
+                    self.emit_division_guard(lv, rv, true)?;
                     self.builder.ins().sdiv(lv, rv)
                 }
             }
-            Rem => self.builder.ins().srem(lv, rv),
+            Rem => {
+                if unsigned {
+                    self.emit_division_guard(lv, rv, false)?;
+                    self.builder.ins().urem(lv, rv)
+                } else {
+                    self.emit_division_guard(lv, rv, true)?;
+                    self.builder.ins().srem(lv, rv)
+                }
+            }
             Eq => {
                 if string {
                     let strcmp_ref = *self
@@ -15370,6 +15480,8 @@ impl<'a> FuncCodegen<'a> {
             Lt => {
                 if float {
                     self.builder.ins().fcmp(FloatCC::LessThan, lv, rv)
+                } else if unsigned {
+                    self.builder.ins().icmp(IntCC::UnsignedLessThan, lv, rv)
                 } else {
                     self.builder.ins().icmp(IntCC::SignedLessThan, lv, rv)
                 }
@@ -15377,6 +15489,10 @@ impl<'a> FuncCodegen<'a> {
             Le => {
                 if float {
                     self.builder.ins().fcmp(FloatCC::LessThanOrEqual, lv, rv)
+                } else if unsigned {
+                    self.builder
+                        .ins()
+                        .icmp(IntCC::UnsignedLessThanOrEqual, lv, rv)
                 } else {
                     self.builder
                         .ins()
@@ -15386,6 +15502,8 @@ impl<'a> FuncCodegen<'a> {
             Gt => {
                 if float {
                     self.builder.ins().fcmp(FloatCC::GreaterThan, lv, rv)
+                } else if unsigned {
+                    self.builder.ins().icmp(IntCC::UnsignedGreaterThan, lv, rv)
                 } else {
                     self.builder.ins().icmp(IntCC::SignedGreaterThan, lv, rv)
                 }
@@ -15393,6 +15511,10 @@ impl<'a> FuncCodegen<'a> {
             Ge => {
                 if float {
                     self.builder.ins().fcmp(FloatCC::GreaterThanOrEqual, lv, rv)
+                } else if unsigned {
+                    self.builder
+                        .ins()
+                        .icmp(IntCC::UnsignedGreaterThanOrEqual, lv, rv)
                 } else {
                     self.builder
                         .ins()
