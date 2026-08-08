@@ -18,6 +18,9 @@ node_modules/
 # Ori compiler output
 *.orl.c
 *.orl.o
+.ori/
+.ori.module-*.o
+examples/**/main
 # OS
 packages/ori-sqlite
 *.pdb
