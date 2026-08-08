@@ -22,6 +22,17 @@ const BLOCK_TERMINATORS: &[TokenKind] = &[
 impl<'src> Parser<'src> {
     /// Parse a block: zero or more statements, stopping at a terminator token.
     pub fn parse_block(&mut self) -> Option<Block> {
+        // Nested control flow recurses through here, so blocks share the same
+        // depth bound as expressions.
+        if !self.enter_nesting() {
+            return None;
+        }
+        let parsed = self.parse_block_inner();
+        self.leave_nesting();
+        parsed
+    }
+
+    fn parse_block_inner(&mut self) -> Option<Block> {
         let start = self.current_span();
         let mut stmts = Vec::new();
         while !self.at_any(BLOCK_TERMINATORS) && !self.at_eof() {

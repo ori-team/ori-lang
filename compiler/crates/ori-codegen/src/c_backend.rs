@@ -7,6 +7,18 @@ use std::fmt::Write as FmtWrite;
 // ── Runtime header ────────────────────────────────────────────────────────────
 
 const ORI_RUNTIME_H: &str = r#"/* Ori runtime — generated, do not edit */
+/* The emitted runtime calls `nanosleep`, `gmtime_r`, and `getline`, which the
+   standard headers hide under a strict `-std=c11`. Requesting the POSIX 2008
+   feature set here keeps the generated file compilable without the host having
+   to pass `-D_GNU_SOURCE` on the command line. */
+#if !defined(_WIN32)
+#  if !defined(_POSIX_C_SOURCE)
+#    define _POSIX_C_SOURCE 200809L
+#  endif
+#  if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#    define _DARWIN_C_SOURCE
+#  endif
+#endif
 #include <stdint.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -25,9 +37,16 @@ const ORI_RUNTIME_H: &str = r#"/* Ori runtime — generated, do not edit */
 typedef struct { const char* data; size_t len; } ori_string_t;
 #define ORI_STR(s) ((ori_string_t){ .data = (s), .len = sizeof(s) - 1 })
 #define ORI_STR_PTR(s) ((ori_string_t){ .data = (s), .len = strlen(s) })
-static inline void ori_abort_bounds(const char* message) {
+/* `abort` skips the atexit handlers that flush buffered output, so anything the
+   program printed before the failure would be lost whenever stdout is a pipe or
+   a file. Flushing first keeps the error in context. */
+static inline void ori_abort_with(const char* message) {
+    fflush(stdout);
     fprintf(stderr, "%s\n", message);
     abort();
+}
+static inline void ori_abort_bounds(const char* message) {
+    ori_abort_with(message);
 }
 static inline bool ori_string_eq(ori_string_t a, ori_string_t b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);
@@ -853,6 +872,28 @@ static inline ori_list_t ori_iter_flatten(ori_list_t nested) {
 static inline ori_string_t ori_int_to_string(int64_t v) {
     char* buf = (char*)malloc(32);
     snprintf(buf, 32, "%" PRId64, v);
+    return (ori_string_t){ .data = buf, .len = strlen(buf) };
+}
+static inline void ori_abort_division_by_zero(void) {
+    ori_abort_with("ori integer division or remainder by zero");
+}
+static inline void ori_abort_division_overflow(void) {
+    ori_abort_with("ori integer division overflow: the minimum value has no positive counterpart");
+}
+/* Compile-time signedness probe, so the `MIN / -1` arm stays off for unsigned
+   operands where `(type)-1` is simply the largest representable value. */
+#define ORI_IS_SIGNED(x) (((__typeof__(x))-1) < ((__typeof__(x))0))
+#define ORI_SIGNED_MIN(x) ((__typeof__(x))(((unsigned long long)1) << (sizeof(x) * 8 - 1)))
+#define ORI_DIV_CHECK(a, b) \
+    do { \
+        if ((b) == 0) ori_abort_division_by_zero(); \
+        if (ORI_IS_SIGNED(b) && (b) == (__typeof__(b))(-1) && (a) == ORI_SIGNED_MIN(a)) \
+            ori_abort_division_overflow(); \
+    } while (0)
+
+static inline ori_string_t ori_uint_to_string(uint64_t v) {
+    char* buf = (char*)malloc(32);
+    snprintf(buf, 32, "%" PRIu64, v);
     return (ori_string_t){ .data = buf, .len = strlen(buf) };
 }
 static inline ori_string_t ori_float_to_string(double v) {
@@ -3223,6 +3264,17 @@ impl CCodegen {
                         BinaryOp::Add => format!("ori_string_concat({}, {})", l, r),
                         _ => format!("({} {} {})", l, binop_to_c(*op), r),
                     }
+                } else if matches!(op, BinaryOp::Div | BinaryOp::Rem) && lhs.ty.is_integer() {
+                    // Integer `/` and `%` trap in C exactly as they do natively,
+                    // so both backends must report the same message instead of
+                    // dying on an unexplained `SIGFPE`.
+                    let a = self.fresh_tmp();
+                    let b = self.fresh_tmp();
+                    format!(
+                        "({{ __typeof__({l}) {a} = ({l}); __typeof__({r}) {b} = ({r}); \
+                         ORI_DIV_CHECK({a}, {b}); ({a} {} {b}); }})",
+                        binop_to_c(*op)
+                    )
                 } else {
                     format!("({} {} {})", l, binop_to_c(*op), r)
                 }
@@ -4560,6 +4612,15 @@ impl CCodegen {
                             // Use PRId64 via C string concatenation in the emitted format
                             fmt.push_str("%\" PRId64 \"");
                             prelude.push(format!("int64_t {tmp} = (int64_t)({val});"));
+                            args.push(tmp);
+                        }
+                        // Unsigned scalars need `PRIu64`: widening them through
+                        // `int64_t` would print every `u64` above `i64::MAX`
+                        // as a negative number.
+                        Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 => {
+                            let tmp = self.fresh_tmp();
+                            fmt.push_str("%\" PRIu64 \"");
+                            prelude.push(format!("uint64_t {tmp} = (uint64_t)({val});"));
                             args.push(tmp);
                         }
                         Ty::Float | Ty::Float32 | Ty::Float64 => {

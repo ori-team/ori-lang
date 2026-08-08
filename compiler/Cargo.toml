@@ -18,7 +18,7 @@ version = "0.3.8"
 edition = "2021"
 authors = ["Ori Language Contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/raillen/ori-lang"
+repository = "https://github.com/ori-lang/ori"
 
 [workspace.dependencies]
 # Shared dependencies across crates (pinned here, referenced with { workspace = true })

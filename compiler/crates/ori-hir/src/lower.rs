@@ -25,7 +25,11 @@ fn stdlib_c_name(ori_path: &str) -> Option<&'static str> {
 }
 
 fn string_conversion_c_name(ty: &Ty) -> Option<&'static str> {
-    if ty.is_integer() || ty.contains_infer() {
+    // The unsigned types fill the whole slot, so they need the unsigned
+    // formatter: the signed one renders anything above `i64::MAX` negative.
+    if ty.is_unsigned_integer() {
+        Some("ori_uint_to_string")
+    } else if ty.is_integer() || ty.contains_infer() {
         Some("ori_to_string")
     } else if ty.is_float() {
         Some("ori_float_to_string")
@@ -204,6 +208,7 @@ fn stdlib_c_func_ty_raw(c_name: &str) -> Ty {
         "ori_string_replace" => (vec![Ty::String, Ty::String, Ty::String], Ty::String),
         "ori_string_chars" => (vec![Ty::String], Ty::List(Box::new(Ty::String))),
         "ori_to_string" => (vec![Ty::Int], Ty::String),
+        "ori_uint_to_string" => (vec![Ty::U64], Ty::String),
         "ori_to_int" => (vec![Ty::Int], Ty::Int),
         "ori_to_float" => (vec![Ty::Int], Ty::Float),
         "ori_list_new" => (vec![], Ty::List(Box::new(Ty::Infer(0)))),

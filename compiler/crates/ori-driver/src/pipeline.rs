@@ -57,16 +57,57 @@ pub use migrate_syntax::{
 };
 
 /// Full pipeline â†’ Cranelift object â†’ linker â†’ native binary.
+/// Stack the recursive front end needs to reach the parser's nesting bound.
+///
+/// The parser, resolver, and type checker all descend one frame per syntactic
+/// level, and those frames are large in an unoptimised build. Platform defaults
+/// vary too much to rely on (8 MiB for a Linux main thread, 1 MiB on Windows,
+/// 2 MiB for a spawned thread), so any host that runs the pipeline off the main
+/// thread — the language server, a test harness — must request at least this
+/// much through [`with_frontend_stack`].
+pub const FRONTEND_STACK_SIZE: usize = 64 * 1024 * 1024;
+
+/// Run `job` on a thread sized by [`FRONTEND_STACK_SIZE`], propagating a panic
+/// in `job` to the caller.
+pub fn with_frontend_stack<T, F>(job: F) -> T
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let worker = std::thread::Builder::new()
+        .stack_size(FRONTEND_STACK_SIZE)
+        .spawn(job)
+        .expect("failed to spawn the compiler worker thread");
+    match worker.join() {
+        Ok(value) => value,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
 pub fn run_compile(source_path: &Path, output: &Path) -> Result<CompileOutput, String> {
     run_compile_with_options(source_path, output, CompileOptions::default())
 }
 
 /// Default shared-library output path for `ori compile --lib`.
 pub fn default_shared_lib_path(source: &Path) -> PathBuf {
-    let stem = source
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("ori_lib");
+    // A project root or an `ori.proj` manifest names the *directory* the
+    // library belongs in, not the library itself; only a plain source file
+    // contributes its stem.
+    let is_manifest = source.file_name().and_then(|name| name.to_str()) == Some("ori.proj");
+    let (directory, stem) = if source.is_dir() {
+        (source.to_path_buf(), None)
+    } else if is_manifest {
+        (
+            source.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            None,
+        )
+    } else {
+        (
+            source.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            source.file_stem().and_then(|s| s.to_str()),
+        )
+    };
+    let stem = stem.unwrap_or("ori_lib");
     let file_name = if cfg!(windows) {
         format!("{stem}.dll")
     } else if cfg!(target_os = "macos") {
@@ -74,10 +115,7 @@ pub fn default_shared_lib_path(source: &Path) -> PathBuf {
     } else {
         format!("lib{stem}.so")
     };
-    source
-        .parent()
-        .map(|p| p.join(&file_name))
-        .unwrap_or_else(|| PathBuf::from(file_name))
+    directory.join(file_name)
 }
 
 /// Project-oriented native build route used by `ori build`.

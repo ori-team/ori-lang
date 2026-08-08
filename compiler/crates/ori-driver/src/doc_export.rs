@@ -261,7 +261,8 @@ pub fn export_doc_json() -> Result<String, String> {
 /// Write documentation export to a file.
 pub fn write_doc_export(path: &Path) -> Result<(), String> {
     let json = export_doc_json()?;
-    if let Some(parent) = path.parent() {
+    // A bare file name yields an empty parent, which `create_dir_all` rejects.
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::write(path, json).map_err(|e| e.to_string())

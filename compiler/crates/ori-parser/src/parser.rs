@@ -5,6 +5,16 @@ use smol_str::SmolStr;
 
 // ── Parser core ───────────────────────────────────────────────────────────────
 
+/// Deepest syntactic nesting the parser accepts.
+///
+/// The parser, the resolver, and the type checker all walk the tree
+/// recursively, so an input nested deeper than this exhausts the thread stack
+/// and kills the process instead of producing a diagnostic. The bound is sized
+/// for the smallest stack the front end runs on — the 2 MiB worker threads used
+/// by the language server and by test harnesses, in an unoptimised build — and
+/// still sits far above any readable program.
+pub(crate) const MAX_NESTING_DEPTH: u32 = 128;
+
 pub(crate) struct Parser<'src> {
     pub tokens: &'src [Token],
     pub pos: usize,
@@ -14,6 +24,11 @@ pub(crate) struct Parser<'src> {
     /// When false, juxtaposition is not parsed as a poetic call (used inside
     /// poetic arguments so `print greet name` can be rejected as nested).
     pub allow_poetic: bool,
+    /// Current syntactic nesting, checked against [`MAX_NESTING_DEPTH`].
+    depth: u32,
+    /// Set once the limit is reported, so one pathological expression does not
+    /// produce one diagnostic per remaining token.
+    depth_reported: bool,
 }
 
 impl<'src> Parser<'src> {
@@ -30,9 +45,46 @@ impl<'src> Parser<'src> {
             file_id,
             sink,
             allow_poetic: true,
+            depth: 0,
+            depth_reported: false,
         };
         p.skip_trivia();
         p
+    }
+
+    /// Enter one level of syntactic nesting.
+    ///
+    /// Returns `false` — after reporting once — when the input is nested past
+    /// [`MAX_NESTING_DEPTH`]; callers must then abandon the construct instead
+    /// of recursing further.
+    pub fn enter_nesting(&mut self) -> bool {
+        if self.depth >= MAX_NESTING_DEPTH {
+            if !self.depth_reported {
+                self.depth_reported = true;
+                let span = self.current_span();
+                self.sink.emit(
+                    Diagnostic::error(
+                        "parse.nesting_too_deep",
+                        format!("syntax is nested deeper than {MAX_NESTING_DEPTH} levels"),
+                    )
+                    .with_label(Label::primary(
+                        self.file_id,
+                        span,
+                        "nesting limit reached here",
+                    ))
+                    .with_why("the compiler walks the syntax tree recursively")
+                    .with_action("split the construct into named bindings or smaller functions"),
+                );
+            }
+            return false;
+        }
+        self.depth += 1;
+        true
+    }
+
+    /// Leave the level entered by a successful [`Parser::enter_nesting`].
+    pub fn leave_nesting(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     fn skip_trivia(&mut self) {

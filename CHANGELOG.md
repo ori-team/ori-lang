@@ -10,6 +10,25 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sized integer folding and trapping arithmetic.** Constant folding now
+  preserves the declared width and signedness, declines division by zero and
+  signed minimum-value overflow, and leaves those cases for the runtime guard.
+  Native and C backends use unsigned operations for unsigned values and report
+  integer traps with a diagnostic instead of a bare signal.
+- **Native runtime safety.** Collection growth checks addressable capacity and
+  allocation failure before calling the allocator. Runtime abort, panic,
+  bounds, and process-exit paths flush stdout first, preserving output captured
+  through a pipe or file.
+- **Compiler robustness.** Deeply nested source reports
+  `parse.nesting_too_deep` instead of exhausting the stack; compile output
+  paths work for bare files and project roots; and error-typed expressions no
+  longer trigger cascading type mismatches.
+- **Strict C emission.** Generated C requests the POSIX feature set required by
+  its runtime helpers, so strict `-std=c11` builds no longer depend on hidden
+  host compiler flags.
+
 ### Changed
 
 - **Cross-platform runtime ownership.** String-keyed maps now retain newly

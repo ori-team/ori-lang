@@ -76,6 +76,7 @@ when the compiler starts producing it.
 | `parse.invalid_lvalue` | error | Assignment target is not assignable |
 | `parse.invalid_range` | error | Range expression has a non-integer boundary |
 | `parse.missing_else_in_if_expr` | error | Inline `if` expression is missing the required `else` branch |
+| `parse.nesting_too_deep` | error | Source nesting exceeds the parser's safe depth limit |
 | `parse.module_missing` | error | Source file is missing the leading `module` declaration |
 | `parse.module_not_first` | error | `module` declaration appears after another declaration |
 | `parse.namespace_removed` | error | Source used removed `namespace` keyword; use `module` |
