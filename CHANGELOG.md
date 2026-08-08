@@ -31,8 +31,15 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Unsigned integers use unsigned instructions.** `u8`–`u64` division,
   remainder, and the four ordering comparisons emitted the signed forms, so any
   `u64` above `i64::MAX` compared and divided as a negative number and printed
-  with a minus sign. Both the native and the C backend now emit the unsigned
-  operations and format `u64` unsigned.
+  with a minus sign. Both backends now emit the unsigned operations and route
+  every unsigned width through the type-directed unsigned formatter.
+- **Runtime aborts preserve prior output.** Native abort, panic, bounds, and
+  process-exit paths now flush stdout before terminating, so messages printed
+  before a runtime failure are not lost when stdout is redirected to a pipe or
+  file. The generated C runtime follows the same rule.
+- **Generated C is strict-dialect compatible.** The emitted runtime requests
+  the POSIX feature set it needs for `nanosleep`, `gmtime_r`, and `getline`, so
+  `ori emit c` output compiles under `-std=c11` without extra host flags.
 - **Integer division reports the trap.** A zero divisor, or `MIN / -1`, raised
   `SIGFPE` and killed the process with no message. Both backends now check the
   operands and abort through the runtime with a named error.

@@ -2182,6 +2182,21 @@ unsafe extern "C" fn ori_to_string(n: i64) -> *mut u8 {
     ori_int_to_cstr(n)
 }
 
+/// Unsigned counterpart of [`ori_int_to_cstr`]: the payload fills the whole
+/// slot, so `u64` values above `i64::MAX` must not be read as negative.
+#[no_mangle]
+unsafe extern "C" fn ori_uint_to_cstr(n: i64) -> *mut u8 {
+    let mut ptr = std::ptr::null_mut();
+    let mut len = 0;
+    ori_uint_to_string_parts(n, &mut ptr, &mut len);
+    ptr
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_uint_to_string(n: i64) -> *mut u8 {
+    ori_uint_to_cstr(n)
+}
+
 #[no_mangle]
 pub extern "C" fn ori_to_int(value: i64) -> i64 {
     value
@@ -7332,6 +7347,7 @@ unsafe extern "C" fn ori_os_env(name: *const u8) -> *mut u8 {
 
 #[no_mangle]
 pub extern "C" fn ori_os_exit(code: i64) {
+    flush_stdout();
     std::process::exit(code as i32);
 }
 
@@ -7606,6 +7622,7 @@ mod test_harness;
 
 #[no_mangle]
 unsafe extern "C" fn ori_panic(message: *const u8) {
+    flush_stdout();
     eprintln!("ori panic: {}", cstr_str(message));
     std::process::abort();
 }
@@ -8228,8 +8245,17 @@ unsafe extern "C" fn ori_bytes_get(ptr: *const u8, index: i64) -> u8 {
 }
 
 fn abort_bounds(message: &str) -> ! {
+    flush_stdout();
     eprintln!("{message}");
     std::process::abort();
+}
+
+/// `abort` does not run the destructors that flush buffered output, so anything
+/// the program printed before the failure would be lost whenever stdout is a
+/// pipe or a file. Flushing first keeps the error in context.
+fn flush_stdout() {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
 }
 
 fn checked_slice_bounds(len: i64, start: i64, end: i64, message: &str) -> (usize, usize) {

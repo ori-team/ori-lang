@@ -165,6 +165,7 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_tree_find_string",
     "ori_string_concat_parts",
     "ori_to_string_parts",
+    "ori_uint_to_cstr",
     "ori_uint_to_string_parts",
 ];
 
@@ -3894,6 +3895,10 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_int_to_cstr", &[types::I64], vec![], Some(pt))?;
         self.stdlib_ids
             .entry(SmolStr::new("ori_to_string"))
+            .or_insert(id);
+        let id = decl("ori_uint_to_cstr", &[types::I64], vec![], Some(pt))?;
+        self.stdlib_ids
+            .entry(SmolStr::new("ori_uint_to_string"))
             .or_insert(id);
         // Length-aware numeric conversion used by direct print/interpolation paths.
         let id = decl("ori_to_string_parts", &[types::I64, pt, pt], vec![], None)?;
@@ -7737,10 +7742,8 @@ impl<'a> FuncCodegen<'a> {
             return Ok(None);
         };
         let parts_function = match name.as_str() {
-            // `u64` occupies the whole slot, so the signed formatter would
-            // render every value above `i64::MAX` as a negative number.
-            "ori_to_string" if arg.value.ty == Ty::U64 => "ori_uint_to_string_parts",
             "ori_to_string" => "ori_to_string_parts",
+            "ori_uint_to_string" => "ori_uint_to_string_parts",
             "ori_float_to_string" => "ori_float_to_string_parts",
             "ori_bool_to_string" => "ori_bool_to_string_parts",
             _ => return Ok(None),

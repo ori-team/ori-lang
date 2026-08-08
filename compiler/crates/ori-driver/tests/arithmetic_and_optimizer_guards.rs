@@ -60,6 +60,13 @@ fn assert_same_output_at_every_opt_level(name: &str, source: &str, expected: &st
 
 /// Build `source` and return the stderr of a run that is expected to abort.
 fn stderr_of_aborting_program(name: &str, source: &str) -> String {
+    output_of_aborting_program(name, source).1
+}
+
+/// Build `source`, run it, and return the `(stdout, stderr)` of a run that is
+/// expected to abort. Both pipes are captured, so buffered stdout only shows up
+/// when the runtime flushes it before aborting.
+fn output_of_aborting_program(name: &str, source: &str) -> (String, String) {
     let dir = TestDir::new(name);
     dir.write("main.orl", source);
     let exe = exe_path(&dir, "app");
@@ -81,7 +88,10 @@ fn stderr_of_aborting_program(name: &str, source: &str) -> String {
         !output.status.success(),
         "`{name}` was expected to abort but exited cleanly"
     );
-    String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n")
+    (
+        normalize_stdout(output.stdout),
+        String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+    )
 }
 
 #[test]
@@ -417,4 +427,113 @@ fn shared_library_name(stem: &str) -> PathBuf {
         format!("lib{stem}.so")
     };
     PathBuf::from(name)
+}
+
+#[test]
+fn buffered_output_survives_a_runtime_abort() {
+    // `abort` skips the handlers that flush stdout, so everything printed
+    // before the failure used to vanish whenever stdout was a pipe.
+    let source = r#"module app.main
+
+import ori.io = io
+
+main()
+    io.println("printed before the failure")
+    var divisor: int = 0
+    io.println(f"{7 / divisor}")
+end
+"#;
+    let (stdout, stderr) = output_of_aborting_program("flush_before_abort", source);
+    assert_eq!(stdout.trim(), "printed before the failure");
+    assert!(
+        stderr.contains("ori integer division or remainder by zero"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
+fn string_conversion_renders_every_integer_width_with_its_own_signedness() {
+    // `string(x)` lowers to a type-directed runtime symbol; the unsigned types
+    // must not reach the signed formatter.
+    let source = r#"module app.main
+
+import ori.io = io
+
+main()
+    const big: u64 = 18446744073709551615u64
+    const wide: u32 = 4294967295u32
+    const byte: u8 = 250u8
+    const negative: int = -42
+    io.println(string(big))
+    io.println(string(wide))
+    io.println(string(byte))
+    io.println(string(negative))
+end
+"#;
+    assert_same_output_at_every_opt_level(
+        "string_conversion_signedness",
+        source,
+        "18446744073709551615\n4294967295\n250\n-42",
+    );
+}
+
+#[test]
+fn emitted_c_compiles_under_a_strict_standard_dialect() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    // The generated runtime calls `nanosleep`, `gmtime_r`, and `getline`, which
+    // a strict `-std=c11` hides unless the file requests the POSIX feature set
+    // itself.
+    let dir = TestDir::new("emitted_c_strict_dialect");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const big: u64 = 18446744073709551615u64
+    io.println(f"{big}")
+end
+"#,
+    );
+    let generated = dir.path("main.c");
+    let emitted = Command::new(ori_exe())
+        .arg("emit")
+        .arg("c")
+        .arg(dir.path("main.orl"))
+        .arg("-o")
+        .arg(&generated)
+        .output()
+        .unwrap();
+    assert!(
+        emitted.status.success(),
+        "emitting C failed: {}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+
+    let host = exe_path(&dir, "chost");
+    let compiled = Command::new("cc")
+        .arg("-std=c11")
+        .arg("-Werror=implicit-function-declaration")
+        .arg("-o")
+        .arg(&host)
+        .arg(&generated)
+        .arg("-lm")
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "emitted C failed under -std=c11:\n{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let run = Command::new(&host).output().unwrap();
+    assert!(run.status.success());
+    assert_eq!(normalize_stdout(run.stdout).trim(), "18446744073709551615");
 }
