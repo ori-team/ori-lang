@@ -12,6 +12,8 @@ else
   exit 2
 fi
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
+echo "== D0 documentation catalog =="
+sh "$repo/tools/qa/docs_coverage.sh"
 cd "$comp"
 echo "== S0 cargo check --workspace =="
 cargo check --workspace

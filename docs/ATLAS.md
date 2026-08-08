@@ -177,8 +177,12 @@ Rules:
 | Need | Location |
 |---|---|
 | Language tour | `language/` |
+| Advanced language topics | [`language/advanced.md`](language/advanced.md) · [`language/concurrency.md`](language/concurrency.md) · [`language/interop.md`](language/interop.md) |
 | Task-oriented guides | `guides/` |
 | CLI reference | `guides/cli-reference*.md` |
+| Debugging and DAP | [`guides/debugging.md`](guides/debugging.md) · [`guides/debugging.pt-BR.md`](guides/debugging.pt-BR.md) |
+| Standard library guide | [`guides/stdlib-reference.md`](guides/stdlib-reference.md) · [`guides/stdlib-reference.pt-BR.md`](guides/stdlib-reference.pt-BR.md) |
+| Documentation audit evidence | [`quality/documentation-audit-2026-08-08.md`](quality/documentation-audit-2026-08-08.md) |
 | Long-form Portuguese book | `book/` |
 | Executable examples | `../examples/` |
 | Stdlib symbol documentation | `../stdlib/**/*.oridoc` |

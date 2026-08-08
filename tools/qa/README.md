@@ -7,6 +7,8 @@ Scripts for daily / weekly language quality (FREEZE-1 / 0.3.x).
 | [`daily_fast.sh`](daily_fast.sh) | S0 compile + strict Clippy for runtime/codegen/driver, S1–S4, and residual surface gate (S8 subset) |
 | [`daily_full.sh`](daily_full.sh) | Fast + multifile + full async + workspace + examples + perf |
 | [`catalog_lint.sh`](catalog_lint.sh) | Spec 13 ↔ emitted diagnostic codes |
+| [`docs_coverage.sh`](docs_coverage.sh) | Canonical Atlas/catalog paths and required documentation files |
+| [`docs_examples.sh`](docs_examples.sh) | Documentation examples, `ori check`, and `ori doc check` |
 | [`residual_audit.sh`](residual_audit.sh) | Product surface + intentional residual negatives |
 | [`examples_smoke.sh`](examples_smoke.sh) | `ori check` over `examples/*` |
 | [`web_sec8.sh`](web_sec8.sh) | `ori-web` SEC8 golden suite (CSRF, jail, sessions, middleware, upload) |
@@ -21,6 +23,7 @@ From repo root (with Rust toolchain for compiler work):
 
 ```bash
 ./tools/qa/catalog_lint.sh
+./tools/qa/docs_examples.sh
 ./tools/qa/daily_fast.sh
 # optional weekly:
 ./tools/qa/daily_full.sh

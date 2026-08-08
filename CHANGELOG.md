@@ -90,6 +90,11 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Semantic documentation audit.** Synchronized the normative chapters with
   the current runtime for embedded-NUL file reads, `ok`/`err` propagation,
   async `using` cleanup, contracts, and formatter defaults.
+- **Documentation coverage follow-up.** Added advanced language, concurrency,
+  interop, debugging/DAP, standard-library, and contributor bootstrapping
+  guides with maintained Portuguese siblings. The Atlas/catalog now routes
+  those pages, and `docs_coverage.sh` plus `docs_examples.sh` validate their
+  paths and executable examples in the daily QA gate.
 - **Audit regression matrix.** Added checker, runtime, native AOT, and C/debug
   regressions for logical `bytes` equality, while retaining the existing S3
   coverage for result patterns, trait receivers, async cleanup, contracts, and

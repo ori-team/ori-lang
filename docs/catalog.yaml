@@ -82,6 +82,62 @@ canonical_documents:
     audience: [user, contributor, maintainer, agent]
     owns: [documentation-map, canonical-source-routing, change-impact-routing]
 
+  - id: language.advanced
+    path: docs/language/advanced.md
+    domain: user-documentation
+    status: current
+    audience: [language-user]
+    owns: [advanced-language-topics]
+    related_code: [compiler/crates/ori-parser, compiler/crates/ori-types, compiler/crates/ori-hir]
+
+  - id: language.concurrency
+    path: docs/language/concurrency.md
+    domain: user-documentation
+    status: current
+    audience: [language-user]
+    owns: [async-tasks-channels-atomics]
+    related_code: [compiler/crates/ori-runtime, compiler/crates/ori-codegen]
+
+  - id: language.interop
+    path: docs/language/interop.md
+    domain: user-documentation
+    status: current
+    audience: [language-user, ffi-contributor]
+    owns: [c-interop-native-abi]
+    related_code: [compiler/crates/ori-codegen, compiler/crates/ori-runtime]
+
+  - id: guide.bootstrapping
+    path: docs/guides/bootstrapping.md
+    domain: user-documentation
+    status: current
+    audience: [contributor, maintainer]
+    owns: [source-build-and-package-bootstrap]
+    related_code: [compiler, runtime, stdlib, tools]
+
+  - id: guide.debugging
+    path: docs/guides/debugging.md
+    domain: user-documentation
+    status: current
+    audience: [language-user, contributor]
+    owns: [dap-debugging-workflow]
+    related_code: [compiler/crates/ori-driver, compiler/crates/ori-lsp, extensions]
+
+  - id: guide.stdlib-reference
+    path: docs/guides/stdlib-reference.md
+    domain: user-documentation
+    status: current
+    audience: [language-user]
+    owns: [stdlib-module-discovery]
+    related_code: [stdlib, compiler/crates/ori-types/src/stdlib.rs]
+
+  - id: quality.documentation-audit-2026-08-08
+    path: docs/quality/documentation-audit-2026-08-08.md
+    domain: quality
+    status: archived
+    audience: [maintainer, documentation-contributor, agent]
+    owns: [documentation-audit-evidence]
+    related_code: [compiler, compiler/crates/ori-driver/tests, tools/qa]
+
   - id: product.index
     path: docs/product/README.md
     domain: product
