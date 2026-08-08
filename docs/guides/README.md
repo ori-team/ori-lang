@@ -9,13 +9,16 @@
 | **CLI reference** (every `ori` command) | [cli-reference.md](cli-reference.md) | [cli-reference.pt-BR.md](cli-reference.pt-BR.md) |
 | Cookbook | [cookbook.md](cookbook.md) | [cookbook.pt-BR.md](cookbook.pt-BR.md) |
 | Errors / optional / result | [errors-null-void.md](errors-null-void.md) | [errors-null-void.pt-BR.md](errors-null-void.pt-BR.md) |
+| Debugging and DAP | [debugging.md](debugging.md) | [debugging.pt-BR.md](debugging.pt-BR.md) |
+| Standard library reference | [stdlib-reference.md](stdlib-reference.md) | [stdlib-reference.pt-BR.md](stdlib-reference.pt-BR.md) |
 | Testing | [testing.md](testing.md) | [testing.pt-BR.md](testing.pt-BR.md) |
 | Report bugs | [report-bugs.md](report-bugs.md) | [report-bugs.pt-BR.md](report-bugs.pt-BR.md) |
-| Bootstrapping (contributors) | [bootstrapping.md](bootstrapping.md) | — |
+| Bootstrapping (contributors) | [bootstrapping.md](bootstrapping.md) | [bootstrapping.pt-BR.md](bootstrapping.pt-BR.md) |
 | **Performance microbench** (Ori / Python / Rust) | [performance.md](performance.md) | [performance.pt-BR.md](performance.pt-BR.md) |
-| Language comparison notes (older suite) | — | [language-comparison.md](language-comparison.md) |
+| Language comparison notes (older suite) | [language-comparison.md](language-comparison.md) | [language-comparison.pt-BR.md](language-comparison.pt-BR.md) |
 
 Language learning path: [../language/tour.md](../language/tour.md) ·
-[../language/tour.pt-BR.md](../language/tour.pt-BR.md).
+[advanced](../language/advanced.md) · [concurrency](../language/concurrency.md) ·
+[interop](../language/interop.md) · [Portuguese tour](../language/tour.pt-BR.md).
 
 Runnable samples: [../../examples/](../../examples/).
