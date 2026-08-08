@@ -1,6 +1,6 @@
 # Cap. 22 — Estabilidade, ABI e limites
 
-> **Versão âncora:** Ori 0.3.x (S3)  
+> **Versão âncora:** Ori 0.3.x (S3) · workspace `0.3.8-dev`
 > **Parte:** IV
 
 ## TL;DR
@@ -43,7 +43,8 @@ ABI significa *Application Binary Interface* (Interface Binária de Aplicação)
 
 A Ori tem um contrato de ABI nomeado (**`ori-native-abi-1`**) que define como
 o binário gerado conversa com C: layout de tipos primitivos, do cabeçalho de
-memória do ARC, e das coleções internas (`OriList`, `OriMap`, `OriSet`...).
+memória do ARC e as pontes públicas geradas pelo compilador. Os layouts
+internos de coleções (`OriList`, `OriMap`, `OriSet`...) continuam privados.
 
 **Onde isso vira prática, hoje:** o comando `ori compile --lib` gera uma
 biblioteca compartilhada (`.so`/`.dll`/`.dylib`) com funções marcadas
@@ -51,9 +52,12 @@ biblioteca compartilhada (`.so`/`.dll`/`.dylib`) com funções marcadas
 lib nativa — é assim que a Ori pode virar um plugin dentro de outro
 programa (por exemplo, uma engine de jogos).
 
-**O que atravessa a fronteira hoje:** escalares (`int`, `float`, `bool`, …) e
-**`string`**. Uma string Ori já é, na memória, um `const char *` terminado em
-zero — então ela passa direto, sem conversão.
+**O que atravessa a fronteira hoje:** escalares (`int`, `float`, `bool`, …),
+`string`, structs não genéricas com campos escalares, handles opacos para
+estruturas gerenciadas e pontes tag + payload para `optional`/`result`. O
+comando `ori compile --lib` gera um cabeçalho C com essas assinaturas e os
+helpers de retain/release. Uma string Ori já é, na memória, um `const char *`
+terminado em zero — então ela passa direto, sem conversão.
 
 ```ori
 @c_export
@@ -78,11 +82,11 @@ Se você esquecer o `ori_arc_release`, o programa **vaza** — não quebra. O
 ponteiro continua válido para sempre. É um bug lento, não um crash: 200 mil
 chamadas sem liberar custam uns 18 MB; com liberação, o uso fica estável.
 
-**O que ainda não atravessa:** structs, `list`, `map`, `optional` e `result`.
-Esses agregados não têm layout C estável na ABI-1, e tentar exportá-los dá
-`attr.c_export_bad_type`. "Integração com C" na Ori de hoje é real e funcional
-para escalares e texto — não é ainda uma promessa de que qualquer função Ori é
-chamável de qualquer sistema legado sem trabalho nenhum.
+**O que ainda não atravessa diretamente:** `list`, `map`, `set`, arrays
+dinâmicos, structs genéricas ou vazias, callbacks e layouts de coleções. Esses
+tipos continuam atrás de handles ou são rejeitados com
+`attr.c_export_bad_type`. "Integração com C" na Ori de hoje é real e funcional,
+mas a assinatura precisa respeitar a lista fechada da [especificação ABI](../../spec/19-abi.md).
 
 ## 4. Limites e Armadilhas (Pitfalls)
 

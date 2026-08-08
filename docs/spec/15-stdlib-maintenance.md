@@ -1,6 +1,6 @@
 # Stdlib maintenance flow
 
-> Status: current as of 2026-06-29.
+> Status: current as of 2026-08-08.
 > Audience: stdlib implementers, compiler implementers
 > Surface: **S3** (`0.3.0`)
 > See also: [`12-stdlib.md`](12-stdlib.md) — Implementation Architecture (v1.x)
@@ -9,9 +9,11 @@ Goal: adding a stdlib function should not require guessing four different places
 
 ## Source of truth
 
-The v1.x stdlib is implemented as a Rust manifest plus a native runtime, not
-as separate `.orl` source modules. `compiler/crates/ori-types/src/stdlib.rs`
-is the single source of truth for the stdlib contract surface.
+The stdlib has three deliberately separate layers. The Rust manifest and
+native runtime are the source of truth for Layer 1 primitives; `.orl` source
+modules implement Layer 2 wrappers and Layer 3 algorithms. The public contract
+is the combination of `compiler/crates/ori-types/src/stdlib.rs` and the
+versioned files under `stdlib/`.
 
 Main entries:
 
@@ -97,7 +99,8 @@ This is no longer a future item — the infrastructure is live.
   `ori.convert`, `ori.map`, `ori.set`, `ori.bytes`,
   `ori.math`, `ori.json`, `ori.io`, `ori.fs`,
   `ori.time`, `ori.test`, `ori.process`,
-  `ori.concurrent`. Gap parity map: `docs/planning/stdlib-gap-parity.md`.
+  `ori.concurrent`. Historical gap parity map:
+  [`../planning/historico/stdlib-gap-parity.md`](../planning/historico/stdlib-gap-parity.md).
 - **Layer 3 (`.orl` algorithms):** pure-Ori algorithms on top of Layer 1+2.
   Modules: `ori.list` (`sum_int`, `binary_search_int`,
   `all_equal_int`), `ori.tree` (iterative traversals:
@@ -199,7 +202,7 @@ Normal alias imports such as `import ori.string = str` continue to expose the
 native runtime surface (`str.len`, `str.slice`, `str.parse_int`, etc.) without
 forcing the parent `.orl` helper module into every compile.
 
-Compatibility rule: old submodules remain valid. `ori.string`,
-`ori.string`, `ori.list`, `ori.list`, and
-`ori.fs` are still loaded from their existing files. Do not remove them
+Compatibility rule: old submodules remain valid. `ori.string.utils`,
+`ori.string.algorithms`, `ori.list.utils`, `ori.list.algorithms`, and
+`ori.fs.utils` are still loaded from their existing files. Do not remove them
 until a future breaking release has a documented migration window.

@@ -1,6 +1,6 @@
 # Erros, optional e void — mapa mental
 
-> Guia pedagógico (**S3 / 0.3.2**).  
+> Guia pedagógico (**S3 + inferência B / workspace 0.3.8-dev**).
 > **English:** [errors-null-void.md](errors-null-void.md)  
 > Normativo: [09-errors](../spec/09-errors.md), [04-types](../spec/04-types.md)
 

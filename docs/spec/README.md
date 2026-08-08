@@ -1,7 +1,7 @@
 # Specs
 
 > Audience: maintainer, contributor  
-> Status: **current (2026-07-20)** — swept against the compiler at `0.3.x` HEAD  
+> Status: **current (2026-08-08)** — swept against the compiler workspace `0.3.8-dev`
 > Surface: **S3** (`0.3.0`) + local inference **`0.3.1` / option B** + pipe `|>`  
 > Post-FREEZE-1 additions: `newtype`, match expressions, or-patterns, `if ok` /
 > `if err`, destructuring bindings, associated type aliases, const generics with
@@ -28,7 +28,7 @@ Product docs index: [../README.md](../README.md).
 | Visibility | **`public`** (not `pub`) |
 | Memory | ARC + cooperative cycle collection |
 | Execution | AOT native primary; `ori run` may JIT when cdylib staged |
-| Freeze | FREEZE-1 on **0.3.x** — additive/fix only without freeze exit |
+| Freeze | FREEZE-1 closed 2026-07-19; workspace remains `0.3.8-dev` until a `0.4.0` cut |
 | ABI | `ori-native-abi-1` — [`19-abi.md`](19-abi.md) |
 | Residuals | [`14-backend-support.md`](14-backend-support.md) · [`../planning/historico/lang-res-closure.md`](../planning/historico/lang-res-closure.md) |
 
@@ -39,8 +39,9 @@ Use:
   competition.**
 - `01-overview.md` through `13-error-catalog.md` for the language contract
   under the **S3** surface (plus inference B and pipe as living features).
-  **There is no chapter 03** — a standalone EBNF grammar was planned and never
-  written; chapters 02 and 04–08 define the grammar between them.
+  Chapter 03 is the standalone EBNF grammar in [`03-grammar.ebnf`](03-grammar.ebnf).
+  Chapters 02 and 04–08 explain the lexical, type, expression, statement, and
+  function rules around that grammar.
 - `04-types.md` / `05-expressions.md` / `06-statements.md` for local inference
   rules and the pipe operator.
 - `13-error-catalog.md` for **emitted** diagnostics, including pre-S3 form

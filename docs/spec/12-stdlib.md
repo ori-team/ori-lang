@@ -1040,7 +1040,7 @@ Its concrete APIs currently live in `ori.task`, `ori.channel`, and
 Status: implemented in the native runtime for explicit task and future APIs.
 The runtime now supports pollable futures, private failed/cancelled states, a
 FIFO executor queue, continuation scheduling, and non-blocking timers.
-`async func` currently uses native state-machine lowering for the supported v1
+`async` functions currently use native state-machine lowering for the supported v1
 subset. The call returns a `future[T]` immediately, the generated frame is
 scheduled on the native executor, and supported `await` shapes suspend through
 `ori_future_poll` plus `ori_future_on_ready` instead of calling
@@ -1174,9 +1174,10 @@ Current behavior:
 
 ## `ori.test` — Testing
 
-Status: partially implemented. Test functions marked with `@test` can be run
-with `ori test <file-or-project>`. This command uses the native backend and the
-Rust `ori-runtime` static library.
+Status: implemented for the native test runner. Test functions marked with
+`@test` can be run with `ori test <file-or-project>`. The assertion module is
+intentionally small and grows only when a runtime-backed assertion has a stable
+contract.
 
 Use `ori test <file-or-project> --filter <name>` to run only tests whose full
 name or short function name contains `<name>`. The runner reports how many tests

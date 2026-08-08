@@ -1,5 +1,9 @@
 # Recursos Implementados e Resolvidos — Ori Language
 
+> **Registro histórico:** esta é uma cronologia de entregas, não a fonte atual
+> de status. Para o inventário vigente, consulte [`../ATLAS.md`](../ATLAS.md) e
+> [`BACKLOG.md`](BACKLOG.md).
+
 Este documento registra o estado atual de implementação da linguagem Ori (conforme verificado pelas suítes de testes automatizados e especificações normativas).
 
 ---
@@ -108,7 +112,7 @@ Todas as coleções listadas abaixo estão integradas com o type-checker, possue
 - **Async/Await**:
   - Tipo primitivo `future<T>` integrado.
   - Executor nativo em thread dedicada com timers não-bloqueantes (`task.sleep`).
-  - Sintaxe `async func` e expressão `await` controladas no parser, HIR e type checker.
+  - Sintaxe de funções `async` e expressão `await` controladas no parser, HIR e type checker.
   - Entrada assíncrona principal: `async main()`.
   - **State Machine Async (v1)**: Geração nativa de frame e state machine com despacho por estado para fluxos sequenciais. Preserva a contagem de referências ARC para locals vivos através de suspensões sequenciais simples.
 

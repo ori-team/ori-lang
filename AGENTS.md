@@ -80,7 +80,7 @@ ori-lang/
 | **Testing** | Always use `ori-testing` skill for new features |
 | **Changelog** | Always update `CHANGELOG.md` with changes |
 | **Bug fixes** | Always add regression test in `compiler/crates/ori-driver/tests/` |
-| **Pre-implementation** | Check `docs/planning/PLANO-MATURIDADE-COMPLETO.md` and `docs/planning/PENDENTES.md` |
+| **Pre-implementation** | Check [`docs/ATLAS.md`](docs/ATLAS.md), [`docs/planning/BACKLOG.md`](docs/planning/BACKLOG.md), and [`docs/planning/PENDENTES.md`](docs/planning/PENDENTES.md); the maturity plan is historical in `docs/planning/historico/` |
 | **Stdlib changes** | Update `stdlib.rs`, `lower.rs` (stdlib_c_name + stdlib_c_func_ty), and changelog |
 | **Documentation** | Keep `spec/` (normative), `planning/` (plans), `archive/` (historical) |
 | **Dedup** | Consolidate documents of same scope, avoid duplication |
@@ -163,31 +163,31 @@ Source (.orl)
   → Binary
 ```
 
-## Current Status (2026-07-23)
+## Current Status (2026-08-08)
 
 - **Rust:** 1.95.0 (via `rust-toolchain.toml`)
 - **Language surface:** **`0.3.0` S3** + **`0.3.1`** Nim-local inference + **option B** (field/index/call/pipe). Manifesto: `docs/spec/00-manifesto.md`. Decisões: `docs/planning/ori-surface-s3-auk9.md`. Spec: `04-types`, `05-expressions` (pipe), `06-statements`.
 - **Cargo workspace package version:** **`0.3.8`** (living development baseline).
   Released tags through **`v0.3.7`**; the current language branch contains the
   0.3.7 fixes as equivalent cherry-picks plus the post-release language work.
-- **Etapas 0–9** do `PLANO-MATURIDADE-COMPLETO.md` (ciclo 0.2) concluídas; S3 PRs 1–10 + PR11 + 11b (B) = superfície atual.
+- **Etapas 0–9** do plano histórico `docs/planning/historico/PLANO-MATURIDADE-COMPLETO.md` (ciclo 0.2) concluídas; S3 PRs 1–10 + PR11 + 11b (B) = superfície atual.
 - **Pipe `|>`:** **mantido** e tipado no checker como `f(value)`; entra na inferência local B.
 - **Auk9:** produto **arquivado** (README no repo auk9-lang). Living surface is Ori S3.
 - **Product focus:** language completeness, docs/examples, performance, local DX
   (VS Code + Zed under `extensions/`). **No** Marketplace/store publish and **no**
   multi-OS distribution push until that focus is done. Game/imgui packages do
   not exist and must not reappear in docs or plans.
-- **`tools/qa/daily_fast.sh`:** PASSES (2026-07-23: workspace check, frontend
-  units, 234 `ori_spec`, diagnostic catalog, ARC/memory, robustness, residual
-  product surface).
+- **`tools/qa/daily_fast.sh`:** PASSES (2026-08-08: workspace check, strict
+  Clippy, frontend units, 238 `ori_spec`, diagnostic catalog, ARC/memory,
+  robustness, residual product surface).
 - **Release smoke:** `tools/smoke_native_release.ps1 -SkipBuild` passes — `ori compile` + `ori test` validados em package isolado com runtime empacotada (Windows MSVC).
 - **Rust removal Phase 1 — Windows MSVC (unreleased):** `ORI_USE_BUNDLED_RUST_LLD=1` engaja estratégia `BundledRustLld` que invoca `rust-lld` diretamente (sem `rustc` driver). CRT discovery via `vswhere.exe` + Windows SDK layout. Validado end-to-end com `examples/hello_world.orl` em Windows MSVC. `tools/stage_native_runtime.ps1` agora copia `rust-lld.exe` para `runtime/bin/`.
 - **Rust removal Phase 1 — Linux GNU (unreleased):** Estratégia `BundledRustLld` estendida para `x86_64-unknown-linux-gnu`. CRT discovery via `cc -print-file-name` (crt1.o/crti.o/crtn.o) + `cc -print-search-dirs` (lib dirs) + fallback de paths comuns para dynamic linker. `tools/stage_native_runtime.sh` agora copia `rust-lld` para `runtime/bin/`.
 - **Rust removal Phase 1 — macOS (unreleased):** Estratégia `BundledRustLld` estendida para `x86_64-apple-darwin` e `aarch64-apple-darwin`. CRT/SDK discovery via `xcrun --show-sdk-path` + `xcrun --show-sdk-version` (requer Xcode Command Line Tools). Link line `rust-lld -flavor darwin` com `-arch`, `-platform_version macos <min> <sdk>`, `-syslibroot`. Deployment target default `10.12` (x86_64) / `11.0` (arm64), override via `MACOSX_DEPLOYMENT_TARGET`. **Phase 1 completa para todos os 3 desktop OSes** (Windows MSVC, Linux GNU, macOS).
 - **Rust removal Phase 2 — SystemLinker (unreleased):** Estratégia `SystemLinker` (`link.exe`/`ld`) sem `rustc`. Opt-in forçado via `ORI_USE_SYSTEM_LINKER=1`. Discovery: Windows MSVC / Linux GNU / macOS. **Prioridade default (LANG-PERF 2026-07-13):** `ORI_NATIVE_LINKER` → force `ORI_USE_BUNDLED_RUST_LLD` → force `ORI_USE_SYSTEM_LINKER` → **auto BundledRustLld if found** → **auto SystemLinker** → `RustcDriver`. 4 testes de regressão em `native_backend/tests.rs`.
 - **Rust removal Phase 3 — JIT Cranelift (unreleased):** `ori run` usa JIT por default quando cdylib disponível; `ORI_USE_JIT=1` força JIT; `ORI_USE_AOT=1` força AOT. Código Cranelift executado in-process via `JITModule` com símbolos `ori_*` resolvidos on-demand da cdylib do runtime através de `libloading`. Sem `.o` temporário, sem linker, sem subprocesso. `ori-runtime` builda 3 artefatos (`staticlib` + `rlib` + `cdylib`); stage scripts copiam cdylib para `runtime/<triple>/`; smoke release valida cdylib staged + `ori run` JIT no package isolado. `ori compile` e `ori test` permanecem AOT. **Híbrido A→B→D completo** para `ori run`.
-- **Stdlib Phase 0 + Gap parity (unreleased):** Prelude loading + **Layer 2/3 `.orl` fechados** para paridade `std.*` v1 (`docs/planning/stdlib-gap-parity.md`): 28 utils + 8 algorithms + `validate`/`path`; Layer 1 hot path Rust (FS metadados, `os.current_dir`, `process.*`, `net.*`, `lazy.is_consumed`, …). Lowering `ori.net.Connection`/`Listener`/`UdpSocket` e `ori.io.Input`/`Output` para módulos `.orl`. ~36 testes stdlib E2E em `multifile_imports.rs` (incl. rede v2).
-- **Stdlib/Rede v2 (unreleased):** `connect_tls`, servidor TCP (`listen`/`accept`), UDP síncrono, `task.run_blocking`; design `docs/planning/net-v2-design.md`; exemplo `examples/http_get.orl`.
+- **Stdlib Phase 0 + Gap parity (unreleased):** Prelude loading + **Layer 2/3 `.orl` fechados** para paridade `std.*` v1 (`docs/planning/historico/stdlib-gap-parity.md`): 28 utils + 8 algorithms + `validate`/`path`; Layer 1 hot path Rust (FS metadados, `os.current_dir`, `process.*`, `net.*`, `lazy.is_consumed`, …). Lowering `ori.net.Connection`/`Listener`/`UdpSocket` e `ori.io.Input`/`Output` para módulos `.orl`. ~36 testes stdlib E2E em `multifile_imports.rs` (incl. rede v2).
+- **Stdlib/Rede v2 (unreleased):** `connect_tls`, servidor TCP (`listen`/`accept`), UDP síncrono, `task.run_blocking`; design histórico em `docs/planning/historico/net-v2-design.md`; exemplo `examples/http_get.orl`.
 - **FFI aggregates ABI v1 scope (unreleased):** `@c_export` accepts non-empty,
   non-generic scalar-field structs through portable pointer/out wrappers and
   managed structs through typed opaque ARC handles, plus direct
@@ -208,7 +208,7 @@ Source (.orl)
   `tools/bench/managed_temporary_churn.orl` retained as evidence.
 - **LSP/VS Code (unreleased):** Catálogo stdlib Layer 1+2, hover/goto stdlib, sync incremental, dot-complete via aliases, `ori doctor`, extensão `extensions/vscode-orl/`.
 - **Docs website (unreleased):** Site Starlight em [github.com/raillen/ori-website](https://github.com/raillen/ori-website) — i18n en/pt/es/ja, Pagefind + busca ⌘K, referência gerada via `ori doc export`. Deploy Vercel-ready (`vercel.json`).
-- **Master plan:** `docs/planning/PLANO-MATURIDADE-COMPLETO.md` — Etapas 0–9 concluídas; backlog v2 em Apêndice C. **M2 ✅** (stdlib + `public alias` de domínio); **M3 ✅** (`19-abi.md`); **M1 ✅** (`docs/install.md`, `tools/smoke_no_rust.sh`, CI smoke-no-rust). Próximo opcional: publicar package; **M4** self-host por último.
+- **Master plan histórico:** `docs/planning/historico/PLANO-MATURIDADE-COMPLETO.md` — Etapas 0–9 concluídas; backlog vigente em `docs/planning/BACKLOG.md`. **M2 ✅** (stdlib + `public alias` de domínio); **M3 ✅** (`19-abi.md`); **M1 ✅** (`docs/install.md`, `tools/smoke_no_rust.sh`, CI smoke-no-rust). Próximo opcional: publicar package; **M4** self-host por último.
 
 ## Versioning policy (2026-07-13)
 

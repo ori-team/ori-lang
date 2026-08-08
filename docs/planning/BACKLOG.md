@@ -2,8 +2,8 @@
 
 > **This file is the only active “what remains to implement” list.**  
 > Surface baseline: **S3 `0.3.0`** + inference B **`0.3.1`** + released package
-> **`0.3.7`** + living workspace **`0.3.8`**.
-> Last consolidated: **2026-07-26** — §2 contains the real remaining work
+> **`0.3.7`** + living workspace **`0.3.8-dev`**.
+> Last consolidated: **2026-08-08** — §2 contains the real remaining work
 > (every row verified against the compiler, not copied from a plan).
 
 ---
@@ -26,7 +26,8 @@
 
 **Do not prioritize unless reopened:** multi-OS DIST, ECO demos, M4 self-host.
 
-**Not in monorepo product tree:** `ori-game` / `ori-imgui` remain **external packages** (sibling repos). Revival work follows `docs/planning/eco-game-imgui-raylib3d-plan.md` — do **not** re-vendor into `ori-lang` unless a new explicit decision says so.  
+External game/editor package work is outside this repository and is not part of
+the active Ori language backlog. Do not re-vendor it into `ori-lang`.
 **Cancelled (editor distribution):** **TOOL-MP** (VS Code Marketplace / Open VSX) — install only via repo script `tools/install_vscode_extension.sh` (local `.vsix`).
 
 ---
@@ -50,12 +51,12 @@
 | DONE-STDLIB-1…5 / 4b / 4k | Canonical stdlib + async I/O + poll reactor |
 | DONE-LANG-1 / LANG-2 | Native async subset + C/debug sync matrix slice |
 | DONE-PKG-1…4 | Path/git/registry (code exists; not market push) |
-| DONE-FREEZE-1 / ABI-1 | Freeze window **closed 2026-07-19** (ran 2026-07-13→07-19, zero intentional surface breaks); line is now `0.4`. **ABI-1 stays in force.** Rules: `freeze-and-abi-gates.md` |
+| DONE-FREEZE-1 / ABI-1 | Freeze window **closed 2026-07-19** (ran 2026-07-13→07-19, zero intentional surface breaks). Workspace remains `0.3.8-dev` until a `0.4.0` cut. **ABI-1 stays in force.** Rules: `freeze-and-abi-gates.md` |
 | DONE-DIST-LINUX-DEB | Linux `.tar.gz` + `.deb` via `package_native_release` / `package_deb`; CI release assets |
 | DONE-LANG-DOC | User docs + examples aligned to S3 / current stdlib / editors local |
 | DONE-LANG-PERF | AOT/JIT, stage release, mold/lld PATH, microbench + ARC bench; living JIT lower only |
 | DONE-LANG-RES | Native residual inventory Spec 14; product surface gate test; reopen only on concrete blocker |
-| CANC-GAME / CANC-IMGUI | **Cancelled as monorepo product** — external plan: `eco-game-imgui-raylib3d-plan.md` |
+| CANC-GAME / CANC-IMGUI | **Cancelled as monorepo product** and removed from the active plan |
 | CANC-AUK9 | Archived |
 | WONT-HM / WONT-LANG-3 | Global HM; C async v1 |
 
@@ -191,8 +192,8 @@ use-after-release path in temporary `ori.args` lookups.
 | **LANG-PERF** | Closed — waves 1–3 (compile/link/JIT flags); see `perf-baseline-2026-07-13.md` |
 | **LANG-PERF-2** | Closed (waves 0–6 + scalar list inline) — reopen only if apps regress |
 | **LANG-RES** | Closed — Spec 14 inventory + `compile_runs_lang_res_product_surface_native`; see `historico/lang-res-closure.md` |
-| **DX-VSCODE** | v0.3.2 local `.vsix` |
-| **DX-ZED** | `extensions/zed-ori` dev install |
+| **DX-VSCODE** | v0.3.5 local `.vsix` |
+| **DX-ZED** | `extensions/zed-ori` v0.3.5 dev install |
 
 ---
 
@@ -203,17 +204,7 @@ Do **not** pull these into “what’s next” until the user re-opens them:
 | ID | Item | Notes |
 |----|------|-------|
 | DIST-1…4 | Multi-OS packages (Win/macOS), smoke matrix | **CI multi-OS packaging** in `release.yml` + smoke-no-rust Win/mac (2026-07-14); publish on `v*` tags |
-| ECO-1 / ECO-2 | External demos / community extras | Covered by ECO-* plan rows below |
-| **ECO-GAME** | Adapt **ori-game** to S3 + raylib 2D + smoke | Plan §3 |
-| **ECO-GAME-O** | Camada Ori: tween, scene, assets, save JSON | **Done** 2026-07-13 — plan §9 |
-| **ECO-IMGUI** | Adapt **ori-imgui** (Dear ImGui GLFW+GL3) | **Done** MVP 2026-07-13 |
-| **ECO-RL3D** | Raylib 3D **draw** + R3 raycast | **Done** 2026-07-13 — plan §5 (R0–R3 pick) |
-| **ECO-RAYGUI** | Translate **raygui** → `ori-raygui` | **Done** 2026-07-13 — plan §6 |
-| **ECO-BOX2D** | Translate **Box2D** → `ori-box2d` | **Done** MVP 2026-07-13 — plan §7 (milli-unit int FFI) |
-| **ECO-JOLT** | Translate **Jolt** → `ori-jolt` | **Done** MVP 2026-07-13 — plan §8 (`ori_jolt_*`, stub/real) |
-| **ECO-RRES** | Translate **rres** → `ori-rres` | **Done** MVP 2026-07-13 — ORPK + CRC32 |
-| **ECO-SQLITE** | Translate **SQLite** → `ori-sqlite` | **Done** MVP 2026-07-13 — amalgamation + shim |
-| **ECO-FUTURE** | Spine, net, compressão avançada, … | Plan §17 only — **not** current scope |
+| ECO-1 / ECO-2 | External demos / community extras | **Out of scope** for this repository |
 | M4 | Self-hosting | **Deferred 2026-07-26:** revisit only after compiler/runtime modularization, stable stdlib/ABI contracts, reproducible bootstrap and a no-breaking-change window; not required for user utility |
 
 ### Cancelled this wave
@@ -231,7 +222,7 @@ Do **not** pull these into “what’s next” until the user re-opens them:
 | This file | Only open-work list |
 | `docs/spec/` | Normative language |
 | `docs/install.md` + guides + examples | User docs |
-| `docs/planning/eco-game-imgui-raylib3d-plan.md` | External ori-game / imgui / raylib 3D / raygui |
+| `docs/planning/historico/eco-game-imgui-raylib3d-plan.md` | Historical external-package discussion (not active) |
 | `extensions/vscode-orl` | VS Code DX |
 | `extensions/zed-ori` | Zed DX |
 

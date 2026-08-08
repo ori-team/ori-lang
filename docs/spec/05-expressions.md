@@ -166,12 +166,12 @@ await task.sleep(1)
 
 Rules:
 - `await` is a contextual prefix operator.
-- It is valid only inside an `async func`.
+- It is valid only inside an async function.
 - Awaiting a non-`future[T]` value is a compile-time error.
 - Awaiting `future[void]` is normally used as an expression statement.
 
-The current native backend implements supported `async func` bodies with a
-native state machine. Calling an `async func` creates and returns a `future[T]`
+The current native backend implements supported async function bodies with a
+native state machine. Calling an async function creates and returns a `future[T]`
 before the function body finishes. The generated frame is scheduled on the
 native executor.
 

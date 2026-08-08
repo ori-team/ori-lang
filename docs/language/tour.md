@@ -424,3 +424,6 @@ C/debug backend **rejects** async (native is the reference).
 | Runnable samples | [../../examples/](../../examples/) |
 | Full grammar / types | [../spec/](../spec/README.md) |
 | ABI / runtime | [../spec/19-abi.md](../spec/19-abi.md) |
+| Advanced types and generics | [advanced.md](advanced.md) |
+| Async, tasks, and channels | [concurrency.md](concurrency.md) |
+| C ABI and FFI | [interop.md](interop.md) |

@@ -1,6 +1,6 @@
 # Como reportar bugs
 
-> Status: política prática Ori **S3 / 0.3.2**  
+> Status: política prática Ori **S3 + inferência B / workspace 0.3.8-dev**
 > **English:** [report-bugs.md](report-bugs.md)
 
 Um bom report permite reproduzir o problema com poucos comandos.

@@ -18,10 +18,10 @@ npx --prefix tools/book puppeteer browsers install chrome
 npm --prefix tools/book run pdf
 ```
 
-Saída:
+Saída (artefatos locais, não versionados):
 
-- [`docs/book/dist/ori-livro.pdf`](../../docs/book/dist/ori-livro.pdf)
-- [`docs/book/dist/ori-livro.html`](../../docs/book/dist/ori-livro.html)
+- `docs/book/dist/ori-livro.pdf`
+- `docs/book/dist/ori-livro.html`
 
 ## Highlight
 

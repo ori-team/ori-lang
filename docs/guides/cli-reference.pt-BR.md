@@ -54,10 +54,12 @@ Para gerar biblioteca compartilhada em vez de executável:
 ori compile main.orl --lib -o libmeu_app.so
 ```
 
-Só funções marcadas com `@c_export` ficam visíveis para C. A superfície cobre
-escalares (`int`, `float`, `bool`, …) e **`string`**, que atravessa como
-`const char *` terminado em NUL. Agregados — structs, `list`, `map`, `optional`,
-`result` — ainda não são exportáveis.
+Só funções marcadas com `@c_export` ficam visíveis para C. A ABI cobre escalares,
+`string`, structs escalares não vazias e não genéricas, structs gerenciadas por
+handles ARC opacos e bridges diretos de `optional`/`result`. `list`, `map`,
+`set`, `tuple`, unions aninhadas, structs genéricas e structs vazias diretas
+continuam rejeitadas. O header gerado é a declaração canônica para o host; veja
+[ABI-1](../spec/19-abi.md#83b-c_export--the-host-facing-surface).
 
 Uma string **retornada** ao host pertence ao host: libere com
 `ori_arc_release`, ou ela vaza. Uma string **passada** continua sendo do host;

@@ -1,6 +1,6 @@
 # Ori documentation
 
-> **Surface:** S3 (`0.3.0`) · inference option B (`0.3.1`) · package/M1 (`0.3.2`)  
+> **Surface:** S3 (`0.3.0`) · inference option B (`0.3.1`) · workspace `0.3.8-dev`
 > **Languages:** English is primary on GitHub · Portuguese is maintained in parallel  
 > **Status:** living docs — must match the compiler, not aspirational designs
 
@@ -9,10 +9,11 @@ This tree is the product documentation for Ori. Use it by audience:
 | Audience | Start here |
 |----------|------------|
 | **New user** | [Install](install.md) → [Language tour](language/tour.md) → [First project](guides/first-project.md) |
-| **Book (draft, PT)** | **[Ori book](book/README.md)** · [PDF](book/dist/ori-livro.pdf) (`0.3.x-book.2`) |
+| **Book (draft, PT)** | **[Ori book](book/README.md)** (PDF/HTML distribution is not committed) |
 | **Everyday coding** | [Cookbook](guides/cookbook.md) · [Errors / optional / result](guides/errors-null-void.md) · [Examples](../examples/) |
 | **Performance** | [Performance microbench](guides/performance.md) (Ori vs Python vs Rust) · [PT](guides/performance.pt-BR.md) |
 | **Language contract** | [Specification](spec/README.md) (normative, English) |
+| **Advanced language** | [Advanced types](language/advanced.md) · [Async](language/concurrency.md) · [C ABI](language/interop.md) |
 | **Maintainers / planning** | **[BACKLOG](planning/BACKLOG.md)** (only open-work list) · [Planning](planning/README.md) · [AGENTS.md](../AGENTS.md) |
 
 Portuguese index: [README.pt-BR.md](README.pt-BR.md).
@@ -51,7 +52,10 @@ docs/
 ├── install.pt-BR.md       # end-user install (PT)
 ├── language/              # learn the language (user-facing)
 │   ├── tour.md
-│   └── tour.pt-BR.md
+│   ├── advanced.md        # arrays, slices, contracts, generics, associated items
+│   ├── concurrency.md     # async, tasks, channels, iter generators
+│   ├── interop.md         # extern, @c_export, and ABI-1
+│   └── *.pt-BR.md         # Portuguese siblings
 ├── guides/                # how-to guides (EN + .pt-BR)
 │   ├── first-project.md
 │   ├── cookbook.md
@@ -59,8 +63,12 @@ docs/
 │   ├── testing.md
 │   ├── report-bugs.md
 │   ├── bootstrapping.md
+│   ├── stdlib-reference.md
+│   ├── debugging.md
 │   ├── performance.md     # Ori / Python / Rust microbench (EN + .pt-BR)
 │   └── language-comparison.md  # older multi-lang suite (historical notes)
+├── ATLAS.md               # implementation/documentation coverage entry point
+├── atlas/                 # machine-readable feature registry
 ├── spec/                  # normative language + ABI (EN)
 ├── book/                  # Ori book draft (PT narrative + reference)
 └── planning/              # maintainers only (not a tutorial)
@@ -97,7 +105,7 @@ Full contract: [spec/01-overview.md](spec/01-overview.md). Migration from pre-S3
 |----------|---------|
 | Language surface (S3) | `0.3.0` |
 | Local inference + option B | `0.3.1` |
-| Package / M1 / M3 docs / stdlib residual | `0.3.2` |
-| Cargo workspace | matches package (`0.3.2`) |
+| Latest release | `v0.3.7` |
+| Cargo workspace | `0.3.8-dev` |
 
 Changelog: [CHANGELOG.md](../CHANGELOG.md).

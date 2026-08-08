@@ -27,9 +27,26 @@ ori test main.orl --filter adds
 ```
 
 Async tests are supported when the function is `async` and uses `await`
-(native backend). See `compiler/crates/ori-driver/tests/concurrency_async.rs`
-for compiler-side coverage; user projects can use `async @test` functions the
-same way.
+(native backend). Put `@test` on the line before the function, then add the
+`async` modifier to the function declaration:
+
+```ori
+module app.async_tests
+
+imports
+    ori.task = task
+    ori.test = test
+end
+
+@test
+async async_check()
+    await task.sleep(1)
+    test.assert(true, "async test should run")
+end
+```
+
+See `compiler/crates/ori-driver/tests/concurrency_async.rs` for compiler-side
+coverage.
 
 Optional leak check:
 

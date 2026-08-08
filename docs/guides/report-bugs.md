@@ -1,6 +1,6 @@
 # How to report bugs
 
-> Status: practical policy for Ori **S3 / 0.3.2**  
+> Status: practical policy for Ori **S3 + inference B / workspace 0.3.8-dev**
 > **Portuguese:** [report-bugs.pt-BR.md](report-bugs.pt-BR.md)
 
 A good report lets someone reproduce the issue with a few commands.

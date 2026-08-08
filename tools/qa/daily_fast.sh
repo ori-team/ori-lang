@@ -11,6 +11,8 @@ else
   echo "cannot find Ori workspace from $repo" >&2
   exit 2
 fi
+echo "== D0 documentation Atlas =="
+"$repo/tools/qa/docs_coverage.sh"
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
 cd "$comp"
 echo "== S0 cargo check --workspace =="

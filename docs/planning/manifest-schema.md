@@ -26,7 +26,7 @@ dep.c = { git = "https://…", tag = "v1.0.0", version = "1.0.0" }
 
 [docs]
 paths = ["docs/api"]
-mode = "sidecar_first"      # see project docs mode enum
+mode = "sidecar-first"      # see project docs mode enum
 require_public = "off"
 ```
 

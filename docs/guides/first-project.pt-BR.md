@@ -1,6 +1,6 @@
 # Primeiro projeto e pacotes locais
 
-> Status: guia prático Ori **S3 / 0.3.2**  
+> Status: guia prático Ori **S3 + inferência B / workspace 0.3.8-dev**
 > **English:** [first-project.md](first-project.md)  
 > Layout: raiz-first (`ori.proj` + `main.orl`) — [spec/17](../spec/17-project-and-docs.md)
 

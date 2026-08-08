@@ -5,7 +5,8 @@ Language support for **Ori** (`.orl`) in [Zed](https://zed.dev).
 - Language config (`.orl`, `--` and `--| |--` comments, all Ori delimiters)
 - **LSP** via `ori-lsp` on `PATH`
 
-Version **0.3.5** (matches language package).
+Extension artifact **0.3.5**. The compiler workspace is `0.3.8-dev` (latest
+release `v0.3.7`); extension artifacts are versioned separately until rebuilt.
 
 ## Install
 

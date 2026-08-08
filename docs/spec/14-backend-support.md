@@ -1,6 +1,6 @@
 # Backend support matrix
 
-Status: current as of 2026-07-23 (FREEZE-1 / 0.3.x).
+Status: current as of 2026-08-08 (FREEZE-1 / workspace 0.3.8-dev).
 Residual cleanup: [`../planning/qa/residual-cleanup-2026-07-13.md`](../planning/qa/residual-cleanup-2026-07-13.md) · audit `tools/qa/residual_audit.sh`.
 
 This page separates three things:
@@ -51,7 +51,7 @@ Supported today (covered by `concurrency_async.rs`):
 - `const x: T = try await future`.
 - `await` inside top-level return expressions, call arguments, and operators.
 - `await` inside top-level statement conditions, such as `if await flag()`.
-- `using` inside `async func` with `dispose()` on scope exit, cancellation, failure, propagation (`try`), and `break`.
+- `using` inside an `async` function with `dispose()` on scope exit, cancellation, failure, propagation (`try`), and `break`.
 - Multiple awaits in the same async function with preserved ARC locals across suspensions.
 
 ### LANG-1 status (2026-07-13)
@@ -95,7 +95,7 @@ Current failure mode:
 
 Intentionally **not** supported on the C route:
 
-- `async func`, `await`, `task.*`, `channel.*`, `atomic.*`
+- `async` functions, `await`, `task.*`, `channel.*`, `atomic.*`
 - `json.parse` / structured `json.Value` (C emits FFI stubs only; no dedicated C lowering)
 - `ori.net.*` (TCP/TLS/UDP; native runtime only)
 
@@ -166,12 +166,12 @@ Legend:
 
 Full async/concurrency parity in the C/debug backend is **intentionally not
 part of its contract**.
-The native Cranelift backend is the reference implementation for `async func`,
+The native Cranelift backend is the reference implementation for `async` functions,
 `await`, `task.*`, `channel.*`, and `atomic.*`.
 
 Current C/debug behaviour:
 
-- `async func` / `await` in user code: rejected at C codegen with an actionable
+- `async` functions / `await` in user code: rejected at C codegen with an actionable
   message (`backend.c_unsupported` via `ori emit c`).
 - Stdlib async/concurrency symbols: rejected at C codegen (same route).
 - Sync subset (`ori emit c` on non-async programs): supported per the matrix above.

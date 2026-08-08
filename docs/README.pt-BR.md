@@ -1,6 +1,6 @@
 # Documentação Ori
 
-> **Superfície:** S3 (`0.3.0`) · inferência opção B (`0.3.1`) · package/M1 (`0.3.2`)  
+> **Superfície:** S3 (`0.3.0`) · inferência opção B (`0.3.1`) · workspace `0.3.8-dev`
 > **Idiomas:** **inglês é o primário no GitHub** · **português é mantido em paralelo**  
 > **Status:** documentação viva — deve refletir o compilador, não desenhos aspiracionais
 
@@ -9,10 +9,11 @@
 | Público | Comece aqui |
 |---------|-------------|
 | **Usuário novo** | [Instalação](install.pt-BR.md) → [Tour da linguagem](language/tour.pt-BR.md) → [Primeiro projeto](guides/first-project.pt-BR.md) |
-| **Livro (rascunho)** | **[Livro Ori](book/README.md)** · [PDF](book/dist/ori-livro.pdf) (`0.3.x-book.2`) |
+| **Livro (rascunho)** | **[Livro Ori](book/README.md)** (PDF/HTML não versionados) |
 | **Uso diário** | [Cookbook](guides/cookbook.pt-BR.md) · [Erros / optional / result](guides/errors-null-void.pt-BR.md) · [Exemplos](../examples/) |
 | **Performance** | [Microbench Ori / Python / Rust](guides/performance.pt-BR.md) · [EN](guides/performance.md) |
 | **Contrato da linguagem** | [Especificação](spec/README.md) (normativa, **em inglês**) |
+| **Recursos avançados** | [Tipos](language/advanced.pt-BR.md) · [Async](language/concurrency.pt-BR.md) · [ABI C](language/interop.pt-BR.md) |
 | **Mantenedores** | **[BACKLOG](planning/BACKLOG.md)** · [Planejamento](planning/README.md) · [AGENTS.md](../AGENTS.md) |
 
 ## Política de idioma

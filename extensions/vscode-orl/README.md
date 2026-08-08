@@ -2,7 +2,9 @@
 
 Language support for **Ori** (`.orl` and `.oridoc`): LSP, grammar, snippets, doctor.
 
-**Surface:** S3 + inference B · version **0.3.5** (matches language package).
+**Surface:** S3 + inference B · extension artifact **0.3.5**. The compiler
+workspace is `0.3.8-dev` (latest release `v0.3.7`); extension artifacts are
+versioned separately until rebuilt.
 
 ## Install
 

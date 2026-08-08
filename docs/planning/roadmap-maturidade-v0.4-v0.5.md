@@ -3,6 +3,11 @@
 > Documento de planejamento para as próximas grandes iterações da linguagem Ori, após a estabilização da superfície S3 (v0.3.x).
 > **Nota:** O *Self-hosting* (M4) continua sendo a última etapa do projeto e não está no escopo desta visão de curto/médio prazo. A reavaliação de 2026-07-26 mantém a decisão: primeiro modularizar e estabilizar compilador/runtime, contratos da stdlib/ABI, bootstrap e QA; uma segunda implementação agora duplicaria o custo de cada mudança de linguagem.
 >
+> **Status documental:** este é um snapshot de planejamento, não a fonte atual
+> de status. As afirmações históricas abaixo foram escritas contra a **v0.3.6**;
+> para a implementação e o backlog vigentes, consulte [`docs/ATLAS.md`](../ATLAS.md),
+> [`docs/atlas/features.yaml`](../atlas/features.yaml) e [`BACKLOG.md`](BACKLOG.md).
+>
 > **Revisão 2026-07-19 (reality sync):** cada seção foi conferida contra a
 > implementação real da **v0.3.6** com sondas executadas no compilador
 > (`ori check`/`ori run`/`ori test`). Itens já entregues estão marcados com

@@ -3,28 +3,34 @@
 > **Público-alvo:** usuários finais que querem desenvolver em Ori **sem** clonar
 > o repositório e **sem** toolchain Rust.  
 > **English:** [install.md](install.md)  
-> **Superfície:** S3 · package **v0.3.4** · M1 (instalação sem Rust) fechada · FREEZE-1 em 0.3.x
+> **Superfície:** S3 + inference B · último release **v0.3.7** · workspace `0.3.8-dev` · M1 fechada
 
 ## Requisitos do sistema
 
-Ori usa o **linker nativo do SO** para AOT (`ori compile`, `ori test`).  
-Para JIT (`ori run`), nenhum linker é necessário — só o runtime empacotado em
-`runtime/<triple>/` ao lado do binário `ori`.
+Ori usa o `rust-lld` empacotado quando disponível e, caso contrário, descobre o
+linker nativo do SO para AOT (`ori compile`, `ori test`). O pacote não exige
+`rustc` nem `cargo`. Para JIT (`ori run`), nenhum linker é necessário — só o
+runtime empacotado em `runtime/<triple>/` ao lado do binário `ori`.
 
 ### Windows (10/11)
 
-**Pré-requisito:** Visual Studio Build Tools ou Community com a workload
-**"Desktop development with C++"**.
+**Pré-requisito para fallback:** Visual Studio Build Tools ou Community com a
+workload **"Desktop development with C++"**. Packages de release normalmente
+incluem `rust-lld`; instale isso somente se `ori doctor` indicar fallback para
+o linker do sistema.
 
 ```powershell
 winget install Microsoft.VisualStudio.2022.BuildTools
 ```
 
-**Não é necessário:** Rust nem `rust-lld` (default = SystemLinker).
+**Não é necessário:** Rust (`rustc`, `cargo`). O `rust-lld` empacotado é um
+detalhe interno do pacote.
 
 ### Linux
 
-**Pré-requisito:** `build-essential` (ou `gcc` + `ld` + headers da libc).
+**Pré-requisito para fallback:** `build-essential` (ou `gcc` + `ld` + headers
+da libc). Packages de release normalmente incluem `rust-lld`; instale isso
+somente se `ori doctor` indicar fallback para o linker do sistema.
 
 ```bash
 # Debian / Ubuntu
@@ -33,7 +39,10 @@ sudo apt update && sudo apt install build-essential
 
 ### macOS
 
-**Pré-requisito:** Xcode Command Line Tools (`xcode-select --install`).
+**Pré-requisito para fallback:** Xcode Command Line Tools
+(`xcode-select --install`). Packages de release normalmente incluem `rust-lld`;
+instale as ferramentas somente se `ori doctor` indicar fallback para o linker
+do sistema.
 
 ---
 
@@ -45,15 +54,15 @@ sudo apt update && sudo apt install build-essential
 > [GitHub Releases](https://github.com/raillen/ori-lang/releases).
 
 1. Baixe em [GitHub Releases](https://github.com/raillen/ori-lang/releases)
-   (ex. **v0.3.5**):
+   (ex. **v0.3.7**):
 
    | Plataforma | Arquivo |
    |------------|---------|
-   | Linux x86_64 | `ori-v0.3.5-x86_64-unknown-linux-gnu.tar.gz` |
-   | Linux deb | `ori_0.3.5_amd64.deb` |
-   | Windows MSVC x86_64 | `ori-v0.3.5-x86_64-pc-windows-msvc.zip` |
-   | macOS Apple Silicon | `ori-v0.3.5-aarch64-apple-darwin.tar.gz` |
-   | macOS Intel | `ori-v0.3.5-x86_64-apple-darwin.tar.gz` |
+   | Linux x86_64 | `ori-v0.3.7-x86_64-unknown-linux-gnu.tar.gz` |
+   | Linux deb | `ori_0.3.7_amd64.deb` |
+   | Windows MSVC x86_64 | `ori-v0.3.7-x86_64-pc-windows-msvc.zip` |
+   | macOS Apple Silicon | `ori-v0.3.7-aarch64-apple-darwin.tar.gz` |
+   | macOS Intel | `ori-v0.3.7-x86_64-apple-darwin.tar.gz` |
 
 **Windows (recomendado — estilo Scoop):**
 
@@ -62,7 +71,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser   # opciona
 irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
 ```
 
-Versão fixa / reinstalar: `$env:ORI_VERSION="0.3.5"; $env:ORI_FORCE="1"; irm …/get.ps1 | iex`.
+Versão fixa / reinstalar: `$env:ORI_VERSION="0.3.7"; $env:ORI_FORCE="1"; irm …/get.ps1 | iex`.
 
 Instala em `%LOCALAPPDATA%\Programs\Ori` e adiciona ao **PATH do usuário**.  
 Sistema: `$env:ORI_SYSTEM="1"` (Administrador).  
@@ -76,8 +85,8 @@ Detalhes: [`tools/windows/README.md`](../tools/windows/README.md).
 **Debian/Ubuntu:**
 
 ```bash
-sudo dpkg -i ori_0.3.5_amd64.deb
-# AOT: sudo apt install build-essential
+sudo dpkg -i ori_0.3.7_amd64.deb
+# AOT fallback: sudo apt install build-essential
 ```
 
 Verifique: `ori --version` e `ori doctor`.
@@ -109,7 +118,7 @@ Na mesma [Release](https://github.com/raillen/ori-lang/releases) da linguagem:
 
 | Editor | Asset | Instalação |
 |--------|--------|------------|
-| VS Code / Cursor | `ori-vscode-orl-0.3.5.vsix` | `code --install-extension ori-vscode-orl-0.3.5.vsix` |
+| VS Code / Cursor | `ori-vscode-orl-0.3.5.vsix` (release) | `code --install-extension <file>.vsix` |
 | Zed | `ori-zed-0.3.5.zip` | extrair → **zed: install dev extension** |
 
 Requer `ori-lsp` no `PATH`. Detalhes: [`extensions/README.md`](../extensions/README.md).

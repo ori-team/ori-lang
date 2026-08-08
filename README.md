@@ -94,19 +94,19 @@ shorter inference chains, fewer hidden rules, and clearer error messages.
 
 | Area | Status |
 |---|---|
-| Version | **S3 surface `0.3.0`** · inference B **`0.3.1`** · package/M1 **`0.3.2`** (Cargo workspace) |
+| Version | **S3 surface `0.3.0`** · inference B **`0.3.1`** · workspace **`0.3.8-dev`** (latest release `v0.3.7`) |
 | Stability | pre-1.0; S3 hard-breaks pre-0.3 syntax; further change still possible |
 | Compiler | Rust workspace under `compiler/` (lexer → parser → HIR → types → Cranelift + runtime) |
 | Native backend | Cranelift AOT + packaged `ori-runtime`; ABI tag `ori-native-abi-1` |
 | `ori run` | JIT by default when a runtime cdylib is available |
-| `ori compile` / `ori test` | AOT; default **SystemLinker** (OS linker) |
+| `ori compile` / `ori test` | AOT; bundled `rust-lld` first, then the OS linker |
 | Standard library | Layer 1 Rust FFI + Layer 2/3 `.orl`; canonical API `ori.X` |
 | Tooling | CLI, formatter, docs export, LSP; **local** VS Code + Zed extensions (no store publish) |
 | Docs | English primary + Portuguese parallel (`docs/README.md`) · [examples/](examples/) |
 | Focus now | Language completeness, docs/examples accuracy, performance — not multi-OS marketing |
 
 S3 breaking list: [CHANGELOG.md](CHANGELOG.md) `[0.3.0]`. Inference: `[0.3.1]`.
-Package / install without Rust: `[0.3.2]`. Migrate old sources with
+Package / install without Rust: M1 is complete in the current workspace. Migrate old sources with
 `ori migrate-syntax`.
 
 ## Performance snapshot
@@ -156,14 +156,15 @@ ori doctor
 **Linux** — download from [Releases](https://github.com/raillen/ori-lang/releases), or:
 
 ```bash
-# example with v0.3.5 tarball
-tar -xzf ori-v0.3.5-x86_64-unknown-linux-gnu.tar.gz
-export PATH="$PWD/ori-v0.3.5-x86_64-unknown-linux-gnu:$PATH"
-# or: sudo dpkg -i ori_0.3.5_amd64.deb
+# example with the latest v0.3.7 tarball
+tar -xzf ori-v0.3.7-x86_64-unknown-linux-gnu.tar.gz
+export PATH="$PWD/ori-v0.3.7-x86_64-unknown-linux-gnu:$PATH"
+# or: sudo dpkg -i ori_0.3.7_amd64.deb
 ori doctor
 ```
 
-AOT (`ori compile`) still needs the OS linker (VS Build Tools / `build-essential` / Xcode CLT).  
+AOT uses the packaged `rust-lld` when available; otherwise it needs the OS linker
+(VS Build Tools / `build-essential` / Xcode CLT).
 `ori run` (JIT) only needs the packaged runtime.
 
 ### Compiler development
@@ -255,7 +256,8 @@ The `ori` CLI is implemented by `compiler/crates/ori-driver`.
 | `ori doc export` | export stdlib symbols, diagnostics, and keywords as JSON |
 | `ori doctor` | report stdlib, runtime, linker, target, and JIT health |
 | `ori explain <code>` | explain a diagnostic code |
-| `ori summary [path]` | print entry file, namespaces, imports, and diagnostics count |
+| `ori summary [path]` | print entry file, modules, imports, and diagnostics count |
+| `ori debug <file.orl>` | run the cooperative debugger; `--dap` serves DAP over stdio |
 | `ori build <path>` | build a file or project through the native backend |
 | `ori emit c <file.orl>` | emit C through the partial debug backend |
 | `ori lex <file.orl>` | print the token stream for compiler debugging |
@@ -333,8 +335,8 @@ Ori's core model is small:
 - only `try expr` propagates (postfix `?` removed);
 - closures use `(u) => expr` (no `do`);
 - `using` makes cleanup explicit;
-- diagnostics use stable codes such as `name.undefined` and
-  `parse.namespace_removed`.
+- diagnostics use stable codes such as `name.undefined`; the migration
+  diagnostic `parse.namespace_removed` keeps its historical name.
 
 Example with `result`:
 

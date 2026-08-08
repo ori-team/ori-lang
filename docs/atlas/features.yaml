@@ -1,0 +1,216 @@
+schema: ori-doc-atlas/v1
+baseline:
+  language_surface: "0.3.0"
+  local_inference: "0.3.1-option-B"
+  workspace: "0.3.8-dev"
+  latest_release: "0.3.7"
+  abi: ori-native-abi-1
+
+features:
+  - id: language.lexical
+    name: Lexical syntax and literals
+    status: stable
+    implementation: [compiler/crates/ori-lexer/src/token.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md]
+    reference: [docs/spec/02-lexical.md, docs/spec/03-grammar.ebnf]
+    examples: [examples/language_features/main.orl]
+
+  - id: language.modules
+    name: Modules, imports, and visibility
+    status: stable
+    implementation: [compiler/crates/ori-parser/src, compiler/crates/ori-hir/src]
+    tests: [compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/tour.md, docs/guides/first-project.md]
+    reference: [docs/spec/01-overview.md, docs/spec/17-project-and-docs.md]
+    examples: [examples/multi_module/main.orl]
+
+  - id: language.bindings
+    name: Const, var, mutability, inference, and destructuring
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/stmt.rs, compiler/crates/ori-types/src/check.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md]
+    reference: [docs/spec/04-types.md, docs/spec/06-statements.md]
+    examples: [examples/language_features/main.orl]
+
+  - id: language.types
+    name: Primitive, tuple, collection, optional, result, range, and lazy types
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/ty.rs, compiler/crates/ori-types/src/ty.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/guides/errors-null-void.md]
+    reference: [docs/spec/04-types.md]
+    examples: [examples/collections_demo/main.orl, examples/error_handling/main.orl]
+
+  - id: language.arrays-and-slices
+    name: Inline arrays and slices
+    status: partial
+    implementation: [compiler/crates/ori-parser/src, compiler/crates/ori-codegen/src/native_backend.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/advanced.md]
+    reference: [docs/spec/04-types.md, docs/spec/14-backend-support.md]
+    examples: []
+    limitations: "Native arrays are scalar-only; backend parity is incomplete."
+
+  - id: language.alias-and-newtype
+    name: Transparent aliases and nominal newtypes
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/item.rs, compiler/crates/ori-types/src/resolve.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/04-types.md, docs/spec/11-generics.md]
+    examples: [examples/language_features/main.orl]
+
+  - id: language.functions
+    name: Functions, parameters, defaults, contracts, variadics, and expression bodies
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/item.rs, compiler/crates/ori-parser/src/parse_item.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/07-functions.md]
+    examples: [examples/hello/main.orl]
+
+  - id: language.closures
+    name: Closures and captures
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/expr.rs, compiler/crates/ori-codegen/src/native_backend.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/05-expressions.md, docs/spec/07-functions.md]
+    examples: [examples/native_showcase/main.orl]
+
+  - id: language.control-flow
+    name: Conditionals, loops, using, and checks
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/stmt.rs, compiler/crates/ori-parser/src/parse_stmt.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/guides/cookbook.md]
+    reference: [docs/spec/06-statements.md, docs/spec/09-errors.md]
+    examples: [examples/using_fs/main.orl]
+
+  - id: language.pattern-matching
+    name: Match statements, expressions, guards, and or-patterns
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/pattern.rs, compiler/crates/ori-types/src/check.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/tour.md]
+    reference: [docs/spec/05-expressions.md, docs/spec/06-statements.md]
+    examples: [examples/language_features/main.orl, examples/error_handling/main.orl]
+    limitations: "Or-pattern alternatives cannot bind variables."
+
+  - id: language.generics
+    name: Generic functions, structs, traits, and constraints
+    status: partial
+    implementation: [compiler/crates/ori-parser/src/parse_item.rs, compiler/crates/ori-types/src]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/08-traits.md, docs/spec/11-generics.md]
+    examples: [examples/native_showcase/main.orl]
+    limitations: "Generic traits and higher-kinded types remain restricted."
+
+  - id: language.const-generics
+    name: Named compile-time generic arguments
+    status: partial
+    implementation: [compiler/crates/ori-parser/src, compiler/crates/ori-types/src/lower.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/11-generics.md]
+    examples: [examples/test_generics.orl]
+    limitations: "Const evaluation is intentionally side-effect-free and limited."
+
+  - id: language.traits
+    name: Traits, apply/use, associated types, and associated functions
+    status: partial
+    implementation: [compiler/crates/ori-ast/src/item.rs, compiler/crates/ori-types/src]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/08-traits.md]
+    examples: [examples/native_showcase/main.orl]
+    limitations: "Associated items are implemented; higher-kinded trait constructors remain restricted."
+
+  - id: language.errors
+    name: Optional/result propagation and diagnostics
+    status: stable
+    implementation: [compiler/crates/ori-types/src/check.rs, compiler/crates/ori-diagnostics/src]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/diagnostic_catalog.rs]
+    user_docs: [docs/guides/errors-null-void.md]
+    reference: [docs/spec/09-errors.md, docs/spec/13-error-catalog.md]
+    examples: [examples/error_handling/main.orl]
+
+  - id: language.async
+    name: Async functions, await, futures, tasks, channels, and atomics
+    status: partial
+    implementation: [compiler/crates/ori-codegen/src/native_backend.rs, compiler/crates/ori-runtime/src/lib.rs]
+    tests: [compiler/crates/ori-driver/tests/concurrency_async.rs]
+    user_docs: [docs/language/tour.md, docs/language/concurrency.md, docs/guides/testing.md]
+    reference: [docs/spec/06-statements.md, docs/spec/10-memory.md, docs/spec/12-stdlib.md]
+    examples: [examples/async_demo/main.orl, examples/concurrency/main.orl]
+    limitations: "Only the documented native state-machine subset is supported."
+
+  - id: language.iter-generators
+    name: Iter functions and suspend
+    status: partial
+    implementation: [compiler/crates/ori-ast/src/item.rs, compiler/crates/ori-ast/src/stmt.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/concurrency.md]
+    reference: [docs/spec/06-statements.md, docs/spec/11-generics.md]
+    examples: [examples/random_format_iter/main.orl]
+    limitations: "Direct for-loop consumption has deliberate restrictions."
+
+  - id: language.memory
+    name: ARC, cycle collection, Disposable, and custom destructors
+    status: partial
+    implementation: [compiler/crates/ori-runtime/src/lib.rs, compiler/crates/ori-codegen/src/native_backend.rs]
+    tests: [compiler/crates/ori-driver/tests/memory_arc.rs, compiler/crates/ori-driver/tests/concurrency_async.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md, docs/guides/errors-null-void.md]
+    reference: [docs/spec/10-memory.md, docs/spec/16-runtime-ffi-safety.md]
+    examples: [examples/using_fs/main.orl, examples/native_showcase/main.orl]
+
+  - id: language.attributes
+    name: Declaration attributes
+    status: partial
+    implementation: [compiler/crates/ori-types/src/check.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/advanced.md]
+    reference: [docs/spec/02-lexical.md, docs/spec/13-error-catalog.md]
+    examples: [examples/tests_demo/main.orl, examples/embed/add_scores.orl]
+    limitations: "@inline, @no_inline, and @cfg are validated but not yet acted on."
+
+  - id: language.ffi
+    name: extern blocks, c_export, and native ABI
+    status: partial
+    implementation: [compiler/crates/ori-codegen/src/c_header.rs, compiler/crates/ori-codegen/src/native_backend.rs]
+    tests: [compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/interop.md, examples/embed/README.md]
+    reference: [docs/spec/16-runtime-ffi-safety.md, docs/spec/19-abi.md]
+    examples: [examples/embed/add_scores.orl]
+    limitations: "Direct collection aggregates and callbacks remain outside ABI-1."
+
+  - id: stdlib.core
+    name: Standard library runtime and source modules
+    status: implemented
+    implementation: [compiler/crates/ori-types/src/stdlib.rs, compiler/crates/ori-runtime/src/lib.rs, stdlib]
+    tests: [compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/guides/stdlib-reference.md, stdlib/README.md]
+    reference: [docs/spec/12-stdlib.md, docs/spec/15-stdlib-maintenance.md]
+    examples: [examples/collections_demo/main.orl, examples/http_get/main.orl]
+
+  - id: tooling.cli
+    name: Compiler, package, documentation, and migration CLI
+    status: stable
+    implementation: [compiler/crates/ori-driver/src/main.rs]
+    tests: [compiler/crates/ori-driver/tests/summary.rs, compiler/crates/ori-driver/tests/doctor.rs, compiler/crates/ori-driver/tests/doc_export.rs]
+    user_docs: [docs/guides/cli-reference.md]
+    reference: [docs/spec/17-project-and-docs.md]
+    examples: [examples/README.md]
+
+  - id: tooling.editors
+    name: LSP, VS Code, Zed, and DAP debugger
+    status: partial
+    implementation: [compiler/crates/ori-lsp/src, extensions/vscode-orl, extensions/zed-ori]
+    tests: [compiler/crates/ori-driver/tests/doctor.rs, compiler/crates/ori-driver/tests/summary.rs]
+    user_docs: [docs/guides/debugging.md, extensions/README.md, extensions/vscode-orl/README.md, extensions/zed-ori/README.md]
+    reference: [docs/spec/14-backend-support.md]
+    examples: [examples/README.md]
+    limitations: "Zed has no automatic debugger wiring in its current extension API."

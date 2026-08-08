@@ -238,10 +238,10 @@ async continuation can use them again.
 
 Current native status:
 
-- `await` is accepted only inside `async func`.
+- `await` is accepted only inside an `async` function.
 - The runtime has pollable `future[T]` values, continuation registration, a FIFO
   executor queue, failed/cancelled internal states, and non-blocking timers.
-- The current backend creates a `future[T]` immediately when an `async func` is
+- The current backend creates a `future[T]` immediately when an `async` function is
   called, allocates a native async frame, and schedules the generated `step`
   function on the native executor.
 - Supported source-level `await` shapes suspend through `ori_future_poll` and
@@ -251,7 +251,7 @@ Current native status:
   dead managed frame values after resumption, and still runs terminal cleanup.
 - Failed/cancelled future states observed by the state machine are propagated by
   the generated async wrapper.
-- `using` inside `async func` is **allowed**. The async frame stores the
+- `using` inside an `async` function is **allowed**. The async frame stores the
   managed resource and injects `dispose()` on normal return, `try`
   propagation, cancellation, failure, and loop exit. These paths are covered
   by the native async regression suite.

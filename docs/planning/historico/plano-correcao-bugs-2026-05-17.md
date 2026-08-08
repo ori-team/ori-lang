@@ -1,5 +1,6 @@
 > **Histórico — não usar como backlog ativo.**  
-> Para o roadmap atual, veja [`docs/planning/PLANO-MATURIDADE-COMPLETO.md`](planning/PLANO-MATURIDADE-COMPLETO.md).
+> Este documento é histórico. Para o roadmap atual, veja
+> [`../BACKLOG.md`](../BACKLOG.md).
 
 # Plano de Correção — Bugs Remanescentes da Implementação Ori
 

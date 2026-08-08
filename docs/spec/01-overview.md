@@ -249,6 +249,7 @@ compatible with Zenith.
 | 00 | Manifesto (identity and purpose) |
 | 01 | Overview (this chapter) |
 | 02 | Lexical Structure |
+| 03 | Formal EBNF Grammar |
 | 04 | Type System |
 | 05 | Expressions |
 | 06 | Statements and Control Flow |
@@ -266,6 +267,7 @@ compatible with Zenith.
 | 18 | Stability and Compatibility |
 | 19 | Native ABI (`ori-native-abi-1`) |
 
-There is no chapter 03. A standalone EBNF grammar was planned and never
-written; the grammar is defined by chapters 02 and 04–08 together. The number
-is left unused so existing chapter references stay stable.
+Chapter 03 is the standalone EBNF grammar in [`03-grammar.ebnf`](03-grammar.ebnf).
+It is a compact syntax index and must be read together with the normative
+lexical, type, expression, statement, function, and trait chapters. The
+grammar does not replace the semantic rules in those chapters.

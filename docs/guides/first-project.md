@@ -1,6 +1,6 @@
 # First project and local packages
 
-> Status: practical guide for Ori **S3 / 0.3.2**  
+> Status: practical guide for Ori **S3 + inference B / workspace 0.3.8-dev**
 > **Portuguese:** [first-project.pt-BR.md](first-project.pt-BR.md)  
 > Layout: root-first (`ori.proj` + `main.orl`) — see [spec/17](../spec/17-project-and-docs.md)
 
@@ -73,7 +73,7 @@ workspace/
 name = "demo.math"
 version = "0.1.0"
 entry = "lib.orl"
-ori_version = "0.3.2"
+ori_version = "0.3.8"
 ```
 
 `math/lib.orl`:

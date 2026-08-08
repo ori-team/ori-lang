@@ -54,10 +54,12 @@ Compiling a shared library instead of an executable:
 ori compile main.orl --lib -o libmy_app.so
 ```
 
-Only functions marked `@c_export` are visible to C. The export surface covers
-scalars (`int`, `float`, `bool`, …) and **`string`**, which crosses as a
-NUL-terminated `const char *`. Aggregates — structs, `list`, `map`, `optional`,
-`result` — are not exportable yet.
+Only functions marked `@c_export` are visible to C. The ABI currently covers
+scalars, `string`, non-empty non-generic scalar structs, managed structs through
+opaque ARC handles, and direct `optional`/`result` bridges. Direct `list`,
+`map`, `set`, `tuple`, nested sum types, generic structs, and empty structs are
+still rejected. The generated header is the canonical host declaration; see
+[ABI-1](../spec/19-abi.md#83b-c_export--the-host-facing-surface).
 
 A string **returned** to the host is owned by the host: free it with
 `ori_arc_release`, or it leaks. A string **passed in** stays owned by the host;

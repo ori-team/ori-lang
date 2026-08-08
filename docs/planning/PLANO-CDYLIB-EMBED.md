@@ -3,10 +3,11 @@
 > **Criado:** 2026-07-16 · Motivação: hospedar código Ori dentro de hosts
 > nativos (Godot via GDExtension, Python, qualquer engine C/C++), no modelo
 > godot-rust/gdext: o host carrega um `.so`/`.dll` que registra funções.
-> Origem da demanda: pivot do editor Ori Studio para Godot
-> (`game-engine-full/ori-game-studio/DEV-HANDOFF.md`).
+> Origem histórica da demanda: pivot do editor Ori Studio para Godot. O
+> experimento Godot não faz parte do produto atual; este arquivo mantém apenas
+> o contrato e os itens residuais de embedding.
 
-## 0. Estado atual (atualizado 2026-07-23)
+## 0. Estado atual (atualizado 2026-08-08)
 
 ### Implementado (P1 + P2)
 
@@ -23,7 +24,9 @@
 
 ### Ainda em aberto
 
-- Valores diretos `optional`/`result` e handles diretos de `list`/`map`.
+- Handles diretos de `list`/`map` e outros aggregates de collection continuam
+  fora do ABI-1. Bridges diretos de `optional`/`result` já foram entregues;
+  ver [19-abi.md](../spec/19-abi.md#83b-c_export--the-host-facing-surface).
 - **P3** callbacks host→Ori no path embed.
 - **P4** shim GDExtension completo em CI.
 - **P5** Windows/mac.
@@ -76,14 +79,17 @@ void ori_rt_shutdown(void);  // best-effort; processo host segue vivo
 - `main()` do usuário é **opcional** quando `--lib`.
 - Globals de módulo: `__ori_module_init` (export da lib; host deve chamar
   após `ori_rt_init` se o módulo usa globals).
-- Contrato de threads fase 1: **single-thread**.
+- Contrato de threads fase 1: o runtime possui ARC atômico e aceita os tipos
+  documentados em `Transferable`; callbacks host→Ori continuam fora do escopo.
 - Reentrância host→Ori→host (callback dentro de export) — P3.
 
 ## 4. Codegen / link
 
 - Cranelift: `is_pic = true` no target AOT (já default).
-- Link: `cc -shared -fPIC` + **cdylib** `libori_runtime.so` (evita colisão
-  compiler-builtins × libgcc do staticlib com `--whole-archive`).
+- Link: a estratégia `NativeLinker` seleciona o linker empacotado ou o linker
+  do sistema conforme a política documentada em [`docs/install.md`](../install.md);
+  o runtime usa a **cdylib** correspondente para evitar colisão de símbolos do
+  staticlib.
 - Símbolos `@c_export` e `__ori_module_init` com `Linkage::Export`.
 
 ## 5. Fases e critérios de aceite

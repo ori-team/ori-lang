@@ -1,6 +1,9 @@
 # Ori editor extensions
 
-Version **0.3.5** (aligned with language package).  
+Extension artifacts are currently **0.3.5**. They are compatible with the
+current S3 + inference-B language surface; the compiler workspace itself is
+`0.3.8-dev` (latest release `v0.3.7`). Artifact and compiler versions are
+tracked separately until the next extension rebuild.
 **GitHub Release assets** ship the installers — not the VS Marketplace / Zed store yet.
 
 | Path | Editor | Release asset |
@@ -10,7 +13,8 @@ Version **0.3.5** (aligned with language package).
 
 ## Install from GitHub Release
 
-Assets on [ori-lang releases](https://github.com/raillen/ori-lang/releases) (e.g. **v0.3.5**).
+Assets on [ori-lang releases](https://github.com/raillen/ori-lang/releases) (the
+currently documented extension assets are from **v0.3.5**).
 
 ### VS Code / Cursor
 

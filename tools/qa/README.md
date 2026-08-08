@@ -1,6 +1,7 @@
 # Ori language QA stages
 
-Scripts for daily / weekly language quality (FREEZE-1 / 0.3.x).
+Scripts for daily / weekly language quality. The current workspace baseline is
+`0.3.8-dev`; ABI-1 remains in force after the 2026-07-19 freeze closure.
 
 | Script | Role |
 |--------|------|
@@ -9,6 +10,8 @@ Scripts for daily / weekly language quality (FREEZE-1 / 0.3.x).
 | [`catalog_lint.sh`](catalog_lint.sh) | Spec 13 ↔ emitted diagnostic codes |
 | [`residual_audit.sh`](residual_audit.sh) | Product surface + intentional residual negatives |
 | [`examples_smoke.sh`](examples_smoke.sh) | `ori check` over `examples/*` |
+| [`docs_coverage.sh`](docs_coverage.sh) | Atlas path and canonical-document consistency |
+| [`docs_examples.sh`](docs_examples.sh) | Atlas + canonical example smoke + `ori doc check` |
 | [`web_sec8.sh`](web_sec8.sh) | `ori-web` SEC8 golden suite (CSRF, jail, sessions, middleware, upload) |
 | [`web_auth_smoke.sh`](web_auth_smoke.sh) | `ori-web-auth` TOTP + recovery codes smoke |
 | [`web_session_sqlite_smoke.sh`](web_session_sqlite_smoke.sh) | SQLite session adapter (needs `ori-sqlite` build; AOT) |

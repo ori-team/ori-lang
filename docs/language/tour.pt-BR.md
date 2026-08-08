@@ -365,3 +365,6 @@ end
 | Erros | [../guides/errors-null-void.pt-BR.md](../guides/errors-null-void.pt-BR.md) |
 | Exemplos | [../../examples/](../../examples/) |
 | Spec completa | [../spec/](../spec/README.md) (EN) |
+| Tipos e generics avançados | [advanced.pt-BR.md](advanced.pt-BR.md) |
+| Async, tasks e channels | [concurrency.pt-BR.md](concurrency.pt-BR.md) |
+| ABI C e FFI | [interop.pt-BR.md](interop.pt-BR.md) |

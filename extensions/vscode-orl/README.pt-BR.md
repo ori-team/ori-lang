@@ -1,5 +1,10 @@
 # Ori — extensão para VS Code / Cursor
 
+O artefato da extensão é **0.3.5**. A superfície atual da linguagem é S3 +
+inferência B; o workspace do compilador é `0.3.8-dev` (última release
+`v0.3.7`). As versões do artefato e do compilador são acompanhadas
+separadamente até a próxima reconstrução da extensão.
+
 > Suporte de linguagem para Ori (`.orl` e `.oridoc`). A versão em inglês é a
 > referência completa de instalação e desenvolvimento: [README.md](README.md).
 

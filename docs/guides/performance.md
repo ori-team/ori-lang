@@ -7,6 +7,10 @@
 > **Harness:** [`tools/bench/polyglot/`](../../tools/bench/polyglot/)  
 > **Latest machine report:** [`tools/bench/polyglot/results/LATEST.md`](../../tools/bench/polyglot/results/LATEST.md)
 
+This page preserves the **2026-07-14 historical measurement**. It is not a
+claim about the current `0.3.8-dev` workspace; rerun the harness before using
+the numbers for a current decision.
+
 ## Snapshot (2026-07-14, loop-GC fix + mid-end)
 
 | Item | Value |
@@ -14,7 +18,7 @@
 | Host | Linux x86_64 · Intel Core i7-3632QM @ 2.20 GHz |
 | Samples | **5** (median wall time) |
 | Timer | `time.perf_counter` around the process (µs) |
-| Ori | **0.3.4** AOT (`ori compile`, mid-end **Default**) |
+| Ori | **0.3.4** AOT (`ori compile`, mid-end **Default**, historical) |
 | Python | CPython **3.12.3** |
 | Rust | **1.95.0** release |
 | C | **gcc 13.3** `-O2` |

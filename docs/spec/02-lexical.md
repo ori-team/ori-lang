@@ -382,13 +382,15 @@ end
 
 Built-in attributes:
 
-| Attribute | Applies to | Current validation | Planned effect |
+| Attribute | Applies to | Current validation | Current effect |
 |---|---|---|---|
-| `@test` | `func` | no arguments; function must have no type parameters, no value parameters, and no return value | Runs through `ori test` |
+| `@test` | function declaration | no arguments; function must have no type parameters, no value parameters, and no return value | Runs through `ori test` |
 | `@deprecated("msg")` | any declaration | exactly one string argument | Emits `attr.deprecated` warning at use sites |
-| `@inline` | `func` | no arguments | Hint to inline at call sites |
-| `@no_inline` | `func` | no arguments | Prohibit inlining |
-| `@cfg("condition")` or `@cfg(key: value)` | any declaration | exactly one string or named argument | Conditionally include based on build config |
+| `@inline` | function declaration | no arguments | Validated and stored; not acted on by the current backend |
+| `@no_inline` | function declaration | no arguments | Validated and stored; not acted on by the current backend |
+| `@cfg("condition")` or `@cfg(key: value)` | any declaration | exactly one string or named argument | Validated and stored; conditional inclusion is not implemented |
+| `@repr("C")` | struct declaration | exactly one string argument | Selects the C-compatible struct layout path |
+| `@c_export` / `@c_export("name")` | public function | no argument or one C identifier | Emits the host-facing ABI export; see [19-abi.md](19-abi.md) |
 
 Custom attributes are not part of the planned v1 contract. They are rejected
 with `attr.unknown`.

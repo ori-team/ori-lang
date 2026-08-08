@@ -1,6 +1,6 @@
 # Cookbook — small and medium projects
 
-> Status: practical recipes for Ori **S3 / 0.3.2**  
+> Status: practical recipes for Ori **S3 + inference B / workspace 0.3.8-dev**
 > **Portuguese:** [cookbook.pt-BR.md](cookbook.pt-BR.md)
 
 ## CLI that reads arguments

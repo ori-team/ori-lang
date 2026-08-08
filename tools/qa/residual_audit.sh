@@ -22,5 +22,5 @@ cargo test -p ori-driver --test concurrency_async \
 
 echo ""
 echo "Documented residuals: docs/spec/14-backend-support.md"
-echo "Policy: docs/planning/lang-res-closure.md + docs/planning/qa/residual-policy.md"
+echo "Policy: docs/planning/historico/lang-res-closure.md + docs/planning/qa/residual-cleanup-2026-07-13.md"
 echo "residual_audit: OK"

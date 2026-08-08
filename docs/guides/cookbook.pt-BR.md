@@ -1,6 +1,6 @@
 # Cookbook — projetos pequenos e médios
 
-> Status: receitas práticas Ori **S3 / 0.3.2**  
+> Status: receitas práticas Ori **S3 + inferência B / workspace 0.3.8-dev**
 > **English:** [cookbook.md](cookbook.md)
 
 ## CLI com argumentos

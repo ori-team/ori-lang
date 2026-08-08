@@ -63,6 +63,22 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Documentation audit and Atlas.** Added the canonical documentation map in
+  [`docs/ATLAS.md`](docs/ATLAS.md) and the machine-readable feature registry in
+  [`docs/atlas/features.yaml`](docs/atlas/features.yaml). The registry links
+  language features to implementation, tests, references, guides, and examples.
+  `tools/qa/docs_coverage.sh` validates those paths and stale canonical links;
+  `tools/qa/docs_examples.sh` validates the example corpus and `ori doc check`.
+- **User documentation synchronized.** Corrected the S3 grammar index, current
+  workspace/release baseline, linker behavior, ABI-1 aggregate bridges, async
+  terminology, install examples, and historical-status labels. Added English
+  and Portuguese guides for advanced language features, concurrency, interop,
+  stdlib usage, debugging, and bootstrapping.
+- **Documentation architecture clarified.** Normative specification, user
+  guides, planning snapshots, and historical archives now point to their
+  respective canonical sources. The book and performance pages explicitly
+  distinguish generated or historical artifacts from current compiler status.
+
 - **Mid-end fixed point without re-serialisation.** The optimiser detected its
   fixed point by formatting the whole module through `Debug` twice per round,
   which cost time and memory proportional to program size on every build. Each
@@ -341,8 +357,8 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   apontam para o livro. Não substitui a spec normativa em `docs/spec/`.
   Revisão: snippets principais validados com `ori check`; caps 3/10/12/13/15/17
   e soluções de exercícios aprofundados; multiarquivo documenta `ori.proj`+`entry`.
-  PDF com syntax highlight: [`docs/book/dist/ori-livro.pdf`](docs/book/dist/ori-livro.pdf)
-  gerado via [`tools/book/`](tools/book/) (marked + highlight.js Ori + Puppeteer).
+  A geração de PDF/HTML é opcional e os artefatos não são versionados; a fonte
+  canônica está em [`docs/book/`](docs/book/), com o fluxo em [`tools/book/`](tools/book/).
 
 ### Mudado
 - **ARC: elisão de RC no return (LANG-MEM-4, ação 1).** `return x` de um
@@ -492,10 +508,9 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Notas
 - Working tree after **v0.3.5**.
-- **Web stack feature freeze v1** documented in
-  [`packages/FREEZE-WEB.md`](packages/FREEZE-WEB.md) and
-  [`packages/README.md`](packages/README.md). Ready for polish + official
-  language release packaging (runtime symbols for crypto/TOTP/net timeouts).
+- **Web stack feature freeze v1** was documented in package files that were
+  later removed from this repository. The web/package experiments are
+  historical and are not part of the current Ori product surface.
 
 ### Adicionado
 - **`ori compile --lib` (cdylib embed, P1):** shared library output with C ABI
@@ -529,8 +544,11 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the cargo subcommand (required by Cargo 1.95+), unblocking the MSVC zip.
 
 ### Documentação
-- Stack index + packaging note: `packages/README.md`.
-- Freeze policy: `packages/FREEZE-WEB.md`.
+- Stack index + packaging note: [`docs/README.md`](docs/README.md) and
+  [`docs/install.md`](docs/install.md); the former package index was removed
+  with the historical web experiments.
+- Freeze policy: the current language/ABI policy is
+  [`docs/planning/freeze-and-abi-gates.md`](docs/planning/freeze-and-abi-gates.md).
 - Phase B/C/D, middleware, ori-sqlite symlink README.
 - Windows installer flow in `docs/install.md` / `install.pt-BR.md` and
   `tools/windows/README.md`.

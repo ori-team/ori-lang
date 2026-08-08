@@ -15,7 +15,6 @@
 | [plano-arc-nim-2026-07-16.md](plano-arc-nim-2026-07-16.md) | **LANG-MEM-0…9** — plano ARC/ORC do estudo Nim (**concluído 2026-07-18**: dono único da cascata, collector incremental, elisão, wrappers do runtime, spec + ADR COW) |
 | [prompt-analisar-nim-para-ori.md](prompt-analisar-nim-para-ori.md) | Prompt mestre do programa de estudo Nim→Ori (campanhas C0–C7; requer clone local do Nim em `_references/nim-lang/`, gitignored) |
 | [PLANO-CDYLIB-EMBED.md](PLANO-CDYLIB-EMBED.md) | `ori compile --lib` / embed (P1 done; P2–P5 open) |
-| [eco-game-imgui-raylib3d-plan.md](eco-game-imgui-raylib3d-plan.md) | External packages plan (ori-game / ori-imgui / raylib3d …) |
 | [freeze-and-abi-gates.md](freeze-and-abi-gates.md) | FREEZE-1 / ABI-1 gates **+ 1.0 readiness checklist** (merged) |
 | [stdlib-merge-policy.md](stdlib-merge-policy.md) | Stdlib API merge policy (M2) |
 | [repo-and-project-layout.md](repo-and-project-layout.md) | Monorepo + root-first projects |
@@ -28,9 +27,17 @@
 | [perf-baseline-2026-07-13.md](perf-baseline-2026-07-13.md) | LANG-PERF baselines + polyglot multi-lang snapshot |
 | [qa/test-matrix-ori.md](qa/test-matrix-ori.md) | Product-mapped compiler test matrix |
 | [qa/residual-cleanup-2026-07-13.md](qa/residual-cleanup-2026-07-13.md) | Residual surface cleanup snapshot |
-| [web-templates-discussion-roadmap.md](web-templates-discussion-roadmap.md) | **ori-templates / ori-web / HTML-first** — discussion roadmap (syntax, SEC, packages) |
-| [web-framework-learning-course.md](web-framework-learning-course.md) | **Curso** (pt-BR): conceitos web/security/htmx + decisões Ori (estudo/revisão) |
-| (mesmo roadmap §12) | Futuro **ori-web-app** Rails-like (D21); convenções APP* |
+
+## External / out of core scope
+
+These files describe packages maintained outside this compiler repository. They
+are useful design history, but they are not implementation status or open work
+for the Ori language. Package policy: [`../../packages/README.md`](../../packages/README.md).
+
+| Document | Role |
+|----------|------|
+| [web-templates-discussion-roadmap.md](web-templates-discussion-roadmap.md) | External `ori-templates` / `ori-web` discussion roadmap |
+| [web-framework-learning-course.md](web-framework-learning-course.md) | Portuguese study course for the external web framework |
 
 ## Historical / archive
 
@@ -42,6 +49,8 @@
 | [historico/nim-study-2026-07-16-c0.md](historico/nim-study-2026-07-16-c0.md) | Nim→Ori study note C0 (glossary, destroy paths, open questions) |
 | [historico/sessao-nim-arc-2026-07-16.md](historico/sessao-nim-arc-2026-07-16.md) | Session log — resume point after machine switch |
 | [historico/issue-ffi-dispatch-large-binary-2026-07-16.md](historico/issue-ffi-dispatch-large-binary-2026-07-16.md) | **LANG-PERF-3** issue (resolved: ARC registry linear → HashMap) |
+| [historico/eco-game-imgui-raylib3d-plan.md](historico/eco-game-imgui-raylib3d-plan.md) | Archived external-package discussion; not part of the Ori core backlog |
+| [documentation-audit-2026-08-08.md](documentation-audit-2026-08-08.md) | Completed implementation-vs-docs audit and coverage report |
 | [historico/perf-runtime-midend-plan.md](historico/perf-runtime-midend-plan.md) | LANG-PERF-2 plan (**done**, waves 0–6) |
 | [historico/pr-plan-ori-surface-s3.md](historico/pr-plan-ori-surface-s3.md) | S3 PR plan (completed, PRs 1–11 + option B) |
 | [historico/result-ctors-ok-err.md](historico/result-ctors-ok-err.md) | `ok`/`err` rename (delivered 2026-07-13) |
@@ -52,3 +61,7 @@
 
 Do **not** treat `historico/` or closed PR plans as the current language surface.
 Normative syntax: [../spec/](../spec/README.md).
+
+The current implementation baseline is the Cargo workspace `0.3.8-dev` after
+the `v0.3.7` release. The older maturity plan is only available under
+[`historico/PLANO-MATURIDADE-COMPLETO.md`](historico/PLANO-MATURIDADE-COMPLETO.md).

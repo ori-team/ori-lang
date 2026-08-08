@@ -7,7 +7,12 @@
 > **Context / history:** this file = operational history + closed etapas.  
 > Strategy narrative: [`uso-real-pequeno-medio.md`](uso-real-pequeno-medio.md).  
 > Historical maturity plan: [`historico/PLANO-MATURIDADE-COMPLETO.md`](historico/PLANO-MATURIDADE-COMPLETO.md).  
-> Superfície: **S3 / 0.3.0** + inference **0.3.1** + package/M1 **0.3.2**. Auk9 = arquivada.
+> **Historical status:** the dated tables below preserve decisions and closed
+> work from the 0.3.2 milestone. They are not the current implementation
+> inventory. For current language status and documentation coverage, use
+> [`docs/ATLAS.md`](../ATLAS.md) and [`docs/atlas/features.yaml`](../atlas/features.yaml).
+> Current surface: **S3 / 0.3.0** + inference **0.3.1**; workspace **0.3.8-dev**;
+> latest release **v0.3.7**. Auk9 = arquivada.
 
 ---
 
@@ -298,7 +303,7 @@ adicione o detalhe no plano de uso real e mantenha aqui apenas o resumo.
 - [x] **Layer 1 FS: `bool` → `result<void, string>` / `result<bool, string>`** — migrados `append_text`, `exists`, `is_file`, `is_dir`, `delete`, `create_dir`, `create_dir_all`, `copy`, `rename`; Layer 2 (`stdlib/fs/utils.orl`) pass-through direto. Gate: `compile_runs_fs_stdlib_canonical_and_compat_aliases`, `compile_runs_stdlib_source_module_fs_utils`, `spec_fs_and_json_contracts_match_stdlib_sig`.
 - [x] **Contratos cap. 12 sincronizados** — `stdlib_func_sig`, manifesto `stdlib.rs`, ABI nativa e teste `spec_fs_and_json_contracts_match_stdlib_sig` refletem assinaturas pós-migração.
 
-> Rastreabilidade: ver também [`stdlib-gap-parity.md`](stdlib-gap-parity.md) § Lacunas remanescentes (“Uniformizar todos os bool FS → result”).
+> Rastreabilidade: ver também [`historico/stdlib-gap-parity.md`](historico/stdlib-gap-parity.md) § Lacunas remanescentes (“Uniformizar todos os bool FS → result”).
 
 ### 3. Ergonomia de linguagem e CLI (média prioridade)
 
