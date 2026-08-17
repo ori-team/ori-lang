@@ -195,6 +195,17 @@ contract decision (evolve `Buffer[T]` vs. a new type name).
 | **BUG-MAPSET** | `m["k"] = v` silently did nothing | 1 | S | **done** | **2026-07-20**: the index-assignment codegen chain handled only `list` and fell through with no store and no error, so map index assignment compiled and did nothing. Implemented for `map`, and the fallthrough is now a hard error so the class cannot recur. Regression: `compile_runs_map_index_assignment` |
 | **DIAG-DEFID** | `<def DefId(N)>` in backend errors | 3 | S | **done** | **2026-07-23**: both backends now render declared type names from their compact `DefId → name` tables, recursively through containers and function types. The native HIR validator builds the same compact table; backend diagnostics no longer need a full `DefMap`. |
 
+### Code audit, memory safety, and performance roadmap (2026-08-17)
+
+Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-performance-architecture.md).
+
+| ID | Item | P | D | Status | What it means |
+|----|------|---|---|--------|---------------|
+| **RUST-AUDIT-2** | Full-workspace clean Clippy gate | 1 | S | **done** | **2026-08-17:** strict clippy clean across `--all-targets` for all 10 workspace crates and test suites; map/slice/question-mark patterns simplified; zero warnings or errors. |
+| **OPT-TYPE-INTERN-1** | Type Arena Interning (`TyId`) | 2 | L | **todo** | Introduce an arena-backed `TypeInterner` replacing deep `Ty` clones with lightweight 32-bit `TyId` handles in `ori-types` and `ori-hir`. |
+| **OPT-PAR-TYPECHECK-1** | Parallel Module Type-Checking | 3 | M | **todo** | Utilize `rayon` to parallelize function-body type checking across independent namespace modules in multi-file projects. |
+| **DX-LINT-EXT-1** | Extended Semantic Linters | 3 | S | **todo** | Add additional lint passes in `ori lint` for unhandled error variants, redundant type annotations, and implicit shadow warnings. |
+
 **Rejected by decision — do not reopen without a new ADR:**
 
 | ID | Item | Why |

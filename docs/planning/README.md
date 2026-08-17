@@ -26,6 +26,7 @@
 | [embedded-execution-profile.md](embedded-execution-profile.md) | Freestanding targets, allocator/runtime profiles, MMIO, and embedded CI |
 | [native-binding-generation.md](native-binding-generation.md) | Deterministic C binding generation and ABI validation |
 | [package-ecosystem-production.md](package-ecosystem-production.md) | Production registry protocol, supply chain, and toolchain channels |
+| [roadmap-code-audit-performance-architecture.md](roadmap-code-audit-performance-architecture.md) | Comprehensive code audit, memory safety, and performance optimization roadmap |
 | [ORI_GRAPHICS_LANGUAGE_EVOLUTION.md](ORI_GRAPHICS_LANGUAGE_EVOLUTION.md) | Numeric/CPU graphics evolution program (inline structs, buffers, bitwise, BCE, SIMD later) |
 | [freeze-and-abi-gates.md](freeze-and-abi-gates.md) | FREEZE-1 / ABI-1 gates **+ 1.0 readiness checklist** (merged) |
 | [stdlib-merge-policy.md](stdlib-merge-policy.md) | Stdlib API merge policy (M2) |

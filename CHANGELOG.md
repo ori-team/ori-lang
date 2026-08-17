@@ -107,6 +107,10 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Workspace-wide strict Clippy cleanup and code modernization (RUST-AUDIT-2).** Resolved all
+  Clippy warnings across the entire 10-crate Cargo workspace and integration test suites (`--all-targets`),
+  modernizing map/filter closures, replacing manual slicing with standard helpers, simplifying
+  nested matching with `?` and `is_some_and`/`is_none_or`, and eliminating unneeded borrow/clone patterns.
 - **Hosted slice windows cross the JIT boundary.** Public functions may now
   return `slice[T]` (read-only windows over lists) and take them as
   parameters; `ori-embed` exposes them as opaque `OriValue::Slice` pointers that

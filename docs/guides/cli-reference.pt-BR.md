@@ -112,11 +112,13 @@ Os campos do manifesto estão em
 
 ---
 
-## Formatação e migração
+## Formatação, linting e ferramentas
 
 | Comando | O que faz |
 |---|---|
-| `ori fmt <arquivo>` | Formata um arquivo e imprime o resultado |
+| `ori fmt <path> [-w / --write] [-c / --check]` | Formata um arquivo ou pasta recursivamente (`-w` in-place, `-c` check) |
+| `ori lint <path>` | Executa linter semântico de código para variáveis não usadas e redundâncias |
+| `ori bindgen <header.h> [--module <nome>]` | Gera bindings `extern "c"` e structs `@repr("C")` a partir de cabeçalho C |
 | `ori migrate-syntax <path>` | Reescreve sintaxe pré-S3 em arquivos `.orl` |
 
 O `ori migrate-syntax` cuida da parte mecânica do corte S3. Ele reescreve:

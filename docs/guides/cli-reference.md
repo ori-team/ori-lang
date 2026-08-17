@@ -112,11 +112,13 @@ Manifest fields are specified in
 
 ---
 
-## Formatting and migration
+## Formatting, linting, and tools
 
 | Command | What it does |
 |---|---|
-| `ori fmt <file>` | Format a source file and print the result |
+| `ori fmt <path> [-w / --write] [-c / --check]` | Format a source file or recursively format directory (`-w` in-place, `-c` check) |
+| `ori lint <path>` | Run semantic code linter for unused variables and code redundancy |
+| `ori bindgen <header.h> [--module <name>]` | Generate low-level Ori `extern "c"` bindings and `@repr("C")` structs from C header |
 | `ori migrate-syntax <path>` | Best-effort rewrite of pre-S3 syntax in `.orl` files |
 
 `ori migrate-syntax` handles the mechanical S3 cutover. It rewrites:
