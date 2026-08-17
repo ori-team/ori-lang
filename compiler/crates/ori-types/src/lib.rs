@@ -4,6 +4,7 @@ pub mod check;
 pub mod conditional;
 pub mod const_eval;
 pub mod def;
+pub mod interner;
 pub mod literal;
 pub mod lower;
 pub mod resolve;
@@ -15,6 +16,7 @@ pub use def::{
     CompileTimeValue, ConstEvalFailure, ConstEvalFailureKind, ConstEvaluation, Def, DefId, DefKind,
     DefMap,
 };
+pub use interner::{TyId, TyInterner};
 pub use lower::{
     is_inline_ty, is_inline_ty_with_structs, is_inline_ty_with_structs_visiting, lower_type,
     lower_type_with_aliases, lower_type_with_local_aliases,

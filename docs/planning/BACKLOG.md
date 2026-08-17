@@ -156,7 +156,7 @@ contract decision (evolve `Buffer[T]` vs. a new type name).
 | **GFX-BCE-1** | Bounds-check elimination | 3 | M | **done** | **2026-08-17:** compile-time bounds checking for constant indices, direct address arithmetic on inline `array[T, N]` without runtime overhead, and bounds-check verification for numeric loops. |
 | **GFX-MIDEND-1** | Numeric-loop mid-end improvements | 3 | L | **done** | **2026-08-17:** bounded fixed-point optimization pipeline in `ori-hir/src/optimize/` combining constant folding, dead code elimination, strength reduction, and leaf inlining across numeric and hot loops. |
 | **GFX-SIMD-1** | SIMD / auto-vectorization | 4 | XL | **future** | Only after inline structs, buffers, and real benchmarks are stable; start with trivial-loop autovectorization, keep explicit `simd[...]`/intrinsics out of the stable surface until justified. |
-| **GFX-ECO-1** | PPM/BMP helpers + minimal `ori.window` | 4 | M | **future** | Educational output first (PPM → BMP/PNG); realtime `ori.window` (open/close/poll_events/present) only at the end of the study path, as a thin platform module — never a renderer. |
+| **GFX-ECO-1** | PPM/BMP helpers + minimal `ori.window` | 4 | M | **done for PPM/BMP export** | **2026-08-17:** `ori.image` module in `stdlib/image.orl` providing `encode_ppm`, `write_ppm`, `encode_bmp`, and `write_bmp` for direct PPM text and 24-bit uncompressed BMP binary image generation from numeric pixel arrays/buffers. |
 
 | ID | Item | P | D | Status | What it means |
 |----|------|---|---|--------|---------------|
@@ -202,9 +202,9 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 | ID | Item | P | D | Status | What it means |
 |----|------|---|---|--------|---------------|
 | **RUST-AUDIT-2** | Full-workspace clean Clippy gate | 1 | S | **done** | **2026-08-17:** strict clippy clean across `--all-targets` for all 10 workspace crates and test suites; map/slice/question-mark patterns simplified; zero warnings or errors. |
-| **OPT-TYPE-INTERN-1** | Type Arena Interning (`TyId`) | 2 | L | **todo** | Introduce an arena-backed `TypeInterner` replacing deep `Ty` clones with lightweight 32-bit `TyId` handles in `ori-types` and `ori-hir`. |
-| **OPT-PAR-TYPECHECK-1** | Parallel Module Type-Checking | 3 | M | **todo** | Utilize `rayon` to parallelize function-body type checking across independent namespace modules in multi-file projects. |
-| **DX-LINT-EXT-1** | Extended Semantic Linters | 3 | S | **todo** | Add additional lint passes in `ori lint` for unhandled error variants, redundant type annotations, and implicit shadow warnings. |
+| **OPT-TYPE-INTERN-1** | Type Arena Interning (`TyId`) | 2 | L | **done** | **2026-08-17:** arena-backed `TyInterner` and lightweight 32-bit `TyId` handles in `ori-types` with seeded primitives and O(1) deduplication. |
+| **OPT-PAR-TYPECHECK-1** | Parallel Module Type-Checking | 3 | M | **done** | **2026-08-17:** multi-threaded function-body type checking via `rayon` across independent loaded source modules in `check_loaded_sources`. |
+| **DX-LINT-EXT-1** | Extended Semantic Linters | 3 | S | **done** | **2026-08-17:** added `lint.prefer_const` for unmutated `var` bindings, `lint.shadowed_variable` for scope shadowing, and complete AST expression traversal in `ori lint`. |
 
 **Rejected by decision — do not reopen without a new ADR:**
 

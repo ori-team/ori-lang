@@ -79,16 +79,31 @@ fn lint_item(item: &ItemWithAttrs, file_id: FileId, sink: &mut DiagnosticSink) {
 }
 
 fn lint_func(func: &FuncDecl, file_id: FileId, sink: &mut DiagnosticSink) {
-    let mut declared_bindings: HashMap<String, Span> = HashMap::new();
+    let mut declared_bindings: HashMap<String, (Span, bool)> = HashMap::new(); // name -> (span, is_var)
     let mut used_identifiers: HashSet<String> = HashSet::new();
+    let mut mutated_identifiers: HashSet<String> = HashSet::new();
+    let mut outer_scope: HashSet<String> = HashSet::new();
 
-    // Traverse statements to find declarations and usages
+    // Include function parameters in outer scope
+    for param in &func.params {
+        outer_scope.insert(param.name.as_str().to_string());
+    }
+
+    // Traverse statements to find declarations, mutations and usages
     for stmt in &func.body.stmts {
-        collect_declarations_and_usages(stmt, &mut declared_bindings, &mut used_identifiers, file_id, sink);
+        collect_declarations_and_usages(
+            stmt,
+            &mut declared_bindings,
+            &mut used_identifiers,
+            &mut mutated_identifiers,
+            &outer_scope,
+            file_id,
+            sink,
+        );
     }
 
     // Emit unused variable warnings for bindings not starting with `_`
-    for (name, span) in declared_bindings {
+    for (name, (span, is_var)) in declared_bindings {
         if !name.starts_with('_') && !used_identifiers.contains(&name) {
             sink.emit(Diagnostic {
                 severity: Severity::Warning,
@@ -99,20 +114,68 @@ fn lint_func(func: &FuncDecl, file_id: FileId, sink: &mut DiagnosticSink) {
                 action: Some(format!("Prefix with an underscore `_{name}` if intentionally unused, or remove it.")),
                 notes: Vec::new(),
             });
+        } else if is_var && !name.starts_with('_') && !mutated_identifiers.contains(&name) && used_identifiers.contains(&name) {
+            sink.emit(Diagnostic {
+                severity: Severity::Warning,
+                code: "lint.prefer_const",
+                message: format!("variable `{name}` is never mutated, prefer `const`"),
+                labels: vec![Label::primary(file_id, span, "never mutated")],
+                why: Some("Immutable bindings declared with `const` make code intent clearer and prevent accidental mutation.".to_string()),
+                action: Some(format!("Change `var {name}` to `const {name}`.")),
+                notes: Vec::new(),
+            });
         }
     }
 }
 
 fn collect_declarations_and_usages(
     stmt: &Stmt,
-    declarations: &mut HashMap<String, Span>,
+    declarations: &mut HashMap<String, (Span, bool)>,
     usages: &mut HashSet<String>,
+    mutations: &mut HashSet<String>,
+    outer_scope: &HashSet<String>,
     file_id: FileId,
     sink: &mut DiagnosticSink,
 ) {
     match stmt {
-        Stmt::Var(LocalVar { name, value, .. }) | Stmt::Const(LocalConst { name, value, .. }) => {
-            declarations.insert(name.as_str().to_string(), name.span);
+        Stmt::Var(LocalVar { name, value, .. }) => {
+            let var_name = name.as_str().to_string();
+            if outer_scope.contains(&var_name) {
+                sink.emit(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "lint.shadowed_variable",
+                    message: format!("local variable `{var_name}` shadows an existing binding"),
+                    labels: vec![Label::primary(file_id, name.span, "shadows outer binding")],
+                    why: Some("Shadowing variables in inner scopes can lead to subtle bugs and confusion.".to_string()),
+                    action: Some("Rename the local variable to avoid shadowing.".to_string()),
+                    notes: Vec::new(),
+                });
+            }
+            declarations.insert(var_name, (name.span, true));
+            lint_expr(value, usages, file_id, sink);
+        }
+        Stmt::Const(LocalConst { name, value, .. }) => {
+            let const_name = name.as_str().to_string();
+            if outer_scope.contains(&const_name) {
+                sink.emit(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "lint.shadowed_variable",
+                    message: format!("local constant `{const_name}` shadows an existing binding"),
+                    labels: vec![Label::primary(file_id, name.span, "shadows outer binding")],
+                    why: Some("Shadowing variables in inner scopes can lead to subtle bugs and confusion.".to_string()),
+                    action: Some("Rename the local constant to avoid shadowing.".to_string()),
+                    notes: Vec::new(),
+                });
+            }
+            declarations.insert(const_name, (name.span, false));
+            lint_expr(value, usages, file_id, sink);
+        }
+        Stmt::Assign(ori_ast::stmt::AssignStmt { lvalue, value, .. }) => {
+            collect_lvalue_mutation(lvalue, mutations);
+            lint_expr(value, usages, file_id, sink);
+        }
+        Stmt::CompoundAssign(ori_ast::stmt::CompoundAssignStmt { lvalue, value, .. }) => {
+            collect_lvalue_mutation(lvalue, mutations);
             lint_expr(value, usages, file_id, sink);
         }
         Stmt::Expr(expr) => {
@@ -123,14 +186,23 @@ fn collect_declarations_and_usages(
         }
         Stmt::While(WhileStmt { condition, body, .. }) => {
             lint_expr(condition, usages, file_id, sink);
+            let mut inner_scope = outer_scope.clone();
+            for k in declarations.keys() {
+                inner_scope.insert(k.clone());
+            }
             for s in &body.stmts {
-                collect_declarations_and_usages(s, declarations, usages, file_id, sink);
+                collect_declarations_and_usages(s, declarations, usages, mutations, &inner_scope, file_id, sink);
             }
         }
         Stmt::For(for_stmt) => {
             lint_expr(&for_stmt.iterable, usages, file_id, sink);
+            let mut inner_scope = outer_scope.clone();
+            inner_scope.insert(for_stmt.binding.as_str().to_string());
+            if let Some(second) = &for_stmt.second_binding {
+                inner_scope.insert(second.as_str().to_string());
+            }
             for s in &for_stmt.body.stmts {
-                collect_declarations_and_usages(s, declarations, usages, file_id, sink);
+                collect_declarations_and_usages(s, declarations, usages, mutations, &inner_scope, file_id, sink);
             }
         }
         Stmt::If(IfStmt {
@@ -141,18 +213,22 @@ fn collect_declarations_and_usages(
             ..
         }) => {
             lint_expr(condition, usages, file_id, sink);
+            let mut inner_scope = outer_scope.clone();
+            for k in declarations.keys() {
+                inner_scope.insert(k.clone());
+            }
             for s in &then_block.stmts {
-                collect_declarations_and_usages(s, declarations, usages, file_id, sink);
+                collect_declarations_and_usages(s, declarations, usages, mutations, &inner_scope, file_id, sink);
             }
             for (elif_cond, elif_block) in else_ifs {
                 lint_expr(elif_cond, usages, file_id, sink);
                 for s in &elif_block.stmts {
-                    collect_declarations_and_usages(s, declarations, usages, file_id, sink);
+                    collect_declarations_and_usages(s, declarations, usages, mutations, &inner_scope, file_id, sink);
                 }
             }
             if let Some(else_block) = else_block {
                 for s in &else_block.stmts {
-                    collect_declarations_and_usages(s, declarations, usages, file_id, sink);
+                    collect_declarations_and_usages(s, declarations, usages, mutations, &inner_scope, file_id, sink);
                 }
             }
         }
@@ -163,18 +239,30 @@ fn collect_declarations_and_usages(
             else_block,
             ..
         }) => {
-            declarations.insert(binding.as_str().to_string(), binding.span);
+            let mut inner_scope = outer_scope.clone();
+            inner_scope.insert(binding.as_str().to_string());
+            declarations.insert(binding.as_str().to_string(), (binding.span, false));
             lint_expr(value, usages, file_id, sink);
             for s in &then_block.stmts {
-                collect_declarations_and_usages(s, declarations, usages, file_id, sink);
+                collect_declarations_and_usages(s, declarations, usages, mutations, &inner_scope, file_id, sink);
             }
             if let Some(else_block) = else_block {
                 for s in &else_block.stmts {
-                    collect_declarations_and_usages(s, declarations, usages, file_id, sink);
+                    collect_declarations_and_usages(s, declarations, usages, mutations, &inner_scope, file_id, sink);
                 }
             }
         }
         _ => {}
+    }
+}
+
+fn collect_lvalue_mutation(lvalue: &ori_ast::stmt::LValue, mutations: &mut HashSet<String>) {
+    match lvalue {
+        ori_ast::stmt::LValue::Ident(name) => {
+            mutations.insert(name.as_str().to_string());
+        }
+        ori_ast::stmt::LValue::Field { base, .. } => collect_lvalue_mutation(base, mutations),
+        ori_ast::stmt::LValue::Index { base, .. } => collect_lvalue_mutation(base, mutations),
     }
 }
 
@@ -183,24 +271,42 @@ fn lint_expr(expr: &Expr, usages: &mut HashSet<String>, file_id: FileId, sink: &
         Expr::Ident(name) => {
             usages.insert(name.as_str().to_string());
         }
+        Expr::QualifiedIdent(qname) => {
+            if let Some(first) = qname.parts.first() {
+                usages.insert(first.as_str().to_string());
+            }
+        }
+        Expr::FStrLit { parts, .. } => {
+            for part in parts {
+                if let ori_ast::expr::FStrPart::Interpolated(e) = part {
+                    lint_expr(e, usages, file_id, sink);
+                }
+            }
+        }
+        Expr::Range { start, end, .. } => {
+            lint_expr(start, usages, file_id, sink);
+            lint_expr(end, usages, file_id, sink);
+        }
         Expr::Unary {
-            op: UnaryOp::Not,
+            op,
             operand,
             span,
         } => {
-            if let Expr::Unary {
-                op: UnaryOp::Not, ..
-            } = &**operand
-            {
-                sink.emit(Diagnostic {
-                    severity: Severity::Warning,
-                    code: "lint.double_negation",
-                    message: "double logical negation (`not (not ...)`) is redundant".to_string(),
-                    labels: vec![Label::primary(file_id, *span, "redundant double negation")],
-                    why: Some("Negating a boolean value twice returns the original boolean condition.".to_string()),
-                    action: Some("Remove both `not` operators.".to_string()),
-                    notes: Vec::new(),
-                });
+            if *op == UnaryOp::Not {
+                if let Expr::Unary {
+                    op: UnaryOp::Not, ..
+                } = &**operand
+                {
+                    sink.emit(Diagnostic {
+                        severity: Severity::Warning,
+                        code: "lint.double_negation",
+                        message: "double logical negation (`not (not ...)`) is redundant".to_string(),
+                        labels: vec![Label::primary(file_id, *span, "redundant double negation")],
+                        why: Some("Negating a boolean value twice returns the original boolean condition.".to_string()),
+                        action: Some("Remove both `not` operators.".to_string()),
+                        notes: Vec::new(),
+                    });
+                }
             }
             lint_expr(operand, usages, file_id, sink);
         }
@@ -266,13 +372,47 @@ fn lint_expr(expr: &Expr, usages: &mut HashSet<String>, file_id: FileId, sink: &
         }
         Expr::Index { object, index, .. } => {
             lint_expr(object, usages, file_id, sink);
-            if let IndexExpr::Single(idx) = index {
-                lint_expr(idx, usages, file_id, sink);
+            match index {
+                IndexExpr::Single(idx) => lint_expr(idx, usages, file_id, sink),
+                IndexExpr::Range { start, end } => {
+                    if let Some(s) = start {
+                        lint_expr(s, usages, file_id, sink);
+                    }
+                    if let Some(e) = end {
+                        lint_expr(e, usages, file_id, sink);
+                    }
+                }
             }
         }
         Expr::List { elements, .. } => {
             for item in elements {
                 lint_expr(item, usages, file_id, sink);
+            }
+        }
+        Expr::Map { entries, .. } => {
+            for (k, v) in entries {
+                lint_expr(k, usages, file_id, sink);
+                lint_expr(v, usages, file_id, sink);
+            }
+        }
+        Expr::Set { elements, .. } => {
+            for item in elements {
+                lint_expr(item, usages, file_id, sink);
+            }
+        }
+        Expr::Tuple { elements, .. } => {
+            for item in elements {
+                lint_expr(item, usages, file_id, sink);
+            }
+        }
+        Expr::StructLit { fields, .. } | Expr::AnonStructLit { fields, .. } => {
+            for f in fields {
+                lint_expr(&f.value, usages, file_id, sink);
+            }
+        }
+        Expr::EnumVariantNamed { fields, .. } => {
+            for f in fields {
+                lint_expr(&f.value, usages, file_id, sink);
             }
         }
         _ => {}

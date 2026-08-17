@@ -12,6 +12,15 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Image export helpers `ori.image` (GFX-ECO-1).** Added `stdlib/image.orl` providing `encode_ppm`,
+  `write_ppm`, `encode_bmp`, and `write_bmp` for direct PPM text and 24-bit uncompressed BMP binary
+  image export from numeric color arrays and software rasterizer framebuffers.
+- **Type arena interning `TyInterner` and `TyId` (OPT-TYPE-INTERN-1).** Added arena-backed `TyInterner`
+  and lightweight 32-bit `TyId` handles in `ori-types` with seeded primitives and O(1) deduplication.
+- **Parallel module type-checking (OPT-PAR-TYPECHECK-1).** Enabled multi-threaded function-body
+  type checking via `rayon` across independent loaded source modules in `check_loaded_sources`.
+- **Extended semantic linters (DX-LINT-EXT-1).** Added `lint.prefer_const` for unmutated `var` bindings,
+  `lint.shadowed_variable` for inner-scope shadowing, and complete AST expression traversal in `ori lint`.
 - **Persistent compiler service and modular JIT session (COMP-SVC-1).** `ori-embed` persistent
   scalar JIT session model with generation-checked handles, explicit unload, structured trap results,
   and registered host callbacks with `user_data` and reentrancy limits.

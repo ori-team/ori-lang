@@ -138,25 +138,61 @@ pub(super) fn check_loaded_sources(
     resolved: &ResolvedModule,
     sink: &mut DiagnosticSink,
 ) {
-    for source in loaded {
-        validate_doc_tags(source, sink);
-        let namespace = namespace_of(&source.ast);
-        let mut checker = ori_types::check::Checker::new(
-            &resolved.def_map,
-            &resolved.func_sigs,
-            &resolved.value_sigs,
-            &resolved.struct_sigs,
-            &resolved.enum_sigs,
-            &resolved.trait_sigs,
-            &resolved.impl_sigs,
-            &resolved.type_alias_sigs,
-            &resolved.newtype_sigs,
-            &resolved.deprecated_sigs,
-            &resolved.reexports,
-            &namespace,
-            source.file_id,
-            sink,
-        );
-        checker.check_file(&source.ast);
+    if loaded.len() > 1 {
+        use rayon::prelude::*;
+        let per_source_diags: Vec<Vec<Diagnostic>> = loaded
+            .par_iter()
+            .map(|source| {
+                let mut local_sink = DiagnosticSink::default();
+                validate_doc_tags(source, &mut local_sink);
+                let namespace = namespace_of(&source.ast);
+                let mut checker = ori_types::check::Checker::new(
+                    &resolved.def_map,
+                    &resolved.func_sigs,
+                    &resolved.value_sigs,
+                    &resolved.struct_sigs,
+                    &resolved.enum_sigs,
+                    &resolved.trait_sigs,
+                    &resolved.impl_sigs,
+                    &resolved.type_alias_sigs,
+                    &resolved.newtype_sigs,
+                    &resolved.deprecated_sigs,
+                    &resolved.reexports,
+                    &namespace,
+                    source.file_id,
+                    &mut local_sink,
+                );
+                checker.check_file(&source.ast);
+                local_sink.into_diagnostics()
+            })
+            .collect();
+
+        for diags in per_source_diags {
+            for diag in diags {
+                sink.emit(diag);
+            }
+        }
+    } else {
+        for source in loaded {
+            validate_doc_tags(source, sink);
+            let namespace = namespace_of(&source.ast);
+            let mut checker = ori_types::check::Checker::new(
+                &resolved.def_map,
+                &resolved.func_sigs,
+                &resolved.value_sigs,
+                &resolved.struct_sigs,
+                &resolved.enum_sigs,
+                &resolved.trait_sigs,
+                &resolved.impl_sigs,
+                &resolved.type_alias_sigs,
+                &resolved.newtype_sigs,
+                &resolved.deprecated_sigs,
+                &resolved.reexports,
+                &namespace,
+                source.file_id,
+                sink,
+            );
+            checker.check_file(&source.ast);
+        }
     }
 }

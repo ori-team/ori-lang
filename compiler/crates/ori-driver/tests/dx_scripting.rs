@@ -636,3 +636,82 @@ void set_callback(char* name, int flags);
         String::from_utf8_lossy(&check_out.stderr)
     );
 }
+
+#[test]
+fn e2e_extended_lints_prefer_const_and_shadowing() {
+    let dir = TestDir::new("extended_lints");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+public process(x: int) -> int
+    var unmutated: int = 42
+    if x > 0
+        var x: int = 100
+        return unmutated + x
+    end
+    return unmutated
+end
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("lint")
+        .arg(dir.path("main.orl"))
+        .output()
+        .expect("failed to run ori lint");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}\n{stderr}");
+
+    assert!(combined.contains("lint.prefer_const"), "expected lint.prefer_const in output: {combined}");
+    assert!(combined.contains("lint.shadowed_variable"), "expected lint.shadowed_variable in output: {combined}");
+}
+
+#[test]
+fn e2e_image_ppm_and_bmp_export() {
+    let dir = TestDir::new("image_export");
+    let ppm_out = dir.path("output.ppm");
+    let bmp_out = dir.path("output.bmp");
+    let ppm_str_path = ppm_out.display().to_string();
+    let bmp_str_path = bmp_out.display().to_string();
+
+    dir.write(
+        "main.orl",
+        &format!(r#"module app.main
+
+import ori.image = img
+import ori.io = io
+
+public main() -> void
+    const width: int = 2
+    const height: int = 2
+    -- 4 pixels: red, green, blue, white
+    const pixels: list[int] = [16711680, 65280, 255, 16777215]
+    
+    const ppm_str: string = img.encode_ppm(width, height, pixels)
+    const res1 = img.write_ppm("{}", width, height, pixels)
+
+    const bmp_bytes: bytes = img.encode_bmp(width, height, pixels)
+    const res2 = img.write_bmp("{}", width, height, pixels)
+
+    io.println("DONE")
+end
+"#, ppm_str_path, bmp_str_path),
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .output()
+        .expect("failed to run image export test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "image export failed:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("DONE"), "expected DONE in stdout: {stdout}");
+    assert!(ppm_out.exists(), "ppm output should exist");
+    assert!(bmp_out.exists(), "bmp output should exist");
+}
