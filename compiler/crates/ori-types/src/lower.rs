@@ -620,7 +620,7 @@ fn lower_builtin_concurrency_type(path: &str, args: &[Ty]) -> Option<Ty> {
             kind: OpaqueTy::File,
             args: vec![],
         }),
-        "ori.task.CancelToken" => Some(Ty::Opaque {
+        "ori.task.CancelToken" | "task.CancelToken" | "CancelToken" => Some(Ty::Opaque {
             kind: OpaqueTy::CancelToken,
             args: vec![],
         }),

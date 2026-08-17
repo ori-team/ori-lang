@@ -1195,6 +1195,42 @@ unsafe extern "C" fn ori_task_sleep(ms: i64) -> *mut OriFuture {
     future
 }
 
+/// Poll the runtime reactor event loop with a millisecond timeout.
+///
+/// # Safety
+///
+/// Caller must ensure the runtime is initialized and handles are valid.
+#[no_mangle]
+pub unsafe extern "C" fn ori_reactor_poll(timeout_ms: i64) -> i64 {
+    let ex = executor();
+    let guard = match ex.queue.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    if !guard.is_empty() {
+        return guard.len() as i64;
+    }
+    if timeout_ms <= 0 {
+        return 0;
+    }
+    let dur = std::time::Duration::from_millis(timeout_ms as u64);
+    let (g, _) = match ex.available.wait_timeout(guard, dur) {
+        Ok(res) => res,
+        Err(p) => p.into_inner(),
+    };
+    g.len() as i64
+}
+
+/// Wake up any threads blocked waiting on the runtime reactor event loop.
+///
+/// # Safety
+///
+/// Safe to call across thread boundaries; caller must ensure the runtime is initialized.
+#[no_mangle]
+pub unsafe extern "C" fn ori_reactor_wake() {
+    executor().available.notify_all();
+}
+
 #[no_mangle]
 unsafe extern "C" fn ori_future_pending() -> *mut OriFuture {
     alloc_pending_future()

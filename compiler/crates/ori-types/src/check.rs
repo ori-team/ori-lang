@@ -8078,6 +8078,8 @@ fn stdlib_named_ty_exists(path: &str) -> bool {
             | "ori.task.Job"
             | "ori.task.JoinError"
             | "ori.task.CancelToken"
+            | "task.CancelToken"
+            | "CancelToken"
             | "ori.channel.Channel"
             | "ori.channel.SendError"
             | "ori.channel.ReceiveError"

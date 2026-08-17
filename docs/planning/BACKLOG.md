@@ -209,6 +209,9 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 | **OPT-ACYCLIC-1** | Acyclic Type Inference | 2 | M | **done** | **2026-08-17:** compile-time `Ty::is_acyclic()` analysis identifying types that cannot form recursive reference cycles. |
 | **OPT-SSO-1** | Small String Optimization / Fast Paths | 2 | M | **done** | **2026-08-17:** short-string fast-paths and direct slice copies without intermediary malloc churn. |
 | **STR-VIEW-1** | Zero-Copy String Views (`ori.string_view`) | 2 | M | **done** | **2026-08-17:** added `stdlib/string_view.orl` providing `StringView`, `from_string`, `from_sub`, `subview`, `starts_with`, `ends_with`, `to_string`. |
+| **ASYNC-REACTOR-1** | Native OS Event Reactor Polling & Non-blocking I/O | 2 | L | **done** | **2026-08-17:** `ori_reactor_poll` and `ori_reactor_wake` in `ori-runtime` supporting event loop integration and non-spinning task multiplexing. |
+| **ASYNC-STRUCT-1** | Structured Concurrency & Cancellation Scopes | 2 | M | **done** | **2026-08-17:** added `stdlib/cancel.orl` with `CancelScope`, `create_scope`, `cancel`, `is_cancelled`, and `defer_cancel`. |
+| **CONC-THREADS-1** | Safe Concurrency Transfers & Value Isolation | 2 | M | **done** | **2026-08-17:** safe cross-thread transfer helpers in `ori.concurrent` (`transfer_int`, `transfer_string`, `transfer_list_string`). |
 
 **Rejected by decision — do not reopen without a new ADR:**
 

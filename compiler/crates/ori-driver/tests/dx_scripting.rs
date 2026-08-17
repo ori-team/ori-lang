@@ -802,3 +802,54 @@ end
     assert!(stdout.contains("RC_ELISION_OK"), "expected RC_ELISION_OK in stdout: {stdout}");
 }
 
+#[test]
+fn e2e_structured_concurrency_and_cancel_scope() {
+    let dir = TestDir::new("struct_conc");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.cancel = cancel
+import ori.concurrent = conc
+import ori.io = io
+
+public main() -> void
+    const scope: cancel.CancelScope = cancel.create_scope()
+    if cancel.is_cancelled(scope)
+        panic("scope should initially not be cancelled")
+    end
+
+    cancel.cancel(scope)
+    if not cancel.is_cancelled(scope)
+        panic("scope should be cancelled after cancel()")
+    end
+
+    const val: int = conc.transfer_int(42)
+    if val != 42
+        panic("transfer_int failed")
+    end
+
+    const s: string = conc.transfer_string("async_msg")
+    if s != "async_msg"
+        panic("transfer_string failed")
+    end
+
+    io.println("STRUCT_CONC_OK")
+end
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .output()
+        .expect("failed to run structured concurrency test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "structured concurrency failed:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("STRUCT_CONC_OK"), "expected STRUCT_CONC_OK in stdout: {stdout}");
+}
+
+

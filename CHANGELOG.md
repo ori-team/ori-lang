@@ -12,6 +12,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Native OS event reactor polling (ASYNC-REACTOR-1).** Added `ori_reactor_poll` and `ori_reactor_wake`
+  in `ori-runtime` enabling external event loop multiplexing and non-spinning task queues.
+- **Structured concurrency & cancellation scopes (ASYNC-STRUCT-1).** Added `stdlib/cancel.orl` providing
+  `CancelScope`, `create_scope`, `cancel`, `is_cancelled`, and `defer_cancel`.
+- **Safe cross-thread concurrency transfer (CONC-THREADS-1).** Added `transfer_int`, `transfer_string`,
+  and `transfer_list_string` in `stdlib/concurrent.orl` supporting value isolation.
 - **Static retain/release and copy elision in HIR (OPT-RC-ELISION-1).** Added intraprocedural escape
   and ownership analysis in `ori-hir/src/optimize/rc_elision.rs` to elide redundant retain/release
   pairs and dead temporary assignments for non-escaping locals.

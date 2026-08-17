@@ -1,0 +1,29 @@
+module ori.cancel
+
+-- Structured cancellation scopes and task lifecycle combinators (ASYNC-STRUCT-1, CONC-THREADS-1).
+
+import ori.task = task
+
+public struct CancelScope
+    token: task.CancelToken
+end
+
+public create_scope() -> CancelScope
+    const tok: task.CancelToken = task.create_token()
+    return CancelScope {
+        token: tok,
+    }
+end
+
+public cancel(scope: CancelScope) -> void
+    task.cancel(scope.token)
+end
+
+public is_cancelled(scope: CancelScope) -> bool
+    return task.is_cancelled(scope.token)
+end
+
+public defer_cancel(scope: CancelScope, millis: int) -> void
+    task.sleep(millis)
+    task.cancel(scope.token)
+end
