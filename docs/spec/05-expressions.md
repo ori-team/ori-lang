@@ -55,6 +55,44 @@ to user-defined types. On primitives, these operators work directly.
 
 ---
 
+## Bitwise and Shift Expressions
+
+Since 0.3.8 (GFX-BITWISE-1), integer types support bitwise operators:
+
+```ori
+a & b       -- bitwise AND (requires matching integer types)
+a | b       -- bitwise OR  (requires matching integer types)
+a ^ b       -- bitwise XOR (requires matching integer types)
+~a          -- bitwise complement (unary, integer operand)
+a << n      -- left shift (integer operands)
+a >> n      -- right shift (integer operands)
+```
+
+Rules:
+
+- `&`, `|`, `^` require **matching integer types**; the result has that type.
+- `<<` / `>>` accept an integer LHS and an integer shift count of any width;
+  the result keeps the LHS type.
+- `>>` is **arithmetic** on signed types (fills the sign bit) and **logical**
+  on unsigned types (fills zero).
+- Shift counts outside `0..bit_width` are a runtime panic (`runtime.shift_overflow`).
+  CT-0 (constant) shifts are validated at compile time.
+- `~x` computes `x ^ -1` in the operand's width: `~0u8 == 255`, `~0 == -1`.
+- Bitwise operators are **not overloadable**; they apply to integer primitives
+  only. The logical keywords `and` / `or` / `not` are unrelated (boolean).
+- Precedence (high to low): unary `~` > `<<` `>>` > `&` > `^` > `|` >
+  `and` > `or`.
+
+Typical use (RGBA packing):
+
+```ori
+pack_rgba(r: u8, g: u8, b: u8, a: u8) -> u32
+    return (u32(r) << 24) | (u32(g) << 16) | (u32(b) << 8) | u32(a)
+end
+```
+
+---
+
 ## Comparison Expressions
 
 ```ori

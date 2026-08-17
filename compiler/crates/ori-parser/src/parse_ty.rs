@@ -55,6 +55,11 @@ impl<'src> Parser<'src> {
         if self.at_contextual("array") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
             return self.parse_array_type(span);
         }
+        if self.at_contextual("buffer") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
+            self.advance();
+            let (inner, end) = self.parse_single_type_arg()?;
+            return Some(Type::Buffer(Box::new(inner), span.cover(end)));
+        }
         if self.at_contextual("slice") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
             self.advance();
             let (inner, end) = self.parse_single_type_arg()?;

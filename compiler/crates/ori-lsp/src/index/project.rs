@@ -51,7 +51,8 @@ impl ProjectManager {
 
     /// Register or update a document in memory.
     pub fn upsert_document(&mut self, uri: Url, content: String, version: i32) {
-        let index = Some(SemanticIndex::build(&content));
+        let path = uri.to_file_path().ok();
+        let index = Some(SemanticIndex::build(&content, path.as_deref()));
         self.open_documents.insert(
             uri.clone(),
             DocumentState {
@@ -73,7 +74,8 @@ impl ProjectManager {
         if start <= end && end <= state.content.len() {
             state.content.replace_range(start..end, text);
             state.version = version;
-            state.index = Some(SemanticIndex::build(&state.content));
+            let path = state.uri.to_file_path().ok();
+            state.index = Some(SemanticIndex::build(&state.content, path.as_deref()));
         }
     }
 

@@ -72,6 +72,13 @@ jobs:
       - name: Test diagnostic catalog
         run: cargo test -p ori-driver --test diagnostic_catalog
 
+      - name: Validate documentation coverage and examples
+        if: matrix.name == 'linux-gnu'
+        working-directory: ${{ github.workspace }}
+        run: |
+          sh tools/qa/docs_coverage.sh
+          sh tools/qa/docs_examples.sh
+
       - name: Native release package (Windows)
         if: matrix.smoke == 'powershell'
         shell: pwsh

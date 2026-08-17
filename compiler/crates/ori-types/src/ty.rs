@@ -92,11 +92,9 @@ pub enum Ty {
     Optional(Box<Ty>),
     Result(Box<Ty>, Box<Ty>),
     List(Box<Ty>),
+    /// `buffer[T]` — a contiguous, mutably-indexable, fixed-length heap block.
+    Buffer(Box<Ty>),
     /// `slice[T]` — a read-only window over a `list[T]`.
-    ///
-    /// Holds the owning list plus a range, never a copy of the elements, so
-    /// taking a window is O(1) whatever the length. Reads resolve through the
-    /// owner because `push` can move the element buffer.
     Slice(Box<Ty>),
     /// `array[T, size: N]` — element type and length.
     ///
@@ -218,6 +216,7 @@ impl Ty {
             Ty::String
                 | Ty::Bytes
                 | Ty::List(_)
+                | Ty::Buffer(_)
                 | Ty::Slice(_)
                 | Ty::Map(_, _)
                 | Ty::Set(_)
@@ -264,6 +263,7 @@ impl Ty {
             Ty::Infer(_) => true,
             Ty::Optional(t)
             | Ty::List(t)
+            | Ty::Buffer(t)
             | Ty::Slice(t)
             | Ty::Set(t)
             | Ty::Range(t)
@@ -295,6 +295,7 @@ impl Ty {
             Ty::Error => true,
             Ty::Optional(t)
             | Ty::List(t)
+            | Ty::Buffer(t)
             | Ty::Slice(t)
             | Ty::Set(t)
             | Ty::Range(t)
@@ -359,6 +360,7 @@ impl Ty {
                 a_ok.is_assignable_to(b_ok) && a_err.is_assignable_to(b_err)
             }
             (List(a), List(b))
+            | (Buffer(a), Buffer(b))
             | (Slice(a), Slice(b))
             | (Set(a), Set(b))
             | (Range(a), Range(b))
@@ -467,6 +469,7 @@ impl Ty {
                 err.display_in(def_map)
             ),
             Ty::List(inner) => format!("list[{}]", inner.display_in(def_map)),
+            Ty::Buffer(inner) => format!("buffer[{}]", inner.display_in(def_map)),
             Ty::Slice(inner) => format!("slice[{}]", inner.display_in(def_map)),
             Ty::Array(elem, size) => match &**size {
                 Ty::ConstInt(_, n) => format!("array[{}, size: {}]", elem.display_in(def_map), n),
@@ -542,6 +545,7 @@ impl Ty {
                 err.display_with_names(names)
             ),
             Ty::List(inner) => format!("list[{}]", inner.display_with_names(names)),
+            Ty::Buffer(inner) => format!("buffer[{}]", inner.display_with_names(names)),
             Ty::Slice(inner) => format!("slice[{}]", inner.display_with_names(names)),
             Ty::Array(elem, size) => match &**size {
                 Ty::ConstInt(_, value) => {
@@ -616,6 +620,7 @@ impl Ty {
             Ty::Optional(t) => format!("optional[{}]", t.display()),
             Ty::Result(ok, err) => format!("result[{}, {}]", ok.display(), err.display()),
             Ty::List(t) => format!("list[{}]", t.display()),
+            Ty::Buffer(t) => format!("buffer[{}]", t.display()),
             Ty::Slice(t) => format!("slice[{}]", t.display()),
             Ty::Array(elem, size) => match &**size {
                 Ty::ConstInt(_, n) => format!("array[{}, size: {}]", elem.display(), n),
@@ -715,6 +720,7 @@ pub fn substitute_ty_params(ty: &Ty, args: &[Ty]) -> Ty {
             Box::new(substitute_ty_params(err, args)),
         ),
         Ty::List(elem) => Ty::List(Box::new(substitute_ty_params(elem, args))),
+        Ty::Buffer(elem) => Ty::Buffer(Box::new(substitute_ty_params(elem, args))),
         Ty::Slice(elem) => Ty::Slice(Box::new(substitute_ty_params(elem, args))),
         // Substituting the length is the point: `array[byte, size: cap]` becomes
         // `array[byte, size: 8]` once `cap` is bound.
@@ -804,6 +810,7 @@ where
             Box::new(normalize_ty_aliases_depth(*err, lookup, depth)),
         ),
         Ty::List(elem) => Ty::List(Box::new(normalize_ty_aliases_depth(*elem, lookup, depth))),
+        Ty::Buffer(elem) => Ty::Buffer(Box::new(normalize_ty_aliases_depth(*elem, lookup, depth))),
         Ty::Map(k, v) => Ty::Map(
             Box::new(normalize_ty_aliases_depth(*k, lookup, depth)),
             Box::new(normalize_ty_aliases_depth(*v, lookup, depth)),
@@ -910,6 +917,11 @@ pub fn substitute_trait_self(ty: &Ty, trait_def_id: DefId, self_ty: &Ty) -> Ty {
             Box::new(substitute_trait_self(err, trait_def_id, self_ty)),
         ),
         Ty::List(inner) => Ty::List(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Buffer(inner) => Ty::Buffer(Box::new(substitute_trait_self(
             inner,
             trait_def_id,
             self_ty,

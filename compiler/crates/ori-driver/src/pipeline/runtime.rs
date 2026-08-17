@@ -414,6 +414,7 @@ pub(crate) fn native_target_triple() -> String {
     std::env::var("ORI_TARGET_TRIPLE")
         .ok()
         .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
         .unwrap_or_else(default_native_target_triple)
 }
 

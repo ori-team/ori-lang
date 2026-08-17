@@ -62,7 +62,7 @@ pub fn file_error_diagnostic(message: String) -> LspDiagnostic {
 }
 
 /// Map a `run_check` / `run_check_source` error message to a structured
-/// project-level diagnostic when it corresponds to a known project
+/// project- or cfg-level diagnostic when it corresponds to a known
 /// configuration failure (Etapa 6.5).
 ///
 /// The driver's `resolve_entry_path` returns plain `String` errors for these
@@ -81,6 +81,14 @@ pub fn project_error_diagnostic(message: &str) -> Option<LspDiagnostic> {
         ("project.entry_not_found", DiagnosticSeverity::ERROR)
     } else if message.contains("project entry") && message.contains("does not exist") {
         ("project.entry_not_found", DiagnosticSeverity::ERROR)
+    } else if message.starts_with("cfg.execution_profile_invalid:") {
+        ("cfg.execution_profile_invalid", DiagnosticSeverity::ERROR)
+    } else if message.starts_with("cfg.feature_invalid:") {
+        ("cfg.feature_invalid", DiagnosticSeverity::ERROR)
+    } else if message.starts_with("cfg.feature_not_declared:") {
+        ("cfg.feature_not_declared", DiagnosticSeverity::ERROR)
+    } else if message.starts_with("cfg.target_invalid:") {
+        ("cfg.target_invalid", DiagnosticSeverity::ERROR)
     } else {
         return None;
     };
@@ -212,6 +220,16 @@ mod tests {
             _ => None,
         });
         assert_eq!(code.as_deref(), Some("project.entry_not_found"));
+
+        let diagnostic = project_error_diagnostic(
+            "cfg.feature_not_declared: feature `fast` is not declared under `[features]`",
+        )
+        .expect("cfg failures map to their public diagnostic code");
+        let code = diagnostic.code.and_then(|value| match value {
+            NumberOrString::String(value) => Some(value),
+            _ => None,
+        });
+        assert_eq!(code.as_deref(), Some("cfg.feature_not_declared"));
 
         // Entry points to a non-existent file → project.entry_not_found
         let d = project_error_diagnostic("project entry `/foo/main.orl` does not exist")

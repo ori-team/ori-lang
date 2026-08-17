@@ -1036,6 +1036,49 @@ end
     assert_eq!(stdout.trim(), "r:6\nleaks:0");
 }
 
+/// Collection mutators must transfer fresh managed values into their ARC edge
+/// ownership just like direct list index assignment does.
+#[test]
+fn compile_runs_native_list_set_and_insert_managed_no_leak() {
+    let dir = TestDir::new("list_set_insert_managed");
+    let (stdout, stderr, success) = compile_and_run_with_leak_check(
+        &dir,
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+import ori.test = test
+
+make_list(n: int) -> list[int]
+    const values: list[int] = lists.new()
+    var i: int = 0
+    while i < n
+        lists.push(values, i)
+        i = i + 1
+    end
+    return values
+end
+
+exercise() -> int
+    var values: list[list[int]] = [make_list(1)]
+    lists.set(values, 0, make_list(6))
+    lists.insert(values, 1, make_list(7))
+    return lists.len(values[0]) + lists.len(values[1])
+end
+
+main()
+    const total: int = exercise()
+    const leaked: int = test.assert_no_leaks("list_set_insert_managed")
+    io.print("total:" + string(total))
+    io.print("leaks:" + string(leaked))
+end
+"#,
+        "list_set_insert_managed",
+    );
+    assert!(success, "stdout: {stdout}\nstderr: {stderr}");
+    assert_eq!(stdout.trim(), "total:13\nleaks:0");
+}
+
 // ── C2 — string temporary accounting (print / interpolation) ───────────────
 // Before the fix, io.print with a fresh string argument leaked the temp's +1,
 // and every f-string part/intermediate concat leaked (7 live allocations for

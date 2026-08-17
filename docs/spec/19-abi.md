@@ -46,6 +46,32 @@ calling conventions the native pipeline actually uses today, so that:
 | Consumer | `ori-driver` embeds the same string in staged `runtime-link.json` |
 | Check | Driver rejects a staged runtime whose `abi_version` ≠ driver constant |
 
+The loaded runtime also exposes two process-lifetime, NUL-terminated C strings:
+
+| Symbol | Contract |
+|--------|----------|
+| `ori_rt_version() -> const char *` | Cargo package version of the runtime (for diagnostics and host telemetry) |
+| `ori_rt_abi_version() -> const char *` | The exact ABI revision string, currently `ori-native-abi-1` |
+
+Hosts must treat both pointers as borrowed immutable strings. They must not free
+or mutate them. A host that loads a shared library should compare
+`ori_rt_abi_version()` with the ABI revision it was built to consume before
+calling exported functions.
+
+The runtime also exposes a thread-local hosted-error slot. Generated hosted JIT
+code writes controlled failures with `ori_host_report_error`; hosts may clear
+and inspect the current-thread result with:
+
+| Symbol | Contract |
+|--------|----------|
+| `ori_host_clear_error()` | Clear the current-thread error |
+| `ori_host_error_code() -> int32_t` | Return zero when no hosted error is pending |
+| `ori_host_error_message() -> const char *` | Borrowed NUL-terminated message until the next error operation |
+
+This slot is an execution aid for the experimental Rust hosted API, not a
+general recovery mechanism for arbitrary native faults. Standalone AOT/JIT
+keeps the existing abort policy.
+
 When any **documented layout or stable `ori_*` symbol signature** in this chapter
 changes in a way that breaks binary compatibility with previously staged
 runtimes, maintainers must:
@@ -124,6 +150,21 @@ struct User {   /* fields in source order, C-like padding */
 
 Anonymous struct of elements left-to-right with natural alignment. Same rules
 as structs for offsets and total size.
+
+### 5.2b Inline structs inside `array`
+
+Since 0.3.8 (GFX-INLINE-1), a struct whose fields are all inline (`Inline(T)`:
+scalars, inline arrays, inline structs) can be an `array[T, size: N]` element
+or an inline field of another struct. Such structs are laid out **in place**:
+
+- element stride = the struct's full size (natural alignment), so
+  `array[Vec3, size: 8]` is `8 × sizeof(Vec3)` contiguous bytes;
+- an inline struct field occupies its bytes at its natural-aligned offset
+  (never a pointer);
+- managed structs (any ARC field) and recursive structs stay pointer-backed /
+  rejected, so no inline layout ever holds an ARC edge.
+
+`ori.mem.size_of` reports the same numbers the codegen layout uses.
 
 ### 5.3 Enums (tagged unions)
 
@@ -464,7 +505,8 @@ The header is the canonical host declaration. It contains:
 
 - `<stdbool.h>` and `<stdint.h>`;
 - `extern "C"` guards for C++;
-- declarations for `ori_rt_init`, `__ori_module_init`, `ori_rt_shutdown`,
+- declarations for `ori_rt_init`, `ori_rt_version`, `ori_rt_abi_version`,
+  `__ori_module_init`, `ori_rt_shutdown`, and the hosted-error read functions,
   `ori_arc_retain`, and `ori_arc_release`;
 - one complete `typedef struct` for each scalar struct used directly by an
   export and one incomplete handle declaration for each managed struct;

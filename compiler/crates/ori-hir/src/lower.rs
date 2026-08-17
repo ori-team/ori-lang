@@ -8,8 +8,8 @@ use ori_ast::stmt::{
 use ori_diagnostics::{DiagnosticSink, FileId, Span};
 use ori_types::literal::{parse_float_literal, parse_int_literal};
 use ori_types::{
-    expand_ty_aliases, DefId, DefKind, DefMap, EnumSig, FuncSig, ImplSig, OpaqueTy, ReExport,
-    StructSig, TraitSig, Ty, TypeAliasSig, ValueSig,
+    expand_ty_aliases, substitute_ty_params, DefId, DefKind, DefMap, EnumSig, FuncSig, ImplSig,
+    OpaqueTy, ReExport, StructSig, TraitSig, Ty, TypeAliasSig, ValueSig,
 };
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
@@ -73,7 +73,8 @@ fn ori_mem_size_of_ty(ty: &Ty) -> i64 {
         Ty::Error => 0,
         Ty::Infer(_) | Ty::Param { .. } => 8,
         // A slice is a small `(owner, start, len)` block behind a pointer.
-        Ty::Slice(_) => 8,
+        // A buffer is a heap-allocated contiguous block (header + payload).
+        Ty::Buffer(_) | Ty::Slice(_) => 8,
         Ty::String
         | Ty::Bytes
         | Ty::Optional(_)
@@ -552,6 +553,13 @@ fn specialized_stdlib_call_ret_ty(c_name: &str, args: &[HirArg], fallback: Ty) -
             .first()
             .and_then(|arg| match &arg.value.ty {
                 Ty::Slice(elem) => Some((**elem).clone()),
+                _ => None,
+            })
+            .unwrap_or(fallback),
+        "ori.buffer.as_slice" => args
+            .first()
+            .and_then(|arg| match &arg.value.ty {
+                Ty::Buffer(elem) => Some(Ty::Slice(elem.clone())),
                 _ => None,
             })
             .unwrap_or(fallback),
@@ -1082,6 +1090,94 @@ impl<'a> Lowerer<'a> {
             .map(|(_, ty)| ty.clone())
     }
 
+    /// GFX-INLINE-1: `ori.mem.size_of` with inline-struct awareness. An inline
+    /// struct (all fields inline) reports its real byte size; managed structs
+    /// and other managed types report the pointer size.
+    fn size_of_ty(&self, ty: &Ty) -> i64 {
+        match ty {
+            Ty::Array(elem, size) => match &**size {
+                Ty::ConstInt(_, n) if *n >= 0 => self.size_of_ty(elem) * n,
+                _ => 0,
+            },
+            Ty::Named(def_id, args) => {
+                let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
+                    return 8;
+                };
+                if !self.ty_is_inline(sig, args, &mut Vec::new()) {
+                    return 8;
+                }
+                // Sum of aligned field sizes, matching the native layout.
+                let mut offset: i64 = 0;
+                let mut max_align: i64 = 1;
+                for (_, field_ty) in &sig.fields {
+                    let substituted = substitute_ty_params(field_ty, args);
+                    let size = self.size_of_ty(&substituted);
+                    let align = self.align_of_ty(&substituted);
+                    offset = (offset + align - 1) & !(align - 1);
+                    offset += size;
+                    if align > max_align {
+                        max_align = align;
+                    }
+                }
+                ((offset + max_align - 1) & !(max_align - 1)).max(1)
+            }
+            other => ori_mem_size_of_ty(other),
+        }
+    }
+
+    /// Alignment of `ty`, recursing through inline structs (the free
+    /// `ori_mem_align_of_ty` treats every `Named` as a pointer).
+    fn align_of_ty(&self, ty: &Ty) -> i64 {
+        match ty {
+            Ty::Array(elem, _) => self.align_of_ty(elem),
+            Ty::Named(def_id, args) => {
+                let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
+                    return 8;
+                };
+                if !self.ty_is_inline(sig, args, &mut Vec::new()) {
+                    return 8;
+                }
+                sig.fields
+                    .iter()
+                    .map(|(_, field_ty)| {
+                        let substituted = substitute_ty_params(field_ty, args);
+                        self.align_of_ty(&substituted)
+                    })
+                    .max()
+                    .unwrap_or(1)
+            }
+            other => ori_mem_align_of_ty(other),
+        }
+    }
+
+    /// Cycle-safe `Inline(T)` check for a struct signature, mirroring the
+    /// checker's classification (scalars, inline arrays, inline structs).
+    fn ty_is_inline(&self, sig: &StructSig, args: &[Ty], visiting: &mut Vec<DefId>) -> bool {
+        if sig.fields.is_empty() {
+            return false;
+        }
+        sig.fields.iter().all(|(_, field_ty)| {
+            let substituted = substitute_ty_params(field_ty, args);
+            match &substituted {
+                Ty::Named(inner_id, inner_args) => {
+                    if visiting.contains(inner_id) {
+                        return false;
+                    }
+                    self.struct_sigs
+                        .iter()
+                        .find(|s| s.def_id == *inner_id)
+                        .is_some_and(|inner_sig| {
+                            visiting.push(*inner_id);
+                            let ok = self.ty_is_inline(inner_sig, inner_args, visiting);
+                            visiting.pop();
+                            ok
+                        })
+                }
+                other => ori_types::is_inline_ty(other),
+            }
+        })
+    }
+
     fn lower_math_overload_call(
         &mut self,
         path: &str,
@@ -1584,7 +1680,7 @@ impl<'a> Lowerer<'a> {
         }
     }
     fn lower_ast_ty(&mut self, t: &ori_ast::ty::Type, tp: &[SmolStr]) -> Ty {
-        let raw = ori_types::lower_type_with_local_aliases(
+        let raw = ori_types::lower_type_with_local_aliases_and_structs(
             t,
             self.namespace,
             tp,
@@ -1593,6 +1689,7 @@ impl<'a> Lowerer<'a> {
             self.sink,
             &self.aliases,
             &self.local_type_aliases,
+            self.struct_sigs,
         );
         let expanded = expand_ty_aliases(raw, self.def_map, &self.type_alias_map);
         // `expand_ty_aliases` only substitutes `DefKind::TypeAlias`, so
@@ -3718,7 +3815,7 @@ impl<'a> Lowerer<'a> {
                             .map(|arg| arg.value.ty.clone())
                             .unwrap_or(Ty::Error);
                         let value = match intrinsic {
-                            MemIntrinsic::SizeOf => ori_mem_size_of_ty(&value_ty),
+                            MemIntrinsic::SizeOf => self.size_of_ty(&value_ty),
                             MemIntrinsic::AlignOf => ori_mem_align_of_ty(&value_ty),
                         };
                         return HirExpr {
@@ -5702,6 +5799,8 @@ fn binary_result_ty(op: ori_ast::expr::BinaryOp, lty: &Ty, _rty: &Ty) -> Ty {
     match op {
         Add | Sub | Mul | Div | Rem => lty.clone(),
         Eq | Ne | Lt | Le | Gt | Ge | And | Or => Ty::Bool,
+        // GFX-BITWISE-1: result keeps the LHS width (shifts too).
+        Band | Bor | Bxor | Shl | Shr => lty.clone(),
     }
 }
 

@@ -120,9 +120,31 @@ pub struct Attr {
     pub span: Span,
 }
 
-/// A single argument inside an attribute: `"string"` or `key: value`.
+/// A structured conditional-compilation predicate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CfgPredicate {
+    /// A compiler fact comparison such as `target_os: linux`.
+    NameValue { key: Name, value: Name, span: Span },
+    /// A composition such as `all(...)`, `any(...)`, or `not(...)`.
+    Call {
+        operator: Name,
+        predicates: Vec<CfgPredicate>,
+        span: Span,
+    },
+}
+
+impl CfgPredicate {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::NameValue { span, .. } | Self::Call { span, .. } => *span,
+        }
+    }
+}
+
+/// A single argument inside an attribute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttrArg {
     String(SmolStr, Span),
     Named { key: Name, value: Name },
+    Cfg(CfgPredicate),
 }

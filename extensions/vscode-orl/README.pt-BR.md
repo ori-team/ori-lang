@@ -27,3 +27,11 @@ Buffers estáticos ou estrangeiros exigem um comprimento exato registrado.
 
 Se o compilador não estiver no `PATH`, configure `ori.compiler.path`. A
 extensão procura também `compiler/target/{debug,release}/` no workspace.
+
+Para manter diagnósticos, completion e execução na mesma configuração de
+`@cfg`, use `ori.cfg.target`, `ori.cfg.executionProfile`, `ori.cfg.features` e
+`ori.cfg.noDefaultFeatures`. A extensão repassa esses valores ao compilador e
+ao LSP pelos mesmos contratos `ORI_*` usados pela CLI.
+Alterar qualquer configuração `ori.cfg.*` reinicia automaticamente o servidor
+de linguagem, mantendo diagnósticos, completion, terminais e debug no mesmo
+programa ativo.

@@ -15,6 +15,7 @@ const DIAGNOSTIC_CATEGORIES: &[&str] = &[
     "generic",
     "impl",
     "lex",
+    "lint",
     "match",
     "mut",
     "name",

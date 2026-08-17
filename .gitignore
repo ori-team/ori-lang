@@ -10,6 +10,7 @@ dist/
 /hello.*
 # IDE
 .idea/
+.commandcode/
 *.lock
 *.log
 # Logs

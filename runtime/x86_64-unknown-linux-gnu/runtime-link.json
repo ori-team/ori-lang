@@ -4,7 +4,7 @@
   "runtime_cdylib": "libori_runtime.so",
   "ori_version": "0.3.8",
   "abi_version": "ori-native-abi-1",
-  "profile": "release",
+  "profile": "debug",
   "native_static_libs": ["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc", "-no-pie"],
   "generated_by": "tools/stage_native_runtime.sh"
 }

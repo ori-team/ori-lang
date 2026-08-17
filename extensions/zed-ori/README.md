@@ -2,6 +2,8 @@
 
 Language support for **Ori** (`.orl`) in [Zed](https://zed.dev).
 
+Portuguese: [README.pt-BR.md](README.pt-BR.md).
+
 - Language config (`.orl`, `--` and `--| |--` comments, all Ori delimiters)
 - **LSP** via `ori-lsp` on `PATH`
 
@@ -48,6 +50,12 @@ export PATH="$PWD/target/debug:$PATH"
 ## Settings
 
 Optional: force stdlib if auto-detect fails (extension sets `ORI_STDLIB_ROOT` when it finds `stdlib/` in the worktree).
+
+For structured `@cfg`, start Zed with the same environment used by the CLI:
+`ORI_TARGET_TRIPLE`, `ORI_EXECUTION_PROFILE`, `ORI_FEATURES`, and
+`ORI_NO_DEFAULT_FEATURES`. The current Zed extension API does not expose a
+dedicated Ori settings form, so the language server inherits these values from
+the editor process.
 
 ## Features / limits
 

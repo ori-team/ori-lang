@@ -33,6 +33,23 @@ ori run main.orl
 `ori check .` walks up until it finds `ori.proj`, so it works from any
 subfolder of a project. `ori check ori.proj` is equivalent.
 
+All compilation commands accept the same conditional-compilation selection:
+
+```bash
+ori check . --features tls,telemetry
+ori run . --no-default-features
+ori check . --execution-profile embedded
+ori check . --target x86_64-unknown-linux-gnu
+```
+
+Features must be declared under `[features]` in the project/package manifest.
+These flags also affect AOT cache fingerprints. `--target` selects cfg facts
+and native runtime artifacts; it does not by itself promise full native
+cross-compilation. A triple whose architecture or OS is outside cfg v1 is
+rejected instead of being treated as an OS-free target.
+Likewise, `--execution-profile embedded` selects cfg branches; it does not yet
+turn the desktop runtime into a freestanding or sandboxed runtime.
+
 ---
 
 ## Building

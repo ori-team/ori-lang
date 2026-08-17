@@ -46,11 +46,20 @@ The complete signatures and backend status are in [12-stdlib.md](../spec/12-stdl
 The generated website data comes from `ori doc export`; run `ori doc check` to
 validate inline docs and `.oridoc` sidecars.
 
+## Text positions and bytes
+
+`string` stores valid UTF-8. `len(text)`, `text.len()`, slicing, indexing,
+`index_of`, `chars()`, and direct `for` iteration use Unicode scalar positions.
+They do not expose UTF-8 byte offsets. One visible grapheme can still contain
+multiple scalars; use `bytes` and `string.to_bytes` when a protocol requires
+the encoded bytes. Grapheme segmentation and normalization are planned but are
+not current stdlib APIs.
+
 ## Backend and error conventions
 
 Native runtime functions are the semantic reference. Filesystem operations that
 can fail return `result[...]`; `ori.io.read_line` returns `optional[string]` at
-EOF. Networking has both blocking wrappers and async helpers, but the async
+EOF or when the input is not valid UTF-8. Networking has both blocking wrappers and async helpers, but the async
 reactor is not a separate OS-level event loop yet.
 
 Opaque collections expose methods through their module contracts rather than a

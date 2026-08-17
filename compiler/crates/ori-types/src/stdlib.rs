@@ -187,6 +187,8 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.string.trim_end" => "ori_string_trim_end", c_backend),
     stdlib!("ori.string.to_upper" => "ori_string_to_upper", c_backend),
     stdlib!("ori.string.to_lower" => "ori_string_to_lower", c_backend),
+    stdlib!("ori.string.is_ascii" => "ori_string_is_ascii", c_backend),
+    stdlib!("ori.string.case_fold" => "ori_string_case_fold", c_backend),
     stdlib!("ori.string.replace" => "ori_string_replace", c_backend),
     stdlib!("ori.string.chars" => "ori_string_chars", c_backend),
     stdlib!("string", [] => "ori_to_string", c_backend),
@@ -213,6 +215,13 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.list.to_list", ["list.to_list"] => "ori_list_to_list"),
     stdlib!("ori.list.from_list", ["list.from_list"] => "ori_list_from_list"),
     stdlib!("ori.list.free", ["list.free"] => "ori_list_free"),
+    stdlib!("ori.buffer.new", ["buffer.new"] => "ori_buffer_new"),
+    stdlib!("ori.buffer.len", ["buffer.len"] => "ori_buffer_len"),
+    stdlib!("ori.buffer.is_empty", ["buffer.is_empty"] => "ori_buffer_is_empty"),
+    stdlib!("ori.buffer.get", ["buffer.get"] => "ori_buffer_get"),
+    stdlib!("ori.buffer.set", ["buffer.set"] => "ori_buffer_set"),
+    stdlib!("ori.buffer.fill", ["buffer.fill"] => "ori_buffer_fill"),
+    stdlib!("ori.buffer.as_slice", ["buffer.as_slice"] => "ori_buffer_as_slice"),
     stdlib!("ori.deque.new", ["deque.new"] => "ori_deque_new"),
     stdlib!("ori.deque.push_front", ["deque.push_front"] => "ori_deque_push_front"),
     stdlib!("ori.deque.push_back", ["deque.push_back"] => "ori_deque_push_back"),
@@ -811,7 +820,11 @@ pub fn stdlib_native_codegen_available(path: &str) -> bool {
     }
     matches!(
         canonical_stdlib_path(path).unwrap_or(path),
-        "ori.lazy.once" | "ori.lazy.force" | "ori.lazy.is_consumed"
+        "ori.lazy.once"
+            | "ori.lazy.force"
+            | "ori.lazy.is_consumed"
+            | "ori.mem.size_of"
+            | "ori.mem.align_of"
     )
 }
 
@@ -873,7 +886,9 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
         | "ori.string.trim_start"
         | "ori.string.trim_end"
         | "ori.string.to_upper"
-        | "ori.string.to_lower" => (vec![Ty::String], Ty::String),
+        | "ori.string.to_lower"
+        | "ori.string.case_fold" => (vec![Ty::String], Ty::String),
+        "ori.string.is_ascii" => (vec![Ty::String], Ty::Bool),
         "ori.string.replace" => (vec![Ty::String, Ty::String, Ty::String], Ty::String),
         "ori.string.chars" => (vec![Ty::String], Ty::List(Box::new(Ty::String))),
         "ori.string.index_of" => (vec![Ty::String, Ty::String], Ty::Int),
@@ -1034,6 +1049,25 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
             Ty::List(Box::new(Ty::Infer(0))),
         ),
         "ori.list.free" => (vec![Ty::List(Box::new(Ty::Infer(0)))], Ty::Void),
+        "ori.buffer.new" => (vec![Ty::Int], Ty::Buffer(Box::new(Ty::Infer(0)))),
+        "ori.buffer.len" => (vec![Ty::Buffer(Box::new(Ty::Infer(0)))], Ty::Int),
+        "ori.buffer.is_empty" => (vec![Ty::Buffer(Box::new(Ty::Infer(0)))], Ty::Bool),
+        "ori.buffer.get" => (
+            vec![Ty::Buffer(Box::new(Ty::Infer(0))), Ty::Int],
+            Ty::Infer(0),
+        ),
+        "ori.buffer.set" => (
+            vec![Ty::Buffer(Box::new(Ty::Infer(0))), Ty::Int, Ty::Infer(0)],
+            Ty::Void,
+        ),
+        "ori.buffer.fill" => (
+            vec![Ty::Buffer(Box::new(Ty::Infer(0))), Ty::Infer(0)],
+            Ty::Void,
+        ),
+        "ori.buffer.as_slice" => (
+            vec![Ty::Buffer(Box::new(Ty::Infer(0)))],
+            Ty::Slice(Box::new(Ty::Infer(0))),
+        ),
         "ori.list.pop" => (vec![Ty::List(Box::new(Ty::Infer(0)))], Ty::Infer(0)),
         "ori.list.try_pop" => (
             vec![Ty::List(Box::new(Ty::Infer(0)))],
@@ -1815,11 +1849,13 @@ pub fn stdlib_native_abi(
         "ori_string_contains" | "ori_string_starts_with" | "ori_string_ends_with" => {
             (vec![Ptr, Ptr], Some(I8))
         }
+        "ori_string_is_ascii" => (vec![Ptr], Some(I8)),
         "ori_string_trim"
         | "ori_string_trim_start"
         | "ori_string_trim_end"
         | "ori_string_to_upper"
         | "ori_string_to_lower"
+        | "ori_string_case_fold"
         | "ori_string_chars"
         | "ori_bytes_to_hex"
         | "ori_bytes_from_hex"
@@ -1984,6 +2020,13 @@ pub fn stdlib_native_abi(
             }),
         ),
         "ori_list_slice" => (vec![Ptr, I64, I64], Some(Ptr)),
+        "ori_buffer_new" => (vec![I64], Some(Ptr)),
+        "ori_buffer_len" => (vec![Ptr], Some(I64)),
+        "ori_buffer_is_empty" => (vec![Ptr], Some(I8)),
+        "ori_buffer_get" => (vec![Ptr, I64], Some(I64)),
+        "ori_buffer_set" => (vec![Ptr, I64, I64], None),
+        "ori_buffer_fill" => (vec![Ptr, I64], None),
+        "ori_buffer_as_slice" => (vec![Ptr], Some(Ptr)),
         "ori_set_union" | "ori_set_intersection" | "ori_set_difference" => {
             (vec![Ptr, Ptr], Some(Ptr))
         }
@@ -2193,6 +2236,8 @@ const STDLIB_MODULE_ONLY_PATHS: &[&str] = &[
     "ori.mem",
     "ori.concurrent",
     "ori.buffer",
+    "ori.span",
+    "ori.slotmap",
 ];
 
 /// Extracts the module prefix from a canonical stdlib path.

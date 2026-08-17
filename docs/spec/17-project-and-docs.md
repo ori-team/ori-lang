@@ -74,6 +74,11 @@ root_namespace = "app"
 [dependencies]
 demo.math = { path = "../math", version = "0.1.0" }
 
+[features]
+default = ["tls"]
+tls = []
+telemetry = []
+
 [docs]
 paths = ["docs"]
 mode = "sidecar-first"
@@ -92,12 +97,19 @@ Current fields:
 | `source.root` | no | Code root folder; **omitted = the `ori.proj` directory**. |
 | `source.root_namespace` | no | Expected module prefix (e.g. `app`). |
 | `dependencies.<name>` | no | Local dependency `{ path = "..." }`; version optional. |
+| `features.default` | no | Feature names enabled unless `--no-default-features` is used. |
+| `features.<name>` | no | Declares a cfg v1 feature. Its value must currently be `[]`. |
 | `docs.paths` | no | Folders/files holding `.oridoc`. |
 | `docs.mode` | no | `sidecar-first` or `inline-first`. Default: `sidecar-first`. |
 | `docs.require_public` | no | `off`, `warn`, or `error`. Default: `off`. |
 
 Compatibility: `entry = "src/main.orl"` with `source.root = "src"` remains
 valid for anyone who prefers that layout.
+
+Cfg v1 features form one namespace at the compilation root. `--features`
+enables names declared by the root project/package; feature dependency graphs
+and dependency-specific feature forwarding are not part of v1. A feature
+declaration therefore uses an empty array.
 
 Local dependencies under `[dependencies]` take part in import resolution:
 
@@ -144,6 +156,10 @@ description = "Demo app"
 
 [dependencies]
 demo.math = { path = "../demo-math", version = "0.1.0" }
+
+[features]
+default = []
+tls = []
 ```
 
 | Field | Description |
@@ -152,6 +168,8 @@ demo.math = { path = "../demo-math", version = "0.1.0" }
 | `package.version` | `major.minor.patch` version. |
 | `package.entry` | Entry `.orl` file of the package. |
 | `package.ori_version` | Minimum expected Ori compiler version. |
+| `features.default` | Package features enabled by default. |
+| `features.<name>` | Declares a package feature; cfg v1 requires an empty array. |
 
 `ori check`, `ori run`, `ori test`, and `ori doc` accept `ori.pkg.toml` as
 input when the directory is used as a package.
@@ -209,6 +227,10 @@ ori new my-lib --lib        # creates lib.orl instead of main.orl
 ori check .                 # walks up until it finds ori.proj
 ori check ori.proj
 ori run .
+ori check . --features tls,telemetry
+ori check . --no-default-features
+ori check . --execution-profile embedded
+ori check . --target x86_64-unknown-linux-gnu
 ori doc file main.orl       # extract docs from one file
 ori doc check               # validate inline docs and .oridoc sidecars
 ori doc export              # stdlib + error catalog JSON for the website

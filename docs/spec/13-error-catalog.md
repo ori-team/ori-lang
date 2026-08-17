@@ -117,6 +117,8 @@ when the compiler starts producing it.
 | `type.arg_count_mismatch` | error | Function call has the wrong number of arguments |
 | `type.arg_type_mismatch` | error | Function call argument type does not match the parameter type |
 | `type.arithmetic_type_mismatch` | error | Arithmetic operator received incompatible operand types |
+| `type.bitwise_type_mismatch` | error | Bitwise operator (`&`, `\|`, `^`) received operands that are not matching integer types |
+| `type.shift_type_mismatch` | error | Shift operator (`<<`, `>>`) received a non-integer operand |
 | `type.comparison_not_supported` | error | Comparison operator is not supported for this type |
 | `type.comparison_type_mismatch` | error | Comparison operands have incompatible types |
 | `type.collection_comparable_unsupported` | error | Current ordered collection runtime does not support this element type without `Comparable` |
@@ -166,7 +168,7 @@ when the compiler starts producing it.
 | `type.tuple_index_on_non_tuple` | error | Tuple index access was used on a non-tuple value |
 | `type.array_index_out_of_bounds` | error | A constant index is past the end of an `array`. The length is part of the type, so this is caught at compile time |
 | `type.array_length_mismatch` | error | An array literal has a different number of elements than its declared length |
-| `type.array_element_not_inline` | error | An `array` element type is reference counted. Elements are stored inline with no ARC, so only scalars are allowed; use `list[T]` for managed values |
+| `type.array_element_not_inline` | error | An `array` element type is not inline: it is reference counted, or a struct containing a managed field (the diagnostic names the offending field), or a recursive struct with no finite size. Elements are stored inline with no ARC; use an inline struct/array or `list[T]` for managed values |
 | `type.negative_array_size` | error | `array[T, size: N]` was given a negative length |
 | `type.undefined_const_param` | error | A simple const type argument names neither an in-scope const parameter nor a module constant |
 | `type.const_argument_not_integer` | error | A const type argument evaluated successfully, but produced `bool` instead of an integer |
@@ -175,6 +177,7 @@ when the compiler starts producing it.
 | `type.type_mismatch` | error | Value type does not match the expected type |
 | `type.unused_result` | warning | `result[T, E]` expression value is discarded |
 | `type.unary_neg_non_numeric` | error | Unary `-` was used on a non-numeric value |
+| `type.unary_bitnot_non_integer` | error | Unary `~` was used on a non-integer value |
 | `type.undefined_name` | error | Type name is not defined |
 | `type.unknown_field` | error | A destructuring binding names a field the struct does not have |
 | `type.unknown_arg_label` | error | Named argument does not match any parameter |
@@ -293,6 +296,22 @@ Regression tests: `compile_reports_violated_param_contract`,
 | `attr.c_export_generic` | error | `@c_export` used on a generic function |
 | `attr.c_export_bad_name` | error | `@c_export` symbol name is not a portable, non-keyword C/C++ identifier |
 | `attr.c_export_bad_type` | error | `@c_export` parameter or return type is not FFI-safe. Scalars, `string`, non-empty non-generic structs, and direct `optional`/`result` bridges over those payloads are accepted (see [19-abi.md](19-abi.md) §8.3b) |
+
+### `cfg`
+
+| Code | Severity | Description |
+|---|---|---|
+| `cfg.duplicate` | error | A declaration has more than one `@cfg`; compose predicates with `all` or `any` |
+| `cfg.execution_profile_invalid` | error | Selected execution profile is not `standalone` or `embedded` |
+| `cfg.feature_invalid` | error | Requested feature is not a valid ASCII feature identifier |
+| `cfg.feature_not_declared` | error | CLI/editor requested a feature absent from the project manifest |
+| `cfg.invalid_arity` | error | `all`, `any`, or `not` has an invalid number of nested predicates |
+| `cfg.invalid_predicate` | error | `@cfg` does not contain exactly one structured predicate |
+| `cfg.target_invalid` | error | Selected target is malformed or cannot be represented by the closed cfg v1 target set |
+| `cfg.unknown_feature` | error | A `feature` predicate refers to a feature not declared by the manifest |
+| `cfg.unknown_key` | error | Predicate key is not part of the closed cfg v1 key set |
+| `cfg.unknown_operator` | error | Composition operator is not `all`, `any`, or `not` |
+| `cfg.unknown_value` | error | Predicate uses an unsupported value for a closed configuration key |
 
 ### `doc`
 
@@ -420,6 +439,20 @@ import-graph failures that span more than one source file.
 | `project.namespace_file_mismatch` | error | Imported file declares a different module |
 | `project.entry_not_found` | error | Project entrypoint declared in `ori.proj` does not exist, or the manifest is missing an `entry` key |
 | `project.no_proj_file` | error | Project manifest (`ori.proj`) was not found at the workspace root |
+
+### `lint`
+
+Semantic and code-quality diagnostics emitted by `ori lint` and LSP code analysis.
+
+| Code | Severity | Description |
+|---|---|---|
+| `lint.double_negation` | warning | Double logical negation (`not (not ...)`) is redundant |
+| `lint.prefer_const` | warning | Local variable is never mutated and can be declared `const` |
+| `lint.redundant_bool_comparison` | warning | Comparison with a boolean literal (`== true`, `== false`) is redundant |
+| `lint.redundant_if_boolean` | warning | `if condition then true else false` can be simplified to the condition directly |
+| `lint.shadowed_variable` | warning | Local variable shadows an existing binding in an outer scope |
+| `lint.unnecessary_cfg` | warning | Empty or redundant `@cfg` attribute predicate |
+| `lint.unused_variable` | warning | Local variable or constant is declared but never read |
 
 ---
 

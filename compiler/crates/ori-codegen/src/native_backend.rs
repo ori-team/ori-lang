@@ -53,6 +53,11 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_abort_concurrent_modification",
     "ori_abort_division_by_zero",
     "ori_abort_division_overflow",
+    "ori_abort_shift_overflow",
+    "ori_host_clear_error",
+    "ori_host_error_code",
+    "ori_host_error_message",
+    "ori_host_report_error",
     "ori_arc_collect_cycles",
     "ori_arc_maybe_collect_cycles",
     "ori_arc_register_edge",
@@ -971,6 +976,12 @@ impl NativeHirValidator {
                     | BinaryOp::Mul
                     | BinaryOp::Div
                     | BinaryOp::Rem => {}
+                    // GFX-BITWISE-1: bitwise/shift operands are integers.
+                    BinaryOp::Band
+                    | BinaryOp::Bor
+                    | BinaryOp::Bxor
+                    | BinaryOp::Shl
+                    | BinaryOp::Shr => {}
                 }
             }
             HirExprKind::Unary { op, operand } => {
@@ -3089,11 +3100,26 @@ fn closure_env_layout(captures: &[HirClosureCapture], ptr_ty: types::Type) -> (V
 }
 
 fn compute_struct_layout(fields: &[HirField], ptr_ty: types::Type, repr_c: bool) -> StructLayout {
+    compute_struct_layout_with(fields, ptr_ty, repr_c, &HashMap::new(), &HashSet::new())
+}
+
+/// GFX-INLINE-1: layout computation with inline-struct awareness.
+///
+/// `struct_layouts` holds layouts of already-resolved dependencies (nested
+/// inline structs); `inline_struct_ids` marks which of them are inline.
+fn compute_struct_layout_with(
+    fields: &[HirField],
+    ptr_ty: types::Type,
+    repr_c: bool,
+    struct_layouts: &HashMap<ori_types::DefId, StructLayout>,
+    inline_struct_ids: &HashSet<ori_types::DefId>,
+) -> StructLayout {
     let mut offset = 0u32;
     let mut max_align = 1u8;
     let mut result = Vec::new();
     for f in fields {
-        let (size, align) = field_size_align(&f.ty, ptr_ty);
+        let (size, align) =
+            field_size_align_with_layouts_typed(&f.ty, ptr_ty, struct_layouts, inline_struct_ids);
         // For repr(C), use natural alignment; for packed, skip alignment
         let aligned = if repr_c {
             (offset + align as u32 - 1) & !(align as u32 - 1)
@@ -3123,6 +3149,106 @@ fn compute_struct_layout(fields: &[HirField], ptr_ty: types::Type, repr_c: bool)
         size: total,
         align: max_align,
         fields: result,
+    }
+}
+
+/// `field_size_align` with both the layout table and the inline-id set, used
+/// while computing struct layouts.
+fn field_size_align_with_layouts_typed(
+    ty: &Ty,
+    ptr_ty: types::Type,
+    struct_layouts: &HashMap<ori_types::DefId, StructLayout>,
+    inline_struct_ids: &HashSet<ori_types::DefId>,
+) -> (u32, u8) {
+    // An array stores its elements inline, so it occupies `elem * len` bytes
+    // rather than one pointer.
+    if let Ty::Array(elem, size) = ty {
+        if let Ty::ConstInt(_, len) = &**size {
+            if *len >= 0 {
+                let (elem_size, elem_align) = field_size_align_with_layouts_typed(
+                    elem,
+                    ptr_ty,
+                    struct_layouts,
+                    inline_struct_ids,
+                );
+                return (elem_size.saturating_mul(*len as u32), elem_align);
+            }
+        }
+    }
+    if let Ty::Named(def_id, _) = ty {
+        if inline_struct_ids.contains(def_id) {
+            if let Some(layout) = struct_layouts.get(def_id) {
+                return (layout.size, layout.align);
+            }
+        }
+    }
+    let cl = cl_type(ty, ptr_ty).unwrap_or(ptr_ty);
+    let bytes = cl.bytes();
+    let align = bytes.clamp(1, 8) as u8;
+    (bytes, align)
+}
+
+/// Order structs so dependencies (nested inline structs) come before users.
+fn topo_order_structs(hir: &HirModule) -> Vec<ori_types::DefId> {
+    let mut order = Vec::new();
+    let mut visited = HashSet::new();
+    let mut visiting = HashSet::new();
+    for s in &hir.structs {
+        visit_struct_topo(s.def_id, hir, &mut order, &mut visited, &mut visiting);
+    }
+    order
+}
+
+fn visit_struct_topo(
+    def_id: ori_types::DefId,
+    hir: &HirModule,
+    order: &mut Vec<ori_types::DefId>,
+    visited: &mut HashSet<ori_types::DefId>,
+    visiting: &mut HashSet<ori_types::DefId>,
+) {
+    if visited.contains(&def_id) || !visiting.insert(def_id) {
+        return;
+    }
+    let Some(s) = hir.structs.iter().find(|s| s.def_id == def_id) else {
+        visiting.remove(&def_id);
+        return;
+    };
+    let deps: Vec<ori_types::DefId> = s
+        .fields
+        .iter()
+        .flat_map(|f| named_def_ids(&f.ty, hir))
+        .collect();
+    for dep in deps {
+        visit_struct_topo(dep, hir, order, visited, visiting);
+    }
+    visiting.remove(&def_id);
+    if visited.insert(def_id) {
+        order.push(def_id);
+    }
+}
+
+/// Collect `DefId`s of named structs referenced by `ty` (excluding arrays of
+/// non-inline elements, which are stored as pointers).
+fn named_def_ids(ty: &Ty, hir: &HirModule) -> Vec<ori_types::DefId> {
+    let _ = hir;
+    let mut ids = Vec::new();
+    collect_named_def_ids(ty, &mut ids, &mut HashSet::new());
+    ids
+}
+
+fn collect_named_def_ids(
+    ty: &Ty,
+    out: &mut Vec<ori_types::DefId>,
+    seen: &mut HashSet<ori_types::DefId>,
+) {
+    match ty {
+        Ty::Named(def_id, _) => {
+            if seen.insert(*def_id) {
+                out.push(*def_id);
+            }
+        }
+        Ty::Array(elem, _) => collect_named_def_ids(elem, out, seen),
+        _ => {}
     }
 }
 
@@ -3488,6 +3614,10 @@ pub struct NativeBackend<M: Module> {
     string_data: HashMap<SmolStr, DataId>,
     global_data: HashMap<SmolStr, GlobalDataInfo>,
     struct_layouts: HashMap<ori_types::DefId, StructLayout>,
+    /// GFX-INLINE-1: `DefId`s of structs whose fields are all inline
+    /// (`Inline(T)`). These are laid out in place inside arrays and other
+    /// structs instead of being stored as one pointer.
+    inline_struct_ids: HashSet<ori_types::DefId>,
     enum_layouts: HashMap<ori_types::DefId, EnumLayout>,
     type_names: HashMap<ori_types::DefId, SmolStr>,
     trait_layouts: HashMap<ori_types::DefId, HirTrait>,
@@ -3506,6 +3636,12 @@ pub struct NativeBackend<M: Module> {
     lib_mode: bool,
     /// Map from Ori function qualified name → C export `FuncId` (lib mode).
     c_export_ids: HashMap<SmolStr, FuncId>,
+    /// Emit explicit error returns for the hosted JIT instead of process
+    /// aborts. Standalone AOT/JIT keeps the historical abort policy.
+    hosted_traps: bool,
+    /// Hidden callback IDs inserted before arguments for trusted hosted
+    /// `extern host` callback imports.
+    host_callback_ids: HashMap<SmolStr, u64>,
     /// Cooperative line debugger (ORI_DEBUG_INSTRUMENT=1 + ORI_DEBUG_SOURCE).
     debug_source_path: Option<String>,
     debug_line_starts: Vec<u32>,
@@ -3514,6 +3650,16 @@ pub struct NativeBackend<M: Module> {
 }
 
 impl<M: Module> NativeBackend<M> {
+    /// GFX-INLINE-1: is `ty` stored in place (inline) rather than behind one
+    /// pointer? Mirrors `Inline(T)` from the checker: scalars, inline arrays,
+    /// and structs whose fields are all inline.
+    fn ty_is_inline_for_layout(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Array(elem, _) => self.ty_is_inline_for_layout(elem),
+            Ty::Named(def_id, _) => self.inline_struct_ids.contains(def_id),
+            _ => ori_types::is_inline_ty(ty),
+        }
+    }
     pub fn new(module: M) -> Result<Self, String> {
         let ptr_ty = module.isa().pointer_type();
         Ok(Self {
@@ -3525,6 +3671,7 @@ impl<M: Module> NativeBackend<M> {
             string_data: HashMap::new(),
             global_data: HashMap::new(),
             struct_layouts: HashMap::new(),
+            inline_struct_ids: HashSet::new(),
             enum_layouts: HashMap::new(),
             type_names: HashMap::new(),
             trait_layouts: HashMap::new(),
@@ -3534,11 +3681,30 @@ impl<M: Module> NativeBackend<M> {
             main_func_id: None,
             lib_mode: false,
             c_export_ids: HashMap::new(),
+            hosted_traps: false,
+            host_callback_ids: HashMap::new(),
             debug_source_path: None,
             debug_line_starts: Vec::new(),
             debug_path_data: None,
             debug_name_data: HashMap::new(),
         })
+    }
+
+    /// Enable recoverable trap lowering for a host-owned JIT module.
+    pub fn set_hosted_traps(&mut self, enabled: bool) {
+        self.hosted_traps = enabled;
+    }
+
+    /// Configure callback imports for the hosted JIT.
+    ///
+    /// Each entry is keyed by the qualified HIR name. The backend adds one
+    /// leading `i64` callback ID to the native import signature and to every
+    /// call site; the dispatcher uses that ID to retrieve host `user_data`.
+    pub fn set_host_callback_ids(&mut self, callbacks: &[(String, u64)]) {
+        self.host_callback_ids = callbacks
+            .iter()
+            .map(|(name, id)| (SmolStr::new(name), *id))
+            .collect();
     }
 
     /// Lower the HIR into the module: validate, compute layouts, declare and
@@ -3552,9 +3718,38 @@ impl<M: Module> NativeBackend<M> {
         validate_native_hir(hir)?;
         self.load_debug_instrument_from_env()?;
         self.emit_debug_names(hir)?;
-        // Compute struct layouts before anything else
-        for s in &hir.structs {
-            let layout = compute_struct_layout(&s.fields, self.ptr_ty, s.repr_c);
+        // Compute struct layouts before anything else. Nested inline structs
+        // must be laid out before their parents, so sort by dependency.
+        //
+        // The inline set must be fixed BEFORE layouts: a struct whose fields
+        // are all inline is itself inline, and only inline structs are laid
+        // out in place (a wrong layout would under-allocate struct copies).
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for s in &hir.structs {
+                if self.inline_struct_ids.contains(&s.def_id) {
+                    continue;
+                }
+                let all_inline = s.fields.iter().all(|f| self.ty_is_inline_for_layout(&f.ty));
+                if all_inline && !s.fields.is_empty() {
+                    self.inline_struct_ids.insert(s.def_id);
+                    changed = true;
+                }
+            }
+        }
+        let struct_order = topo_order_structs(hir);
+        for &def_id in &struct_order {
+            let Some(s) = hir.structs.iter().find(|s| s.def_id == def_id) else {
+                continue;
+            };
+            let layout = compute_struct_layout_with(
+                &s.fields,
+                self.ptr_ty,
+                s.repr_c,
+                &self.struct_layouts,
+                &self.inline_struct_ids,
+            );
             self.struct_layouts.insert(s.def_id, layout);
             self.type_names.insert(s.def_id, s.name.clone());
         }
@@ -3596,6 +3791,16 @@ impl<M: Module> NativeBackend<M> {
     /// HIR has no entry `main`.
     pub fn main_func_id(&self) -> Option<FuncId> {
         self.main_func_id
+    }
+
+    /// Returns the native function identifier for a lowered Ori function.
+    ///
+    /// The identifier is only valid while the owning Cranelift module remains
+    /// alive. Hosted callers should resolve it before finalization and retain
+    /// the resulting module-owned function address instead of exposing
+    /// `FuncId` across their public boundary.
+    pub fn function_id(&self, name: &str) -> Option<FuncId> {
+        self.func_ids.get(name).copied()
     }
 
     /// Emit all string literals as static null-terminated data in .data.
@@ -3962,6 +4167,12 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_string_to_lower", &[pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_string_to_lower"), id);
+        let id = decl("ori_string_is_ascii", &[pt], vec![], Some(types::I8))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_string_is_ascii"), id);
+        let id = decl("ori_string_case_fold", &[pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_string_case_fold"), id);
         let id = decl("ori_string_replace", &[pt, pt, pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_string_replace"), id);
@@ -4371,6 +4582,22 @@ impl<M: Module> NativeBackend<M> {
         self.stdlib_ids.insert(SmolStr::new("ori_list_len"), id);
         let id = decl("ori_list_free", &[pt], vec![], None)?;
         self.stdlib_ids.insert(SmolStr::new("ori_list_free"), id);
+        // buffer[T] runtime (contiguous fixed-length block)
+        let id = decl("ori_buffer_new", &[types::I64], vec![], Some(pt))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_buffer_new"), id);
+        let id = decl("ori_buffer_len", &[pt], vec![], Some(types::I64))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_buffer_len"), id);
+        let id = decl("ori_buffer_is_empty", &[pt], vec![], Some(types::I8))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_buffer_is_empty"), id);
+        let id = decl("ori_buffer_get", &[pt, types::I64], vec![], Some(types::I64))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_buffer_get"), id);
+        let id = decl("ori_buffer_set", &[pt, types::I64, types::I64], vec![], None)?;
+        self.stdlib_ids.insert(SmolStr::new("ori_buffer_set"), id);
+        let id = decl("ori_buffer_fill", &[pt, types::I64], vec![], None)?;
+        self.stdlib_ids.insert(SmolStr::new("ori_buffer_fill"), id);
+        let id = decl("ori_buffer_as_slice", &[pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_buffer_as_slice"), id);
         let id = decl("ori_list_pop", &[pt], vec![], Some(types::I64))?;
         self.stdlib_ids.insert(SmolStr::new("ori_list_pop"), id);
         let id = decl("ori_list_remove", &[pt, types::I64], vec![], None)?;
@@ -4763,6 +4990,17 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_abort_division_overflow", &[], vec![], None)?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_abort_division_overflow"), id);
+        let id = decl("ori_abort_shift_overflow", &[], vec![], None)?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_abort_shift_overflow"), id);
+        let id = decl(
+            "ori_host_report_error",
+            &[types::I32, pt],
+            vec![Ty::Int, Ty::String],
+            None,
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_host_report_error"), id);
 
         let id = decl("ori_deque_iterator_new", &[pt], vec![], Some(pt))?;
         self.stdlib_ids
@@ -5077,6 +5315,9 @@ impl<M: Module> NativeBackend<M> {
                     ..
                 } => {
                     let mut sig = self.module.make_signature();
+                    if self.host_callback_ids.contains_key(path) {
+                        sig.params.push(AbiParam::new(types::I64));
+                    }
                     for p in params {
                         if let Some(t) = cl_type(&p.ty, self.ptr_ty) {
                             sig.params.push(AbiParam::new(t));
@@ -5270,6 +5511,25 @@ impl<M: Module> NativeBackend<M> {
             }
         }
 
+        if self.hosted_traps {
+            for name in [
+                "ori_host_report_error",
+                "ori_alloc",
+                "ori_arc_release",
+                "ori_arc_maybe_collect_cycles",
+                "ori_list_get",
+                "ori_list_len",
+                "ori_string_len",
+                "ori_string_slice",
+                "ori_bytes_get",
+                "ori_bytes_len",
+            ] {
+                if let Some(function_id) = self.stdlib_ids.get(name) {
+                    selected.insert(SmolStr::new(name), *function_id);
+                }
+            }
+        }
+
         for wrapper_name in references.wrappers {
             let external_wrapper_name = SmolStr::new(format!("{wrapper_name}.__fnptr_wrapper"));
             let Some(function_id) = self
@@ -5382,12 +5642,14 @@ impl<M: Module> NativeBackend<M> {
                     global_data: &self.global_data,
                     const_exprs: &const_exprs,
                     struct_layouts: &self.struct_layouts,
+                    inline_struct_ids: &self.inline_struct_ids,
                     enum_layouts: &self.enum_layouts,
                     type_names: &self.type_names,
                     trait_layouts: &self.trait_layouts,
                     trait_impls: &self.trait_impls,
                     func_param_tys: &self.func_param_tys,
                     user_func_names: &self.user_func_names,
+                    host_callback_ids: &self.host_callback_ids,
                     vars: vec![HashMap::new()],
                     ptr_ty: self.ptr_ty,
                     loop_stack: Vec::new(),
@@ -5395,6 +5657,7 @@ impl<M: Module> NativeBackend<M> {
                     managed_stack: Vec::new(),
                     current_return_ty: f.return_ty.clone(),
                     terminated: false,
+                    broke_loop_target: None,
                     async_frame: None,
                     async_plan: None,
                     async_await_index: 0,
@@ -5406,6 +5669,7 @@ impl<M: Module> NativeBackend<M> {
                     debug_line_starts,
                     debug_function_gv,
                     debug_variable_gvs: &debug_variable_gvs,
+                    hosted_traps: self.hosted_traps && !f.is_async,
                 }
                 .emit_user_func(f)?;
             }
@@ -5968,6 +6232,7 @@ impl<M: Module> NativeBackend<M> {
                     global_data: &self.global_data,
                     const_exprs: &const_exprs,
                     struct_layouts: &self.struct_layouts,
+                    inline_struct_ids: &self.inline_struct_ids,
                     enum_layouts: &self.enum_layouts,
                     type_names: &self.type_names,
                     trait_layouts: &self.trait_layouts,
@@ -5981,6 +6246,7 @@ impl<M: Module> NativeBackend<M> {
                     managed_stack: Vec::new(),
                     current_return_ty: Ty::Bool,
                     terminated: false,
+                    broke_loop_target: None,
                     async_frame: None,
                     async_plan: None,
                     async_await_index: 0,
@@ -5992,6 +6258,8 @@ impl<M: Module> NativeBackend<M> {
                     debug_line_starts: &[],
                     debug_function_gv: None,
                     debug_variable_gvs: &HashMap::new(),
+                    hosted_traps: false,
+                    host_callback_ids: &self.host_callback_ids,
                 };
 
                 let res = if codegen.struct_supports_equality(s.def_id) {
@@ -6095,12 +6363,14 @@ impl<M: Module> NativeBackend<M> {
                 global_data: &self.global_data,
                 const_exprs,
                 struct_layouts: &self.struct_layouts,
+                inline_struct_ids: &self.inline_struct_ids,
                 enum_layouts: &self.enum_layouts,
                 type_names: &self.type_names,
                 trait_layouts: &self.trait_layouts,
                 trait_impls: &self.trait_impls,
                 func_param_tys: &self.func_param_tys,
                 user_func_names: &self.user_func_names,
+                host_callback_ids: &self.host_callback_ids,
                 vars: vec![HashMap::new()],
                 ptr_ty: self.ptr_ty,
                 loop_stack: Vec::new(),
@@ -6108,6 +6378,7 @@ impl<M: Module> NativeBackend<M> {
                 managed_stack: Vec::new(),
                 current_return_ty: plan.inner_ty.clone(),
                 terminated: false,
+                broke_loop_target: None,
                 async_frame: None,
                 async_plan: None,
                 async_await_index: 0,
@@ -6119,6 +6390,7 @@ impl<M: Module> NativeBackend<M> {
                 debug_line_starts,
                 debug_function_gv,
                 debug_variable_gvs: &debug_variable_gvs,
+                hosted_traps: false,
             };
             if plan.is_general {
                 codegen.emit_general_async_step(f, plan)?;
@@ -6192,12 +6464,14 @@ impl<M: Module> NativeBackend<M> {
                 global_data: &self.global_data,
                 const_exprs: &const_exprs,
                 struct_layouts: &self.struct_layouts,
+                inline_struct_ids: &self.inline_struct_ids,
                 enum_layouts: &self.enum_layouts,
                 type_names: &self.type_names,
                 trait_layouts: &self.trait_layouts,
                 trait_impls: &self.trait_impls,
                 func_param_tys: &self.func_param_tys,
                 user_func_names: &self.user_func_names,
+                host_callback_ids: &self.host_callback_ids,
                 vars: vec![HashMap::new()],
                 ptr_ty: self.ptr_ty,
                 loop_stack: Vec::new(),
@@ -6205,6 +6479,7 @@ impl<M: Module> NativeBackend<M> {
                 managed_stack: Vec::new(),
                 current_return_ty: Ty::Void,
                 terminated: false,
+                broke_loop_target: None,
                 async_frame: None,
                 async_plan: None,
                 async_await_index: 0,
@@ -6216,6 +6491,7 @@ impl<M: Module> NativeBackend<M> {
                 debug_line_starts: &[],
                 debug_function_gv: None,
                 debug_variable_gvs: &HashMap::new(),
+                hosted_traps: self.hosted_traps,
             };
             let block = codegen.builder.create_block();
             codegen.builder.switch_to_block(block);
@@ -6266,6 +6542,7 @@ struct FuncCodegen<'a> {
     global_data: &'a HashMap<SmolStr, GlobalDataInfo>,
     const_exprs: &'a HashMap<SmolStr, HirExpr>,
     struct_layouts: &'a HashMap<ori_types::DefId, StructLayout>,
+    inline_struct_ids: &'a HashSet<ori_types::DefId>,
     enum_layouts: &'a HashMap<ori_types::DefId, EnumLayout>,
     type_names: &'a HashMap<ori_types::DefId, SmolStr>,
     trait_layouts: &'a HashMap<ori_types::DefId, HirTrait>,
@@ -6279,6 +6556,10 @@ struct FuncCodegen<'a> {
     managed_stack: Vec<ManagedCleanup>,
     current_return_ty: Ty,
     terminated: bool,
+    /// When the most recent terminator was a `break`, the loop exit it jumped
+    /// to; lets loop epilogues distinguish a real break (exit has a jump) from
+    /// a `return` (exit is unreachable) without inspecting the CFG.
+    broke_loop_target: Option<ir::Block>,
     async_frame: Option<ir::Value>,
     async_plan: Option<&'a SimpleAsyncStateMachinePlan>,
     async_await_index: usize,
@@ -6291,11 +6572,140 @@ struct FuncCodegen<'a> {
     debug_line_starts: &'a [u32],
     debug_function_gv: Option<ir::GlobalValue>,
     debug_variable_gvs: &'a HashMap<SmolStr, ir::GlobalValue>,
+    hosted_traps: bool,
+    host_callback_ids: &'a HashMap<SmolStr, u64>,
 }
 
 impl<'a> FuncCodegen<'a> {
     fn display_ty(&self, ty: &Ty) -> String {
         ty.display_with_names(self.type_names)
+    }
+
+    /// GFX-INLINE-1: is `ty` stored in place (inline) rather than behind one
+    /// pointer? Mirrors `Inline(T)` from the checker.
+    fn ty_is_inline_for_layout(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Array(elem, _) => self.ty_is_inline_for_layout(elem),
+            Ty::Named(def_id, _) => self.inline_struct_ids.contains(def_id),
+            _ => ori_types::is_inline_ty(ty),
+        }
+    }
+
+    /// GFX-INLINE-1: layout-aware field size for codegen. Inline structs and
+    /// arrays of inline structs resolve to their real byte size.
+    fn field_size_align_for_layout(&self, ty: &Ty) -> (u32, u8) {
+        field_size_align_with_layouts_typed(
+            ty,
+            self.ptr_ty,
+            self.struct_layouts,
+            self.inline_struct_ids,
+        )
+    }
+
+    /// GFX-INLINE-1: copy the bytes of an inline value (`source`, a heap
+    /// pointer produced by a struct literal) into `destination + offset`.
+    /// Scalars are stored directly by the caller; only inline aggregates
+    /// (structs and arrays of inline structs) reach here.
+    fn emit_copy_inline_into(
+        &mut self,
+        source: ir::Value,
+        ty: &Ty,
+        destination: ir::Value,
+        offset: i32,
+    ) -> Result<(), String> {
+        match ty {
+            Ty::Named(def_id, _) => {
+                let layout = self.struct_layouts.get(def_id).cloned().ok_or_else(|| {
+                    format!(
+                        "missing native layout for inline struct `{}`",
+                        self.display_ty(ty)
+                    )
+                })?;
+                for (name, field) in &layout.fields {
+                    let field_offset = offset + field.offset as i32;
+                    if field.ty.is_runtime_managed() {
+                        // Managed fields cannot appear inside inline structs
+                        // (the checker rejects them); defensively error.
+                        return Err(format!(
+                            "inline struct field `{name}` of `{}` is managed",
+                            self.display_ty(ty)
+                        ));
+                    }
+                    if matches!(field.ty, Ty::Named(..)) || matches!(field.ty, Ty::Array(..)) {
+                        let sub_source = self.builder.ins().iadd_imm(source, field.offset as i64);
+                        self.emit_copy_inline_into(
+                            sub_source,
+                            &field.ty,
+                            destination,
+                            field_offset,
+                        )?;
+                    } else {
+                        let Some(cl) = cl_type(&field.ty, self.ptr_ty) else {
+                            return Err(format!(
+                                "missing Cranelift type for inline field `{name}`"
+                            ));
+                        };
+                        let value = self.builder.ins().load(
+                            cl,
+                            MemFlags::new(),
+                            source,
+                            field.offset as i32,
+                        );
+                        self.builder
+                            .ins()
+                            .store(MemFlags::new(), value, destination, field_offset);
+                    }
+                }
+                Ok(())
+            }
+            Ty::Array(elem_ty, size) => {
+                let Ty::ConstInt(_, len) = &**size else {
+                    return Err("array size must be constant for inline copy".to_string());
+                };
+                if *len <= 0 {
+                    return Ok(());
+                }
+                let (elem_size, _) = self.field_size_align_for_layout(elem_ty);
+                let elem_inline = matches!(elem_ty.as_ref(), Ty::Named(..))
+                    && self.ty_is_inline_for_layout(elem_ty);
+                if elem_inline {
+                    for i in 0..*len {
+                        let byte = (i as u32).saturating_mul(elem_size) as i32;
+                        let sub_source = self.builder.ins().iadd_imm(source, byte as i64);
+                        self.emit_copy_inline_into(
+                            sub_source,
+                            elem_ty,
+                            destination,
+                            offset + byte,
+                        )?;
+                    }
+                    Ok(())
+                } else {
+                    // Scalar elements: copy each by value.
+                    let Some(cl) = cl_type(elem_ty, self.ptr_ty) else {
+                        return Err(format!(
+                            "missing Cranelift type for inline array element `{}`",
+                            self.display_ty(elem_ty)
+                        ));
+                    };
+                    for i in 0..*len {
+                        let byte = (i as u32).saturating_mul(elem_size) as i32;
+                        let value = self.builder.ins().load(cl, MemFlags::new(), source, byte);
+                        self.builder.ins().store(
+                            MemFlags::new(),
+                            value,
+                            destination,
+                            offset + byte,
+                        );
+                    }
+                    Ok(())
+                }
+            }
+            _ => Err(format!(
+                "internal: inline copy of non-aggregate `{}`",
+                self.display_ty(ty)
+            )),
+        }
     }
 
     fn push_scope(&mut self) {
@@ -6833,18 +7243,86 @@ impl<'a> FuncCodegen<'a> {
         self.builder.seal_block(fail_blk);
         self.builder.switch_to_block(fail_blk);
         if run_cleanup {
-            self.emit_scope_cleanup_calls_from(0, 0)?;
-        }
-        if let Some(message) = message {
-            if let Some(fref) = self.func_refs.get("ori_panic").copied() {
-                let text = self.bytes_ptr(message.as_bytes())?;
-                self.builder.ins().call(fref, &[text]);
+            if self.hosted_traps {
+                self.emit_host_trap_return(i32::from(trap_code.as_raw().get()), message, true)?;
+            } else {
+                self.emit_scope_cleanup_calls_from(0, 0)?;
             }
+        } else if self.hosted_traps {
+            self.emit_host_trap_return(i32::from(trap_code.as_raw().get()), message, false)?;
         }
-        self.builder.ins().trap(trap_code);
+        if !self.hosted_traps {
+            if let Some(message) = message {
+                if let Some(fref) = self.func_refs.get("ori_panic").copied() {
+                    let text = self.bytes_ptr(message.as_bytes())?;
+                    self.builder.ins().call(fref, &[text]);
+                }
+            }
+            self.builder.ins().trap(trap_code);
+        }
         self.builder.seal_block(ok_blk);
         self.builder.switch_to_block(ok_blk);
         self.terminated = false;
+        Ok(())
+    }
+
+    /// Report a controlled failure to the hosted runtime and return the
+    /// function's zero value. Standalone code never enters this helper.
+    fn emit_host_trap_return(
+        &mut self,
+        code: i32,
+        message: Option<&str>,
+        run_cleanup: bool,
+    ) -> Result<(), String> {
+        debug_assert!(self.hosted_traps);
+        let text = self.bytes_ptr(message.unwrap_or("").as_bytes())?;
+        self.emit_host_trap_return_value(code, text, true, run_cleanup)
+    }
+
+    fn emit_host_error(&mut self, code: i32, message: &str) -> Result<(), String> {
+        debug_assert!(self.hosted_traps);
+        let text = self.bytes_ptr(message.as_bytes())?;
+        self.emit_host_error_value(code, text, true)
+    }
+
+    fn emit_host_error_value(
+        &mut self,
+        code: i32,
+        text: ir::Value,
+        release_message: bool,
+    ) -> Result<(), String> {
+        let report_ref = *self
+            .func_refs
+            .get("ori_host_report_error")
+            .ok_or_else(|| "missing runtime function `ori_host_report_error`".to_string())?;
+        let code_value = self.builder.ins().iconst(types::I32, i64::from(code));
+        self.builder.ins().call(report_ref, &[code_value, text]);
+        if release_message {
+            self.emit_arc_release_if_managed(&Ty::Bytes, text)?;
+        }
+        Ok(())
+    }
+
+    fn emit_host_trap_return_value(
+        &mut self,
+        code: i32,
+        text: ir::Value,
+        release_message: bool,
+        run_cleanup: bool,
+    ) -> Result<(), String> {
+        self.emit_host_error_value(code, text, release_message)?;
+        if run_cleanup {
+            self.emit_scope_cleanup_calls_from(0, 0)?;
+        }
+        self.emit_debug_leave();
+        let return_ty = self.current_return_ty.clone();
+        if cl_type(&return_ty, self.ptr_ty).is_some() {
+            let zero = self.zero_val(&return_ty);
+            self.builder.ins().return_(&[zero]);
+        } else {
+            self.builder.ins().return_(&[]);
+        }
+        self.terminated = true;
         Ok(())
     }
 
@@ -7393,6 +7871,50 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
+    fn emit_list_set_value(
+        &mut self,
+        list: ir::Value,
+        index: ir::Value,
+        value: ir::Value,
+        elem_ty: &Ty,
+    ) -> Result<(), String> {
+        if is_managed_ty(elem_ty) {
+            let get_ref = *self
+                .func_refs
+                .get("ori_list_get")
+                .ok_or_else(|| "missing runtime function `ori_list_get`".to_string())?;
+            let old_call = self.builder.ins().call(get_ref, &[list, index]);
+            let old = self.builder.inst_results(old_call)[0];
+            let old = self.decode_list_storage_value(old, elem_ty);
+            self.emit_arc_update_edge_if_managed(elem_ty, list, old, value)?;
+        }
+
+        let set_ref = *self
+            .func_refs
+            .get("ori_list_set")
+            .ok_or_else(|| "missing runtime function `ori_list_set`".to_string())?;
+        let stored = self.encode_list_storage_value(value, elem_ty);
+        self.builder.ins().call(set_ref, &[list, index, stored]);
+        Ok(())
+    }
+
+    fn emit_list_insert_value(
+        &mut self,
+        list: ir::Value,
+        index: ir::Value,
+        value: ir::Value,
+        elem_ty: &Ty,
+    ) -> Result<(), String> {
+        let insert_ref = *self
+            .func_refs
+            .get("ori_list_insert")
+            .ok_or_else(|| "missing runtime function `ori_list_insert`".to_string())?;
+        let stored = self.encode_list_storage_value(value, elem_ty);
+        self.builder.ins().call(insert_ref, &[list, index, stored]);
+        self.emit_arc_register_edge_if_managed(elem_ty, list, value)?;
+        Ok(())
+    }
+
     /// Load `list[index]` — inline bounds-checked load for scalar elements.
     fn emit_list_get_value(
         &mut self,
@@ -7406,6 +7928,45 @@ impl<'a> FuncCodegen<'a> {
             .ok_or_else(|| "missing runtime function `ori_list_get`".to_string())?;
 
         if !is_list_inline_scalar_elem(elem_ty) {
+            if self.hosted_traps {
+                let len =
+                    self.builder
+                        .ins()
+                        .load(types::I64, MemFlags::new(), list, ORI_LIST_LEN_OFFSET);
+                let zero = self.builder.ins().iconst(types::I64, 0);
+                let ge_zero = self.builder.ins().icmp(
+                    ir::condcodes::IntCC::SignedGreaterThanOrEqual,
+                    index,
+                    zero,
+                );
+                let lt_len =
+                    self.builder
+                        .ins()
+                        .icmp(ir::condcodes::IntCC::SignedLessThan, index, len);
+                let in_bounds = self.builder.ins().band(ge_zero, lt_len);
+                let fast = self.builder.create_block();
+                let slow = self.builder.create_block();
+                let join = self.builder.create_block();
+                self.builder.append_block_param(join, types::I64);
+                self.builder.ins().brif(in_bounds, fast, &[], slow, &[]);
+
+                self.builder.seal_block(fast);
+                self.builder.switch_to_block(fast);
+                let call = self.builder.ins().call(get_ref, &[list, index]);
+                let stored = self.builder.inst_results(call)[0];
+                self.builder.ins().jump(join, &[BlockArg::Value(stored)]);
+
+                self.builder.seal_block(slow);
+                self.builder.switch_to_block(slow);
+                self.emit_host_error(8, "list index out of bounds")?;
+                self.builder.ins().jump(join, &[BlockArg::Value(zero)]);
+
+                self.builder.seal_block(join);
+                self.builder.switch_to_block(join);
+                self.terminated = false;
+                let stored = self.builder.block_params(join)[0];
+                return Ok(self.decode_list_storage_value(stored, elem_ty));
+            }
             let call = self.builder.ins().call(get_ref, &[list, index]);
             let stored = self.builder.inst_results(call)[0];
             return Ok(self.decode_list_storage_value(stored, elem_ty));
@@ -7449,9 +8010,14 @@ impl<'a> FuncCodegen<'a> {
 
         self.builder.seal_block(slow);
         self.builder.switch_to_block(slow);
-        // Runtime path aborts with the standard bounds diagnostic.
-        let call = self.builder.ins().call(get_ref, &[list, index]);
-        let slow_stored = self.builder.inst_results(call)[0];
+        let slow_stored = if self.hosted_traps {
+            self.emit_host_error(8, "list index out of bounds")?;
+            self.builder.ins().iconst(types::I64, 0)
+        } else {
+            // Runtime path aborts with the standard bounds diagnostic.
+            let call = self.builder.ins().call(get_ref, &[list, index]);
+            self.builder.inst_results(call)[0]
+        };
         self.builder
             .ins()
             .jump(join, &[BlockArg::Value(slow_stored)]);
@@ -7582,14 +8148,58 @@ impl<'a> FuncCodegen<'a> {
             }
             HirLValue::Field { base, field } => {
                 let (addr, field_layout, _) = self.emit_field_lvalue_addr(base, field)?;
-                let cl_ty = cl_type(&field_layout.ty, self.ptr_ty)
-                    .ok_or_else(|| format!("missing Cranelift type for field `{field}`"))?;
-                let value = self.builder.ins().load(cl_ty, MemFlags::new(), addr, 0);
-                Ok((value, field_layout.ty))
+                // Inline aggregate fields (array or inline struct) are
+                // represented by their address; scalars load by value.
+                if matches!(field_layout.ty, Ty::Array(_, _))
+                    || (matches!(field_layout.ty, Ty::Named(..))
+                        && self.ty_is_inline_for_layout(&field_layout.ty))
+                {
+                    Ok((addr, field_layout.ty))
+                } else {
+                    let cl_ty = cl_type(&field_layout.ty, self.ptr_ty)
+                        .ok_or_else(|| format!("missing Cranelift type for field `{field}`"))?;
+                    let value = self.builder.ins().load(cl_ty, MemFlags::new(), addr, 0);
+                    Ok((value, field_layout.ty))
+                }
             }
-            _ => Err(native_codegen_unsupported(
-                "indexed assignment base in native codegen",
-            )),
+            HirLValue::Index { base, index } => {
+                // `xs[i].f = v`: the base is an array; return the element
+                // address for inline struct elements (scalar elements are
+                // loaded by value).
+                let (container, container_ty) = self.emit_lvalue_value(base)?;
+                match &container_ty {
+                    Ty::Array(elem_ty, _) => {
+                        let idx = self.emit_expr(index)?;
+                        let (elem_size, _) = self.field_size_align_for_layout(elem_ty);
+                        let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
+                        let byte_offset = self.builder.ins().imul(idx, stride);
+                        let offset = if self.ptr_ty == types::I64 {
+                            byte_offset
+                        } else {
+                            self.builder.ins().ireduce(self.ptr_ty, byte_offset)
+                        };
+                        let addr = self.builder.ins().iadd(container, offset);
+                        let inline_struct = matches!(elem_ty.as_ref(), Ty::Named(..))
+                            && self.ty_is_inline_for_layout(elem_ty);
+                        if inline_struct {
+                            Ok((addr, (**elem_ty).clone()))
+                        } else {
+                            let Some(cl) = cl_type(elem_ty, self.ptr_ty) else {
+                                return Err(format!(
+                                    "native codegen cannot index `array` of `{}` yet",
+                                    self.display_ty(elem_ty)
+                                ));
+                            };
+                            let value = self.builder.ins().load(cl, MemFlags::new(), addr, 0);
+                            Ok((value, (**elem_ty).clone()))
+                        }
+                    }
+                    _ => Err(native_codegen_unsupported(format!(
+                        "indexed assignment base `{}` in native codegen",
+                        self.display_ty(&container_ty)
+                    ))),
+                }
+            }
         }
     }
 
@@ -8918,6 +9528,15 @@ impl<'a> FuncCodegen<'a> {
         for stmt in &plan.tail_stmts {
             self.emit_stmt(stmt)?;
         }
+        if self.terminated {
+            // The tail terminated (e.g. `return`), so the rest of the complete
+            // block is unreachable. The emit_if/emit_while fixes already filled
+            // the terminated blocks; make sure the complete block itself stays
+            // well-formed by leaving the cursor on the last emitted block.
+            self.builder.seal_all_blocks();
+            self.builder.finalize();
+            return Ok(());
+        }
         if let Some(expr) = &plan.tail_expr {
             self.emit_expr(expr)?;
             self.emit_future_complete(result_future, &plan.inner_ty, None)?;
@@ -9104,7 +9723,8 @@ impl<'a> FuncCodegen<'a> {
         let poll_block = self.async_poll_blocks[index];
         self.builder.ins().jump(poll_block, &[]);
 
-        // Switch to poll block
+        // Switch to poll block (this is the dispatch target in the general
+        // async step; it must be filled here, not left empty).
         self.builder.switch_to_block(poll_block);
 
         let awaited = self
@@ -9392,7 +10012,22 @@ impl<'a> FuncCodegen<'a> {
         let zero = self.builder.ins().iconst(types::I64, 0);
         self.builder.ins().return_(&[zero]);
 
-        for block in &self.async_poll_blocks {
+        for block in self.async_poll_blocks.iter() {
+            let is_filled = self
+                .builder
+                .func
+                .layout
+                .block_insts(*block)
+                .next()
+                .is_some();
+            if !is_filled {
+                // The body terminated before this await was emitted (e.g. a
+                // `return` in a previous branch), so this poll block has no
+                // instructions yet. It is still a dispatch target and must be
+                // filled to keep the CFG well-formed.
+                self.builder.switch_to_block(*block);
+                self.builder.ins().trap(ir::TrapCode::user(2).unwrap());
+            }
             self.builder.seal_block(*block);
         }
 
@@ -9418,6 +10053,11 @@ impl<'a> FuncCodegen<'a> {
         let mut args_v = Vec::new();
         for arg in args {
             args_v.push(self.emit_expr_for_expected(&arg.value, &Ty::String)?);
+        }
+        if self.hosted_traps {
+            let text = args_v.first().copied().unwrap_or(self.bytes_ptr(b"")?);
+            self.emit_host_trap_return_value(2, text, false, true)?;
+            return Ok(true);
         }
         self.emit_scope_cleanup_calls_from(0, 0)?;
         let fref = *self
@@ -10275,10 +10915,11 @@ impl<'a> FuncCodegen<'a> {
                         }
                     } else if let Ty::Array(elem_ty, _) = container_ty {
                         // Inline storage: store straight at `base + i * stride`.
-                        // Elements are scalars (managed ones are rejected in the
-                        // checker), so there is no edge to update.
+                        // Scalar elements have no edge to update (managed ones
+                        // are rejected in the checker); inline struct elements
+                        // are copied recursively (GFX-INLINE-1).
                         let idx = self.emit_expr(index)?;
-                        let (elem_size, _) = field_size_align(&elem_ty, self.ptr_ty);
+                        let (elem_size, _) = self.field_size_align_for_layout(&elem_ty);
                         let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
                         let byte_offset = self.builder.ins().imul(idx, stride);
                         let offset = if self.ptr_ty == types::I64 {
@@ -10287,7 +10928,13 @@ impl<'a> FuncCodegen<'a> {
                             self.builder.ins().ireduce(self.ptr_ty, byte_offset)
                         };
                         let addr = self.builder.ins().iadd(container, offset);
-                        self.builder.ins().store(MemFlags::new(), val, addr, 0);
+                        let inline_struct = matches!(elem_ty.as_ref(), Ty::Named(..))
+                            && self.ty_is_inline_for_layout(&elem_ty);
+                        if inline_struct {
+                            self.emit_copy_inline_into(val, &elem_ty, addr, 0)?;
+                        } else {
+                            self.builder.ins().store(MemFlags::new(), val, addr, 0);
+                        }
                     } else if let Ty::Map(key_ty, value_ty) = container_ty {
                         // `m["k"] = v` used to fall through this chain and emit
                         // nothing at all: the assignment silently did not happen.
@@ -10356,6 +11003,7 @@ impl<'a> FuncCodegen<'a> {
                         ctx.managed_cleanup_start,
                     )?;
                     self.builder.ins().jump(ctx.break_target, &[]);
+                    self.broke_loop_target = Some(ctx.break_target);
                     self.terminated = true;
                 }
             }
@@ -10565,6 +11213,16 @@ impl<'a> FuncCodegen<'a> {
 
     // == Control flow ==
 
+    fn emit_unreachable_return(&mut self) -> Result<(), String> {
+        // Fill an unreachable block with a trap. This is safe for both sync
+        // and async functions: the real paths never reach it, and it keeps
+        // the CFG well-formed without assuming a return ABI.
+        let trap = ir::TrapCode::user(2).unwrap();
+        self.builder.ins().trap(trap);
+        self.terminated = true;
+        Ok(())
+    }
+
     fn emit_if(
         &mut self,
         cond: &HirExpr,
@@ -10606,6 +11264,8 @@ impl<'a> FuncCodegen<'a> {
                 self.emit_block(eb)?;
             }
             if !self.terminated {
+                // The nested elif chain may have left the cursor in a different
+                // block; jump to this branch's own merge from wherever it is.
                 self.builder.ins().jump(merge_block, &[]);
             }
         }
@@ -10638,6 +11298,7 @@ impl<'a> FuncCodegen<'a> {
         self.push_loop(cond_blk, exit_blk);
         self.emit_block(body)?;
         self.pop_loop();
+        let body_terminated = self.terminated;
         if !self.terminated {
             self.builder.ins().jump(cond_blk, &[]);
         }
@@ -10649,7 +11310,26 @@ impl<'a> FuncCodegen<'a> {
         // Exit block — only cond_blk branches here
         self.builder.seal_block(exit_blk);
         self.builder.switch_to_block(exit_blk);
-        self.terminated = false;
+        if body_terminated {
+            // The body ended with a `break` to this loop (the exit already has
+            // a jump from the body) or with a `return` (the exit has no
+            // predecessor). In the return case the exit must still be filled so
+            // the CFG stays well-formed. In the break case the exit already has
+            // a terminator, so continue on a fresh block for whatever follows
+            // the loop.
+            let was_break = self.broke_loop_target == Some(exit_blk);
+            if !was_break {
+                self.emit_unreachable_return()?;
+            } else {
+                let continue_block = self.builder.create_block();
+                self.builder.ins().jump(continue_block, &[]);
+                self.builder.seal_block(continue_block);
+                self.builder.switch_to_block(continue_block);
+                self.terminated = false;
+            }
+        } else {
+            self.terminated = false;
+        }
         Ok(())
     }
 
@@ -10662,13 +11342,27 @@ impl<'a> FuncCodegen<'a> {
         self.push_loop(header, exit);
         self.emit_block(body)?;
         self.pop_loop();
+        let body_terminated = self.terminated;
         if !self.terminated {
             self.builder.ins().jump(header, &[]);
         }
         self.builder.seal_block(header);
         self.builder.seal_block(exit);
         self.builder.switch_to_block(exit);
-        self.terminated = false;
+        if body_terminated {
+            let was_break = self.broke_loop_target == Some(exit);
+            if !was_break {
+                self.emit_unreachable_return()?;
+            } else {
+                let continue_block = self.builder.create_block();
+                self.builder.ins().jump(continue_block, &[]);
+                self.builder.seal_block(continue_block);
+                self.builder.switch_to_block(continue_block);
+                self.terminated = false;
+            }
+        } else {
+            self.terminated = false;
+        }
         Ok(())
     }
 
@@ -10854,6 +11548,7 @@ impl<'a> FuncCodegen<'a> {
         self.push_loop(header_blk, exit_blk);
         self.emit_block(body)?;
         self.pop_loop();
+        let body_terminated = self.terminated;
         if !self.terminated {
             self.builder.ins().jump(header_blk, &[]);
         }
@@ -10862,7 +11557,20 @@ impl<'a> FuncCodegen<'a> {
         self.builder.seal_block(header_blk);
         self.builder.seal_block(exit_blk);
         self.builder.switch_to_block(exit_blk);
-        self.terminated = false;
+        if body_terminated {
+            let was_break = self.broke_loop_target == Some(exit_blk);
+            if !was_break {
+                self.emit_unreachable_return()?;
+            } else {
+                let continue_block = self.builder.create_block();
+                self.builder.ins().jump(continue_block, &[]);
+                self.builder.seal_block(continue_block);
+                self.builder.switch_to_block(continue_block);
+                self.terminated = false;
+            }
+        } else {
+            self.terminated = false;
+        }
         self.pop_scope();
         Ok(())
     }
@@ -11659,14 +12367,18 @@ impl<'a> FuncCodegen<'a> {
 
         self.builder.seal_block(abort_b);
         self.builder.switch_to_block(abort_b);
-        let abort_ref = *self
-            .func_refs
-            .get("ori_abort_concurrent_modification")
-            .ok_or_else(|| {
-                "missing runtime function `ori_abort_concurrent_modification`".to_string()
-            })?;
-        self.builder.ins().call(abort_ref, &[]);
-        self.builder.ins().trap(ir::TrapCode::user(2).unwrap());
+        if self.hosted_traps {
+            self.emit_host_trap_return(7, Some("concurrent modification during iteration"), true)?;
+        } else {
+            let abort_ref = *self
+                .func_refs
+                .get("ori_abort_concurrent_modification")
+                .ok_or_else(|| {
+                    "missing runtime function `ori_abort_concurrent_modification`".to_string()
+                })?;
+            self.builder.ins().call(abort_ref, &[]);
+            self.builder.ins().trap(ir::TrapCode::user(2).unwrap());
+        }
 
         self.builder.seal_block(check_b);
         self.builder.switch_to_block(check_b);
@@ -11699,6 +12411,7 @@ impl<'a> FuncCodegen<'a> {
         self.push_loop(step, exit);
         self.emit_block(body)?;
         self.pop_loop();
+        let body_terminated = self.terminated;
         if !self.terminated {
             self.builder.ins().jump(step, &[]);
         }
@@ -11718,6 +12431,17 @@ impl<'a> FuncCodegen<'a> {
 
         self.builder.seal_block(exit);
         self.builder.switch_to_block(exit);
+        if body_terminated {
+            let was_break = self.broke_loop_target == Some(exit);
+            if !was_break {
+                self.emit_unreachable_return()?;
+                return Ok(());
+            }
+            let continue_block = self.builder.create_block();
+            self.builder.ins().jump(continue_block, &[]);
+            self.builder.seal_block(continue_block);
+            self.builder.switch_to_block(continue_block);
+        }
         if !has_await {
             self.emit_for_release_element_binding(binding)?;
         }
@@ -11871,14 +12595,18 @@ impl<'a> FuncCodegen<'a> {
 
         self.builder.seal_block(abort_b);
         self.builder.switch_to_block(abort_b);
-        let abort_ref = *self
-            .func_refs
-            .get("ori_abort_concurrent_modification")
-            .ok_or_else(|| {
-                "missing runtime function `ori_abort_concurrent_modification`".to_string()
-            })?;
-        self.builder.ins().call(abort_ref, &[]);
-        self.builder.ins().trap(ir::TrapCode::user(2).unwrap());
+        if self.hosted_traps {
+            self.emit_host_trap_return(7, Some("concurrent modification during iteration"), true)?;
+        } else {
+            let abort_ref = *self
+                .func_refs
+                .get("ori_abort_concurrent_modification")
+                .ok_or_else(|| {
+                    "missing runtime function `ori_abort_concurrent_modification`".to_string()
+                })?;
+            self.builder.ins().call(abort_ref, &[]);
+            self.builder.ins().trap(ir::TrapCode::user(2).unwrap());
+        }
 
         self.builder.seal_block(check_b);
         self.builder.switch_to_block(check_b);
@@ -11903,6 +12631,7 @@ impl<'a> FuncCodegen<'a> {
         self.push_loop(step, exit);
         self.emit_block(body)?;
         self.pop_loop();
+        let body_terminated = self.terminated;
         if !self.terminated {
             self.builder.ins().jump(step, &[]);
         }
@@ -11921,6 +12650,17 @@ impl<'a> FuncCodegen<'a> {
         self.builder.seal_block(header);
         self.builder.seal_block(exit);
         self.builder.switch_to_block(exit);
+        if body_terminated {
+            let was_break = self.broke_loop_target == Some(exit);
+            if !was_break {
+                self.emit_unreachable_return()?;
+                return Ok(());
+            }
+            let continue_block = self.builder.create_block();
+            self.builder.ins().jump(continue_block, &[]);
+            self.builder.seal_block(continue_block);
+            self.builder.switch_to_block(continue_block);
+        }
         if !has_await {
             self.emit_for_release_element_binding(binding)?;
             if let Some(value_name) = value_binding {
@@ -12193,6 +12933,7 @@ impl<'a> FuncCodegen<'a> {
         self.push_loop(step, exit);
         self.emit_block(body)?;
         self.pop_loop();
+        let body_terminated = self.terminated;
         if !self.terminated {
             self.builder.ins().jump(step, &[]);
         }
@@ -12211,6 +12952,17 @@ impl<'a> FuncCodegen<'a> {
         self.builder.seal_block(header);
         self.builder.seal_block(exit);
         self.builder.switch_to_block(exit);
+        if body_terminated {
+            let was_break = self.broke_loop_target == Some(exit);
+            if !was_break {
+                self.emit_unreachable_return()?;
+                return Ok(());
+            }
+            let continue_block = self.builder.create_block();
+            self.builder.ins().jump(continue_block, &[]);
+            self.builder.seal_block(continue_block);
+            self.builder.switch_to_block(continue_block);
+        }
         if !has_await {
             self.emit_for_release_element_binding(binding)?;
         }
@@ -12302,9 +13054,13 @@ impl<'a> FuncCodegen<'a> {
 
         // Exhaustiveness is a type-check guarantee, so falling out of every
         // arm is unreachable; the block still needs a terminator.
-        self.builder
-            .ins()
-            .trap(ir::TrapCode::user(2).ok_or_else(|| "invalid match trap code `2`".to_string())?);
+        if self.hosted_traps {
+            self.emit_host_trap_return(2, Some("non-exhaustive match"), true)?;
+        } else {
+            self.builder.ins().trap(
+                ir::TrapCode::user(2).ok_or_else(|| "invalid match trap code `2`".to_string())?,
+            );
+        }
         self.builder.seal_block(merge_blk);
         self.builder.switch_to_block(merge_blk);
         self.terminated = false;
@@ -13069,6 +13825,12 @@ impl<'a> FuncCodegen<'a> {
                             .ins()
                             .icmp(ir::condcodes::IntCC::Equal, v, zero)
                     }
+                    // Bitwise complement is `x ^ -1` (two's complement).
+                    UnaryOp::BitNot => {
+                        let cl = cl_type(&operand.ty, self.ptr_ty).unwrap_or(types::I64);
+                        let minus_one = self.builder.ins().iconst(cl, -1);
+                        self.builder.ins().bxor(v, minus_one)
+                    }
                 }
             }
             HirExprKind::Call { callee, args } => {
@@ -13394,6 +14156,44 @@ impl<'a> FuncCodegen<'a> {
                             }
                             return Ok(self.builder.ins().iconst(types::I8, 0));
                         }
+                        if name.as_str() == "ori_list_set" && args.len() == 3 {
+                            let list_is_owned = Self::expr_produces_owned_ref(&args[0].value);
+                            let value_is_owned = Self::expr_produces_owned_ref(&args[2].value);
+                            let list_v = self.emit_expr(&args[0].value)?;
+                            let index_v = self.emit_expr(&args[1].value)?;
+                            let value_v = self.emit_expr(&args[2].value)?;
+                            let elem_ty = match &args[0].value.ty {
+                                Ty::List(elem) => elem.as_ref().clone(),
+                                _ => args[2].value.ty.clone(),
+                            };
+                            self.emit_list_set_value(list_v, index_v, value_v, &elem_ty)?;
+                            if value_is_owned && is_managed_ty(&elem_ty) {
+                                self.emit_arc_release_if_managed(&elem_ty, value_v)?;
+                            }
+                            if list_is_owned {
+                                self.emit_arc_release_if_managed(&args[0].value.ty, list_v)?;
+                            }
+                            return Ok(self.builder.ins().iconst(types::I8, 0));
+                        }
+                        if name.as_str() == "ori_list_insert" && args.len() == 3 {
+                            let list_is_owned = Self::expr_produces_owned_ref(&args[0].value);
+                            let value_is_owned = Self::expr_produces_owned_ref(&args[2].value);
+                            let list_v = self.emit_expr(&args[0].value)?;
+                            let index_v = self.emit_expr(&args[1].value)?;
+                            let value_v = self.emit_expr(&args[2].value)?;
+                            let elem_ty = match &args[0].value.ty {
+                                Ty::List(elem) => elem.as_ref().clone(),
+                                _ => args[2].value.ty.clone(),
+                            };
+                            self.emit_list_insert_value(list_v, index_v, value_v, &elem_ty)?;
+                            if value_is_owned && is_managed_ty(&elem_ty) {
+                                self.emit_arc_release_if_managed(&elem_ty, value_v)?;
+                            }
+                            if list_is_owned {
+                                self.emit_arc_release_if_managed(&args[0].value.ty, list_v)?;
+                            }
+                            return Ok(self.builder.ins().iconst(types::I8, 0));
+                        }
                         let param_tys = self.func_param_tys.get(name).cloned();
                         let is_user_func = self.user_func_names.contains(name.as_str());
                         let mut args_v = Vec::new();
@@ -13434,6 +14234,11 @@ impl<'a> FuncCodegen<'a> {
                                 }
                                 args_v.push(value);
                             }
+                        }
+                        if let Some(callback_id) = self.host_callback_ids.get(name) {
+                            let callback_id =
+                                self.builder.ins().iconst(types::I64, *callback_id as i64);
+                            args_v.insert(0, callback_id);
                         }
                         if let Some(&fref) = self.func_refs.get(name.as_str()) {
                             let call = self.builder.ins().call(fref, &args_v);
@@ -13587,8 +14392,8 @@ impl<'a> FuncCodegen<'a> {
                             }
                             // An array field owns its bytes inline, so the value
                             // (an address) has to be copied in, not stored as a
-                            // pointer. Elements are scalars, so a byte copy is
-                            // the whole job — no per-element ARC.
+                            // pointer. Scalar elements copy by value; inline
+                            // struct elements copy recursively (GFX-INLINE-1).
                             if let Ty::Array(elem_ty, size) = &fi.ty {
                                 let len = match &**size {
                                     Ty::ConstInt(_, n) if *n >= 0 => *n,
@@ -13598,29 +14403,63 @@ impl<'a> FuncCodegen<'a> {
                                         ))
                                     }
                                 };
-                                let Some(elem_cl) = cl_type(elem_ty, self.ptr_ty) else {
-                                    return Err(format!(
-                                        "array field `{fname}` has no Cranelift element type"
-                                    ));
-                                };
-                                let (elem_size, _) = field_size_align(elem_ty, self.ptr_ty);
-                                // The length is a compile-time constant and the
-                                // elements are scalars, so an unrolled copy needs
-                                // no target config and no runtime call.
-                                for i in 0..len {
-                                    let byte = (i as u32).saturating_mul(elem_size) as i32;
-                                    let elem = self.builder.ins().load(
-                                        elem_cl,
-                                        MemFlags::new(),
+                                let inline_struct = matches!(elem_ty.as_ref(), Ty::Named(..))
+                                    && self.ty_is_inline_for_layout(elem_ty);
+                                if inline_struct {
+                                    self.emit_copy_inline_into(
                                         val,
-                                        byte,
-                                    );
+                                        &fi.ty,
+                                        base,
+                                        fi.offset as i32,
+                                    )?;
+                                } else {
+                                    let Some(elem_cl) = cl_type(elem_ty, self.ptr_ty) else {
+                                        return Err(format!(
+                                            "array field `{fname}` has no Cranelift element type"
+                                        ));
+                                    };
+                                    let (elem_size, _) = field_size_align(elem_ty, self.ptr_ty);
+                                    // The length is a compile-time constant and the
+                                    // elements are scalars, so an unrolled copy needs
+                                    // no target config and no runtime call.
+                                    for i in 0..len {
+                                        let byte = (i as u32).saturating_mul(elem_size) as i32;
+                                        let elem = self.builder.ins().load(
+                                            elem_cl,
+                                            MemFlags::new(),
+                                            val,
+                                            byte,
+                                        );
+                                        self.builder.ins().store(
+                                            MemFlags::new(),
+                                            elem,
+                                            base,
+                                            fi.offset as i32 + byte,
+                                        );
+                                    }
+                                }
+                            } else if let Ty::Named(..) = &fi.ty {
+                                // An inline struct field is copied recursively;
+                                // a managed struct field is a stored pointer
+                                // (handled in the next arm).
+                                if self.ty_is_inline_for_layout(&fi.ty) {
+                                    self.emit_copy_inline_into(
+                                        val,
+                                        &fi.ty,
+                                        base,
+                                        fi.offset as i32,
+                                    )?;
+                                } else {
                                     self.builder.ins().store(
                                         MemFlags::new(),
-                                        elem,
+                                        val,
                                         base,
-                                        fi.offset as i32 + byte,
+                                        fi.offset as i32,
                                     );
+                                    self.emit_arc_register_edge_if_managed(&fi.ty, base, val)?;
+                                    if fexpr_is_owned && is_managed_ty(&fi.ty) {
+                                        self.emit_arc_release_if_managed(&fi.ty, val)?;
+                                    }
                                 }
                             } else if cl_type(&fi.ty, self.ptr_ty).is_some() {
                                 self.builder.ins().store(
@@ -13663,8 +14502,12 @@ impl<'a> FuncCodegen<'a> {
                     if let Some(fi) = layout.field(field) {
                         // An array field *is* the bytes at that offset, not a
                         // pointer stored there. Loading it would read the first
-                        // element and treat it as an address.
-                        if matches!(fi.ty, Ty::Array(_, _)) {
+                        // element and treat it as an address. The same applies
+                        // to inline struct fields (GFX-INLINE-1).
+                        let inline_aggregate = matches!(fi.ty, Ty::Array(_, _))
+                            || (matches!(fi.ty, Ty::Named(..))
+                                && self.ty_is_inline_for_layout(&fi.ty));
+                        if inline_aggregate {
                             self.builder.ins().iadd_imm(ptr, fi.offset as i64)
                         } else if let Some(cl_ty) = cl_type(&fi.ty, self.ptr_ty) {
                             self.builder
@@ -13691,13 +14534,13 @@ impl<'a> FuncCodegen<'a> {
                     // The elements sit inline, so indexing is address arithmetic
                     // on the array's own storage — no runtime call.
                     Ty::Array(elem_ty, _) => {
-                        let Some(cl) = cl_type(elem_ty, self.ptr_ty) else {
-                            return Err(format!(
-                                "native codegen cannot index `array` of `{}` yet",
-                                self.display_ty(elem_ty)
-                            ));
-                        };
-                        let (elem_size, _) = field_size_align(elem_ty, self.ptr_ty);
+                        // An inline struct element is represented by its
+                        // address inside the array's storage (like an array
+                        // field), so indexing returns the element address.
+                        // Scalar elements are loaded by value.
+                        let inline_struct = matches!(elem_ty.as_ref(), Ty::Named(..))
+                            && self.ty_is_inline_for_layout(elem_ty);
+                        let (elem_size, _) = self.field_size_align_for_layout(elem_ty);
                         let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
                         let byte_offset = self.builder.ins().imul(idx, stride);
                         let offset = if self.ptr_ty == types::I64 {
@@ -13706,7 +14549,17 @@ impl<'a> FuncCodegen<'a> {
                             self.builder.ins().ireduce(self.ptr_ty, byte_offset)
                         };
                         let addr = self.builder.ins().iadd(container, offset);
-                        self.builder.ins().load(cl, MemFlags::new(), addr, 0)
+                        if inline_struct {
+                            addr
+                        } else {
+                            let Some(cl) = cl_type(elem_ty, self.ptr_ty) else {
+                                return Err(format!(
+                                    "native codegen cannot index `array` of `{}` yet",
+                                    self.display_ty(elem_ty)
+                                ));
+                            };
+                            self.builder.ins().load(cl, MemFlags::new(), addr, 0)
+                        }
                     }
                     Ty::String => {
                         let slice_ref =
@@ -13715,15 +14568,106 @@ impl<'a> FuncCodegen<'a> {
                             })?;
                         let one = self.builder.ins().iconst(types::I64, 1);
                         let end = self.builder.ins().iadd(idx, one);
-                        let call = self.builder.ins().call(slice_ref, &[container, idx, end]);
-                        self.builder.inst_results(call)[0]
+                        if !self.hosted_traps {
+                            let call = self.builder.ins().call(slice_ref, &[container, idx, end]);
+                            self.builder.inst_results(call)[0]
+                        } else {
+                            let len_ref =
+                                *self.func_refs.get("ori_string_len").ok_or_else(|| {
+                                    "missing runtime function `ori_string_len`".to_string()
+                                })?;
+                            let len_call = self.builder.ins().call(len_ref, &[container]);
+                            let len = self.builder.inst_results(len_call)[0];
+                            let zero = self.builder.ins().iconst(types::I64, 0);
+                            let ge_zero = self.builder.ins().icmp(
+                                ir::condcodes::IntCC::SignedGreaterThanOrEqual,
+                                idx,
+                                zero,
+                            );
+                            let lt_len = self.builder.ins().icmp(
+                                ir::condcodes::IntCC::SignedLessThan,
+                                idx,
+                                len,
+                            );
+                            let in_bounds = self.builder.ins().band(ge_zero, lt_len);
+                            let fast = self.builder.create_block();
+                            let slow = self.builder.create_block();
+                            let join = self.builder.create_block();
+                            self.builder.append_block_param(join, self.ptr_ty);
+                            self.builder.ins().brif(in_bounds, fast, &[], slow, &[]);
+
+                            self.builder.seal_block(fast);
+                            self.builder.switch_to_block(fast);
+                            let call = self.builder.ins().call(slice_ref, &[container, idx, end]);
+                            let value = self.builder.inst_results(call)[0];
+                            self.builder.ins().jump(join, &[BlockArg::Value(value)]);
+
+                            self.builder.seal_block(slow);
+                            self.builder.switch_to_block(slow);
+                            self.emit_host_error(8, "string index out of bounds")?;
+                            let empty_end = self.builder.ins().iconst(types::I64, 0);
+                            let empty = self
+                                .builder
+                                .ins()
+                                .call(slice_ref, &[container, empty_end, empty_end]);
+                            let empty = self.builder.inst_results(empty)[0];
+                            self.builder.ins().jump(join, &[BlockArg::Value(empty)]);
+
+                            self.builder.seal_block(join);
+                            self.builder.switch_to_block(join);
+                            self.terminated = false;
+                            self.builder.block_params(join)[0]
+                        }
                     }
                     Ty::Bytes => {
                         let get_ref = *self.func_refs.get("ori_bytes_get").ok_or_else(|| {
                             "missing runtime function `ori_bytes_get`".to_string()
                         })?;
-                        let call = self.builder.ins().call(get_ref, &[container, idx]);
-                        self.builder.inst_results(call)[0]
+                        if !self.hosted_traps {
+                            let call = self.builder.ins().call(get_ref, &[container, idx]);
+                            self.builder.inst_results(call)[0]
+                        } else {
+                            let len_ref =
+                                *self.func_refs.get("ori_bytes_len").ok_or_else(|| {
+                                    "missing runtime function `ori_bytes_len`".to_string()
+                                })?;
+                            let len_call = self.builder.ins().call(len_ref, &[container]);
+                            let len = self.builder.inst_results(len_call)[0];
+                            let zero = self.builder.ins().iconst(types::I64, 0);
+                            let ge_zero = self.builder.ins().icmp(
+                                ir::condcodes::IntCC::SignedGreaterThanOrEqual,
+                                idx,
+                                zero,
+                            );
+                            let lt_len = self.builder.ins().icmp(
+                                ir::condcodes::IntCC::SignedLessThan,
+                                idx,
+                                len,
+                            );
+                            let in_bounds = self.builder.ins().band(ge_zero, lt_len);
+                            let fast = self.builder.create_block();
+                            let slow = self.builder.create_block();
+                            let join = self.builder.create_block();
+                            self.builder.append_block_param(join, types::I8);
+                            self.builder.ins().brif(in_bounds, fast, &[], slow, &[]);
+
+                            self.builder.seal_block(fast);
+                            self.builder.switch_to_block(fast);
+                            let call = self.builder.ins().call(get_ref, &[container, idx]);
+                            let value = self.builder.inst_results(call)[0];
+                            self.builder.ins().jump(join, &[BlockArg::Value(value)]);
+
+                            self.builder.seal_block(slow);
+                            self.builder.switch_to_block(slow);
+                            self.emit_host_error(8, "bytes index out of bounds")?;
+                            let zero_byte = self.builder.ins().iconst(types::I8, 0);
+                            self.builder.ins().jump(join, &[BlockArg::Value(zero_byte)]);
+
+                            self.builder.seal_block(join);
+                            self.builder.switch_to_block(join);
+                            self.terminated = false;
+                            self.builder.block_params(join)[0]
+                        }
                     }
                     _ => {
                         return Err(format!(
@@ -13737,7 +14681,9 @@ impl<'a> FuncCodegen<'a> {
             // no length field, no reference counting — the length is in the type
             // and the storage dies with the frame.
             HirExprKind::ArrayLit { elem_ty, elements } => {
-                let (elem_size, align) = field_size_align(elem_ty, self.ptr_ty);
+                let (elem_size, align) = self.field_size_align_for_layout(elem_ty);
+                let inline_struct =
+                    matches!(elem_ty, Ty::Named(..)) && self.ty_is_inline_for_layout(elem_ty);
                 let total = elem_size.saturating_mul(elements.len() as u32).max(1);
                 let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
                     ir::StackSlotKind::ExplicitSlot,
@@ -13748,9 +14694,15 @@ impl<'a> FuncCodegen<'a> {
                 for (index, element) in elements.iter().enumerate() {
                     let value = self.emit_expr(element)?;
                     let offset = (index as u32).saturating_mul(elem_size) as i32;
-                    self.builder
-                        .ins()
-                        .store(MemFlags::new(), value, base, offset);
+                    if inline_struct {
+                        // The element literal is a heap pointer; copy its
+                        // bytes into the inline slot.
+                        self.emit_copy_inline_into(value, elem_ty, base, offset)?;
+                    } else {
+                        self.builder
+                            .ins()
+                            .store(MemFlags::new(), value, base, offset);
+                    }
                 }
                 base
             }
@@ -15265,6 +16217,24 @@ impl<'a> FuncCodegen<'a> {
 
     /// Jump to a runtime abort helper that never returns.
     fn emit_abort_call(&mut self, symbol: &str) -> Result<(), String> {
+        if self.hosted_traps {
+            let (code, message) = match symbol {
+                "ori_abort_division_by_zero" => (5, "ori integer division or remainder by zero"),
+                "ori_abort_division_overflow" => (
+                    6,
+                    "ori integer division overflow: the minimum value has no positive counterpart",
+                ),
+                "ori_abort_concurrent_modification" => {
+                    (7, "concurrent modification during iteration")
+                }
+                "ori_abort_shift_overflow" => {
+                    (9, "ori shift count out of range: must be in 0..bit_width")
+                }
+                _ => (2, "ori runtime abort"),
+            };
+            self.emit_host_trap_return(code, Some(message), true)?;
+            return Ok(());
+        }
         let abort_ref = *self
             .func_refs
             .get(symbol)
@@ -15300,6 +16270,10 @@ impl<'a> FuncCodegen<'a> {
 
         self.builder.seal_block(nonzero_block);
         self.builder.switch_to_block(nonzero_block);
+        // The abort path set `terminated`; the nonzero block is a live
+        // continuation and must not inherit it, or the enclosing statement
+        // list would skip the rest of the block.
+        self.terminated = false;
 
         if signed {
             let min = match self.builder.func.dfg.value_type(lv).bits() {
@@ -15324,6 +16298,7 @@ impl<'a> FuncCodegen<'a> {
 
             self.builder.seal_block(ok_block);
             self.builder.switch_to_block(ok_block);
+            self.terminated = false;
         }
         Ok(())
     }
@@ -15523,7 +16498,55 @@ impl<'a> FuncCodegen<'a> {
             }
             And => self.builder.ins().band(lv, rv),
             Or => self.builder.ins().bor(lv, rv),
+            // GFX-BITWISE-1: bitwise ops on integers. `And`/`Or` above are the
+            // logical `and`/`or` keywords; the symbolic operators are distinct.
+            Band => self.builder.ins().band(lv, rv),
+            Bor => self.builder.ins().bor(lv, rv),
+            Bxor => self.builder.ins().bxor(lv, rv),
+            Shl => {
+                self.emit_shift_guard(lv, rv)?;
+                self.builder.ins().ishl(lv, rv)
+            }
+            Shr => {
+                self.emit_shift_guard(lv, rv)?;
+                if unsigned {
+                    self.builder.ins().ushr(lv, rv)
+                } else {
+                    self.builder.ins().sshr(lv, rv)
+                }
+            }
         })
+    }
+
+    /// GFX-BITWISE-1: trap when the shift count is negative or >= the LHS bit
+    /// width. Without the guard, Cranelift's shift instructions wrap or are
+    /// target-dependent for out-of-range counts.
+    fn emit_shift_guard(&mut self, lv: ir::Value, rv: ir::Value) -> Result<(), String> {
+        use ir::condcodes::IntCC;
+        let bits = self.builder.func.dfg.value_type(lv).bits() as i64;
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let width = self.builder.ins().iconst(types::I64, bits);
+        let ge_zero = self
+            .builder
+            .ins()
+            .icmp(IntCC::SignedGreaterThanOrEqual, rv, zero);
+        let lt_width = self.builder.ins().icmp(IntCC::SignedLessThan, rv, width);
+        let in_range = self.builder.ins().band(ge_zero, lt_width);
+
+        let ok_block = self.builder.create_block();
+        let bad_block = self.builder.create_block();
+        self.builder
+            .ins()
+            .brif(in_range, ok_block, &[], bad_block, &[]);
+
+        self.builder.seal_block(bad_block);
+        self.builder.switch_to_block(bad_block);
+        self.emit_abort_call("ori_abort_shift_overflow")?;
+
+        self.builder.seal_block(ok_block);
+        self.builder.switch_to_block(ok_block);
+        self.terminated = false;
+        Ok(())
     }
 
     /// Compare two `optional[T]` values for equality (eq=true) or inequality (eq=false).

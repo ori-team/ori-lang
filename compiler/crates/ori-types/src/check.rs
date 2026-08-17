@@ -2984,6 +2984,23 @@ impl<'a> Checker<'a> {
                         self.expect_bool(&t, operand.span());
                         Ty::Bool
                     }
+                    UnaryOp::BitNot => {
+                        if !t.is_integer() && !t.is_error() {
+                            self.sink.emit(
+                                Diagnostic::error(
+                                    "type.unary_bitnot_non_integer",
+                                    format!(
+                                        "unary `~` applied to non-integer type `{}`",
+                                        t.display_in(self.def_map)
+                                    ),
+                                )
+                                .with_label(Label::primary(self.file_id, *span, "here"))
+                                .with_action("use an integer operand"),
+                            );
+                            return Ty::Error;
+                        }
+                        t
+                    }
                 }
             }
             Expr::Binary { op, lhs, rhs, span } => {
@@ -3617,6 +3634,26 @@ impl<'a> Checker<'a> {
                                 }
                                 *elem.clone()
                             }
+                            Ty::Buffer(elem) => {
+                                if !idx_ty.is_assignable_to(&Ty::Int) && !idx_ty.is_error() {
+                                    self.sink.emit(
+                                        Diagnostic::error(
+                                            "type.index_not_int",
+                                            format!(
+                                                "buffer index must be `int`, found `{}`",
+                                                idx_ty.display_in(self.def_map)
+                                            ),
+                                        )
+                                        .with_label(Label::primary(
+                                            self.file_id,
+                                            *span,
+                                            "index here",
+                                        ))
+                                        .with_action("use an integer index"),
+                                    );
+                                }
+                                *elem.clone()
+                            }
                             Ty::Map(key, val) => {
                                 if !idx_ty.is_assignable_to(key) && !idx_ty.is_error() {
                                     self.sink.emit(
@@ -3676,18 +3713,18 @@ impl<'a> Checker<'a> {
                             _ if obj_ty.is_error() || obj_ty.contains_infer() => Ty::Infer(0),
                             _ => {
                                 self.sink.emit(
-                                    Diagnostic::error(
-                                        "type.not_indexable",
-                                        format!(
-                                            "type `{}` does not support indexing",
-                                            obj_ty.display_in(self.def_map)
+                                        Diagnostic::error(
+                                            "type.not_indexable",
+                                            format!(
+                                                "type `{}` does not support indexing",
+                                                obj_ty.display_in(self.def_map)
+                                            ),
+                                        )
+                                        .with_label(Label::primary(self.file_id, *span, "indexed here"))
+                                        .with_action(
+                                            "only list, buffer, array, map, string, and tuple values can be indexed",
                                         ),
-                                    )
-                                    .with_label(Label::primary(self.file_id, *span, "indexed here"))
-                                    .with_action(
-                                        "only list, map, string, and tuple values can be indexed",
-                                    ),
-                                );
+                                    );
                                 Ty::Error
                             }
                         }
@@ -3701,7 +3738,7 @@ impl<'a> Checker<'a> {
                         }
                         // Slicing returns same collection type
                         match &obj_ty {
-                            Ty::List(_) | Ty::String => obj_ty,
+                            Ty::Buffer(_) | Ty::List(_) | Ty::String => obj_ty,
                             _ if obj_ty.is_error() || obj_ty.contains_infer() => Ty::Infer(0),
                             _ => {
                                 self.sink.emit(
@@ -3826,6 +3863,53 @@ impl<'a> Checker<'a> {
                             span,
                             "here",
                         )),
+                    );
+                    Ty::Error
+                }
+            }
+            // GFX-BITWISE-1: bitwise ops require matching integer types.
+            Band | Bor | Bxor => {
+                if lt.is_integer() && lt == rt {
+                    lt.clone()
+                } else if lt.is_error() || rt.is_error() {
+                    Ty::Error
+                } else {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "type.bitwise_type_mismatch",
+                            format!(
+                                "bitwise operator `{}` requires matching integer types, got `{}` and `{}`",
+                                operator_symbol(op),
+                                lt.display_in(self.def_map),
+                                rt.display_in(self.def_map)
+                            ),
+                        )
+                        .with_label(Label::primary(self.file_id, span, "here"))
+                        .with_action("use integer operands of the same width"),
+                    );
+                    Ty::Error
+                }
+            }
+            // Shifts: LHS integer, RHS integer (width may differ); the result
+            // keeps the LHS width. The shift count is validated at runtime.
+            Shl | Shr => {
+                if lt.is_integer() && rt.is_integer() {
+                    lt.clone()
+                } else if lt.is_error() || rt.is_error() {
+                    Ty::Error
+                } else {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "type.shift_type_mismatch",
+                            format!(
+                                "shift operator `{}` requires integer operands, got `{}` and `{}`",
+                                operator_symbol(op),
+                                lt.display_in(self.def_map),
+                                rt.display_in(self.def_map)
+                            ),
+                        )
+                        .with_label(Label::primary(self.file_id, span, "here"))
+                        .with_action("use integer operands"),
                     );
                     Ty::Error
                 }
@@ -5910,7 +5994,7 @@ impl<'a> Checker<'a> {
 
     fn lower(&mut self, ty: &ori_ast::ty::Type, type_params: &[SmolStr]) -> Ty {
         self.mark_type_alias_usage(ty);
-        let raw = crate::lower::lower_type_with_local_aliases(
+        let raw = crate::lower::lower_type_with_local_aliases_and_structs(
             ty,
             self.namespace,
             type_params,
@@ -5919,6 +6003,7 @@ impl<'a> Checker<'a> {
             self.sink,
             &self.aliases,
             &self.local_type_aliases,
+            self.struct_sigs,
         );
         expand_ty_aliases(raw, self.def_map, &self.type_alias_map)
     }
@@ -6187,10 +6272,9 @@ impl<'a> Checker<'a> {
             Ty::ConstInt(_, _) => true,
             // Elements live inline, so an array moves exactly when they do.
             Ty::Array(elem, _) => self.is_transferable_ty(elem),
-            // A slice points at a list owned by the sending side; letting it
-            // cross a task boundary would share that list without the receiver
-            // owning it.
-            Ty::Slice(_) => false,
+            // A buffer/slice owns its heap block/window; sharing without
+            // ownership would dangle — not transferable.
+            Ty::Buffer(_) | Ty::Slice(_) => false,
             Ty::Bool
             | Ty::Int
             | Ty::Int8
@@ -6212,13 +6296,13 @@ impl<'a> Checker<'a> {
             | Ty::TaskJoinError
             | Ty::ChannelSendError
             | Ty::ChannelReceiveError => true,
-            Ty::Optional(inner)
-            | Ty::List(inner)
-            | Ty::Set(inner)
-            | Ty::Range(inner)
-            | Ty::Future(inner)
-            | Ty::TaskJob(inner)
-            | Ty::Channel(inner) => self.is_transferable_ty(inner),
+        Ty::Optional(inner)
+        | Ty::List(inner)
+        | Ty::Set(inner)
+        | Ty::Range(inner)
+        | Ty::Future(inner)
+        | Ty::TaskJob(inner)
+        | Ty::Channel(inner) => self.is_transferable_ty(inner),
             Ty::Map(key, value) | Ty::Result(key, value) => {
                 self.is_transferable_ty(key) && self.is_transferable_ty(value)
             }
@@ -6781,9 +6865,10 @@ impl<'a> Checker<'a> {
                 }
                 self.check_collection_runtime_limits(elem, span);
             }
-            Ty::Optional(inner)
-            | Ty::List(inner)
-            | Ty::Range(inner)
+        Ty::Optional(inner)
+        | Ty::List(inner)
+        | Ty::Buffer(inner)
+        | Ty::Range(inner)
             | Ty::Lazy(inner)
             | Ty::Future(inner)
             | Ty::TaskJob(inner)
@@ -6936,6 +7021,7 @@ impl<'a> Checker<'a> {
                 self.unify(ok1, ok2) && self.unify(err1, err2)
             }
             (List(x), List(y))
+            | (Buffer(x), Buffer(y))
             | (Slice(x), Slice(y))
             | (Set(x), Set(y))
             | (Range(x), Range(y))
@@ -7400,7 +7486,7 @@ impl<'a> Checker<'a> {
                 let base_ty = self.infer_lvalue_ty(base);
                 self.infer_expr(index);
                 match &base_ty {
-                    Ty::List(elem) => *elem.clone(),
+                    Ty::List(elem) | Ty::Buffer(elem) | Ty::Array(elem, _) => *elem.clone(),
                     Ty::Map(_, val) => *val.clone(),
                     _ => Ty::Infer(0),
                 }
@@ -7616,6 +7702,7 @@ fn ty_is_locally_inferable(ty: &Ty) -> bool {
         Ty::Error | Ty::Infer(_) | Ty::Never | Ty::Void => false,
         Ty::Optional(inner)
         | Ty::List(inner)
+        | Ty::Buffer(inner)
         | Ty::Set(inner)
         | Ty::Range(inner)
         | Ty::Lazy(inner)
@@ -7792,10 +7879,24 @@ fn is_known_attr(name: &str) -> bool {
     matches!(
         name,
         "test" | "deprecated" | "inline" | "no_inline" | "cfg" | "repr" | "c_export"
-    )
+    ) || (name.contains('.') && is_valid_namespaced_attr(name))
+}
+
+fn is_valid_namespaced_attr(name: &str) -> bool {
+    let mut parts = name.split('.');
+    let namespace = parts.next().unwrap_or("");
+    let attr_name = parts.next().unwrap_or("");
+    !namespace.is_empty()
+        && !attr_name.is_empty()
+        && parts.next().is_none()
+        && namespace.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && attr_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn attr_applies_to(name: &str, target: &str) -> bool {
+    if name.contains('.') {
+        return true;
+    }
     match name {
         "test" | "inline" | "no_inline" | "c_export" => target == "func",
         "deprecated" | "cfg" => true,
@@ -7805,14 +7906,15 @@ fn attr_applies_to(name: &str, target: &str) -> bool {
 }
 
 fn attr_args_valid(name: &str, attr: &Attr) -> bool {
+    if name.contains('.') {
+        return true;
+    }
     match name {
         "test" | "inline" | "no_inline" => attr.args.is_empty(),
         "c_export" => matches!(attr.args.as_slice(), [] | [AttrArg::String(_, _)]),
         "deprecated" => matches!(attr.args.as_slice(), [AttrArg::String(_, _)]),
-        "cfg" => matches!(
-            attr.args.as_slice(),
-            [AttrArg::String(_, _)] | [AttrArg::Named { .. }]
-        ),
+        "repr" => matches!(attr.args.as_slice(), [AttrArg::String(value, _)] if value == "C"),
+        "cfg" => matches!(attr.args.as_slice(), [AttrArg::Cfg(_)]),
         _ => true,
     }
 }
@@ -7831,7 +7933,8 @@ fn attr_arg_action(name: &str) -> &'static str {
         "test" | "inline" | "no_inline" => "remove the attribute arguments",
         "c_export" => "use `@c_export` or `@c_export(\"symbol_name\")`",
         "deprecated" => "use `@deprecated(\"message\")` with exactly one string message",
-        "cfg" => "use `@cfg(\"condition\")` or `@cfg(key: value)`",
+        "repr" => "use exactly `@repr(\"C\")`",
+        "cfg" => "use one structured predicate, such as `@cfg(target_os: linux)`",
         _ => "use the documented argument form for this attribute",
     }
 }
@@ -8374,6 +8477,30 @@ fn comparison_op_text(op: BinaryOp) -> &'static str {
         BinaryOp::Gt => ">",
         BinaryOp::Ge => ">=",
         _ => "<comparison>",
+    }
+}
+
+/// Symbol of a bitwise/shift operator for diagnostics.
+fn operator_symbol(op: BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Band => "&",
+        BinaryOp::Bor => "|",
+        BinaryOp::Bxor => "^",
+        BinaryOp::Shl => "<<",
+        BinaryOp::Shr => ">>",
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Rem => "%",
+        BinaryOp::Eq => "==",
+        BinaryOp::Ne => "!=",
+        BinaryOp::Lt => "<",
+        BinaryOp::Le => "<=",
+        BinaryOp::Gt => ">",
+        BinaryOp::Ge => ">=",
+        BinaryOp::And => "and",
+        BinaryOp::Or => "or",
     }
 }
 

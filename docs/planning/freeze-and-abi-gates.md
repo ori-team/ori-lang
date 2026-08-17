@@ -1,8 +1,8 @@
 # Freeze and ABI gates (FREEZE-1 / ABI-1)
 
-> **Status (2026-07-19):** **FREEZE-1 closed**; development line is now **`0.4`**.
-> **ABI-1 remains in force** — the `0.4` surface work does not change native
-> layouts, so `ori-native-abi-1` still holds and its rules below still apply.
+> **Status (2026-08-09):** **FREEZE-1 closed**; the workspace remains
+> **`0.3.8-dev`** and no `0.4.0` cut has occurred. **ABI-1 remains in force** —
+> `ori-native-abi-1` still holds and its rules below still apply.
 > This file also carries the **1.0 readiness checklist** (merged 2026-07-17 from
 > the former `freeze-1-0-readiness.md`; the FREEZE-1/ABI-1 rules were duplicated).
 
@@ -11,33 +11,32 @@
 ## FREEZE-1 — **CLOSED 2026-07-19** (window ran 2026-07-13 → 2026-07-19)
 
 **Opened:** 2026-07-13  
-**Closed:** 2026-07-19 · next line: **`0.4`** (`compiler/Cargo.toml` = `0.4.0`)
+**Closed:** 2026-07-19 · current workspace: **`0.3.8-dev`**. A future `0.4`
+line requires an explicit breaking or major milestone decision; closing the
+freeze did not perform that version cut.
 
 **Why now:** the freeze existed to stabilize the S3 surface, and it did its
 job — the `0.3.x` series shipped the ARC campaign, the incremental cycle
 collector, `ori update`, the CI native-route fix and the silent match-guard
-bug fix, with **no** intentional surface break. The queued work is different
-in kind: a set of *additive* reading-first surface features decided on
-2026-07-19 (`match` as an expression, `if ok(v) =`, `newtype`, or-patterns,
-compact `apply`, struct destructuring — see
-[`roadmap-maturidade-v0.4-v0.5.md`](roadmap-maturidade-v0.4-v0.5.md) §10).
-Those cannot land under a surface freeze, and holding them back no longer
-buys stability — it only splits the trunk.
+bug fix, with **no** intentional surface break. Closing the timed gate permits
+reviewed additive work, but does not by itself authorize a breaking surface or
+declare a new released version line.
 
 **What the `0.3.x` rules below still bought us (kept as the model for the
 next freeze):** every entry in "Not allowed" stayed unviolated for the whole
 window.
 
-### `0.4` line rules (in force from 2026-07-19)
+### Post-FREEZE-1 rules (current `0.3.8-dev`)
 
-- Surface **additions** decided in the roadmap are allowed; each lands with
-  spec + book + tests, never syntax-only.
+- Small compatible surface **additions** may use `0.3.x`; each lands with spec,
+  guide/reference updates, tests, and CHANGELOG, never syntax-only.
 - Surface **removals/renames** still need an explicit decision recorded in
-  the roadmap first (the S3 "one canonical form" norm did not relax).
+  the roadmap first and normally require a `0.4+` cut (the S3 "one canonical
+  form" norm did not relax).
 - **ABI-1 is untouched:** breaking `ori-native-abi-1` still requires a
   version bump per the ABI section below.
-- Released `0.3.x` binaries keep working; `0.4` programs are not expected to
-  compile on `0.3.x` toolchains (that is the point of the new line).
+- Documents must not present `0.4` as current until the workspace, changelog,
+  package metadata, and release process actually move together.
 
 ### Scope of the freeze that just closed (kept for the record)
 
@@ -63,8 +62,8 @@ window.
 
 ### How to exit freeze — **executed 2026-07-19**
 
-1. ~~Decide end date and next version line~~ → closed 2026-07-19, line `0.4`.
-2. ~~Document in CHANGELOG~~ → recorded under `[Unreleased]` / `0.4.0`.
+1. ~~Decide end date~~ → closed 2026-07-19; no automatic version cut.
+2. ~~Document in CHANGELOG~~ → recorded under `[Unreleased]`.
 3. ~~Update BACKLOG~~ → gate row updated.
 
 Reuse this same 3-step process for any future freeze window.
@@ -73,7 +72,7 @@ Reuse this same 3-step process for any future freeze window.
 
 ## ABI-1 — **DONE** (enforcement in force)
 
-With FREEZE-1 open, **ABI-1 is enforced**:
+After FREEZE-1 closure, **ABI-1 remains enforced**:
 
 | Gate | Rule |
 |------|------|
@@ -121,9 +120,10 @@ With FREEZE-1 open, **ABI-1 is enforced**:
 2. Real programs / feedback without prolonged intentional breaking.
 3. Install path remains Rust-free for end users (M1).
 4. Self-host (M4) is **optional and last** — not required for 1.0 utility.
-5. Explicit CHANGELOG entry when declaring 1.0 (or when closing FREEZE-1 into 0.4/1.0).
+5. Explicit coordinated version, ABI, and CHANGELOG decision before any
+   `0.4` or `1.0` declaration.
 
-Until then: ship **0.3.x** packages under freeze.
+Until then: ship **0.3.x** packages under the post-freeze compatibility rules.
 
 ---
 

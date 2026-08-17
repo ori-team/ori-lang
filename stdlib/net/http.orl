@@ -10,7 +10,15 @@ import ori.convert = conv
 import ori.list = lists
 
 public alias ResponseResult = result[Response, string]
+public alias RequestResult = result[Request, string]
 public alias TextResult = result[string, string]
+
+public struct Request
+    method: string
+    path: string
+    headers: string
+    body: string
+end
 
 public struct Response
     status: int
@@ -91,6 +99,73 @@ public parse_response(raw: string) -> ResponseResult
         })
     end
     return err("invalid HTTP status code")
+end
+
+public build_response(
+    status: int,
+    status_text: string,
+    extra_headers: string,
+    body: string
+) -> string
+    var resp: string = "HTTP/1.1 "
+    resp = str.concat(resp, string(status))
+    resp = str.concat(resp, " ")
+    resp = str.concat(resp, status_text)
+    resp = str.concat(resp, "\r\nConnection: close\r\n")
+    if not str.is_empty(extra_headers)
+        resp = str.concat(resp, extra_headers)
+        if not str.ends_with(extra_headers, "\r\n")
+            resp = str.concat(resp, "\r\n")
+        end
+    end
+    if not str.is_empty(body)
+        const blen: int = str.len(body)
+        resp = str.concat(resp, "Content-Length: ")
+        resp = str.concat(resp, string(blen))
+        resp = str.concat(resp, "\r\n")
+    end
+    resp = str.concat(resp, "\r\n")
+    if not str.is_empty(body)
+        resp = str.concat(resp, body)
+    end
+    return resp
+end
+
+public parse_request(raw: string) -> RequestResult
+    const sep: string = "\r\n\r\n"
+    const at: int = str.index_of(raw, sep)
+    if at < 0
+        return err("HTTP message missing header/body separator")
+    end
+    const head: string = str.slice(raw, 0, at)
+    const body: string = str.slice(raw, at + 4, str.len(raw))
+    const lines: list[string] = str.split(head, "\r\n")
+    if lists.len(lines) == 0
+        return err("empty HTTP request")
+    end
+    const req_line: string = lines[0]
+    const sp1: int = str.index_of(req_line, " ")
+    if sp1 < 0
+        return err("malformed HTTP request line")
+    end
+    const method: string = str.slice(req_line, 0, sp1)
+    const rest: string = str.slice(req_line, sp1 + 1, str.len(req_line))
+    const sp2: int = str.index_of(rest, " ")
+    var path: string = rest
+    if sp2 >= 0
+        path = str.slice(rest, 0, sp2)
+    end
+    var headers: string = ""
+    const nl: int = str.index_of(head, "\r\n")
+    if nl >= 0
+        headers = str.slice(head, nl + 2, str.len(head))
+    end
+    return ok(Request{
+        method: method,
+        path: path,
+        headers: headers,
+        body: body,
+    })
 end
 
 public read_all_text(conn: net.Connection, max_bytes: int) -> TextResult

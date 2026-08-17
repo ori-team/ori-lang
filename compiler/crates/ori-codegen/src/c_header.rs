@@ -32,8 +32,13 @@ pub fn generate_c_header(module: &HirModule, header_file_name: &str) -> Result<S
     header.push_str("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n");
     header.push_str("/* Ori runtime lifecycle and managed-value ownership. */\n");
     header.push_str("int32_t ori_rt_init(void);\n");
+    header.push_str("const char *ori_rt_version(void);\n");
+    header.push_str("const char *ori_rt_abi_version(void);\n");
     header.push_str("void __ori_module_init(void);\n");
     header.push_str("void ori_rt_shutdown(void);\n");
+    header.push_str("void ori_host_clear_error(void);\n");
+    header.push_str("int32_t ori_host_error_code(void);\n");
+    header.push_str("const char *ori_host_error_message(void);\n");
     header.push_str("void ori_arc_retain(void *value);\n");
     header.push_str("void ori_arc_release(void *value);\n");
 

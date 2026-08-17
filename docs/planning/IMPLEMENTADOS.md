@@ -17,7 +17,7 @@ Este documento registra o estado atual de implementação da linguagem Ori (conf
   - Triple strings multi-linha (`"""..."""`) com desindentação automática baseada na margem esquerda (*baseline stripping*) em runtime, tanto para strings comuns quanto para f-strings interpoladas.
   - Validação de escapes unicode em bytes string (rejeição de `\u{...}` no parser).
 - **Identificadores**: Permite identificadores unicode e palavras contextualizadas (como o uso de `times` como identificador local fora de contextos especiais).
-- **Atributos**: Parsing e validação de atributos em declarações de alto nível (ex. `@deprecated`, `@test`).
+- **Atributos**: Parsing e validação de atributos em declarações de alto nível (ex. `@deprecated`, `@test`). `@cfg` possui predicados estruturados, features de manifesto e filtra itens antes da resolução (LANG-CFG-1, 2026-08-10).
 
 ---
 

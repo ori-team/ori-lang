@@ -1,6 +1,6 @@
 # Backend support matrix
 
-Status: current as of 2026-08-08 (FREEZE-1 / workspace 0.3.8-dev).
+Status: current as of 2026-08-10 (FREEZE-1 / workspace 0.3.8-dev).
 Residual cleanup: [`../planning/qa/residual-cleanup-2026-07-13.md`](../planning/qa/residual-cleanup-2026-07-13.md) · audit `tools/qa/residual_audit.sh`.
 
 This page separates three things:
@@ -22,6 +22,7 @@ Legend:
 | --- | --- | --- | --- | --- |
 | Basic expressions and statements | yes | yes | partial | Native is the main execution path. C/debug is not full parity. |
 | Functions and imports | yes | yes | partial | Native tests cover local imports, transitive imports and entry module. |
+| Structured `@cfg` | yes | yes | yes | Filtering occurs in the shared frontend before HIR, so AOT, JIT, C/debug, docs, and exported ABI receive the same active declarations. |
 | Structs, enums and tuples | yes | yes | partial | Native ABI has layout tests. |
 | Traits and `any[Trait]` | yes | yes | partial | Native tests cover dynamic dispatch. |
 | Generics and monomorphization | yes | yes | partial | Native tests cover generic functions and imported generic traits. |
@@ -32,7 +33,7 @@ Legend:
 | `ori.net` (TCP/TLS/UDP) | yes | yes | no | Native runtime only (rustls). Sync path blocking; async uses shared I/O reactor with `poll(2)` readiness (STDLIB-4k) for read/write/accept/UDP; connect/TLS still worker+future (STDLIB-4b). |
 | File I/O async | yes | yes | no | L1 `fs.read_text_async` / `write_text_async` (worker + future); L2 `read_text_in_background` Jobs. |
 | `bytes` with internal NUL | yes | partial | partial | Native preserves embedded NUL bytes; the C/debug backend does not expose the length-carrying `bytes` representation. `string` still rejects internal NUL at conversion boundary. |
-| Unicode `string.len`, `slice`, `index_of` | yes | yes | partial | Indices are Unicode scalar indices, not byte offsets. |
+| Unicode `len(string)`, methods, and iteration | yes | yes | yes | Global/method length, slices, indexing, `index_of`, `chars`, and direct iteration use Unicode scalar values, not UTF-8 byte offsets. Generated-C execution covers accents, emoji, and rejection of malformed input. Grapheme APIs remain separate future library work. |
 | Async functions and `await` | yes | yes* | no | *Promised native subset closed (LANG-1). Rare residual layout failures only — see inventory. C/debug rejects async. |
 | `using` resource cleanup | yes | yes | partial | Sync and async `using` supported; async dispose on normal return, `try`, cancel, fail, and `break`. |
 | `core.Destructor` automatic cleanup | yes | yes | no | Native AOT/JIT run the callback before field cleanup. C/debug rejects it with `backend.c_unsupported` rather than changing semantics. |

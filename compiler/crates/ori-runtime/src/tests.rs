@@ -1,12 +1,36 @@
 use super::*;
 use ori_types::stdlib::stdlib_runtime_functions;
 use std::collections::HashSet;
+use std::ffi::CStr;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Mutex;
 
 static TEST_DTOR_CALLS: AtomicUsize = AtomicUsize::new(0);
 static TEST_EXECUTOR_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
 static TEST_ARC_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn exported_runtime_version_queries_are_stable_and_nul_terminated() {
+    let runtime_version = unsafe { CStr::from_ptr(ori_rt_version()) };
+    let abi_version = unsafe { CStr::from_ptr(ori_rt_abi_version()) };
+
+    assert_eq!(runtime_version.to_str().unwrap(), ORI_RUNTIME_VERSION);
+    assert_eq!(abi_version.to_str().unwrap(), ORI_ABI_VERSION);
+    assert!(!runtime_version.to_bytes().is_empty());
+    assert!(!abi_version.to_bytes().is_empty());
+}
+
+#[test]
+fn hosted_error_slot_is_thread_local_and_clearable() {
+    unsafe { ori_host_report_error(8, c"list index out of bounds".as_ptr().cast()) };
+    assert_eq!(ori_host_error_code(), 8);
+    let message = unsafe { CStr::from_ptr(ori_host_error_message()) };
+    assert_eq!(message.to_str().unwrap(), "list index out of bounds");
+
+    ori_host_clear_error();
+    assert_eq!(ori_host_error_code(), 0);
+    assert!(ori_host_error_message().is_null());
+}
 
 unsafe extern "C" fn test_destructor(_ptr: *mut u8) {
     TEST_DTOR_CALLS.fetch_add(1, AtomicOrdering::SeqCst);
@@ -117,10 +141,11 @@ fn string_and_bytes_use_nul_terminated_payload_layout() {
     arc_state().lock().unwrap().edges.clear();
 
     unsafe {
-        let text = cstring_from_str("ori");
+        let text = cstring_from_str("\u{00e1}\u{00e9}\u{1f642}");
         assert_eq!(ori_len(text), 3);
-        assert_eq!(cstr_bytes(text), b"ori");
-        assert_eq!(*text.add(3), 0);
+        assert_eq!(ori_string_len(text), 3);
+        assert_eq!(cstr_bytes(text), "\u{00e1}\u{00e9}\u{1f642}".as_bytes());
+        assert_eq!(*text.add("\u{00e1}\u{00e9}\u{1f642}".len()), 0);
         assert!(header_for_registered(text).is_some());
         ori_arc_release(text);
 

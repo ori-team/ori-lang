@@ -1,0 +1,32 @@
+module app.vec3_add_loop
+
+-- Measures scalar struct instantiation and addition in tight loop (VALUE-PERF-1).
+
+imports
+    ori.io = io
+end
+
+struct Vec3
+    x: float
+    y: float
+    z: float
+end
+
+add_vec3(a: Vec3, b: Vec3) -> Vec3
+    return Vec3 {
+        x: a.x + b.x,
+        y: a.y + b.y,
+        z: a.z + b.z,
+    }
+end
+
+main()
+    var v: Vec3 = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+    const step: Vec3 = Vec3 { x: 0.5, y: 1.0, z: 1.5 }
+    var i: int = 0
+    while i < 5000000
+        v = add_vec3(v, step)
+        i = i + 1
+    end
+    io.println(string(v.x + v.y + v.z))
+end

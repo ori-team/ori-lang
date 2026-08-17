@@ -1,3 +1,4 @@
+pub mod bindgen;
 pub mod debugger;
 pub mod doc_export;
 pub mod emit;

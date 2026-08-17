@@ -420,7 +420,18 @@ fn scan_stdlib_orl(path: &Path, content: &str, catalog: &mut StdlibCatalog) {
     let file_id = ori_diagnostics::FileId(0);
     let mut sink = ori_diagnostics::DiagnosticSink::default();
     let tokens = ori_lexer::lex(content, file_id, &mut sink);
-    let source_file = ori_parser::parse(&tokens, content, file_id, &mut sink);
+    let mut source_file = ori_parser::parse(&tokens, content, file_id, &mut sink);
+    if let Err(error) = ori_driver::pipeline::filter_intrinsic_source_for_current_configuration(
+        &mut source_file,
+        file_id,
+        &mut sink,
+    ) {
+        eprintln!(
+            "ori-lsp: cannot index stdlib module `{}`: {error}",
+            path.display()
+        );
+        return;
+    }
     let namespace = source_file.namespace.name.to_string();
 
     for item in &source_file.items {

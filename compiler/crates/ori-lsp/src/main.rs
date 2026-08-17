@@ -199,10 +199,10 @@ impl Backend {
         }?;
         let index = {
             let project = self.project.read().await;
-            project
-                .document_index(uri)
-                .cloned()
-                .unwrap_or_else(|| SemanticIndex::build(&source))
+            project.document_index(uri).cloned().unwrap_or_else(|| {
+                let path = uri.to_file_path().ok();
+                SemanticIndex::build(&source, path.as_deref())
+            })
         };
         Some((source, index))
     }
@@ -368,7 +368,8 @@ impl LanguageServer for Backend {
         }
         if let Some(target_uri) = self.resolve_import_target(&index, &symbol).await {
             if let Some((target_source, _)) = self.get_source_and_index(&target_uri).await {
-                let target_index = SemanticIndex::build(&target_source);
+                let target_path = target_uri.to_file_path().ok();
+                let target_index = SemanticIndex::build(&target_source, target_path.as_deref());
                 if let Some(range) = target_index.definition(&symbol) {
                     return Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
                         target_uri, range,
@@ -798,7 +799,8 @@ impl LanguageServer for Backend {
         let open_docs: Vec<(Url, String)> = project.all_open_documents();
 
         for (uri, source) in &open_docs {
-            let index = SemanticIndex::build(source);
+            let path = uri.to_file_path().ok();
+            let index = SemanticIndex::build(source, path.as_deref());
             for sym in index.all_symbols() {
                 if sym.name.to_lowercase().contains(&query) || query.is_empty() {
                     results.push(SymbolInformation {

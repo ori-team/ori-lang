@@ -52,10 +52,17 @@ cd extensions/vscode-orl && npm install && npm run package:vsix && npm run insta
 | `ori.lsp.path` | — | Path to `ori-lsp` |
 | `ori.compiler.path` | — | Path to `ori` CLI |
 | `ori.stdlib.root` | `ORI_STDLIB_ROOT` | Stdlib directory |
+| `ori.cfg.target` | `ORI_TARGET_TRIPLE` | Target facts used by `@cfg` |
+| `ori.cfg.executionProfile` | `ORI_EXECUTION_PROFILE` | `standalone` or `embedded` |
+| `ori.cfg.features` | `ORI_FEATURES` | Manifest-declared enabled features |
+| `ori.cfg.noDefaultFeatures` | `ORI_NO_DEFAULT_FEATURES=1` | Disable manifest defaults |
 | `ori.runtime.lib` | `ORI_RUNTIME_LIB` | Native staticlib |
 | `ori.runtime.cdylib` | `ORI_RUNTIME_CDYLIB` | JIT cdylib |
 | `ori.useJit` | `ORI_USE_JIT=1` | Force JIT for extension terminals (default true) |
 | `ori.useAot` | `ORI_USE_AOT=1` | Force AOT for extension terminals |
+
+Changing any `ori.cfg.*` setting restarts the language server automatically so
+diagnostics, completion, CLI terminals, and debugging keep one active program.
 
 Binary discovery (when paths empty): `PATH`, then monorepo  
 `compiler/target/{debug,release}/`, then root `target/{debug,release}/`.

@@ -1,0 +1,52 @@
+module app.mat3_multiply
+
+-- Measures 3x3 matrix multiplication and copies (VALUE-PERF-1).
+
+imports
+    ori.io = io
+end
+
+struct Mat3
+    m00: float
+    m01: float
+    m02: float
+    m10: float
+    m11: float
+    m12: float
+    m20: float
+    m21: float
+    m22: float
+end
+
+mul_mat3(a: Mat3, b: Mat3) -> Mat3
+    return Mat3 {
+        m00: a.m00 * b.m00 + a.m01 * b.m10 + a.m02 * b.m20,
+        m01: a.m00 * b.m01 + a.m01 * b.m11 + a.m02 * b.m21,
+        m02: a.m00 * b.m02 + a.m01 * b.m12 + a.m02 * b.m22,
+        m10: a.m10 * b.m00 + a.m11 * b.m10 + a.m12 * b.m20,
+        m11: a.m10 * b.m01 + a.m11 * b.m11 + a.m12 * b.m21,
+        m12: a.m10 * b.m02 + a.m11 * b.m12 + a.m12 * b.m22,
+        m20: a.m20 * b.m00 + a.m21 * b.m10 + a.m22 * b.m20,
+        m21: a.m20 * b.m01 + a.m21 * b.m11 + a.m22 * b.m21,
+        m22: a.m20 * b.m02 + a.m21 * b.m12 + a.m22 * b.m22,
+    }
+end
+
+main()
+    var m: Mat3 = Mat3 {
+        m00: 1.0, m01: 0.0, m02: 0.0,
+        m10: 0.0, m11: 1.0, m12: 0.0,
+        m20: 0.0, m21: 0.0, m22: 1.0,
+    }
+    const rot: Mat3 = Mat3 {
+        m00: 0.9999, m01: 0.001, m02: 0.0,
+        m10: -0.001, m11: 0.9999, m12: 0.0,
+        m20: 0.0,    m21: 0.0,    m22: 1.0,
+    }
+    var i: int = 0
+    while i < 1000000
+        m = mul_mat3(m, rot)
+        i = i + 1
+    end
+    io.println(string(m.m00 + m.m11 + m.m22))
+end

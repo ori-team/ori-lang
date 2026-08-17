@@ -64,21 +64,87 @@ static inline ori_string_t ori_string_concat(ori_string_t a, ori_string_t b) {
     out[len] = '\0';
     return (ori_string_t){ .data = out, .len = len };
 }
+static inline size_t ori_utf8_scalar_width(unsigned char leading_byte) {
+    if (leading_byte < 0x80u) return 1;
+    if ((leading_byte & 0xE0u) == 0xC0u) return 2;
+    if ((leading_byte & 0xF0u) == 0xE0u) return 3;
+    if ((leading_byte & 0xF8u) == 0xF0u) return 4;
+    return 1;
+}
+static inline bool ori_utf8_is_valid(const char* data, size_t len) {
+    size_t offset = 0;
+    while (offset < len) {
+        unsigned char first = (unsigned char)data[offset];
+        if (first < 0x80u) {
+            offset++;
+            continue;
+        }
+        size_t width = ori_utf8_scalar_width(first);
+        if (width == 1 || width > len - offset) return false;
+        for (size_t i = 1; i < width; i++) {
+            if (((unsigned char)data[offset + i] & 0xC0u) != 0x80u) return false;
+        }
+        uint32_t scalar = first & (0x7Fu >> width);
+        for (size_t i = 1; i < width; i++) {
+            scalar = (scalar << 6) | ((unsigned char)data[offset + i] & 0x3Fu);
+        }
+        if ((width == 2 && scalar < 0x80u)
+            || (width == 3 && scalar < 0x800u)
+            || (width == 4 && scalar < 0x10000u)
+            || (scalar >= 0xD800u && scalar <= 0xDFFFu)
+            || scalar > 0x10FFFFu) {
+            return false;
+        }
+        offset += width;
+    }
+    return true;
+}
+static inline size_t ori_utf8_next_offset(ori_string_t s, size_t byte_offset) {
+    size_t width = ori_utf8_scalar_width((unsigned char)s.data[byte_offset]);
+    return width <= s.len - byte_offset ? byte_offset + width : byte_offset + 1;
+}
+static inline int64_t ori_utf8_scalar_count(ori_string_t s) {
+    int64_t count = 0;
+    for (size_t offset = 0; offset < s.len; offset = ori_utf8_next_offset(s, offset)) {
+        count++;
+    }
+    return count;
+}
+static inline bool ori_utf8_scalar_offset(
+    ori_string_t s,
+    int64_t scalar_index,
+    size_t* byte_offset
+) {
+    if (scalar_index < 0) return false;
+    int64_t current_index = 0;
+    size_t current_offset = 0;
+    while (current_offset < s.len && current_index < scalar_index) {
+        current_offset = ori_utf8_next_offset(s, current_offset);
+        current_index++;
+    }
+    if (current_index != scalar_index) return false;
+    *byte_offset = current_offset;
+    return true;
+}
 static inline ori_string_t ori_string_slice(ori_string_t s, int64_t start, int64_t end) {
-    if (start < 0 || end < start || end > (int64_t)s.len) {
+    size_t byte_start = 0;
+    size_t byte_end = 0;
+    if (end < start
+        || !ori_utf8_scalar_offset(s, start, &byte_start)
+        || !ori_utf8_scalar_offset(s, end, &byte_end)) {
         ori_abort_bounds("ori string slice bounds out of range");
     }
-    size_t len = (size_t)(end - start);
+    size_t len = byte_end - byte_start;
     char* out = (char*)malloc(len + 1);
     if (!out) abort();
     if (len > 0) {
-        memcpy(out, s.data + start, len);
+        memcpy(out, s.data + byte_start, len);
     }
     out[len] = '\0';
     return (ori_string_t){ .data = out, .len = len };
 }
 static inline ori_string_t ori_string_get(ori_string_t s, int64_t index) {
-    if (index < 0 || index >= (int64_t)s.len) {
+    if (index < 0 || index >= ori_utf8_scalar_count(s)) {
         ori_abort_bounds("ori string slice bounds out of range");
     }
     return ori_string_slice(s, index, index + 1);
@@ -1660,8 +1726,8 @@ static inline long long ori_arc_collect_cycles(void) {
 }
 
 /* LANG-2: real C/debug bodies for string / convert / io / list helpers. */
-static inline int64_t ori_string_len(ori_string_t s) { return (int64_t)s.len; }
-static inline int64_t ori_len(ori_string_t s) { return (int64_t)s.len; }
+static inline int64_t ori_string_len(ori_string_t s) { return ori_utf8_scalar_count(s); }
+static inline int64_t ori_len(ori_string_t s) { return ori_utf8_scalar_count(s); }
 static inline ori_string_t ori_string_dup_range(const char* data, size_t len) {
     char* out = (char*)malloc(len + 1);
     if (!out) abort();
@@ -1692,6 +1758,15 @@ static inline ori_string_t ori_string_to_lower(ori_string_t s) {
     for (size_t i = 0; i < s.len; i++) out[i] = (char)tolower((unsigned char)s.data[i]);
     out[s.len] = '\0';
     return (ori_string_t){ .data = out, .len = s.len };
+}
+static inline bool ori_string_is_ascii(ori_string_t s) {
+    for (size_t i = 0; i < s.len; i++) {
+        if ((unsigned char)s.data[i] > 127) return false;
+    }
+    return true;
+}
+static inline ori_string_t ori_string_case_fold(ori_string_t s) {
+    return ori_string_to_lower(s);
 }
 static inline ori_string_t ori_string_to_upper(ori_string_t s) {
     char* out = (char*)malloc(s.len + 1);
@@ -1739,8 +1814,10 @@ static inline bool ori_string_ends_with(ori_string_t s, ori_string_t sub) {
 static inline int64_t ori_string_index_of(ori_string_t s, ori_string_t sub) {
     if (sub.len == 0) return 0;
     if (sub.len > s.len) return -1;
-    for (size_t i = 0; i + sub.len <= s.len; i++) {
-        if (memcmp(s.data + i, sub.data, sub.len) == 0) return (int64_t)i;
+    int64_t scalar_index = 0;
+    for (size_t offset = 0; offset + sub.len <= s.len; scalar_index++) {
+        if (memcmp(s.data + offset, sub.data, sub.len) == 0) return scalar_index;
+        offset = ori_utf8_next_offset(s, offset);
     }
     return -1;
 }
@@ -1795,9 +1872,11 @@ static inline ori_list_t ori_string_split(ori_string_t s, ori_string_t delimiter
 }
 static inline ori_list_t ori_string_chars(ori_string_t s) {
     ori_list_t out = ori_list_new(sizeof(ori_string_t));
-    for (size_t i = 0; i < s.len; i++) {
-        ori_string_t ch = ori_string_dup_range(s.data + i, 1);
+    for (size_t offset = 0; offset < s.len; ) {
+        size_t next = ori_utf8_next_offset(s, offset);
+        ori_string_t ch = ori_string_dup_range(s.data + offset, next - offset);
         ori_list_push(&out, &ch);
+        offset = next;
     }
     return out;
 }
@@ -1861,6 +1940,9 @@ static inline ori_opt_str_t ori_io_read_line(void) {
     }
     size_t n = strlen(buf);
     while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) n--;
+    if (!ori_utf8_is_valid(buf, n)) {
+        return (ori_opt_str_t){ .has_value = false, .value = ORI_STR("") };
+    }
     return (ori_opt_str_t){ .has_value = true, .value = ori_string_dup_range(buf, n) };
 #else
     char* line = NULL;
@@ -1871,6 +1953,10 @@ static inline ori_opt_str_t ori_io_read_line(void) {
         return (ori_opt_str_t){ .has_value = false, .value = ORI_STR("") };
     }
     while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
+    if (!ori_utf8_is_valid(line, (size_t)n)) {
+        free(line);
+        return (ori_opt_str_t){ .has_value = false, .value = ORI_STR("") };
+    }
     ori_string_t value = ori_string_dup_range(line, (size_t)n);
     free(line);
     return (ori_opt_str_t){ .has_value = true, .value = value };
@@ -2791,7 +2877,7 @@ impl CCodegen {
                         self.line("{");
                         self.push();
                         self.line(&format!(
-                            "void* {} = (void*)ori_string_chars({});",
+                            "ori_list_t {} = ori_string_chars({});",
                             chars_tmp, str_s
                         ));
                         self.line(&format!(
@@ -2804,7 +2890,7 @@ impl CCodegen {
                         ));
                         self.push();
                         self.line(&format!(
-                            "const char* {} = (const char*)ori_list_get({}, {});",
+                            "ori_string_t {} = *((ori_string_t*)ori_list_get({}, {}));",
                             mangle(binding),
                             chars_tmp,
                             idx_tmp
@@ -3284,6 +3370,7 @@ impl CCodegen {
                 match op {
                     UnaryOp::Neg => format!("(-{})", e),
                     UnaryOp::Not => format!("(!{})", e),
+                    UnaryOp::BitNot => format!("(~{})", e),
                 }
             }
             HirExprKind::Field { object, field } => {
@@ -3361,7 +3448,6 @@ impl CCodegen {
                             | "ori_list_pop"
                             | "ori_list_insert"
                             | "ori_bytes_from_hex"
-                            | "ori_io_read_line"
                             | "ori_io_read_bytes"
                             | "ori_io_try_read_line"
                             | "ori_io_try_read_bytes"
@@ -4708,6 +4794,7 @@ impl CCodegen {
                 match op {
                     UnaryOp::Neg => format!("(-{})", e),
                     UnaryOp::Not => format!("(!{})", e),
+                    UnaryOp::BitNot => format!("(~{})", e),
                 }
             }
             HirExprKind::Field { object, field } => {
@@ -5219,7 +5306,75 @@ fn mangle(name: &str) -> String {
             write!(&mut out, "_x{:02x}_", c as u32).unwrap();
         }
     }
-    out
+    const ESCAPE_PREFIX: &str = "ori_c_id_";
+    if is_c_reserved_identifier(&out) || out.starts_with(ESCAPE_PREFIX) {
+        format!("{ESCAPE_PREFIX}{out}")
+    } else {
+        out
+    }
+}
+
+fn is_c_reserved_identifier(name: &str) -> bool {
+    if name.starts_with("__")
+        || name
+            .strip_prefix('_')
+            .and_then(|rest| rest.as_bytes().first())
+            .is_some_and(u8::is_ascii_uppercase)
+    {
+        return true;
+    }
+    matches!(
+        name,
+        "auto"
+            | "break"
+            | "case"
+            | "char"
+            | "const"
+            | "continue"
+            | "default"
+            | "do"
+            | "double"
+            | "else"
+            | "enum"
+            | "extern"
+            | "float"
+            | "for"
+            | "goto"
+            | "if"
+            | "inline"
+            | "int"
+            | "long"
+            | "register"
+            | "restrict"
+            | "return"
+            | "short"
+            | "signed"
+            | "sizeof"
+            | "static"
+            | "struct"
+            | "switch"
+            | "typedef"
+            | "union"
+            | "unsigned"
+            | "void"
+            | "volatile"
+            | "while"
+            | "_Alignas"
+            | "_Alignof"
+            | "_Atomic"
+            | "_Bool"
+            | "_Complex"
+            | "_Generic"
+            | "_Imaginary"
+            | "_Noreturn"
+            | "_Static_assert"
+            | "_Thread_local"
+            | "asm"
+            | "typeof"
+            | "bool"
+            | "true"
+            | "false"
+    )
 }
 
 fn is_entry_main(module: &HirModule, f: &HirFunc) -> bool {
@@ -5246,6 +5401,11 @@ fn binop_to_c(op: BinaryOp) -> &'static str {
         BinaryOp::Ge => ">=",
         BinaryOp::And => "&&",
         BinaryOp::Or => "||",
+        BinaryOp::Band => "&",
+        BinaryOp::Bor => "|",
+        BinaryOp::Bxor => "^",
+        BinaryOp::Shl => "<<",
+        BinaryOp::Shr => ">>",
     }
 }
 
@@ -5344,6 +5504,17 @@ mod tests {
     use ori_diagnostics::Span;
     use ori_types::stdlib::stdlib_runtime_functions;
     use std::collections::HashSet;
+
+    #[test]
+    fn c_identifier_mangling_escapes_reserved_and_gnu_names_without_collisions() {
+        assert_eq!(mangle("plain"), "plain");
+        assert_eq!(mangle("char"), "ori_c_id_char");
+        assert_eq!(mangle("asm"), "ori_c_id_asm");
+        assert_eq!(mangle("typeof"), "ori_c_id_typeof");
+        assert_eq!(mangle("__name"), "ori_c_id___name");
+        assert_eq!(mangle("_Upper"), "ori_c_id__Upper");
+        assert_eq!(mangle("ori_c_id_char"), "ori_c_id_ori_c_id_char");
+    }
 
     fn expr(kind: HirExprKind, ty: Ty) -> HirExpr {
         HirExpr {

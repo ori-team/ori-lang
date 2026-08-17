@@ -170,12 +170,22 @@ features:
   - id: language.attributes
     name: Declaration attributes
     status: partial
-    implementation: [compiler/crates/ori-types/src/check.rs]
+    implementation: [compiler/crates/ori-types/src/check.rs, compiler/crates/ori-hir/src/lower.rs]
     tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
     user_docs: [docs/language/advanced.md]
     reference: [docs/spec/02-lexical.md, docs/spec/13-error-catalog.md]
     examples: [examples/tests_demo/main.orl, examples/embed/add_scores.orl]
-    limitations: "@inline, @no_inline, and @cfg are validated but not yet acted on."
+    limitations: "@inline and @no_inline are validated but not yet acted on. Custom metadata attributes remain planned."
+
+  - id: language.conditional-compilation
+    name: Structured conditional compilation
+    status: implemented
+    implementation: [compiler/crates/ori-ast/src/common.rs, compiler/crates/ori-parser/src/parse_item.rs, compiler/crates/ori-types/src/conditional.rs, compiler/crates/ori-driver/src/main.rs, compiler/crates/ori-driver/src/package.rs, compiler/crates/ori-driver/src/pipeline/project.rs, compiler/crates/ori-driver/src/incremental.rs, compiler/crates/ori-lsp/src]
+    tests: [compiler/crates/ori-driver/tests/multifile_imports.rs, compiler/crates/ori-driver/tests/jit_run.rs, compiler/crates/ori-lsp/src/index/semantic.rs]
+    user_docs: [docs/language/advanced.md, docs/language/advanced.pt-BR.md]
+    reference: [docs/spec/02-lexical.md, docs/spec/03-grammar.ebnf, docs/spec/13-error-catalog.md, docs/spec/17-project-and-docs.md]
+    examples: [examples/conditional_config/main.orl]
+    limitations: "Cfg v1 applies to top-level declarations; feature dependencies and full native cross-compilation are outside the contract."
 
   - id: language.ffi
     name: extern blocks, c_export, and native ABI
@@ -187,11 +197,21 @@ features:
     examples: [examples/embed/add_scores.orl]
     limitations: "Direct collection aggregates and callbacks remain outside ABI-1."
 
+  - id: tooling.hosted-session
+    name: Hosted compiler session and scalar JIT
+    status: experimental
+    implementation: [compiler/crates/ori-embed/src/lib.rs, compiler/crates/ori-embed/examples/hosted_scalar_calls.rs, compiler/crates/ori-driver/src/pipeline/frontend.rs, compiler/crates/ori-driver/src/pipeline/native.rs, compiler/crates/ori-codegen/src/native_backend/jit.rs, compiler/crates/ori-runtime/src/lib.rs]
+    tests: [compiler/crates/ori-embed/src/lib.rs, compiler/crates/ori-runtime/src/tests.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/interop.md, docs/language/interop.pt-BR.md]
+    reference: [docs/planning/embedded-runtime-host-abi-v1.md, docs/planning/interactive-compiler-service.md]
+    examples: [compiler/crates/ori-embed/examples/hosted_scalar_calls.rs, tools/bench/hosted_scalar_calls.sh]
+    limitations: "Rust only; calls are limited to public homogeneous bool/int/float functions with at most four arguments and scalar/void returns. Explicit unload exists but concurrent frame/task coordination does not. Scalar hosted traps use a thread-local structured error slot; arbitrary runtime aborts and async traps remain outside the boundary. extern host accepts trusted scalar function pointers plus an experimental integer callback slice with opaque user_data, protected unregister, cancellation, and bounded synchronous reentrancy. Callback C ABI/thread dispatch, aggregate/managed values, concurrent hot reload, and versioned C ABI remain planned."
+
   - id: stdlib.core
     name: Standard library runtime and source modules
     status: implemented
-    implementation: [compiler/crates/ori-types/src/stdlib.rs, compiler/crates/ori-runtime/src/lib.rs, stdlib]
-    tests: [compiler/crates/ori-driver/tests/multifile_imports.rs]
+    implementation: [compiler/crates/ori-types/src/stdlib.rs, compiler/crates/ori-runtime/src/lib.rs, compiler/crates/ori-codegen/src/c_backend.rs, stdlib]
+    tests: [compiler/crates/ori-runtime/src/tests.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
     user_docs: [docs/guides/stdlib-reference.md, stdlib/README.md]
     reference: [docs/spec/12-stdlib.md, docs/spec/15-stdlib-maintenance.md]
     examples: [examples/collections_demo/main.orl, examples/http_get/main.orl]

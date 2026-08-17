@@ -47,3 +47,25 @@ Statuses are deliberately conservative:
 
 The Atlas is not a second language specification. Detailed grammar and
 semantics remain in [`spec/`](spec/README.md).
+
+## Planned implementation maps
+
+The following documents describe proposed work and incremental implementation.
+They remain indexed here with the current truth so a partial slice is not
+mistaken for completion of the whole plan. The machine-readable registry marks
+implemented or experimental slices explicitly.
+
+| Area | Implementation map | Current truth |
+|---|---|---|
+| Hosted execution and embedding | [`planning/embedded-runtime-host-abi-v1.md`](planning/embedded-runtime-host-abi-v1.md) | [`spec/19-abi.md`](spec/19-abi.md), `compile --lib`, experimental `ori-embed`, and `EMBED-HOST-1` |
+| Static metadata and attributes | [`planning/static-metadata-attributes.md`](planning/static-metadata-attributes.md) | [`spec/02-lexical.md`](spec/02-lexical.md), built-in top-level attributes, and `META-ATTR-1` |
+| Persistent compiler/JIT service | [`planning/interactive-compiler-service.md`](planning/interactive-compiler-service.md) | Experimental `ori-embed` scalar persistent JIT with generational handles, whole-program JIT, file-granular AOT cache, and `COMP-SVC-1` |
+| Value-type performance | [`planning/value-types-performance.md`](planning/value-types-performance.md) | Inline fixed arrays, heap-backed aggregate construction, and `VALUE-PERF-1` |
+| Scripts and automation | [`planning/developer-experience-scripting-automation.md`](planning/developer-experience-scripting-automation.md) | Current CLI/process surface and `DX-SCRIPT-1` |
+| Runtime control/observability | [`planning/runtime-control-observability.md`](planning/runtime-control-observability.md) | Current task/ARC/DAP primitives and `RUNTIME-CTRL-1` |
+| Unicode text | [`planning/unicode-text-processing.md`](planning/unicode-text-processing.md) | UTF-8 `string`, scalar indexing, and `TEXT-UNICODE-1` |
+| Web runtime foundation | [`planning/web-runtime-foundation.md`](planning/web-runtime-foundation.md) | `ori.net`, basic `ori.net.http`, and `WEB-FOUND-1` |
+| Embedded profile | [`planning/embedded-execution-profile.md`](planning/embedded-execution-profile.md) | Hosted desktop runtime and `EMBEDDED-1` |
+| Native binding generation | [`planning/native-binding-generation.md`](planning/native-binding-generation.md) | Manual `extern c`, generated export headers, and `FFI-BINDGEN-1` |
+| Package ecosystem | [`planning/package-ecosystem-production.md`](planning/package-ecosystem-production.md) | Local/HTTP registry proof, lockfile, and reopened `PKG-REG` |
+| Numeric/CPU graphics evolution | [`planning/ORI_GRAPHICS_LANGUAGE_EVOLUTION.md`](planning/ORI_GRAPHICS_LANGUAGE_EVOLUTION.md) | Inline structs in `array[T, size: N]` done (`GFX-INLINE-1`); official graphics bench suite done (`GFX-BENCH-1`); bitwise/shift operators done (`GFX-BITWISE-1`); managed `ori.buffer` stub — `GFX-BUFFER-1..ECO-1` |

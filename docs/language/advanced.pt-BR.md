@@ -69,5 +69,38 @@ Const generics aceitam apenas expressões de compilação sem efeitos colaterais
 `newtype` não se mistura automaticamente com sua representação; a conversão
 precisa ser explícita.
 
+## Attributes de declaração
+
+Ori reconhece hoje um conjunto fechado de attributes em declarações de nível
+superior: `@test`, `@deprecated("mensagem")`, `@inline`, `@no_inline`, `@cfg`,
+`@repr("C")` e `@c_export`. Um attribute desconhecido é erro.
+
+`@repr` é propositalmente restrito: somente `@repr("C")` exato em uma struct é
+aceito. Layout packed e outras strings de representação não existem.
+
+`@cfg` agora seleciona declarações de nível superior antes da resolução de
+nomes e da checagem de tipos. Ele usa predicados estruturados, não strings
+livres:
+
+```ori
+@cfg(all(target_family: unix, feature: tls))
+public connect_securely()
+end
+
+@cfg(not(execution_profile: embedded))
+public spawn_process()
+end
+```
+
+As chaves são `target_os`, `target_arch`, `target_family`,
+`execution_profile` e `feature`, que precisa estar declarada no manifesto.
+Os predicados podem ser combinados com `all`, `any` e `not`. A sintaxe do
+código inativo continua sendo verificada; nomes e tipos dentro dele, não.
+Consulte as [regras normativas](../spec/02-lexical.md#conditional-compilation)
+e os [campos de features](../spec/17-project-and-docs.md#oriproj).
+`@inline` e `@no_inline` também são preservados, mas ainda não controlam o
+otimizador nativo. As regras normativas estão em
+[02-lexical.md](../spec/02-lexical.md#attributes).
+
 HKTs, move explícito, layouts diretos de collections na ABI e paridade completa
 do backend C continuam fora do contrato estável.

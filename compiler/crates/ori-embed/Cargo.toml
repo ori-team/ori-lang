@@ -1,0 +1,14 @@
+[package]
+name = "ori-embed"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+ori-codegen = { workspace = true }
+ori-diagnostics = { workspace = true }
+ori-driver = { workspace = true }
+ori-hir = { workspace = true }
+ori-types = { workspace = true }
+thiserror = { workspace = true }

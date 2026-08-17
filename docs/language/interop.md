@@ -33,7 +33,49 @@ ori compile --lib examples/embed/add_scores.orl -o libadd_scores.so
 The compiler writes the shared library and a sibling C header. Include the
 generated header instead of reproducing declarations manually. The host must
 call `ori_rt_init()` before using the library and `ori_rt_shutdown()` when it is
-finished.
+finished. The header also declares `ori_rt_version()` and
+`ori_rt_abi_version()`; both return borrowed, NUL-terminated strings that the
+host must not free. Check the ABI string before calling exports when the host
+supports multiple Ori runtime revisions.
+
+## Hosted compiler session foundation
+
+Rust hosts can use the experimental `ori-embed` crate for a session boundary
+with structured checking and a deliberately small persistent-JIT call surface:
+
+- `OriConfig` selects target, execution profile, and declared/enabled features;
+- `OriEngine` checks in-memory source and returns owned structured diagnostics;
+- accepted modules receive stable `ModuleId` values and advancing generations;
+- an invalid update leaves the last accepted generation intact;
+- a valid update can compile public scalar functions without `main`, resolve an
+  opaque generation-bound handle, and call homogeneous `bool`, `int`, or
+  `float` signatures with at most four arguments.
+- `OriHostRegistry` can bind a validated `extern host` scalar symbol once per
+  session; the JIT caches its address instead of resolving it on every call.
+- `OriHostRegistry::register_int_callback`, `register_float_callback`, and
+  `register_bool_callback` can bind homogeneous scalar callbacks with opaque
+  `user_data`; the JIT injects a stable callback ID and dispatches it without
+  a per-call textual lookup. Each callback accepts up to four parameters of
+  its registered scalar type and returns that same scalar type or `void` in
+  this experimental Rust boundary.
+- Callback removal is lifecycle-safe: a new call after `remove_callback`
+  returns a structured cancellation trap, while removal during an active call
+  returns `CallbackActive`. Reentry into the same `OriEngine` is supported for
+  synchronous calls and recursion is bounded at 64 callback frames.
+- `OriEngine::unload_module` releases the module's retained executable
+  generations; handles then fail instead of calling freed code.
+- scalar hosted traps (contracts, checks, integer division guards, and direct
+  scalar collection/text bounds checks) return `OriExecutionError` through the
+  Rust API; they do not unwind through the host or terminate the process.
+
+This is not yet a general runtime execution API or a complete hot-reload
+system. Aggregates/managed values, async execution, and a versioned C host ABI
+remain planned; non-scalar runtime abort paths are not yet covered by the
+hosted trap mode. The callback slice is intentionally limited to trusted Rust
+hosts and homogeneous scalar signatures; it does not yet define C header
+callbacks, thread-affinity dispatch, object destruction, or callback migration
+across reload. See the [host ABI plan](../planning/embedded-runtime-host-abi-v1.md)
+and the [compiler service plan](../planning/interactive-compiler-service.md).
 
 ## Accepted boundary types
 
@@ -66,7 +108,8 @@ layout. See [16-runtime-ffi-safety.md](../spec/16-runtime-ffi-safety.md).
 ## Current limits
 
 - `@c_export` is native-backend functionality; the C/debug backend is not an ABI reference;
-- callbacks from a host into Ori exports are not part of ABI-1;
+- callback registration is currently a Rust `ori-embed` experiment, not part
+  of the generated C ABI-1 header;
 - direct collection handles and nested optional/result bridges remain outside the contract;
 - symbol names must be portable, non-keyword C/C++ identifiers.
 

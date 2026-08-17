@@ -5,13 +5,27 @@
 //! driver API while keeping formatting concerns out of the pipeline facade.
 
 use ori_diagnostics::{Diagnostic, DiagnosticSink, SourceCache};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct FmtOutput {
     pub cache: SourceCache,
     pub formatted: String,
     pub diagnostics: Vec<Diagnostic>,
     pub has_errors: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FmtOptions {
+    pub write: bool,
+    pub check: bool,
+}
+
+pub struct FmtBatchOutput {
+    pub total_files: usize,
+    pub modified_files: Vec<PathBuf>,
+    pub unformatted_files: Vec<PathBuf>,
+    pub errors: Vec<String>,
+    pub single_output: Option<FmtOutput>,
 }
 
 pub fn run_fmt(path: &Path) -> Result<FmtOutput, String> {
@@ -34,6 +48,84 @@ pub fn run_fmt(path: &Path) -> Result<FmtOutput, String> {
         diagnostics,
         has_errors,
     })
+}
+
+pub fn run_fmt_path(path: &Path, options: FmtOptions) -> Result<FmtBatchOutput, String> {
+    if !path.exists() {
+        return Err(format!("path `{}` does not exist", path.display()));
+    }
+
+    let files = if path.is_file() {
+        vec![path.to_path_buf()]
+    } else {
+        let mut collected = Vec::new();
+        collect_orl_files(path, &mut collected)?;
+        collected.sort();
+        collected
+    };
+
+    if files.len() == 1 && !options.write && !options.check && path.is_file() {
+        let output = run_fmt(path)?;
+        return Ok(FmtBatchOutput {
+            total_files: 1,
+            modified_files: Vec::new(),
+            unformatted_files: Vec::new(),
+            errors: Vec::new(),
+            single_output: Some(output),
+        });
+    }
+
+    let mut modified_files = Vec::new();
+    let mut unformatted_files = Vec::new();
+    let mut errors = Vec::new();
+    let total_files = files.len();
+
+    for file in &files {
+        match std::fs::read_to_string(file) {
+            Err(e) => errors.push(format!("failed to read `{}`: {e}", file.display())),
+            Ok(source) => {
+                let formatted = format_source_text(&source);
+                if formatted != source {
+                    if options.check {
+                        unformatted_files.push(file.clone());
+                    }
+                    if options.write {
+                        if let Err(e) = std::fs::write(file, &formatted) {
+                            errors.push(format!("failed to write `{}`: {e}", file.display()));
+                        } else {
+                            modified_files.push(file.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(FmtBatchOutput {
+        total_files,
+        modified_files,
+        unformatted_files,
+        errors,
+        single_output: None,
+    })
+}
+
+fn collect_orl_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| format!("failed to read directory `{}`: {e}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("failed to read entry in `{}`: {e}", dir.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.starts_with('.') && name != "target" && name != "vendor" {
+                collect_orl_files(&path, out)?;
+            }
+        } else if path.extension().is_some_and(|ext| ext == "orl") {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 pub fn format_source_text(source: &str) -> String {

@@ -1,0 +1,31 @@
+module app.bench_fill
+
+import ori.io = io
+import ori.list = lists
+
+-- GFX-BENCH-01: fill a 640x480 RGBA framebuffer with one color.
+-- Measures: sequential writes, loop overhead, memory bandwidth.
+-- Resolution is a const so the kernel shape stays identical across
+-- languages; the runner compares wall time and pixels/s.
+
+main()
+    const width: int = 640
+    const height: int = 480
+    const count: int = width * height
+
+    var pixels: list[int] = []
+    var i: int = 0
+    while i < count
+        lists.push(pixels, 0)
+        i = i + 1
+    end
+
+    const color: int = 0xFF4080C0
+    i = 0
+    while i < count
+        pixels[i] = color
+        i = i + 1
+    end
+
+    io.print(f"{pixels[count - 1]}")
+end

@@ -1043,6 +1043,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ori-embed"
+version = "0.3.8"
+dependencies = [
+ "ori-codegen",
+ "ori-diagnostics",
+ "ori-driver",
+ "ori-hir",
+ "ori-types",
+ "thiserror",
+]
+
+[[package]]
 name = "ori-hir"
 version = "0.3.8"
 dependencies = [

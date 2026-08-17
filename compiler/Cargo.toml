@@ -9,6 +9,7 @@ members = [
     "crates/ori-codegen",
     "crates/ori-runtime",
     "crates/ori-diagnostics",
+    "crates/ori-embed",
     "crates/ori-lsp",
     "crates/ori-driver",
 ]
@@ -60,3 +61,4 @@ ori-hir         = { path = "crates/ori-hir" }
 ori-codegen     = { path = "crates/ori-codegen" }
 ori-runtime     = { path = "crates/ori-runtime" }
 ori-driver      = { path = "crates/ori-driver" }
+ori-embed       = { path = "crates/ori-embed" }

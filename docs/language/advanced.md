@@ -149,6 +149,38 @@ end
 
 Ori does not silently mix `UserId` and `int`; conversions must be written.
 
+## Declaration attributes
+
+Ori currently recognizes a closed set of top-level declaration attributes:
+`@test`, `@deprecated("message")`, `@inline`, `@no_inline`, `@cfg`,
+`@repr("C")`, and `@c_export`. Unknown attributes are errors.
+
+`@repr` is intentionally narrow: only exact `@repr("C")` on a struct is
+accepted. It selects the supported C-compatible layout route. Packed layouts
+and custom layout strings do not exist.
+
+`@cfg` now selects top-level declarations before names and types are checked.
+It uses structured predicates rather than free-form strings:
+
+```ori
+@cfg(all(target_family: unix, feature: tls))
+public connect_securely()
+end
+
+@cfg(not(execution_profile: embedded))
+public spawn_process()
+end
+```
+
+The supported keys are `target_os`, `target_arch`, `target_family`,
+`execution_profile`, and manifest-declared `feature`. Predicates compose with
+`all`, `any`, and `not`. Syntax is still checked in inactive code, while name
+and type errors inside it are not. See the [normative attribute rules](../spec/02-lexical.md#conditional-compilation)
+and [manifest feature fields](../spec/17-project-and-docs.md#oriproj).
+`@inline` and `@no_inline` are likewise preserved but not yet acted on by the
+native optimizer. The normative target and argument rules are in
+[02-lexical.md](../spec/02-lexical.md#attributes).
+
 ## What is intentionally not here
 
 Higher-kinded types, explicit ownership-transfer syntax, direct collection ABI

@@ -32,3 +32,41 @@ public is_empty_choice[T](items: list[T]) -> bool
     return lists.len(items) == 0
 end
 
+-- Value-based independent pseudo-random generator (RUNTIME-CTRL-1.4).
+
+public struct Rng
+    state: int
+end
+
+public new_rng(seed: int) -> Rng
+    var s = seed
+    if s == 0
+        s = 123456789
+    end
+    return Rng{ state: s }
+end
+
+public next_int(rng: Rng) -> tuple[int, Rng]
+    var x = rng.state
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    if x < 0
+        x = -x
+    end
+    const next_gen = Rng{ state: x }
+    return (x, next_gen)
+end
+
+public next_range(rng: Rng, min_val: int, max_val: int) -> tuple[int, Rng]
+    if max_val <= min_val
+        return (min_val, rng)
+    end
+    const pair = next_int(rng)
+    const val = pair.0
+    const next_gen = pair.1
+    const span = max_val - min_val
+    const res = min_val + (val % span)
+    return (res, next_gen)
+end
+

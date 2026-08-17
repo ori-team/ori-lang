@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,6 +16,8 @@ pub struct PackageManifest {
     pub description: Option<String>,
     pub dependencies: Vec<PackageDependency>,
     pub native_libs: Vec<String>,
+    pub declared_features: BTreeSet<String>,
+    pub default_features: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -464,6 +466,8 @@ fn parse_project_lock_manifest(path: &Path) -> Result<PackageManifest, String> {
         description: None,
         dependencies,
         native_libs: Vec::new(),
+        declared_features: BTreeSet::new(),
+        default_features: BTreeSet::new(),
     })
 }
 
@@ -933,6 +937,8 @@ fn parse_package_manifest(
     let mut package = HashMap::new();
     let mut dependencies = Vec::new();
     let mut native_libs = Vec::new();
+    let mut declared_features = BTreeSet::new();
+    let mut default_features = BTreeSet::new();
 
     for (line_index, raw_line) in source.lines().enumerate() {
         let line_no = line_index + 1;
@@ -989,6 +995,37 @@ fn parse_package_manifest(
                     )
                 })?);
             }
+            "features" => {
+                let feature = normalize_key(key)?;
+                let values = parse_string_array_value(value).map_err(|err| {
+                    format!(
+                        "package.manifest_syntax: `{}` line {line_no}: {err}",
+                        manifest_path.display()
+                    )
+                })?;
+                if feature == "default" {
+                    default_features.extend(values);
+                } else {
+                    validate_feature_identifier(&feature).map_err(|err| {
+                        format!(
+                            "package.manifest_syntax: `{}` line {line_no}: {err}",
+                            manifest_path.display()
+                        )
+                    })?;
+                    if !values.is_empty() {
+                        return Err(format!(
+                            "package.manifest_syntax: `{}` line {line_no}: feature `{feature}` must use an empty array in cfg v1",
+                            manifest_path.display()
+                        ));
+                    }
+                    if !declared_features.insert(feature.clone()) {
+                        return Err(format!(
+                            "package.manifest_syntax: `{}` line {line_no}: feature `{feature}` is declared more than once",
+                            manifest_path.display()
+                        ));
+                    }
+                }
+            }
             "" => {
                 return Err(format!(
                     "package.manifest_syntax: `{}` line {line_no}: values must be inside a section",
@@ -1039,6 +1076,15 @@ fn parse_package_manifest(
 
     let ori_version = required_field(&package, "ori_version", &manifest_path)?;
     let description = package.get("description").cloned();
+    if let Some(unknown) = default_features
+        .iter()
+        .find(|feature| !declared_features.contains(*feature))
+    {
+        return Err(format!(
+            "package.manifest_syntax: `{}` enables undeclared default feature `{unknown}`",
+            manifest_path.display()
+        ));
+    }
 
     Ok(PackageManifest {
         root,
@@ -1050,7 +1096,24 @@ fn parse_package_manifest(
         description,
         dependencies,
         native_libs,
+        declared_features,
+        default_features,
     })
+}
+
+fn validate_feature_identifier(name: &str) -> Result<(), String> {
+    let mut chars = name.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+    if valid && name != "default" {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid feature name `{name}`; use an ASCII identifier other than `default`"
+        ))
+    }
 }
 
 fn parse_dependency(key: &str, value: &str) -> Result<PackageDependency, String> {
@@ -2483,6 +2546,36 @@ mod tests {
         })
         .expect("validate unchanged lockfile");
         assert!(!second.changed);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_manifest_declares_cfg_features_and_defaults() {
+        let root = std::env::temp_dir().join(format!(
+            "ori_package_features_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock must be after epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create package root");
+        fs::write(root.join("main.orl"), "module demo.features\n").expect("write entry");
+        fs::write(
+            root.join("ori.pkg.toml"),
+            "[package]\nname = \"demo.features\"\nversion = \"1.0.0\"\nentry = \"main.orl\"\nori_version = \"0.3.8\"\n\n[features]\ndefault = [\"tls\"]\ntls = []\ntelemetry = []\n",
+        )
+        .expect("write manifest");
+
+        let manifest = load_package_manifest(&root).expect("parse package features");
+        assert_eq!(
+            manifest.default_features,
+            BTreeSet::from(["tls".to_string()])
+        );
+        assert_eq!(
+            manifest.declared_features,
+            BTreeSet::from(["telemetry".to_string(), "tls".to_string()])
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

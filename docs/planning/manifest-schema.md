@@ -24,6 +24,11 @@ dep.c = { git = "https://…", tag = "v1.0.0", version = "1.0.0" }
 # git pin: at most one of rev | tag | branch (default branch = main)
 # cannot combine git + path
 
+[features]
+default = ["tls"]           # optional default set
+tls = []                    # cfg v1 declarations use empty arrays
+telemetry = []
+
 [docs]
 paths = ["docs/api"]
 mode = "sidecar-first"      # see project docs mode enum
@@ -39,6 +44,8 @@ require_public = "off"
 | bare version | Semver-like `major.minor.patch` digits only |
 | `path` | Relative to project root; target needs `ori.pkg.toml` or `ori.proj` |
 | `git` | URL / `github.com/…` / local path; pin optional |
+| feature name | ASCII identifier other than reserved `default`; must use `[]` in cfg v1 |
+| `features.default` | Every listed name must be declared in the same manifest |
 
 ## `ori.pkg.toml` (publishable package)
 
@@ -54,6 +61,10 @@ native_libs = ["foo"]       # optional string array
 
 [dependencies]
 # same shapes as ori.proj (version | path | git)
+
+[features]
+default = []
+tls = []
 ```
 
 ### Rules
@@ -65,6 +76,7 @@ native_libs = ["foo"]       # optional string array
 | `entry` | Must be `.orl` and exist on disk |
 | path dep name | Must match dependency package's `name` |
 | git dep | Fetched into cache; optional `version` checks cloned manifest |
+| feature | Same identifier, empty-array, and default-subset rules as `ori.proj` |
 
 ## Resolution order (version pin)
 

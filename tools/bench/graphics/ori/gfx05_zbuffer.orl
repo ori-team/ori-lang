@@ -1,0 +1,108 @@
+module app.bench_zbuffer
+
+import ori.io = io
+import ori.list = lists
+
+-- GFX-BENCH-05: z-buffered triangle rasterization (two buffers).
+-- Measures: read + compare + write on color and depth buffers.
+-- Depth uses fixed-point ints (depth * 1024), a standard software-renderer
+-- technique, which also avoids the native runtime's untested float list path.
+
+main()
+    const width: int = 640
+    const height: int = 480
+    const count: int = width * height
+
+    var pixels: list[int] = []
+    var depth: list[int] = []
+    var i: int = 0
+    while i < count
+        lists.push(pixels, 0)
+        lists.push(depth, 1000000000)
+        i = i + 1
+    end
+
+    const color: int = 0xFFCC6600
+    var tri: int = 0
+    while tri < 256
+        const x0: int = (tri * 61) % width
+        const y0: int = (tri * 23) % height
+        const x1: int = (tri * 47 + 80) % width
+        const y1: int = (tri * 31 + 120) % height
+        const x2: int = (tri * 17 + 40) % width
+        const y2: int = (tri * 73 + 200) % height
+
+        var minx: int = x0
+        if x1 < minx
+            minx = x1
+        end
+        if x2 < minx
+            minx = x2
+        end
+        var maxx: int = x0
+        if x1 > maxx
+            maxx = x1
+        end
+        if x2 > maxx
+            maxx = x2
+        end
+        var miny: int = y0
+        if y1 < miny
+            miny = y1
+        end
+        if y2 < miny
+            miny = y2
+        end
+        var maxy: int = y0
+        if y1 > maxy
+            maxy = y1
+        end
+        if y2 > maxy
+            maxy = y2
+        end
+        if minx < 0
+            minx = 0
+        end
+        if miny < 0
+            miny = 0
+        end
+        if maxx >= width
+            maxx = width - 1
+        end
+        if maxy >= height
+            maxy = height - 1
+        end
+
+        const zbase: int = tri * 1000
+        var py: int = miny
+        while py <= maxy
+            var px: int = minx
+            while px <= maxx
+                const e0: int = (x1 - x0) * (py - y0) - (y1 - y0) * (px - x0)
+                const e1: int = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+                const e2: int = (x0 - x2) * (py - y2) - (y0 - y2) * (px - x2)
+                if e0 >= 0 and e1 >= 0 and e2 >= 0
+                    const z: int = zbase + (e0 + e1 + e2) / 100
+                    const idx: int = py * width + px
+                    if z < depth[idx]
+                        depth[idx] = z
+                        pixels[idx] = color
+                    end
+                end
+                px = px + 1
+            end
+            py = py + 1
+        end
+        tri = tri + 1
+    end
+
+    var filled: int = 0
+    i = 0
+    while i < count
+        if pixels[i] != 0
+            filled = filled + 1
+        end
+        i = i + 1
+    end
+    io.print(f"{filled}")
+end

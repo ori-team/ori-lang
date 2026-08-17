@@ -1,0 +1,71 @@
+module app.bench_line
+
+import ori.io = io
+import ori.list = lists
+
+-- GFX-BENCH-03: Bresenham line rasterization across a 640x480 buffer.
+-- Measures: branching, integer math, scattered writes.
+
+main()
+    const width: int = 640
+    const height: int = 480
+    const count: int = width * height
+
+    var pixels: list[int] = []
+    var i: int = 0
+    while i < count
+        lists.push(pixels, 0)
+        i = i + 1
+    end
+
+    const color: int = 0xFFFFFFFF
+    var line: int = 0
+    while line < 512
+        const x0: int = (line * 37) % width
+        const y0: int = (line * 53) % height
+        const x1: int = width - 1 - ((line * 29) % width)
+        const y1: int = height - 1 - ((line * 17) % height)
+        var x: int = x0
+        var y: int = y0
+        const raw_dx: int = x1 - x0
+        const raw_dy: int = y1 - y0
+        var dx: int = raw_dx
+        if dx < 0
+            dx = -dx
+        end
+        var dy: int = raw_dy
+        if dy < 0
+            dy = -dy
+        end
+        var sx: int = 1
+        if x0 > x1
+            sx = -1
+        end
+        var sy: int = 1
+        if y0 > y1
+            sy = -1
+        end
+        var err: int = dx - dy
+        var keep: bool = true
+        while keep
+            if x >= 0 and x < width and y >= 0 and y < height
+                pixels[y * width + x] = color
+            end
+            if x == x1 and y == y1
+                keep = false
+            end
+            const e2: int = 2 * err
+            if e2 > -dy
+                err = err - dy
+                x = x + sx
+            end
+            if e2 < dx
+                err = err + dx
+                y = y + sy
+            end
+        end
+        line = line + 1
+    end
+
+    io.print(f"{pixels[count - 1]}")
+end

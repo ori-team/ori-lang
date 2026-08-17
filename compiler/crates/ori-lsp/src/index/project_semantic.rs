@@ -252,7 +252,19 @@ impl ProjectSemanticIndex {
         let file_id = ori_diagnostics::FileId(0);
         let mut sink = ori_diagnostics::DiagnosticSink::default();
         let tokens = ori_lexer::lex(source, file_id, &mut sink);
-        let source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        let mut source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        if let Err(error) = ori_driver::pipeline::filter_source_for_current_configuration(
+            &self.active_path,
+            &mut source_file,
+            file_id,
+            &mut sink,
+        ) {
+            eprintln!(
+                "ori-lsp: cannot inspect `{}`: {error}",
+                self.active_path.display()
+            );
+            return None;
+        }
 
         for item in &source_file.items {
             if let Item::Var(v) = &item.item {
@@ -322,7 +334,19 @@ impl ProjectSemanticIndex {
         let file_id = ori_diagnostics::FileId(0);
         let mut sink = ori_diagnostics::DiagnosticSink::default();
         let tokens = ori_lexer::lex(source, file_id, &mut sink);
-        let source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        let mut source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        if let Err(error) = ori_driver::pipeline::filter_source_for_current_configuration(
+            &self.active_path,
+            &mut source_file,
+            file_id,
+            &mut sink,
+        ) {
+            eprintln!(
+                "ori-lsp: cannot inspect `{}`: {error}",
+                self.active_path.display()
+            );
+            return None;
+        }
 
         let mut bindings: HashMap<String, String> = HashMap::new();
 
@@ -536,6 +560,7 @@ fn ty_to_str(ty: &Ty, resolved: &ResolvedModule) -> String {
             )
         }
         Ty::List(inner) => format!("list[{}]", ty_to_str(inner, resolved)),
+        Ty::Buffer(inner) => format!("buffer[{}]", ty_to_str(inner, resolved)),
         Ty::Slice(inner) => format!("slice[{}]", ty_to_str(inner, resolved)),
         Ty::Array(inner, len) => format!(
             "array[{}, size: {}]",

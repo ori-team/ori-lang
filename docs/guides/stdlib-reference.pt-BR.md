@@ -39,3 +39,15 @@ end
 As assinaturas completas estão em [12-stdlib.md](../spec/12-stdlib.md). O site
 usa os dados gerados por `ori doc export`; `ori doc check` valida docs inline e
 sidecars `.oridoc`.
+
+## Posições de texto e bytes
+
+`string` armazena UTF-8 válido. `len(texto)`, `texto.len()`, slices, indexação,
+`index_of`, `chars()` e iteração direta com `for` usam posições de valores
+escalares Unicode. Essas APIs não expõem offsets de bytes UTF-8. Um grapheme
+visível ainda pode conter vários escalares; use `bytes` e `string.to_bytes`
+quando um protocolo exigir os bytes codificados. Segmentação de graphemes e
+normalização ainda não fazem parte da stdlib.
+
+Funções nativas são a referência semântica. `ori.io.read_line` retorna
+`optional[string]`: `none` indica EOF ou entrada que não é UTF-8 válido.

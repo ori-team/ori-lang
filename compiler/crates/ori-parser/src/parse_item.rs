@@ -1,5 +1,5 @@
 use crate::parser::Parser;
-use ori_ast::common::{Attr, AttrArg, Visibility};
+use ori_ast::common::{Attr, AttrArg, CfgPredicate, Name, Visibility};
 use ori_ast::item::{
     AbiLabel, AliasDecl, ApplyDecl, ApplyMember, ApplyUseSection, EnumDecl, EnumVariant,
     ExternBlock, ExternMember, FuncDecl, FuncSignature, ImportDecl, ImportItem, Item,
@@ -9,6 +9,7 @@ use ori_ast::item::{
 use ori_ast::ty::Type;
 use ori_diagnostics::Span;
 use ori_lexer::TokenKind;
+use smol_str::SmolStr;
 use std::collections::HashSet;
 
 /// Modifiers that may precede a function head: `async`, `iter`, `mut`.
@@ -277,18 +278,47 @@ impl<'src> Parser<'src> {
 
     fn parse_attr(&mut self) -> Option<Attr> {
         let start = self.advance().unwrap().span; // @
-        let name = self.parse_name()?;
+        let mut name = self.parse_attr_ident()?;
+        while self.eat(&TokenKind::Dot) {
+            let next = self.parse_attr_ident()?;
+            name = Name {
+                text: format!("{}.{}", name.text, next.text).into(),
+                span: name.span.cover(next.span),
+            };
+        }
         let mut end = name.span;
         let args = if self.at(&TokenKind::LParen) {
             self.advance();
             let mut args = Vec::new();
             while !self.at(&TokenKind::RParen) && !self.at_eof() {
                 let span = self.current_span();
-                if self.at(&TokenKind::Ident) && self.peek_nth_kind(1) == Some(&TokenKind::Colon) {
-                    let key = self.parse_name()?;
+                if name.text == "cfg" && self.at(&TokenKind::StrLit) {
+                    let tok = self.advance().expect("cfg string token was checked");
+                    let raw = self.slice(tok.span);
+                    args.push(AttrArg::String(raw[1..raw.len() - 1].into(), tok.span));
+                } else if name.text == "cfg" {
+                    args.push(AttrArg::Cfg(self.parse_cfg_predicate()?));
+                } else if self.peek_nth_kind(1) == Some(&TokenKind::Colon) {
+                    let key = self.parse_attr_ident()?;
                     self.expect(&TokenKind::Colon)?;
-                    let value = self.parse_name()?;
-                    args.push(AttrArg::Named { key, value });
+                    if self.at(&TokenKind::StrLit) {
+                        let tok = self.advance().unwrap();
+                        let raw = self.slice(tok.span);
+                        let value = Name::new(SmolStr::new(&raw[1..raw.len() - 1]), tok.span);
+                        args.push(AttrArg::Named { key, value });
+                    } else if self.at(&TokenKind::IntLit)
+                        || self.at(&TokenKind::FloatLit)
+                        || self.at(&TokenKind::True)
+                        || self.at(&TokenKind::False)
+                    {
+                        let tok = self.advance().unwrap();
+                        let raw = self.slice(tok.span);
+                        let value = Name::new(SmolStr::new(raw), tok.span);
+                        args.push(AttrArg::Named { key, value });
+                    } else {
+                        let value = self.parse_attr_ident()?;
+                        args.push(AttrArg::Named { key, value });
+                    }
                 } else if self.at(&TokenKind::StrLit) {
                     let tok = self.advance().unwrap();
                     let raw = self.slice(tok.span);
@@ -311,6 +341,95 @@ impl<'src> Parser<'src> {
             args,
             span: start.cover(end),
         })
+    }
+
+    fn parse_attr_ident(&mut self) -> Option<Name> {
+        match self.peek_kind() {
+            Some(tok)
+                if !matches!(
+                    tok,
+                    TokenKind::LParen
+                        | TokenKind::RParen
+                        | TokenKind::Comma
+                        | TokenKind::Dot
+                        | TokenKind::Colon
+                ) =>
+            {
+                let tok = self.advance().unwrap();
+                let text = SmolStr::new(self.slice(tok.span));
+                Some(Name::new(text, tok.span))
+            }
+            _ => {
+                let span = self.current_span();
+                self.error("parse.expected_identifier", "expected identifier", span);
+                None
+            }
+        }
+    }
+
+    fn parse_cfg_predicate(&mut self) -> Option<CfgPredicate> {
+        if !self.enter_nesting() {
+            return None;
+        }
+        let predicate = self.parse_cfg_predicate_inner();
+        self.leave_nesting();
+        predicate
+    }
+
+    fn parse_cfg_predicate_inner(&mut self) -> Option<CfgPredicate> {
+        let name = self.parse_cfg_name()?;
+        let start = name.span;
+        if self.eat(&TokenKind::Colon) {
+            let value = self.parse_cfg_name()?;
+            return Some(CfgPredicate::NameValue {
+                key: name,
+                span: start.cover(value.span),
+                value,
+            });
+        }
+        if self.eat(&TokenKind::LParen) {
+            let mut predicates = Vec::new();
+            while !self.at(&TokenKind::RParen) && !self.at_eof() {
+                predicates.push(self.parse_cfg_predicate()?);
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            let end = self.expect(&TokenKind::RParen)?;
+            return Some(CfgPredicate::Call {
+                operator: name,
+                predicates,
+                span: start.cover(end),
+            });
+        }
+        self.error(
+            "parse.unexpected_token",
+            "expected `:` or `(` in conditional-compilation predicate",
+            self.current_span(),
+        );
+        None
+    }
+
+    fn parse_cfg_name(&mut self) -> Option<Name> {
+        if let Some(token) = self.peek() {
+            let text = self.slice(token.span);
+            let mut chars = text.chars();
+            let is_name = chars
+                .next()
+                .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+                && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+            if is_name {
+                let token = self.advance().expect("cfg name token was checked");
+                return Some(Name::new(self.slice(token.span), token.span));
+            }
+        }
+        let span = self.current_span();
+        self.error(
+            "parse.expected_identifier",
+            "expected a conditional-compilation name",
+            span,
+        );
+        None
     }
 
     fn parse_visibility(&mut self) -> Visibility {
@@ -1546,9 +1665,11 @@ impl<'src> Parser<'src> {
 
     fn parse_extern_block(&mut self) -> Option<ExternBlock> {
         let start = self.advance().unwrap().span; // extern
-        let abi = if self.at(&TokenKind::Ident) {
+        let abi = if self.at(&TokenKind::Ident) || self.at(&TokenKind::StrLit) {
             let tok = self.peek().unwrap();
-            match self.slice(tok.span) {
+            let raw = self.slice(tok.span);
+            let unquoted = raw.trim_matches('"');
+            match unquoted {
                 "c" | "C" => {
                     self.advance();
                     AbiLabel::C

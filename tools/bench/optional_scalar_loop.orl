@@ -1,0 +1,26 @@
+module app.optional_scalar_loop
+
+-- Measures optional scalar creation and matching in tight loop (VALUE-PERF-1).
+
+imports
+    ori.io = io
+end
+
+step_opt(val: int) -> optional[int]
+    if val % 2 == 0
+        return some(val + 1)
+    end
+    return none
+end
+
+main()
+    var total: int = 0
+    var i: int = 0
+    while i < 5000000
+        if some(v) = step_opt(i)
+            total = total + v
+        end
+        i = i + 1
+    end
+    io.println(string(total))
+end

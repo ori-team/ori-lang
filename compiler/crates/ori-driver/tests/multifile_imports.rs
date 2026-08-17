@@ -94,6 +94,47 @@ fn compile_c_source(dir: &TestDir, name: &str, source: &str) {
     );
 }
 
+fn compile_and_run_c_source(
+    dir: &TestDir,
+    name: &str,
+    source: &str,
+    stdin: &[u8],
+) -> Option<std::process::Output> {
+    let c_path = dir.path(&format!("{name}.c"));
+    let exe = exe_path(dir, name);
+    std::fs::write(&c_path, source).unwrap();
+    let compiled = match Command::new("cc")
+        .arg("-std=gnu11")
+        .arg(&c_path)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .arg("-pthread")
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && cfg!(windows) => return None,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            panic!("`cc` is required to validate generated C on this platform")
+        }
+        Err(err) => panic!("failed to run cc: {err}"),
+    };
+    assert!(
+        compiled.status.success(),
+        "generated C did not link\nstderr:\n{}\nsource:\n{}",
+        String::from_utf8_lossy(&compiled.stderr),
+        source,
+    );
+    let mut child = Command::new(exe)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.as_mut().unwrap().write_all(stdin).unwrap();
+    Some(child.wait_with_output().unwrap())
+}
+
 fn normalize_stdout(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).unwrap().replace("\r\n", "\n")
 }
@@ -9512,6 +9553,7 @@ import ori.io = io
 main()
     const text: string = "\u{00e1}\u{00e9}"
     io.print("len=" + string(text.len()))
+    io.print("global_len=" + string(len(text)))
     io.print(text.slice(0, 1))
     io.print("index=" + string(text.index_of("\u{00e9}")))
     io.print("emoji_index=" + string("\u{1f642}x".index_of("x")))
@@ -9530,8 +9572,62 @@ end
     let output = Command::new(&exe).output().unwrap();
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let expected = "len=2\n\u{00e1}\nindex=1\nemoji_index=1\n";
+    let expected = "len=2\nglobal_len=2\n\u{00e1}\nindex=1\nemoji_index=1\n";
     assert_eq!(stdout.replace("\r\n", "\n"), expected);
+}
+
+#[test]
+fn c_backend_runs_unicode_string_positions_in_scalar_values() {
+    let dir = TestDir::new("c_unicode_string_positions");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const text: string = "\u{00e1}\u{00e9}\u{1f642}"
+    io.print("len=" + string(text.len()))
+    io.print("global_len=" + string(len(text)))
+    io.print(text.slice(1, 3))
+    io.print("index=" + string(text.index_of("\u{1f642}")))
+    io.print("get=" + text[0])
+    const chars: list[string] = text.chars()
+    io.print("char=" + chars[2])
+    for char, index in text
+        io.print("iter=" + string(index) + ":" + char)
+    end
+    match io.read_line()
+        case some(_):
+            io.print("input=some")
+        case none:
+            io.print("input=none")
+    end
+    match io.read_line()
+        case some(line):
+            io.print("valid=" + line)
+        case none:
+            io.print("valid=none")
+    end
+end
+"#,
+    );
+
+    let out = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let Some(output) = compile_and_run_c_source(
+        &dir,
+        "c_unicode_positions",
+        &out.c_source,
+        &[0xC0, 0xAF, b'\n', b'o', b'l', 0xC3, 0xA1, b'\n'],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        normalize_stdout(output.stdout),
+        "len=3\nglobal_len=3\n\u{00e9}\u{1f642}\nindex=2\nget=\u{00e1}\nchar=\u{1f642}\niter=0:\u{00e1}\niter=1:\u{00e9}\niter=2:\u{1f642}\ninput=none\nvalid=ol\u{00e1}\n"
+    );
 }
 
 #[test]
@@ -10059,6 +10155,700 @@ end
 }
 
 #[test]
+fn cfg_filters_inactive_declarations_before_resolution_and_checking() {
+    let dir = TestDir::new("cfg_filter_before_resolution");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_filter"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["tracing"]
+tracing = []
+disabled = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+@cfg(feature: tracing)
+selected() -> int
+    return 41
+end
+
+@cfg(not(feature: tracing))
+selected() -> string
+    return missing_name
+end
+
+@cfg(feature: disabled)
+inactive_broken() -> int
+    return another_missing_name
+end
+
+@cfg(all(any(target_family: unix, target_family: windows), not(target_os: none)))
+host_value() -> int
+    return 1
+end
+
+main()
+    const value: int = selected() + host_value()
+    io.print(string(value))
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("ori.proj")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    assert_eq!(compile_and_run(&dir, "cfg_native"), "42\n");
+}
+
+#[test]
+fn cfg_filters_every_supported_top_level_declaration_kind() {
+    let dir = TestDir::new("cfg_top_level_declaration_kinds");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_top_level_kinds"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["active"]
+active = []
+inactive = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg(feature: active)
+struct Choice
+    value: int
+end
+
+@cfg(feature: inactive)
+struct Choice
+    broken: MissingType
+end
+
+@cfg(feature: active)
+enum Mode
+    Ready
+end
+
+@cfg(feature: inactive)
+enum Mode
+    Broken(value: MissingType)
+end
+
+@cfg(feature: active)
+const selected: int = 42
+
+@cfg(feature: inactive)
+const selected: string = missing_value
+
+@cfg(feature: inactive)
+extern c
+    read_managed(input: string) -> string
+end
+
+main()
+    const choice: Choice = Choice { value: selected }
+    const mode: Mode = Mode.Ready
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("ori.proj")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn cfg_filters_the_same_hir_for_c_and_documentation_routes() {
+    let dir = TestDir::new("cfg_backend_docs_parity");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_parity"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = []
+hidden = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+--|
+Active API.
+|--
+public active_api() -> int
+    return 1
+end
+
+@cfg(feature: hidden)
+--|
+Inactive API.
+|--
+public inactive_api() -> int
+    return 2
+end
+
+main()
+end
+"#,
+    );
+
+    let built = run_build(&dir.path("ori.proj")).unwrap();
+    assert!(!built.has_errors, "{:?}", built.diagnostics);
+    assert!(built.c_source.contains("active_api"), "{}", built.c_source);
+    assert!(
+        !built.c_source.contains("inactive_api"),
+        "{}",
+        built.c_source
+    );
+
+    let docs = run_doc(&dir.path("ori.proj")).unwrap();
+    assert!(!docs.has_errors, "{:?}", docs.diagnostics);
+    assert!(docs.markdown.contains("active_api"), "{}", docs.markdown);
+    assert!(!docs.markdown.contains("inactive_api"), "{}", docs.markdown);
+}
+
+#[test]
+fn cfg_filters_public_symbols_in_imported_modules() {
+    let dir = TestDir::new("cfg_imported_public_symbol");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_import"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["native_api"]
+native_api = []
+"#,
+    );
+    dir.write(
+        "platform.orl",
+        r#"module app.platform
+
+@cfg(feature: native_api)
+public answer() -> int
+    return 42
+end
+
+@cfg(not(feature: native_api))
+public answer() -> string
+    return missing_name
+end
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import app.platform = platform
+
+main()
+    const value: int = platform.answer()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("ori.proj")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn compile_lib_cfg_excludes_inactive_c_exports() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = TestDir::new("cfg_c_export_surface");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_exports"
+version = "0.1.0"
+kind = "lib"
+entry = "lib.orl"
+
+[features]
+default = []
+hidden = []
+"#,
+    );
+    dir.write(
+        "lib.orl",
+        r#"module app.cfg_exports
+
+@c_export
+public active_export() -> int
+    return 1
+end
+
+@cfg(feature: hidden)
+@c_export
+public inactive_export() -> int
+    return 2
+end
+"#,
+    );
+    let library = dir.path("libcfg_exports.so");
+    let output = run_compile_with_options(
+        &dir.path("ori.proj"),
+        &library,
+        CompileOptions {
+            native_raw: false,
+            lib: true,
+        },
+    )
+    .expect("compile cfg library");
+    assert!(!output.has_errors, "{:?}", output.diagnostics);
+    let header =
+        std::fs::read_to_string(dir.path("libcfg_exports.h")).expect("read generated cfg header");
+    assert!(header.contains("active_export"), "{header}");
+    assert!(!header.contains("inactive_export"), "{header}");
+}
+
+#[test]
+fn cfg_rejects_strings_unknown_names_bad_arity_and_duplicates() {
+    let dir = TestDir::new("cfg_invalid_predicates");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg("linux")
+string_form()
+end
+
+@cfg(other_key: value)
+unknown_key()
+end
+
+@cfg(feature: missing)
+unknown_feature()
+end
+
+@cfg(execution_profile: hosted)
+unknown_profile()
+end
+
+@cfg(target_os: lniux)
+unknown_target_value()
+end
+
+@cfg(all())
+empty_all()
+end
+
+@cfg(one(target_os: linux))
+unknown_operator()
+end
+
+@cfg(not(target_os: linux, target_os: windows))
+wide_not()
+end
+
+@cfg(target_os: linux)
+@cfg(target_family: unix)
+duplicate_cfg()
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    let codes = diagnostic_codes(&out);
+    for expected in [
+        "cfg.invalid_predicate",
+        "cfg.unknown_key",
+        "cfg.unknown_feature",
+        "cfg.unknown_value",
+        "cfg.invalid_arity",
+        "cfg.unknown_operator",
+        "cfg.duplicate",
+    ] {
+        assert!(
+            codes.contains(&expected),
+            "missing {expected}: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+#[test]
+fn cfg_still_reports_syntax_errors_inside_inactive_declarations() {
+    let dir = TestDir::new("cfg_inactive_syntax_error");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg(target_os: none)
+broken()
+    const value: int =
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    assert!(
+        diagnostic_codes(&out).contains(&"parse.expected_expression"),
+        "{:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn cfg_reports_excessive_predicate_nesting_without_crashing() {
+    let dir = TestDir::new("cfg_nesting_limit");
+    let nested = format!("{}target_os: linux{}", "all(".repeat(140), ")".repeat(140));
+    dir.write(
+        "main.orl",
+        &format!("module app.main\n\n@cfg({nested})\nmain()\nend\n"),
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    assert!(
+        diagnostic_codes(&out).contains(&"parse.nesting_too_deep"),
+        "{:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn cfg_rejects_an_undeclared_default_manifest_feature() {
+    let dir = TestDir::new("cfg_undeclared_default");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "bad_cfg_defaults"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["missing"]
+declared = []
+"#,
+    );
+    dir.write("main.orl", "module app.main\n\nmain()\nend\n");
+
+    let error = match run_check(&dir.path("ori.proj")) {
+        Err(error) => error,
+        Ok(_) => panic!("invalid defaults must fail"),
+    };
+    assert!(
+        error.contains("undeclared default feature `missing`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn cfg_uses_package_manifest_default_features() {
+    let dir = TestDir::new("cfg_package_defaults");
+    dir.write(
+        "ori.pkg.toml",
+        r#"[package]
+name = "demo.cfg_package"
+version = "1.0.0"
+entry = "main.orl"
+ori_version = "0.3.8"
+
+[features]
+default = ["active"]
+active = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module demo.cfg_package
+
+@cfg(feature: active)
+selected() -> int
+    return 1
+end
+
+@cfg(not(feature: active))
+selected() -> string
+    return missing_name
+end
+
+main()
+    const value: int = selected()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("ori.pkg.toml")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn formatter_preserves_structured_cfg_predicates() {
+    let dir = TestDir::new("fmt_structured_cfg");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg(all(target_family: unix, not(feature: tls)))
+main()
+end
+"#,
+    );
+
+    let out = run_fmt(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    assert!(
+        out.formatted
+            .contains("@cfg(all(target_family: unix, not(feature: tls)))"),
+        "{}",
+        out.formatted
+    );
+}
+
+#[test]
+fn cli_selects_declared_features_and_execution_profile() {
+    let dir = TestDir::new("cfg_cli_selection");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_cli"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = []
+extra = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg(all(feature: extra, execution_profile: embedded))
+selected() -> int
+    return 1
+end
+
+@cfg(not(all(feature: extra, execution_profile: embedded)))
+selected() -> string
+    return "inactive"
+end
+
+main()
+    const value: int = selected()
+end
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .arg("check")
+        .arg(dir.path("ori.proj"))
+        .arg("--features")
+        .arg("extra")
+        .arg("--execution-profile")
+        .arg("embedded")
+        .arg("--no-color")
+        .output()
+        .expect("run ori check with cfg selection");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cfg_environment_errors_use_catalogued_codes() {
+    let dir = TestDir::new("cfg_environment_errors");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_environment_errors"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = []
+known = []
+"#,
+    );
+    dir.write("main.orl", "module app.main\n\nmain()\nend\n");
+
+    for (variable, value, code) in [
+        ("ORI_TARGET_TRIPLE", "bad target", "cfg.target_invalid"),
+        (
+            "ORI_TARGET_TRIPLE",
+            "x86_64-unknown-fuchsia",
+            "cfg.target_invalid",
+        ),
+        (
+            "ORI_EXECUTION_PROFILE",
+            "sandboxed",
+            "cfg.execution_profile_invalid",
+        ),
+        ("ORI_FEATURES", "bad-name", "cfg.feature_invalid"),
+        ("ORI_FEATURES", "missing", "cfg.feature_not_declared"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ori"))
+            .arg("check")
+            .arg(dir.path("ori.proj"))
+            .arg("--no-color")
+            .env_remove("ORI_TARGET_TRIPLE")
+            .env_remove("ORI_EXECUTION_PROFILE")
+            .env_remove("ORI_FEATURES")
+            .env_remove("ORI_NO_DEFAULT_FEATURES")
+            .env(variable, value)
+            .output()
+            .expect("run ori check with invalid cfg environment");
+        assert!(
+            !output.status.success(),
+            "{variable}={value} unexpectedly passed"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(code),
+            "expected {code} for {variable}={value}, stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn cfg_selection_invalidates_the_native_incremental_cache() {
+    let dir = TestDir::new("cfg_incremental_fingerprint");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_incremental"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["enabled"]
+enabled = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+@cfg(feature: enabled)
+message() -> string
+    return "on"
+end
+
+@cfg(not(feature: enabled))
+message() -> string
+    return "off"
+end
+
+main()
+    io.print(message())
+end
+"#,
+    );
+    let executable = exe_path(&dir, "cfg_incremental");
+
+    let first = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .arg("compile")
+        .arg(dir.path("ori.proj"))
+        .arg("--out")
+        .arg(&executable)
+        .arg("--no-color")
+        .output()
+        .expect("compile default cfg");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(
+        normalize_stdout(Command::new(&executable).output().unwrap().stdout),
+        "on\n"
+    );
+
+    let second = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .arg("compile")
+        .arg(dir.path("ori.proj"))
+        .arg("--out")
+        .arg(&executable)
+        .arg("--no-default-features")
+        .arg("--no-color")
+        .output()
+        .expect("compile cfg without defaults");
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert_eq!(
+        normalize_stdout(Command::new(&executable).output().unwrap().stdout),
+        "off\n"
+    );
+
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_incremental"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = []
+enabled = []
+"#,
+    );
+    let third = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .arg("compile")
+        .arg(dir.path("ori.proj"))
+        .arg("--out")
+        .arg(&executable)
+        .arg("--no-color")
+        .output()
+        .expect("compile after changing manifest defaults");
+    assert!(
+        third.status.success(),
+        "{}",
+        String::from_utf8_lossy(&third.stderr)
+    );
+    assert_eq!(
+        normalize_stdout(Command::new(&executable).output().unwrap().stdout),
+        "off\n"
+    );
+}
+
+#[test]
 fn compile_lib_c_export_produces_shared_object_on_linux() {
     if !cfg!(target_os = "linux") {
         return;
@@ -10430,6 +11220,26 @@ end
 
     let header = std::fs::read_to_string(dir.path("libmanagedexport.h"))
         .expect("read generated managed handle header");
+    assert!(
+        header.contains("const char *ori_rt_version(void);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("const char *ori_rt_abi_version(void);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("void ori_host_clear_error(void);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("int32_t ori_host_error_code(void);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("const char *ori_host_error_message(void);"),
+        "{header}"
+    );
     assert!(
         header.contains("typedef struct OriProfileHandle OriProfileHandle;"),
         "{header}"
@@ -10968,6 +11778,55 @@ end
         "{:?}",
         out.diagnostics
     );
+}
+
+#[test]
+fn check_rejects_every_unsupported_repr_form() {
+    let dir = TestDir::new("invalid_repr_arguments");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@repr
+struct Missing
+    value: int
+end
+
+@repr("packed")
+struct Unsupported
+    value: int
+end
+
+@repr(layout: C)
+struct Named
+    value: int
+end
+
+@repr("C", "packed")
+struct Additional
+    value: int
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    assert_eq!(
+        diagnostic_codes(&out)
+            .into_iter()
+            .filter(|code| *code == "attr.invalid_arg")
+            .count(),
+        4,
+        "{:?}",
+        out.diagnostics
+    );
+    assert!(out.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code != "attr.invalid_arg"
+            || diagnostic
+                .action
+                .as_deref()
+                .is_some_and(|action| action.contains("@repr(\"C\")"))
+    }));
 }
 
 #[test]

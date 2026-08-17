@@ -1,0 +1,27 @@
+module app.conditional_config
+
+import ori.io = io
+
+@cfg(feature: telemetry)
+build_mode() -> string
+    return "telemetry enabled"
+end
+
+@cfg(not(feature: telemetry))
+build_mode() -> string
+    return "telemetry disabled"
+end
+
+@cfg(target_family: unix)
+platform_family() -> string
+    return "unix"
+end
+
+@cfg(not(target_family: unix))
+platform_family() -> string
+    return "non-unix"
+end
+
+main()
+    io.println(f"{build_mode()} on {platform_family()}")
+end

@@ -17,17 +17,21 @@ struct NormalizedTripleString {
 fn infix_prec(kind: &TokenKind) -> Option<(u8, u8)> {
     // Returns (left_prec, right_prec). right > left → right-associative.
     match kind {
-        TokenKind::Pipe => Some((1, 2)), // |>  left-assoc
-        TokenKind::Or => Some((3, 4)),   // or
-        TokenKind::And => Some((5, 6)),  // and
+        TokenKind::Pipe => Some((1, 2)),                   // |>  left-assoc
+        TokenKind::Or => Some((3, 4)),                     // or
+        TokenKind::Bar => Some((5, 6)),                    // |   bitwise or
+        TokenKind::Caret => Some((7, 8)),                  // ^   bitwise xor
+        TokenKind::Amp => Some((9, 10)),                   // &   bitwise and
+        TokenKind::And => Some((11, 12)),                  // and
+        TokenKind::Shl | TokenKind::Shr => Some((13, 14)), // shifts
         TokenKind::EqEq
         | TokenKind::BangEq
         | TokenKind::Lt
         | TokenKind::LtEq
         | TokenKind::Gt
-        | TokenKind::GtEq => Some((7, 8)), // comparisons
-        TokenKind::Plus | TokenKind::Minus => Some((9, 10)),
-        TokenKind::Star | TokenKind::Slash | TokenKind::Percent => Some((11, 12)),
+        | TokenKind::GtEq => Some((15, 16)), // comparisons
+        TokenKind::Plus | TokenKind::Minus => Some((17, 18)),
+        TokenKind::Star | TokenKind::Slash | TokenKind::Percent => Some((19, 20)),
         _ => None,
     }
 }
@@ -47,6 +51,11 @@ fn token_to_binop(kind: &TokenKind) -> Option<BinaryOp> {
         TokenKind::GtEq => Some(BinaryOp::Ge),
         TokenKind::And => Some(BinaryOp::And),
         TokenKind::Or => Some(BinaryOp::Or),
+        TokenKind::Amp => Some(BinaryOp::Band),
+        TokenKind::Bar => Some(BinaryOp::Bor),
+        TokenKind::Caret => Some(BinaryOp::Bxor),
+        TokenKind::Shl => Some(BinaryOp::Shl),
+        TokenKind::Shr => Some(BinaryOp::Shr),
         _ => None,
     }
 }
@@ -199,6 +208,15 @@ impl<'src> Parser<'src> {
             let s = span.cover(operand.span());
             return Some(Expr::Unary {
                 op: UnaryOp::Not,
+                operand: Box::new(operand),
+                span: s,
+            });
+        }
+        if self.eat(&TokenKind::Tilde) {
+            let operand = self.parse_unary()?;
+            let s = span.cover(operand.span());
+            return Some(Expr::Unary {
+                op: UnaryOp::BitNot,
                 operand: Box::new(operand),
                 span: s,
             });

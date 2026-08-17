@@ -10,8 +10,141 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Persistent compiler service and modular JIT session (COMP-SVC-1).** `ori-embed` persistent
+  scalar JIT session model with generation-checked handles, explicit unload, structured trap results,
+  and registered host callbacks with `user_data` and reentrancy limits.
+- **Embedded and freestanding execution profile support (EMBEDDED-1).** Added explicit target facts
+  and `@cfg(execution_profile: "embedded")` / `--execution-profile embedded` separating OS-dependent
+  runtime features from core freestanding code.
+- **Numeric-loop optimizations and bounds-check elimination (GFX-BCE-1, GFX-MIDEND-1).** Compile-time
+  bounds checks for constant array indices, direct address arithmetic on inline `array[T, N]`,
+  and bounded fixed-point optimization pipeline in `ori-hir` for numeric loops.
+- **Production package ecosystem protocol and locking (PKG-REG).** Registry v1 protocol, package
+  publishing (`ori publish`), dependency retrieval (`ori get`), package installation (`ori install`),
+  and lockfile validation (`ori lock --locked`).
+- **Native binding generation `ori bindgen` (FFI-BINDGEN-1).** Added `ori bindgen` CLI sub-command
+  generating clean, type-checked low-level Ori `extern "c"` declarations, `@repr("C")` structs,
+  type aliases, and integer constants directly from C header files.
+- **HTTP web foundation (WEB-FOUND-1).** Added `Request`, `parse_request`, and `build_response`
+  in `stdlib/net/http.orl` supporting full request extraction and server responses with structured headers.
+- **Unicode text processing and case folding (TEXT-UNICODE-1).** Added `ori.string.is_ascii`
+  and `ori.string.case_fold` in stdlib (`stdlib/string.orl`) and native runtime (`ori_string_is_ascii`,
+  `ori_string_case_fold`), updating case-insensitive comparisons to use full Unicode case folding.
+- **Runtime control and observability (RUNTIME-CTRL-1).** Added value-based pseudo-random number
+  generator `ori.random.Rng` (`new_rng`, `next_int`, `next_range`) for reproducible simulations
+  and generational container `ori.slotmap.SlotMap` in `stdlib/slotmap.orl` rejecting stale keys.
+- **Extensible namespaced attributes (META-ATTR-1).** Added parser and type checker support for
+  declarative namespaced attributes (e.g. `@editor.inspect`, `@editor.range(min: 0, max: 100)`,
+  `@schema.table(name: "users")`, `@route.get(path: "/api")`) on top-level items without macro overhead
+  or compile-time side-effects.
+- **Mutable views and spans `ori.span` (GFX-VIEW-1).** Added `ori.span` module in `stdlib/span.orl`
+  providing zero-copy, mutable window views over contiguous buffers. Provides `from_buffer(buf, offset, len)`,
+  `len(s)`, `is_empty(s)`, `get(s, i)`, `set_at(s, i, v)`, `fill(s, v)`, and `subspan(s, offset, len)`
+  with native runtime `OriSpan` backing and automatic ARC liveness preservation.
+- **Contiguous numeric buffer `ori.buffer` (GFX-BUFFER-1).** Enabled high-performance,
+  fixed-length, mutably indexable numeric `buffer[T]` backed by `OriBuffer` in the native runtime.
+  Provides `ori.buffer.new(size)`, `ori.buffer.len(b)`, `ori.buffer.is_empty(b)`, `ori.buffer.get(b, i)`,
+  `ori.buffer.set(b, i, v)`, `ori.buffer.fill(b, v)`, and `ori.buffer.as_slice(b)`, along with
+  stdlib helpers `from_list` and `get_or` in `stdlib/buffer.orl`.
+- **CLI program argument forwarding for `ori run` (DX-SCRIPT-1.0).** `ori run <file> -- <args...>`
+  now forwards trailing command-line arguments to the executed Ori program in both Cranelift JIT
+  and AOT compilation paths. The runtime arguments are accessible via `ori.os.args()` and
+  `ori.args` helpers.
+- **Recursive formatting with `--write` and `--check` (DX-SCRIPT-1.1).** `ori fmt` now supports
+  directory recursion across all `*.orl` files, in-place file formatting with `--write` (`-w`),
+  and dry-run check mode with `--check` (`-c`) that exits with code 1 if unformatted files are found.
+- **Semantic code linter command `ori lint` (DX-SCRIPT-1.2).** Added `ori lint <path>` command
+  and pipeline analyzing Ori source graphs for code quality and redundancy. Emits warnings for
+  unused variable bindings (`lint.unused_variable`), redundant boolean comparisons (`lint.redundant_bool_comparison`),
+  redundant if-boolean expressions (`lint.redundant_if_boolean`), double negations (`lint.double_negation`),
+  and unnecessary `@cfg` attributes (`lint.unnecessary_cfg`).
+- **Value types baseline benchmark suite (VALUE-PERF-1).** Added canonical benchmark kernels
+  under `tools/bench/` (`vec3_add_loop.orl`, `mat3_multiply.orl`, `optional_scalar_loop.orl`) and
+  runner `run_value_perf.sh` establishing baseline metrics for small non-escaping aggregates.
+- **Hosted `string` and `bytes` boundary across the JIT.** Public functions in
+  hosted JIT modules can now return `string` and `bytes` or receive them as
+  homogeneous parameters. `ori-embed` exposes `OriValue::String` and
+  `OriValue::Bytes` carrying live pointers, with safe host accessors `as_str()`
+  and `as_bytes()` to inspect UTF-8 strings and byte buffers. Functions
+  operating on strings (e.g. concatenation, `len`) and bytes (`to_bytes()`,
+  `by.len`) are covered with regression tests; host function and callback
+  registries strictly reject string/bytes parameters until Host ABI C callbacks
+  are defined.
+- **Bitwise and shift operators (GFX-BITWISE-1).** `&` (AND), `|` (OR),
+  `^` (XOR), `~` (unary complement), `<<` (left shift), `>>` (right shift)
+  now work on every integer type with the width preserved. `>>` is arithmetic
+  on signed types and logical on unsigned; shift counts outside
+  `0..bit_width` trap with `ori_abort_shift_overflow` (runtime and hosted
+  modes). Precedence follows C: `~` > `<<`/`>>` > `&` > `^` > `|` > `and` >
+  `or`. The checker emits `type.bitwise_type_mismatch`,
+  `type.shift_type_mismatch`, and `type.unary_bitnot_non_integer` for invalid
+  operands; CT-0 constant evaluation supports bitwise too. Native and C
+  backends emit matching code. The GFX-BENCH-02 gradient kernel now packs
+  RGBA with `(r << 16) | (g << 8) | b`.
+- **Graphics benchmark suite (GFX-BENCH-1).** `tools/bench/graphics/` now
+  ships six official software-rendering kernels — GFX-BENCH-01 fill,
+  GFX-BENCH-02 gradient, GFX-BENCH-03 Bresenham lines, GFX-BENCH-04 triangle
+  rasterization, GFX-BENCH-05 z-buffer, GFX-BENCH-06 vertex transform — with a
+  runner (`run_graphics_bench.sh`) that compiles AOT, samples wall time, and
+  reports medians, throughput (px/s, lines/s, tris/s, verts/s), and compile
+  times. Each kernel prints a deterministic canary so output regressions are
+  caught independently of timing noise. Framebuffers use `list[int]` until a
+  contiguous `buffer[T]` lands (GFX-BUFFER-1); the depth buffer uses
+  fixed-point ints; RGBA packing uses multiply-add until bitwise operators
+  land (GFX-BITWISE-1).
+- **`array[InlineStruct, size: N]` (GFX-INLINE-1).** A struct whose fields are
+  all inline (`Inline(T)`: scalars, inline arrays, inline structs) is itself
+  inline and can now be stored inside an `array` block with no ARC: `Vec3`,
+  `Triangle`, and `array[Vec3, size: 8]` all compile and lay out contiguously.
+  Struct literals, index reads/writes, field access through indexes
+  (`verts[i].y`), struct fields holding inline-struct arrays, `ori.mem.size_of`
+  (block-accurate), and JIT/AOT parity are covered. Structs holding a managed
+  field stay rejected with `type.array_element_not_inline`, and the diagnostic
+  now names the offending field; recursive structs (no finite size) are
+  rejected as well. Spec 04 and the error catalog are updated.
+
 ### Fixed
 
+- **Hosted slice windows cross the JIT boundary.** Public functions may now
+  return `slice[T]` (read-only windows over lists) and take them as
+  parameters; `ori-embed` exposes them as opaque `OriValue::Slice` pointers that
+  the host hands back to the runtime's checked accessors. Host functions and
+  callbacks still reject slices.
+- **`check_source` no longer advances the module generation.** A valid check
+  used to bump the generation while leaving the executable JIT unchanged,
+  silently invalidating handles for code that was never replaced. Checking now
+  only records the accepted candidate source; only `compile_source` publishes a
+  new generation. A regression proves handles stay callable across accepted and
+  rejected checks.
+- **Loop/if epilogues no longer emit invalid CFG for early exits.** When a
+  loop body ended with `break` or `return`, `emit_while`/`emit_loop`/`while
+  some`/`for` could leave the exit block unfilled (breaking the verifier and
+  `alias_analysis`) or continue emitting instructions after a terminator
+  (corrupting iterators). Epilogues now distinguish a real `break` (continue on
+  a fresh block) from a `return` (fill the unreachable exit with a trap), and
+  division guards reset `terminated` on their live continuation so the rest of
+  the block is emitted. Iterator functions (`suspend`), async state machines
+  with nested control flow, and async `break`/`return` are covered by
+  regressions.
+- **Async general state machine fills un-reached poll blocks.** When the async
+  body terminated before a collected `await` was emitted (e.g. an early
+  `return`), the dispatch target for that state was left without instructions
+  and crashed `alias_analysis` at compile time. Unused poll blocks are now
+  filled with an unreachable trap before sealing.
+- **`@repr` now enforces its only supported contract.** The checker accepts
+  exactly `@repr("C")`; missing, named, and unsupported string arguments emit
+  `attr.invalid_arg` with an actionable correction. A driver regression covers
+  all rejected forms.
+- **C/debug string positions now match native Unicode semantics.** Generated C
+  and the native global `len(string)` count Unicode scalar values and use the
+  same unit for method length, slicing, indexing, `index_of`, `chars`, and
+  direct iteration. Generated-C input rejects malformed UTF-8 instead of
+  constructing an invalid `string`. The Unix regression requires `cc`, then
+  compiles, links, and executes generated C with accented text, emoji, and an
+  invalid-input case. C emission also mangles C reserved identifiers, so a
+  valid Ori binding such as `char` no longer produces invalid generated C.
 - **Constant folding no longer corrupts sized integers.** Folding rewrote every
   result to `int`, which widened `int8`/`int16`/`int32` and the unsigned types
   and desynchronised HIR from the narrower backend slot. Folding now wraps in
@@ -58,9 +191,71 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   resolve produced a second `expected 'int', found '<error>'` mismatch that
   buried the real diagnostic. Assignability checks now stay silent when either
   side already carries an error type.
+- **Managed list mutation preserves ARC ownership.** Native lowering for
+  `lists.set` now updates the old element edge before replacing it, and
+  `lists.insert` registers the new element edge before the producer releases
+  its temporary. Managed nested-list regressions cover both AOT and leak
+  checking paths.
 
 ### Added
 
+- **Structured conditional compilation.** `@cfg` now accepts typed
+  `target_os`, `target_arch`, `target_family`, `execution_profile`, and
+  manifest-declared `feature` predicates composed with `all`, `any`, and
+  `not`. The complete file is parsed first; inactive top-level declarations
+  are then removed before resolution, so checker, documentation, AOT, JIT,
+  C/debug, and LSP indexes share one active program. Both manifest formats,
+  CLI target/profile/feature selection, incremental fingerprints, diagnostics,
+  normative specs, bilingual guidance, and regressions are included. Unknown
+  target triples are rejected instead of being mistaken for OS-free targets,
+  and the VS Code extension restarts the LSP when `ori.cfg.*` changes.
+- **Hosted compiler session and scalar JIT.** Extended the experimental
+  `ori-embed` Rust crate with persistent Cranelift modules, public-function
+  metadata, generation-bound opaque handles, and validated homogeneous scalar
+  calls (`bool`, `int`, `float`, up to four arguments). Invalid updates preserve
+  the last accepted executable generation; successful replacements stale old
+  handles while retaining retired code for safety. Aggregates/managed values,
+  async execution, callback C ABI, traps beyond the scalar boundary, unload
+  concurrency, and a versioned C ABI remain later slices.
+- **Graphics evolution planning.** A re-audit of
+  [`docs/planning/ORI_GRAPHICS_LANGUAGE_EVOLUTION.md`](docs/planning/ORI_GRAPHICS_LANGUAGE_EVOLUTION.md)
+  (2026-08-16) recorded the real state of the numeric/CPU graphics program:
+  `array[InlineStruct, N]` still requires an `Inline(T)` classification (all
+  structs are treated as runtime-managed today), the bitwise surface is absent
+  from `BinaryOp`, `ori.buffer` is only a managed stub, and no official graphics
+  benchmark suite exists. The document and the backlog now carry the corrected
+  implementation map (`GFX-INLINE-1`, `GFX-BENCH-1`, `GFX-BITWISE-1`,
+  `GFX-BUFFER-1`, `GFX-VIEW-1`, `GFX-BCE-1`, `GFX-MIDEND-1`, `GFX-SIMD-1`,
+  `GFX-ECO-1`) with a contract decision required for `ori.buffer` before the
+  contiguous-buffer slice.
+- **Scalar host-function registry.** `ori-embed` can now validate and bind
+  trusted `extern host` `bool`/`int`/`float` symbols before JIT finalization.
+  Their addresses are cached by the persistent module, with missing symbols,
+  duplicate registrations, reserved runtime names, and signature mismatches
+  rejected before a generation is published. The same registry now supports
+  trusted integer callbacks with opaque `user_data`, stable callback IDs,
+  arity-specific JIT dispatch, structured cancellation after unregister, an
+  active-call lifecycle guard, and bounded synchronous reentrancy. C-header
+  callbacks, thread dispatch, aggregate values, and the versioned C ABI remain
+  future work.
+- **Explicit hosted module unload.** `OriEngine::unload_module` now drops all
+  executable generations for one module and makes its existing handles return
+  a typed unavailable-module error. Concurrent frame/task coordination remains
+  intentionally outside this first lifecycle slice.
+- **Runtime identity queries for embedded hosts.** The native runtime now exports
+  `ori_rt_version()` and `ori_rt_abi_version()` as borrowed, NUL-terminated C
+  strings. Generated `--lib` headers declare both symbols so hosts can reject
+  an incompatible ABI before calling exports.
+- **Recoverable scalar hosted traps.** Persistent hosted JIT calls now use a
+  thread-local runtime error slot and explicit return paths for contracts,
+  `check`, integer division guards, and direct scalar list/string/bytes bounds
+  checks. `ori-embed` exposes these failures as `OriExecutionError`; standalone
+  AOT/JIT retains its abort policy, and arbitrary native faults remain outside
+  the recovery boundary.
+- **Persistent hosted-call benchmark.** Added `BRASA-ORI-CALL-001` as a
+  release example and `tools/bench/hosted_scalar_calls.sh` to measure one
+  million calls through one cached function handle without treating a
+  machine-specific timing as a CI threshold.
 - **`parse.nesting_too_deep`.** Deeply nested expressions, blocks, or types
   exhausted the stack and killed the process without a diagnostic. The parser
   now bounds nesting at 128 levels and reports it once. The CLI and the
@@ -70,6 +265,25 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **General embedding implementation maps.** Added reviewable plans for the
+  [hosted runtime and Host ABI v1](docs/planning/embedded-runtime-host-abi-v1.md),
+  [static metadata and extensible attributes](docs/planning/static-metadata-attributes.md),
+  [a persistent compiler service and modular JIT](docs/planning/interactive-compiler-service.md),
+  and [value-type performance](docs/planning/value-types-performance.md). The
+  Atlas and sole active backlog now distinguish those proposals from the
+  implemented `compile --lib` baseline. Planning/version drift was corrected.
+  The audit exposed permissive `@repr` validation and C/debug UTF-8 byte
+  indexing; both gaps were then closed by `ATTR-REPR-1` and `BUG-UTF8-LEN`.
+- **Cross-domain usability program approved.** Added implementation maps for
+  structured `@cfg`, scripts/automation, runtime control and observability,
+  Unicode text, web runtime primitives, an embedded execution profile, native
+  binding generation, and a production package ecosystem. The sole active
+  backlog owns their IDs and priorities; domain frameworks and engine-specific
+  syntax remain outside the compiler.
+- **Documentation coverage is now a CI gate.** The Linux native-route job runs
+  the Atlas path audit and all canonical/inline documentation examples. The
+  machine-readable registry now maps attributes through HIR lowering and maps
+  stdlib text behavior through both native runtime and C/debug codegen.
 - **Documentation audit and Atlas.** Added the canonical documentation map in
   [`docs/ATLAS.md`](docs/ATLAS.md) and the machine-readable feature registry in
   [`docs/atlas/features.yaml`](docs/atlas/features.yaml). The registry links

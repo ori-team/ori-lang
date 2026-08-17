@@ -171,6 +171,34 @@ const ENTRIES: &[ExplainEntry] = &[
         cause: "A type argument does not implement a required trait (`for T: Trait`).",
         fix: "Implement the trait for your type or use a type that already satisfies the constraint.",
     },
+    ExplainEntry {
+        code: "cfg.execution_profile_invalid",
+        severity: "error",
+        summary: "The selected execution profile is not supported.",
+        cause: "`--execution-profile` or `ORI_EXECUTION_PROFILE` contains a value other than `standalone` or `embedded`.",
+        fix: "Select `standalone` for normal applications or `embedded` for hosted configuration selection.",
+    },
+    ExplainEntry {
+        code: "cfg.feature_invalid",
+        severity: "error",
+        summary: "A requested feature name is not a valid Ori feature identifier.",
+        cause: "A value passed through `--features` or `ORI_FEATURES` is empty, reserved, or contains characters outside ASCII letters, digits, and `_`.",
+        fix: "Use a declared ASCII identifier such as `telemetry` or `fast_math`.",
+    },
+    ExplainEntry {
+        code: "cfg.feature_not_declared",
+        severity: "error",
+        summary: "A requested feature is not declared by the project.",
+        cause: "`--features`, `ORI_FEATURES`, or editor configuration names a feature absent from the root manifest's `[features]` section.",
+        fix: "Declare the feature with an empty array under `[features]`, or remove it from the requested feature list.",
+    },
+    ExplainEntry {
+        code: "cfg.target_invalid",
+        severity: "error",
+        summary: "The selected compilation target is malformed or unsupported by cfg v1.",
+        cause: "The target is empty, contains whitespace, or has architecture/OS facts outside the closed cfg v1 value set.",
+        fix: "Pass a supported target triple such as `x86_64-unknown-linux-gnu` or `wasm32-unknown-unknown`; unknown OS names never mean `target_os: none`.",
+    },
 ];
 
 /// Lookup explanation for a diagnostic code (exact match).

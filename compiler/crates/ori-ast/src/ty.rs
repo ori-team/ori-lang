@@ -124,6 +124,8 @@ pub enum Type {
     Optional(Box<Type>, Span),
     Result(Box<Type>, Box<Type>, Span),
     List(Box<Type>, Span),
+    /// `buffer[T]` — a mutable, contiguous, fixed-length sequence.
+    Buffer(Box<Type>, Span),
     /// `slice[T]` — a read-only window over a `list[T]`.
     Slice(Box<Type>, Span),
     /// `array[T, size: N]` — fixed length, part of the type.
@@ -184,10 +186,11 @@ impl Type {
             | Type::Void(s) => *s,
             Type::Named(q) => q.span,
             Type::ConstArg { span, .. } => *span,
-            Type::Array { span, .. } => *span,
-            Type::Optional(_, s)
-            | Type::List(_, s)
+            Type::Buffer(_, s)
             | Type::Slice(_, s)
+            | Type::Array { span: s, .. }
+            | Type::Optional(_, s)
+            | Type::List(_, s)
             | Type::Set(_, s)
             | Type::Range(_, s)
             | Type::Lazy(_, s)

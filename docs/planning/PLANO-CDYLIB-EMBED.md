@@ -1,13 +1,13 @@
 # Plano: `ori compile --lib` — shared library embarcável (cdylib)
 
-> **Criado:** 2026-07-16 · Motivação: hospedar código Ori dentro de hosts
-> nativos (Godot via GDExtension, Python, qualquer engine C/C++), no modelo
-> godot-rust/gdext: o host carrega um `.so`/`.dll` que registra funções.
-> Origem histórica da demanda: pivot do editor Ori Studio para Godot. O
-> experimento Godot não faz parte do produto atual; este arquivo mantém apenas
-> o contrato e os itens residuais de embedding.
+> **Criado:** 2026-07-16 · **Atualizado:** 2026-08-09.
+> **Motivação:** hospedar código Ori dentro de hosts nativos por uma ABI C
+> geral. A demanda nasceu durante um experimento com Godot, mas nenhuma engine
+> específica faz parte do produto atual. Este arquivo registra a fundação já
+> entregue; o trabalho aberto está no
+> [plano de runtime hospedado e Host ABI v1](embedded-runtime-host-abi-v1.md).
 
-## 0. Estado atual (atualizado 2026-08-08)
+## 0. Estado atual (atualizado 2026-08-09)
 
 ### Implementado (P1 + P2)
 
@@ -22,16 +22,22 @@
   (`add_scores(2,3)==5`, 1M calls ~28 ns/call no host de dev).
 - Exemplo: `examples/embed/` (+ stub Godot em `examples/embed/godot/`).
 
-### Ainda em aberto
+### Residual reclassificado
 
 - Handles diretos de `list`/`map` e outros aggregates de collection continuam
   fora do ABI-1. Bridges diretos de `optional`/`result` já foram entregues;
   ver [19-abi.md](../spec/19-abi.md#83b-c_export--the-host-facing-surface).
-- **P3** callbacks host→Ori no path embed.
-- **P4** shim GDExtension completo em CI.
-- **P5** Windows/mac.
-- **Issue #1** (custo/call em módulos grandes) — monitorar no P4; path scalar
-  P1 está bem abaixo do teto 2 µs.
+- Callbacks, traps recuperáveis fora do caminho escalar, lifecycle por contexto,
+  buffers em lote e negociação de versão pertencem agora a **EMBED-HOST-1**;
+  o `ori-embed` já possui o primeiro slot de erro para traps escalares.
+- JIT persistente escalar, handles geracionais e unload explícito já existem
+  na sessão Rust experimental; JIT incremental, reload seguro concorrente,
+  callbacks e migração de estado pertencem a **COMP-SVC-1**.
+- Windows/macOS continuam sujeitos à política geral de distribuição, não a
+  uma integração com engine.
+- O path escalar P1 mediu cerca de 28 ns/chamada no host de desenvolvimento;
+  workloads maiores devem permanecer em benchmarks antes de qualquer nova
+  promessa de desempenho.
 
 ### Histórico (pré-implementação)
 
@@ -45,9 +51,10 @@
 library com (a) funções Ori marcadas como exportadas visíveis com ABI C,
 (b) init/shutdown explícitos do runtime, (c) PIC correto.
 
-**Não-objetivos (fase posterior):** integração como *linguagem de script de
-editor* no Godot (ScriptLanguageExtension, hot-reload, debugger); Windows/mac
-(seguem depois do Linux, mesmo padrão dos hosts).
+**Não-objetivos:** integrações específicas com engines, editores ou frameworks;
+uma VM separada; sintaxe de entidades/cenas/componentes; e exposição direta do
+layout privado das collections. Adaptadores pertencem a repositórios externos
+e devem consumir a mesma Host ABI geral.
 
 ## 2. Superfície de linguagem
 
@@ -98,26 +105,28 @@ void ori_rt_shutdown(void);  // best-effort; processo host segue vivo
 |------|---------|--------|--------|
 | **P1** | `--lib` + `@c_export` int/float/bool + `ori_rt_init/shutdown` | Harness C: dlopen, init, `add_scores(2,3)==5`, 1M calls | **done** |
 | **P2** | Strings + structs escalares/gerenciadas + header gerado | Harness C inclui o `.h`, valida ida/volta e ownership ARC | **done** |
-| **P3** | Callbacks host→Ori registráveis | Harness registra callback e Ori o invoca | open |
-| **P4** | Exemplo Godot GDExtension | Cena 60fps + ≤2 µs/call | stub docs |
-| **P5** | Windows/mac | CI matrix | open |
+| **P3** | Callbacks host→Ori registráveis | Harness C registra callback e Ori o invoca com erro recuperável | moved to **EMBED-HOST-1** |
+| **P4** | Compatibilidade com host real | Harness genérico mede chamadas escalares e em lote sem depender de engine | moved to **EMBED-HOST-1** |
+| **P5** | Windows/macOS | CI matrix conforme a política geral de distribuição | deferred |
 
-**P4 é o teste de realidade**: além de provar a feature, mede o custo por
-chamada no contexto real — amarra com a issue #1 (o aceite inclui
-`custo/call ≤ 2µs` com o módulo de exemplo, para impedir regressão).
+O teste de realidade passa a ser um harness C/C++ genérico com chamadas
+escalares, buffers, callbacks, erro e reload. Uma integração externa deve
+conseguir usar o mesmo contrato sem alterar o compilador Ori.
 
 ## 6. Riscos
 
 | Risco | Mitigação |
 |-------|-----------|
-| Issue #1 torna o bridge inútil em módulos grandes | Fix junto/antes; aceite de perf no P4 |
+| Custo cresce em módulos grandes | Benchmark genérico por tamanho de módulo; otimizar somente com regressão reproduzível |
 | Runtime assume processo próprio (signals? TLS? argv?) | `ori_rt_init` não toca argv/signals |
-| GC × ponteiros retidos pelo host | Fase 1: host **não retém** managed refs (só escalares) |
+| ARC × referências retidas pelo host | Usar exclusivamente handles e funções de retain/release documentadas |
 | PIC / link staticlib × libgcc | Shared link usa **cdylib** do runtime |
 
 ## 7. Ligações
 
-- Issue perf: https://github.com/raillen/ori-lang/issues/1
-- Consumidor alvo: plano Godot em `game-engine-full/docs/planning/PLANO-GODOT-STUDIO.md`
+- Runtime hospedado/Host ABI: [`embedded-runtime-host-abi-v1.md`](embedded-runtime-host-abi-v1.md)
+- Metadata estática: [`static-metadata-attributes.md`](static-metadata-attributes.md)
+- Compiler service/JIT modular: [`interactive-compiler-service.md`](interactive-compiler-service.md)
+- Performance de value types: [`value-types-performance.md`](value-types-performance.md)
 - Smoke: `tools/qa/embed_smoke.sh`
 - Exemplo: `examples/embed/README.md`

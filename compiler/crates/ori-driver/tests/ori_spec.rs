@@ -6052,6 +6052,258 @@ end
     );
 }
 
+// ── GFX-INLINE-1: `array[InlineStruct, size: N]` ────────────────────────────
+//
+// A struct whose fields are all inline (scalars, inline arrays, inline
+// structs) is itself inline and can be stored inside an `array` block with no
+// ARC. Structs holding a managed field stay rejected, naming the offender.
+
+#[test]
+fn compile_runs_inline_struct_arrays() {
+    let dir = TestDir::new("array_inline_struct");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.mem = mem
+
+struct Vec3
+    x: float32
+    y: float32
+    z: float32
+end
+
+struct Triangle
+    a: Vec3
+    b: Vec3
+    c: Vec3
+end
+
+main()
+    var verts: array[Vec3, size: 3] = [
+        Vec3 { x: 1.0f32, y: 2.0f32, z: 3.0f32 },
+        Vec3 { x: 4.0f32, y: 5.0f32, z: 6.0f32 },
+        Vec3 { x: 7.0f32, y: 8.0f32, z: 9.0f32 },
+    ]
+    io.println(f"{verts[1].y}")
+    verts[2] = Vec3 { x: 70.0f32, y: 80.0f32, z: 90.0f32 }
+    io.println(f"{verts[2].z}")
+    const tri: Triangle = Triangle {
+        a: verts[0],
+        b: verts[1],
+        c: verts[2],
+    }
+    io.println(f"{tri.c.x}")
+    io.println(f"{mem.size_of(verts)}")
+    io.println(f"{mem.size_of(tri)}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "array_inline_struct");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "5\n90\n70\n36\n36\n"
+    );
+}
+
+#[test]
+fn check_rejects_inline_struct_with_managed_field_and_names_it() {
+    let dir = TestDir::new("array_inline_struct_managed_field");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Labeled
+    name: string
+    v: int
+end
+
+main()
+    const xs: array[Labeled, size: 2] = [
+        Labeled { name: "a", v: 1 },
+        Labeled { name: "b", v: 2 },
+    ]
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.array_element_not_inline"),
+        "a struct with a managed field must stay rejected: {:?}",
+        out.diagnostics
+    );
+    let joined: String = out
+        .diagnostics
+        .iter()
+        .flat_map(|d| [d.message.as_str(), d.why.as_deref().unwrap_or("")])
+        .collect();
+    assert!(
+        joined.contains("field `name`"),
+        "diagnostic must name the offending field: {joined:?}"
+    );
+}
+
+#[test]
+fn check_rejects_recursive_inline_struct() {
+    let dir = TestDir::new("array_inline_struct_recursive");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Node
+    next: Node
+    v: int
+end
+
+main()
+    const xs: array[Node, size: 2] = []
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        diagnostic_codes(&out).contains(&"type.array_element_not_inline"),
+        "a recursive struct has no finite size and must be rejected: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn compile_runs_struct_field_array_of_inline_structs() {
+    let dir = TestDir::new("struct_field_inline_struct_array");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+struct Vec3
+    x: float32
+    y: float32
+    z: float32
+end
+
+struct Mesh
+    verts: array[Vec3, size: 4]
+    name: string
+end
+
+main()
+    var m: Mesh = Mesh {
+        verts: [
+            Vec3 { x: 1.0f32, y: 2.0f32, z: 3.0f32 },
+            Vec3 { x: 4.0f32, y: 5.0f32, z: 6.0f32 },
+            Vec3 { x: 7.0f32, y: 8.0f32, z: 9.0f32 },
+            Vec3 { x: 10.0f32, y: 11.0f32, z: 12.0f32 },
+        ],
+        name: "cube",
+    }
+    io.println(f"{m.name}")
+    io.println(f"{m.verts[2].y}")
+    m.verts[1].x = 40.0f32
+    io.println(f"{m.verts[1].x}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "struct_field_inline_struct_array");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "cube\n8\n40\n");
+}
+
+// ── GFX-BITWISE-1: `& | ^ ~ << >>` ──────────────────────────────────────────
+//
+// Bitwise operators on integers with preserved width; `>>` is arithmetic on
+// signed and logical on unsigned. Shifts accept an integer count of any width.
+
+#[test]
+fn compile_runs_bitwise_operators() {
+    let dir = TestDir::new("bitwise_ops");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const a: int = 0b1100
+    const b: int = 0b1010
+    io.println(f"{a & b}")
+    io.println(f"{a | b}")
+    io.println(f"{a ^ b}")
+    io.println(f"{~a}")
+    io.println(f"{a << 2}")
+    io.println(f"{a >> 1}")
+    const neg: int = -16
+    io.println(f"{neg >> 2}")
+    const u: u8 = 0b10000000u8
+    io.println(f"{u >> 4}")
+    io.println(f"{u << 1}")
+    const packed: u32 = (0xFFu32 << 24) | (0x40u32 << 16) | (0x80u32 << 8) | 0xC0u32
+    io.println(f"{packed}")
+end
+"#,
+    );
+    let exe = exe_path(&dir, "bitwise_ops");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "8\n14\n6\n-13\n48\n6\n-4\n8\n0\n4282417344\n"
+    );
+}
+
+#[test]
+fn check_rejects_bitwise_type_mismatches() {
+    let dir = TestDir::new("bitwise_type_mismatch");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+main()
+    const x: int = 5
+    const y: string = "a"
+    const z: int = x & y
+    const w: int = x << y
+    const f: float = 1.5
+    const q: int = x & f
+    const t: bool = true
+    const s: int = ~t
+    io.println(f"{z} {w} {q} {s}")
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"type.bitwise_type_mismatch"),
+        "bitwise on non-integers must be rejected: {:?}",
+        out.diagnostics
+    );
+    assert!(
+        codes.contains(&"type.shift_type_mismatch"),
+        "shift with non-integer operand must be rejected: {:?}",
+        out.diagnostics
+    );
+    assert!(
+        codes.contains(&"type.unary_bitnot_non_integer"),
+        "`~` on a bool must be rejected: {:?}",
+        out.diagnostics
+    );
+}
+
 // ── Index assignment actually stores ───────────────────────────────────────
 //
 // The codegen chain for `container[i] = v` handled only `list` and fell through

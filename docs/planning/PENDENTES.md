@@ -55,17 +55,17 @@
 | **M4** | Self-hosting | **adiado; reavaliado em 2026-07-26** (última discussão) | Ainda não: priorizar modularização, estabilidade do compilador/runtime e DX |
 
 > **Ordem M2 → M3 → M1 fechada.** Lista aberta unificada: **[BACKLOG.md](BACKLOG.md)**  
-> (próximo: **DIST-1** Windows package, depois **STDLIB-2** HTTP, etc.)
+> As prioridades atuais são lidas diretamente no backlog; esta fotografia não
+> escolhe o próximo item.
 
 ### Decisão de prontidão para self-hosting — 2026-07-26
 
 Ainda não é o momento de iniciar o self-hosting. A Ori já pode ser instalada,
-compilada e executada sem Rust pelo usuário final (M1), mas o compilador ainda
-está recebendo mudanças de estabilização: o cache por arquivo já reutiliza
-objetos nativos, o debugger continua ampliando a inspeção de variáveis, e os
-contratos entre frontend, HIR, codegen, runtime e documentação agora estão
-fechados em módulos explícitos. Escrever uma segunda versão do compilador em
-Ori agora duplicaria o trabalho e tornaria cada ajuste de linguagem mais lento.
+compilada e executada sem Rust pelo usuário final (M1), mas a próxima fundação
+agora inclui Host ABI seguro, performance de value types, metadata estática e,
+depois, um compiler service persistente. Escrever uma segunda versão do
+compilador em Ori agora duplicaria esses contratos ainda em evolução e tornaria
+cada ajuste de linguagem mais lento.
 
 O caminho recomendado é consolidar essa fundação: fortalecer diagnósticos e
 regressões, medir o runtime em programas reais e estabilizar a stdlib/ABI por
@@ -81,20 +81,21 @@ Ver BACKLOG §5 (HM, game/imgui, Layer1→Ori rewrite, C-async-v1).
 
 ---
 
-## Plano ativo atual
+## Narrativa de uso real
 
-O plano de uso real pequeno/médio continua em
+O documento de uso real pequeno/médio continua em
 [`uso-real-pequeno-medio.md`](uso-real-pequeno-medio.md), **subordinado** à tabela
-de prioridade acima quando houver conflito.
+de prioridade do [`BACKLOG.md`](BACKLOG.md) quando houver conflito.
 
-Use este arquivo como backlog resumido e histórico operacional:
+Use este arquivo somente como resumo de marcos e histórico operacional:
 
 - Etapas 1–6: histórico da estabilização até `0.2.0`;
 - Backlog v2: itens remanescentes de DX, stdlib e I/O;
 - Prioridade 2026-07-13: ordem tática pós-S3.
 
 Quando uma tarefa nova afetar sintaxe, runtime, stdlib, tooling ou distribuição,
-adicione o detalhe no plano de uso real e mantenha aqui apenas o resumo.
+registre a linha aberta somente no `BACKLOG.md`; planos temáticos podem detalhar
+o desenho sem se tornarem uma segunda lista de pendências.
 
 ---
 

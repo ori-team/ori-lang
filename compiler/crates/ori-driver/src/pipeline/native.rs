@@ -4,7 +4,7 @@ use ori_hir::{HirArg, HirBlock, HirExpr, HirExprKind, HirFunc, HirModule, HirStm
 use ori_types::{DefId, Ty};
 use std::path::{Path, PathBuf};
 
-use super::frontend::check_loaded_sources;
+use super::frontend::{check_loaded_sources, CheckOptions};
 use super::lowering::lower_loaded_sources;
 use super::project::{load_and_resolve, namespace_of, LoadedSource};
 use super::runtime::{
@@ -46,6 +46,32 @@ pub struct JitRunOutput {
     pub diagnostics: Vec<Diagnostic>,
     pub has_errors: bool,
     pub exit_code: i32,
+}
+
+/// Result of compiling an in-memory source graph into a persistent JIT module.
+///
+/// The module owns its finalized Cranelift code and must remain alive for any
+/// host function handle derived from it. Source diagnostics are returned in the
+/// same shape as the check pipeline; backend/runtime failures remain `Err`.
+pub struct JitCompileOutput {
+    pub cache: SourceCache,
+    pub diagnostics: Vec<Diagnostic>,
+    pub has_errors: bool,
+    pub module: Option<ori_codegen::CompiledJitModule>,
+}
+
+/// Checked and lowered source graph ready for persistent JIT finalization.
+///
+/// The HIR is kept separate from the Cranelift module so callers that need a
+/// large frontend stack can perform parsing/type checking on a worker thread,
+/// then finalize executable code on their owning thread.
+pub struct JitLowerOutput {
+    pub cache: SourceCache,
+    pub diagnostics: Vec<Diagnostic>,
+    pub has_errors: bool,
+    pub hir: Option<HirModule>,
+    pub cdylib: Option<PathBuf>,
+    pub native_libs: Vec<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -180,6 +206,11 @@ fn filter_test_cases(tests: Vec<TestCase>, filter: Option<&str>) -> Vec<TestCase
 /// subprocess. The runtime `ori_*` symbols are resolved from the staged
 /// cdylib via `libloading`.
 pub fn run_jit(source_path: &Path) -> Result<JitRunOutput, String> {
+    run_jit_with_args(source_path, &[])
+}
+
+/// Run JIT with custom arguments forwarded to `ori.os.args` / `ori.args`.
+pub fn run_jit_with_args(source_path: &Path, args: &[String]) -> Result<JitRunOutput, String> {
     let mut cache = ori_diagnostics::SourceCache::default();
     let mut sink = ori_diagnostics::DiagnosticSink::default();
     let sources = load_and_resolve(source_path, &mut cache, &mut sink)?;
@@ -206,7 +237,13 @@ pub fn run_jit(source_path: &Path) -> Result<JitRunOutput, String> {
                 native_libs.push(lib_path);
             }
 
-            exit_code = ori_codegen::run_jit(&hir, &cdylib, &native_libs)?;
+            let full_args: Vec<String> = std::iter::once(source_path.display().to_string())
+                .chain(args.iter().cloned())
+                .collect();
+            ori_runtime::set_custom_args(Some(full_args.clone()));
+            let result = ori_codegen::run_jit_with_args(&hir, &cdylib, &native_libs, &full_args);
+            ori_runtime::set_custom_args(None);
+            exit_code = result?;
         }
     }
 
@@ -217,6 +254,101 @@ pub fn run_jit(source_path: &Path) -> Result<JitRunOutput, String> {
         diagnostics,
         has_errors,
         exit_code,
+    })
+}
+
+/// Compile an in-memory source graph into a finalized persistent JIT module.
+///
+/// This is the compiler-side foundation for hosted sessions. It intentionally
+/// does not execute `main`; callers choose whether to keep the module and
+/// invoke an explicitly supported function or use the legacy `run_jit` path.
+pub fn compile_jit_source_with_options(
+    path: &Path,
+    source: String,
+    options: CheckOptions,
+) -> Result<JitCompileOutput, String> {
+    let lowered = lower_jit_source_with_options(path, source, options)?;
+    let JitLowerOutput {
+        cache,
+        diagnostics,
+        has_errors,
+        hir,
+        cdylib,
+        native_libs,
+    } = lowered;
+    let module = match (has_errors, hir, cdylib) {
+        (false, Some(hir), Some(cdylib)) => Some(ori_codegen::CompiledJitModule::compile(
+            &hir,
+            &cdylib,
+            &native_libs,
+        )?),
+        _ => None,
+    };
+    Ok(JitCompileOutput {
+        cache,
+        diagnostics,
+        has_errors,
+        module,
+    })
+}
+
+/// Check and lower an in-memory source graph without transferring JIT code
+/// across the compiler's large-stack worker boundary.
+pub fn lower_jit_source_with_options(
+    path: &Path,
+    source: String,
+    options: CheckOptions,
+) -> Result<JitLowerOutput, String> {
+    let mut cache = SourceCache::default();
+    let mut sink = DiagnosticSink::default();
+    let sources = super::project::load_and_resolve_with_entry_source_and_cfg(
+        path,
+        source,
+        options.cfg,
+        &mut cache,
+        &mut sink,
+    )?;
+    let loaded = sources.loaded;
+    let resolved = sources.resolved;
+    let import_context = sources.imports;
+
+    if !sink.has_errors() {
+        check_loaded_sources(&loaded, &resolved, &mut sink);
+    }
+
+    let (hir, cdylib, native_libs) = if !sink.has_errors() {
+        let mut hir = lower_loaded_sources(&loaded, &resolved, &mut sink);
+        if sink.has_errors() {
+            (None, None, Vec::new())
+        } else {
+            ori_hir::optimize_module(&mut hir, ori_hir::OptLevel::from_env());
+            let cdylib = find_native_runtime_cdylib()?;
+            let target = native_target_triple();
+            let native_libs = import_context
+                .native_libs
+                .iter()
+                .map(|lib| {
+                    lib.package_root
+                        .join("lib")
+                        .join(&target)
+                        .join(native_lib_cdylib_name(&target, &lib.name))
+                })
+                .collect::<Vec<_>>();
+            (Some(hir), Some(cdylib), native_libs)
+        }
+    } else {
+        (None, None, Vec::new())
+    };
+
+    let has_errors = sink.has_errors();
+    let diagnostics = sink.into_diagnostics();
+    Ok(JitLowerOutput {
+        cache,
+        diagnostics,
+        has_errors,
+        hir,
+        cdylib,
+        native_libs,
     })
 }
 

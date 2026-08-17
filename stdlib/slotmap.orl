@@ -1,0 +1,112 @@
+module ori.slotmap
+
+-- Generational SlotMap container rejecting stale keys upon slot reuse (RUNTIME-CTRL-1.7).
+
+import ori.list = lists
+
+public struct SlotKey
+    index: int
+    generation: int
+end
+
+public struct SlotEntry
+    value: int
+    generation: int
+    occupied: bool
+end
+
+public struct SlotMap
+    _entries: list[SlotEntry]
+end
+
+public new() -> SlotMap
+    const empty_list: list[SlotEntry] = []
+    return SlotMap{
+        _entries: empty_list,
+    }
+end
+
+public len(sm: SlotMap) -> int
+    var count = 0
+    var i = 0
+    const n = lists.len(sm._entries)
+    while i < n
+        if some(entry) = lists.try_get(sm._entries, i)
+            if entry.occupied
+                count = count + 1
+            end
+        end
+        i = i + 1
+    end
+    return count
+end
+
+public is_empty(sm: SlotMap) -> bool
+    return len(sm) == 0
+end
+
+public insert(sm: SlotMap, val: int) -> SlotKey
+    var i = 0
+    const n = lists.len(sm._entries)
+    while i < n
+        if some(entry) = lists.try_get(sm._entries, i)
+            if not entry.occupied
+                const new_gen = entry.generation + 1
+                const updated = SlotEntry{
+                    value: val,
+                    generation: new_gen,
+                    occupied: true,
+                }
+                lists.set(sm._entries, i, updated)
+                return SlotKey{ index: i, generation: new_gen }
+            end
+        end
+        i = i + 1
+    end
+
+    const entry = SlotEntry{
+        value: val,
+        generation: 1,
+        occupied: true,
+    }
+    lists.push(sm._entries, entry)
+    return SlotKey{ index: n, generation: 1 }
+end
+
+public get(sm: SlotMap, key: SlotKey) -> optional[int]
+    if key.index < 0 or key.index >= lists.len(sm._entries)
+        return none
+    end
+    if some(entry) = lists.try_get(sm._entries, key.index)
+        if entry.occupied and entry.generation == key.generation
+            return some(entry.value)
+        end
+    end
+    return none
+end
+
+public remove(sm: SlotMap, key: SlotKey) -> optional[int]
+    if key.index < 0 or key.index >= lists.len(sm._entries)
+        return none
+    end
+    if some(entry) = lists.try_get(sm._entries, key.index)
+        if entry.occupied and entry.generation == key.generation
+            const old_val = entry.value
+            const updated = SlotEntry{
+                value: 0,
+                generation: entry.generation,
+                occupied: false,
+            }
+            lists.set(sm._entries, key.index, updated)
+            return some(old_val)
+        end
+    end
+    return none
+end
+
+public contains(sm: SlotMap, key: SlotKey) -> bool
+    if some(_) = get(sm, key)
+        return true
+    end
+    return false
+end

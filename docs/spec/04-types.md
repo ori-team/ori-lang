@@ -67,6 +67,10 @@ scope permanently.
 
 Primitive types are value types: they are copied on assignment.
 
+All integer types support bitwise operations (`&`, `|`, `^`, `~`, `<<`, `>>`)
+since 0.3.8 (GFX-BITWISE-1); see Chapter 05 for precedence and shift
+semantics (arithmetic `>>` on signed, logical on unsigned).
+
 `string` and `bytes` are immutable managed values with reference counting.
 Assigning a `string` copies the reference, not the content.
 
@@ -158,6 +162,7 @@ These types are built into the language and require no import.
 |---|---|
 | `list[T]` | Ordered, resizable sequence |
 | `array[T, size: N]` | Fixed-length sequence stored **inline** — see below |
+| `buffer[T]` | Mutable, contiguous, fixed-length heap block — see below |
 | `slice[T]` | A read-only **window** over a `list[T]` — see below |
 | `map[K, V]` | Key-value mapping. Current runtime supports `int`, `string`, and user-defined keys that implement `Hashable` and `Equatable` |
 | `set[T]` | Unordered unique values. Current runtime supports `int`, `string`, and user-defined elements that implement `Hashable` and `Equatable` |
@@ -285,12 +290,49 @@ const page: array[int, size: page_size] = [1, 2, 3, 4, 5, 6, 7, 8]
   end
   ```
 
-### Element types must be scalars
+### Element types: the `Inline(T)` rule
 
-Inline storage has no reference counting, so a managed element (`string`,
-`list`, a struct, …) would be stored without a retain and released by nobody.
-Those are rejected with `type.array_element_not_inline`; use `list[T]` when the
-elements are managed.
+Inline storage has no reference counting, so an element that needs ARC
+ownership would be stored without a retain and released by nobody. The
+element type must therefore be **inline**:
+
+```text
+Inline(bool)      = true
+Inline(integer)   = true
+Inline(float)     = true
+Inline(array[T])  = Inline(T)
+Inline(struct S)  = S has at least one field and every field of S is Inline
+Inline(rest)      = false
+```
+
+A struct whose fields are all inline is itself inline, so graphics-friendly
+types work directly:
+
+```ori
+struct Vec3
+    x: float32
+    y: float32
+    z: float32
+end
+
+struct Triangle
+    a: Vec3
+    b: Vec3
+    c: Vec3
+end
+
+const cube_verts: array[Vec3, size: 8] = [ … ]
+```
+
+Inline struct elements are stored contiguously with no heap block per element
+and no ARC edge; `ori.mem.size_of` reports the whole block
+(`array[Vec3, size: 8]` is 96 bytes on a 4-byte-aligned layout).
+
+A struct holding any managed field (`string`, `list`, a managed struct, …) is
+not inline; `array[SuchStruct, size: N]` is rejected with
+`type.array_element_not_inline`, and the diagnostic names the offending field.
+A recursive struct (`A { next: A }`) has no finite size and is likewise
+rejected. Use `list[T]` when the elements are managed.
 
 ### Backend support
 
@@ -299,7 +341,50 @@ them to a heap list that would behave differently (chapter 14).
 
 ---
 
-## Optional
+## Contiguous Buffers (`buffer[T]`)
+
+`buffer[T]` is the numeric twin of `list[T]` for contiguous, **mutably
+indexable** storage. The length is not part of the type; it is fixed at
+allocation time and never grows — there is no implicit `reserve`, no hashing,
+no versioned iterators, and no ARC edge per element.
+
+```ori
+var pixels: buffer[u32] = ori.buffer.new(width * height)
+var depth: buffer[float32] = ori.buffer.new(width * height)
+var verts: buffer[Vertex] = ori.buffer.new(vertex_count)
+
+pixels[i] = 0xFF00FF00u32
+const value: u32 = pixels[i]
+const n: int = ori.buffer.len(pixels)
+ori.buffer.fill(pixels, 0u32)
+const span: slice[u32] = ori.buffer.as_slice(pixels)
+```
+
+### Rules
+
+- **Elements must be inline.** Exactly the same rule as `array` (`Inline(T)`
+  above): `buffer[string]`, `buffer[list[int]]`, etc. are rejected with
+  `type.array_element_not_inline` (handled as `type.buffer_element_not_inline`
+  once the diagnostic name is disambiguated). Empty structs and recursive
+  structs are not inline.
+- **Allocated with `ori.buffer.new(len)`.** `len` is an `int`; `len < 0` is
+  rejected. Zero is valid.
+- **Length-aware, indexed.** `buf[i]` is `T` (`i` may be `int`, bounds checked
+  at compile time for constants and at runtime otherwise). `buf[i] = v`
+  stores `v`. A length mismatch at construction is `type.buffer_length_mismatch`.
+- **Bounds-checked assignment.** `buf[i] = v` is an `LValue::Index` whose
+  index type is inferred as `int` (like `list[i] = v` and `array[i] = v`).
+- **`ori.mem.size_of` reports a heap pointer** for `buffer` (the header, not the
+  payload), consistent with `list`/`slice`.
+- **Valid everywhere a collection is valid in `check_collection_runtime_limits`.**
+- **Width-preserving `is_assignable_to`.** `buffer[int]` and `buffer[u32]` are
+  different types; neither substitutes for the other.
+
+### Backend support
+
+Native only. The C backend declines `buffer` as `backend.buffer_unsupported`.
+
+
 
 `optional[T]` represents a value that may be absent. There is no `null`.
 

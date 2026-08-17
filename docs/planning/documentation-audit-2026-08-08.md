@@ -5,6 +5,10 @@
 > [`../atlas/features.yaml`](../atlas/features.yaml).
 > **Scope:** compiler, runtime, tests, examples, language specification, user
 > guides, CLI/install docs, editor docs, and planning metadata.
+>
+> **Post-audit closure:** structured `@cfg` became active on 2026-08-10. Its
+> current contract is in [Spec 02](../spec/02-lexical.md#conditional-compilation)
+> and the Atlas; statements below describe the 2026-08-08 snapshot.
 
 ## Executive summary
 

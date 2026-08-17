@@ -85,6 +85,26 @@
     "body": "import ${1:ori.module} = ${2:alias}",
     "description": "Import stdlib module"
   },
+  "conditional target declaration": {
+    "prefix": "cfg-target",
+    "body": [
+      "@cfg(${1:target_os}: ${2:linux})",
+      "${3:name}(${4}) -> ${5:void}",
+      "    ${0}",
+      "end"
+    ],
+    "description": "Top-level declaration selected by a structured target predicate"
+  },
+  "conditional feature declaration": {
+    "prefix": "cfg-feature",
+    "body": [
+      "@cfg(feature: ${1:feature_name})",
+      "${2:name}(${3}) -> ${4:void}",
+      "    ${0}",
+      "end"
+    ],
+    "description": "Top-level declaration selected by a manifest feature"
+  },
   "if": {
     "prefix": "if",
     "body": [

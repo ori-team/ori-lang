@@ -1,0 +1,51 @@
+module ori.span
+
+-- Mutable views / spans over contiguous buffer regions without copying (GFX-VIEW-1).
+
+import ori.buffer = buffer_mod
+
+public struct Span
+    _buf: buffer[int]
+    _offset: int
+    _len: int
+end
+
+public from_buffer(buf: buffer[int], offset: int, len: int) -> Span
+    return Span{
+        _buf: buf,
+        _offset: offset,
+        _len: len,
+    }
+end
+
+public len(s: Span) -> int
+    return s._len
+end
+
+public is_empty(s: Span) -> bool
+    return s._len == 0
+end
+
+public get(s: Span, index: int) -> int
+    return buffer_mod.get(s._buf, s._offset + index)
+end
+
+public set_at(s: Span, index: int, value: int) -> void
+    buffer_mod.set(s._buf, s._offset + index, value)
+end
+
+public fill(s: Span, value: int) -> void
+    var i: int = 0
+    while i < s._len
+        buffer_mod.set(s._buf, s._offset + i, value)
+        i = i + 1
+    end
+end
+
+public subspan(s: Span, offset: int, len: int) -> Span
+    return Span{
+        _buf: s._buf,
+        _offset: s._offset + offset,
+        _len: len,
+    }
+end

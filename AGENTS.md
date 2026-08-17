@@ -147,7 +147,11 @@ cargo run -p ori-driver -- run ../examples/hello
 | `ORI_TEST_LEAK_CHECK=1` | When set, `ori.test.assert_no_leaks(label)` aborts with a stderr diagnostic if live ARC allocations remain after running the cycle collector. Use in E2E tests to fail fast on memory leaks. |
 | `ORI_COOPERATIVE_COLLECT_THRESHOLD=N` | Number of managed allocations between cooperative cycle collections in the async executor (default 256). Set to a small value in tests to force frequent collection. |
 | `ORI_STDLIB_ROOT` | Override path to the `stdlib/` directory containing `.orl` source modules (Stdlib Phase 0). When unset, resolves to `CARGO_MANIFEST_DIR/../../../stdlib` (dev mode) or `<ori.exe dir>/stdlib` (release package). |
-| `ori.lsp.path` / `ori.compiler.path` / `ori.stdlib.root` | VS Code extension settings (`extensions/vscode-orl/`) — forwarded to `ORI_*` env vars when spawning `ori-lsp`. |
+| `ORI_TARGET_TRIPLE` | Select target facts for structured `@cfg` and native runtime artifacts (`ori --target`). Does not by itself enable full native cross-compilation. |
+| `ORI_EXECUTION_PROFILE` | Select `standalone` or `embedded` for `@cfg(execution_profile: ...)` (`ori --execution-profile`). |
+| `ORI_FEATURES` | Comma-separated manifest-declared features enabled for `@cfg(feature: ...)` (`ori --features`). |
+| `ORI_NO_DEFAULT_FEATURES=1` | Disable the manifest's `[features].default` set (`ori --no-default-features`). |
+| `ori.lsp.path` / `ori.compiler.path` / `ori.stdlib.root` / `ori.cfg.*` | VS Code extension settings (`extensions/vscode-orl/`) — cfg target/profile/features are forwarded to the compiler, LSP, debugger, and extension terminals. |
 
 ## Compiler Pipeline
 

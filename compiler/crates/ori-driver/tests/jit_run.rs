@@ -159,6 +159,54 @@ end
 }
 
 #[test]
+fn jit_run_uses_the_manifest_cfg_selection() {
+    let dir = TestDir::new("jit_cfg_selection");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "jit_cfg"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["selected"]
+selected = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+@cfg(feature: selected)
+configured_value() -> int
+    return 42
+end
+
+@cfg(not(feature: selected))
+configured_value() -> string
+    return missing_name
+end
+
+main()
+    io.print(string(configured_value()))
+end
+"#,
+    );
+
+    let output = run_jit(&dir.path("main.orl"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "ori run (JIT cfg) failed: status={:?} stderr={stderr}",
+        output.status
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\n");
+}
+
+#[test]
 fn jit_path_relative_keeps_list_segments_alive() {
     let dir = TestDir::new("jit_path_relative_lifetime");
     dir.write(

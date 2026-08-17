@@ -63,9 +63,9 @@ pub struct SemanticIndex {
 }
 
 impl SemanticIndex {
-    pub fn build(source: &str) -> Self {
+    pub fn build(source: &str, path: Option<&std::path::Path>) -> Self {
         let mut index = Self::default();
-        index.index_ast(source);
+        index.index_ast(source, path);
         index
     }
 
@@ -194,11 +194,22 @@ impl SemanticIndex {
             .push(symbol);
     }
 
-    fn index_ast(&mut self, source: &str) {
+    fn index_ast(&mut self, source: &str, path: Option<&std::path::Path>) {
         let file_id = ori_diagnostics::FileId(0);
         let mut sink = ori_diagnostics::DiagnosticSink::default();
         let tokens = ori_lexer::lex(source, file_id, &mut sink);
-        let source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        let mut source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        if let Some(path) = path {
+            if let Err(error) = ori_driver::pipeline::filter_source_for_current_configuration(
+                path,
+                &mut source_file,
+                file_id,
+                &mut sink,
+            ) {
+                eprintln!("ori-lsp: cannot index `{}`: {error}", path.display());
+                return;
+            }
+        }
 
         for item_with_attrs in &source_file.items {
             self.index_item(&item_with_attrs.item, source);
@@ -689,4 +700,45 @@ fn position_in_range(pos: Position, range: &Range) -> bool {
 
 fn position_is_before(left: Position, right: Position) -> bool {
     left.line < right.line || (left.line == right.line && left.character < right.character)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SemanticIndex;
+
+    #[test]
+    fn semantic_index_hides_inactive_cfg_declarations() {
+        let root = std::env::temp_dir().join(format!(
+            "ori_lsp_cfg_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock must be after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create LSP cfg fixture");
+        let source = r#"module app.main
+
+active_symbol()
+end
+
+@cfg(feature: hidden)
+inactive_symbol()
+end
+
+main()
+end
+"#;
+        std::fs::write(root.join("main.orl"), source).expect("write LSP cfg source");
+        std::fs::write(
+            root.join("ori.proj"),
+            "manifest = 1\nname = \"lsp_cfg\"\nversion = \"0.1.0\"\nkind = \"app\"\nentry = \"main.orl\"\n\n[features]\ndefault = []\nhidden = []\n",
+        )
+        .expect("write LSP cfg manifest");
+
+        let index = SemanticIndex::build(source, Some(&root.join("main.orl")));
+        assert!(index.hover("active_symbol").is_some());
+        assert!(index.hover("inactive_symbol").is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

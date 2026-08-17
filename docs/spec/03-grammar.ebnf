@@ -13,6 +13,7 @@
      A = ( B )      -- grouping
      "x"            -- terminal: literal token x
      UPPER          -- terminal defined in Chapter 02 (lexer token)
+     CFG_NAME       -- ASCII identifier-shaped token text, including reserved words
      lower          -- non-terminal defined in this grammar
 
    Whitespace and comments between tokens are always ignored.
@@ -76,7 +77,7 @@ top_level_decl
     | [ attr_list ] alias_decl
     | [ attr_list ] const_decl
     | [ attr_list ] var_decl
-    | extern_block
+    | [ attr_list ] extern_block
     ;
 
 attr_list
@@ -84,7 +85,27 @@ attr_list
     ;
 
 attr
-    = "@" IDENT [ "(" attr_arg_list ")" ]
+    = cfg_attr
+    | "@" IDENT [ "(" attr_arg_list ")" ]
+    ;
+
+cfg_attr
+    = "@" "cfg" "(" cfg_predicate [ "," ] ")"
+    ;
+
+cfg_predicate
+    = cfg_key ":" CFG_NAME
+    | "all" "(" cfg_predicate { "," cfg_predicate } [ "," ] ")"
+    | "any" "(" cfg_predicate { "," cfg_predicate } [ "," ] ")"
+    | "not" "(" cfg_predicate [ "," ] ")"
+    ;
+
+cfg_key
+    = "target_os"
+    | "target_arch"
+    | "target_family"
+    | "execution_profile"
+    | "feature"
     ;
 
 attr_arg_list
@@ -545,7 +566,24 @@ or_expr
     ;
 
 and_expr
-    = compare_expr { "and" compare_expr }
+    = bor_expr { "and" bor_expr }
+    ;
+
+(* GFX-BITWISE-1: symbolic bitwise operators, C-like precedence. *)
+bor_expr
+    = bxor_expr { "|" bxor_expr }
+    ;
+
+bxor_expr
+    = band_expr { "^" band_expr }
+    ;
+
+band_expr
+    = shift_expr { "&" shift_expr }
+    ;
+
+shift_expr
+    = compare_expr { ("<<" | ">>") compare_expr }
     ;
 
 compare_expr
@@ -575,6 +613,7 @@ mul_op
 unary_expr
     = "-" unary_expr
     | "not" unary_expr
+    | "~" unary_expr                         (* bitwise complement *)
     | "try" unary_expr                       (* only propagation form; no postfix ? *)
     | postfix_expr
     ;

@@ -1,8 +1,12 @@
 // ori-runtime implementation
 
 pub const ORI_ABI_VERSION: &str = "ori-native-abi-1";
+pub const ORI_RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-use std::cell::Cell;
+static ORI_ABI_VERSION_C: &[u8] = b"ori-native-abi-1\0";
+static ORI_RUNTIME_VERSION_C: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString};
 use std::io::Write;
@@ -328,6 +332,60 @@ unsafe extern "C" fn ori_arc_maybe_collect_cycles() {
 
 thread_local! {
     static TASK_LAST_AWAIT_STATUS: Cell<i64> = const { Cell::new(1) };
+    static HOST_ERROR: RefCell<HostErrorState> = RefCell::new(HostErrorState::default());
+}
+
+#[derive(Default)]
+struct HostErrorState {
+    code: i32,
+    message: Vec<u8>,
+}
+
+/// Clear the recoverable error recorded for the current host thread.
+#[no_mangle]
+extern "C" fn ori_host_clear_error() {
+    HOST_ERROR.with(|error| {
+        let mut error = error.borrow_mut();
+        error.code = 0;
+        error.message.clear();
+    });
+}
+
+/// Record a recoverable error for the current host thread.
+///
+/// The message is copied immediately, so the caller retains ownership of the
+/// input pointer. A null message records an empty string.
+#[no_mangle]
+unsafe extern "C" fn ori_host_report_error(code: i32, message: *const u8) {
+    let message = cstr_str(message).as_bytes();
+    HOST_ERROR.with(|error| {
+        let mut error = error.borrow_mut();
+        error.code = code;
+        error.message.clear();
+        error.message.extend_from_slice(message);
+        error.message.push(0);
+    });
+}
+
+/// Return the recoverable error code for the current host thread, or zero.
+#[no_mangle]
+extern "C" fn ori_host_error_code() -> i32 {
+    HOST_ERROR.with(|error| error.borrow().code)
+}
+
+/// Return the recoverable error message for the current host thread.
+///
+/// The pointer is borrowed until the next host error operation on this thread.
+#[no_mangle]
+extern "C" fn ori_host_error_message() -> *const c_char {
+    HOST_ERROR.with(|error| {
+        let error = error.borrow();
+        if error.message.is_empty() {
+            std::ptr::null()
+        } else {
+            error.message.as_ptr().cast()
+        }
+    })
 }
 
 fn arc_state() -> &'static Mutex<ArcState> {
@@ -2255,7 +2313,7 @@ unsafe fn write_string_parts(body: String, out_ptr: *mut *mut u8, out_len: *mut 
 
 #[no_mangle]
 unsafe extern "C" fn ori_len(ptr: *const u8) -> i64 {
-    cstr_byte_len(ptr) as i64
+    cstr_str(ptr).chars().count() as i64
 }
 
 unsafe fn cstr_byte_len(ptr: *const u8) -> usize {
@@ -2347,6 +2405,16 @@ unsafe extern "C" fn ori_string_to_upper(s: *const u8) -> *mut u8 {
 
 #[no_mangle]
 unsafe extern "C" fn ori_string_to_lower(s: *const u8) -> *mut u8 {
+    cstring_from_str(&cstr_str(s).to_lowercase())
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_string_is_ascii(s: *const u8) -> c_uchar {
+    u8::from(cstr_str(s).is_ascii()) as c_uchar
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_string_case_fold(s: *const u8) -> *mut u8 {
     cstring_from_str(&cstr_str(s).to_lowercase())
 }
 
@@ -2787,6 +2855,201 @@ unsafe extern "C" fn ori_slice_owner(slice: *mut u8) -> *mut u8 {
         return std::ptr::null_mut();
     }
     (*(slice as *mut OriSlice)).owner as *mut u8
+}
+
+/// A contiguous, mutably-indexable, fixed-length heap block.
+///
+/// Unlike `OriList`, `OriBuffer` pins its length at creation and never grows.
+/// There is no version field because no iterator can race; growth is rejected
+/// at the API boundary (`ori_buffer_reserve` validates, never reallocs).
+#[repr(C)]
+pub struct OriBuffer {
+    pub data: *mut i64,
+    pub len: i64,
+    pub cap: i64,
+}
+
+unsafe extern "C" fn ori_buffer_dtor(ptr: *mut u8) {
+    let buf = ptr as *mut OriBuffer;
+    if !(*buf).data.is_null() {
+        libc::free((*buf).data as *mut libc::c_void);
+    }
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_buffer_new(len: i64) -> *mut OriBuffer {
+    if len < 0 {
+        abort_bounds("ori buffer length must be non-negative");
+    }
+    let bytes = capacity_bytes(len, std::mem::size_of::<i64>());
+    let data = if bytes > 0 {
+        let p = checked_malloc(bytes) as *mut i64;
+        // Zero-init so reads before writes see a deterministic value.
+        std::ptr::write_bytes(p, 0, len as usize);
+        p
+    } else {
+        std::ptr::null_mut()
+    };
+    let buf =
+        ori_alloc(std::mem::size_of::<OriBuffer>(), Some(ori_buffer_dtor)) as *mut OriBuffer;
+    if buf.is_null() {
+        if !data.is_null() {
+            libc::free(data as *mut libc::c_void);
+        }
+        abort_bounds("ori out of memory while allocating a buffer");
+    }
+    (*buf).data = data;
+    (*buf).len = len;
+    (*buf).cap = len;
+    buf
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_buffer_len(buf: *mut OriBuffer) -> i64 {
+    if buf.is_null() { 0 } else { (*buf).len }
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_buffer_is_empty(buf: *mut OriBuffer) -> c_uchar {
+    u8::from(ori_buffer_len(buf) == 0) as c_uchar
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_buffer_get(buf: *mut OriBuffer, index: i64) -> i64 {
+    if buf.is_null() || index < 0 || index >= (*buf).len {
+        abort_bounds("ori buffer index out of bounds");
+    }
+    *(*buf).data.add(index as usize)
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_buffer_set(buf: *mut OriBuffer, index: i64, value: i64) {
+    if buf.is_null() || index < 0 || index >= (*buf).len {
+        abort_bounds("ori buffer index out of bounds");
+    }
+    *(*buf).data.add(index as usize) = value;
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_buffer_fill(buf: *mut OriBuffer, value: i64) {
+    if buf.is_null() {
+        return;
+    }
+    for i in 0..(*buf).len {
+        *(*buf).data.add(i as usize) = value;
+    }
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_buffer_as_slice(buf: *mut OriBuffer) -> *mut u8 {
+    // Equivalent to `ori_slice_new(buf_as_list, 0, len)` would be, but a
+    // buffer is not a list — we build a slice-like view without converting.
+    // For now the API returns a Slice over the buffer header via a thin
+    // wrapper; the caller sees a `*u8` slice object.
+    if buf.is_null() {
+        abort_bounds("ori buffer slice: null buffer");
+    }
+    // Reuse Slice: store a borrowed reference as an OriSlice whose owner is
+    // the buffer allocation (keeps liveness via an ARC edge).
+    let ptr = ori_alloc(std::mem::size_of::<OriSlice>(), None);
+    if ptr.is_null() {
+        abort_bounds("ori out of memory while slicing a buffer");
+    }
+    let slice = ptr as *mut OriSlice;
+    (*slice).owner = buf as *mut OriList;
+    (*slice).start = 0;
+    (*slice).len = (*buf).len;
+    ori_arc_register_edge(ptr, buf as *mut u8);
+    ptr
+}
+
+/// A mutable view (span) over a contiguous `OriBuffer` window without copying (GFX-VIEW-1).
+#[repr(C)]
+pub struct OriSpan {
+    pub owner: *mut OriBuffer,
+    pub start: i64,
+    pub len: i64,
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_span_new(buf: *mut OriBuffer, start: i64, len: i64) -> *mut OriSpan {
+    let buf_len = if buf.is_null() { 0 } else { (*buf).len };
+    if start < 0 || len < 0 || start + len > buf_len {
+        abort_bounds("ori span bounds out of range");
+    }
+    let ptr = ori_alloc(std::mem::size_of::<OriSpan>(), None) as *mut OriSpan;
+    if ptr.is_null() {
+        abort_bounds("ori out of memory while creating span");
+    }
+    (*ptr).owner = buf;
+    (*ptr).start = start;
+    (*ptr).len = len;
+    if !buf.is_null() {
+        ori_arc_register_edge(ptr as *mut u8, buf as *mut u8);
+    }
+    ptr
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_span_len(span: *mut OriSpan) -> i64 {
+    if span.is_null() { 0 } else { (*span).len }
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_span_is_empty(span: *mut OriSpan) -> c_uchar {
+    u8::from(ori_span_len(span) == 0) as c_uchar
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_span_get(span: *mut OriSpan, index: i64) -> i64 {
+    if span.is_null() || index < 0 || index >= (*span).len {
+        abort_bounds("ori span index out of bounds");
+    }
+    let owner = (*span).owner;
+    let absolute = (*span).start + index;
+    if owner.is_null() || absolute < 0 || absolute >= (*owner).len {
+        abort_bounds("ori span out of bounds of backing buffer");
+    }
+    *(*owner).data.add(absolute as usize)
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_span_set(span: *mut OriSpan, index: i64, value: i64) {
+    if span.is_null() || index < 0 || index >= (*span).len {
+        abort_bounds("ori span index out of bounds");
+    }
+    let owner = (*span).owner;
+    let absolute = (*span).start + index;
+    if owner.is_null() || absolute < 0 || absolute >= (*owner).len {
+        abort_bounds("ori span out of bounds of backing buffer");
+    }
+    *(*owner).data.add(absolute as usize) = value;
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_span_fill(span: *mut OriSpan, value: i64) {
+    if span.is_null() {
+        return;
+    }
+    let owner = (*span).owner;
+    if owner.is_null() {
+        return;
+    }
+    for i in 0..(*span).len {
+        let absolute = (*span).start + i;
+        if absolute >= 0 && absolute < (*owner).len {
+            *(*owner).data.add(absolute as usize) = value;
+        }
+    }
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_span_subspan(span: *mut OriSpan, offset: i64, len: i64) -> *mut OriSpan {
+    if span.is_null() || offset < 0 || len < 0 || offset + len > (*span).len {
+        abort_bounds("ori subspan bounds out of range");
+    }
+    let owner = (*span).owner;
+    ori_span_new(owner, (*span).start + offset, len)
 }
 
 #[no_mangle]
@@ -7320,12 +7583,58 @@ unsafe extern "C" fn ori_format_bytes_size(bytes: i64, style: *const u8) -> *mut
     cstring_from_str(&text)
 }
 
-#[no_mangle]
-unsafe extern "C" fn ori_os_set_args(_argc: i32, _argv: *mut *mut c_char) {}
+static CUSTOM_ARGS: std::sync::RwLock<Option<Vec<String>>> = std::sync::RwLock::new(None);
 
+/// Set or clear the custom arguments returned by `ori.os.args` and `ori.args`.
+///
+/// This is used by the driver JIT runner (`ori run`) and embedded hosts to forward
+/// program arguments in-process without modifying the parent process `std::env::args`.
+pub fn set_custom_args(args: Option<Vec<String>>) {
+    if let Ok(mut guard) = CUSTOM_ARGS.write() {
+        *guard = args;
+    }
+}
+
+/// Set the program arguments for the current runtime session.
+///
+/// # Safety
+///
+/// If `argc > 0`, `argv` must point to an array of valid, null-terminated C string pointers
+/// of at least `argc` length.
 #[no_mangle]
-unsafe extern "C" fn ori_os_args() -> *mut OriList {
+pub unsafe extern "C" fn ori_os_set_args(argc: i32, argv: *mut *mut c_char) {
+    if argc <= 0 || argv.is_null() {
+        set_custom_args(None);
+        return;
+    }
+    let mut args = Vec::with_capacity(argc as usize);
+    for i in 0..argc {
+        let arg_ptr = *argv.offset(i as isize);
+        if !arg_ptr.is_null() {
+            let s = CStr::from_ptr(arg_ptr).to_string_lossy().into_owned();
+            args.push(s);
+        }
+    }
+    set_custom_args(Some(args));
+}
+
+/// Retrieve the program arguments as a managed list of strings.
+///
+/// # Safety
+///
+/// The caller must ensure that the returned `OriList` pointer is managed according to the
+/// ARC runtime conventions.
+#[no_mangle]
+pub unsafe extern "C" fn ori_os_args() -> *mut OriList {
     let list = ori_list_new();
+    if let Ok(guard) = CUSTOM_ARGS.read() {
+        if let Some(custom) = guard.as_ref() {
+            for arg in custom {
+                ori_list_push_owned_managed(list, cstring_from_process_arg(arg));
+            }
+            return list;
+        }
+    }
     for arg in std::env::args() {
         // Process arguments live until process exit. Keep them as unmanaged
         // C strings so a temporary `ori.args.get_or(...)` list cannot release
@@ -8302,6 +8611,13 @@ unsafe extern "C" fn ori_abort_division_by_zero() -> ! {
 #[no_mangle]
 unsafe extern "C" fn ori_abort_division_overflow() -> ! {
     abort_bounds("ori integer division overflow: the minimum value has no positive counterpart");
+}
+
+/// A shift count outside `0..bit_width` is undefined in hardware and traps
+/// unpredictably; report it like the other arithmetic guards.
+#[no_mangle]
+unsafe extern "C" fn ori_abort_shift_overflow() -> ! {
+    abort_bounds("ori shift count out of range: must be in 0..bit_width");
 }
 
 #[repr(C)]
@@ -9682,6 +9998,7 @@ static RT_INIT_COUNT: AtomicU64 = AtomicU64::new(0);
 /// Returns `0` on success. Idempotent: subsequent calls return `0`.
 #[no_mangle]
 unsafe extern "C" fn ori_rt_init() -> i32 {
+    ori_host_clear_error();
     if RT_INIT_COUNT
         .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -9701,7 +10018,26 @@ unsafe extern "C" fn ori_rt_shutdown() {
     // Phase 1: no-op beyond a fence — managed heaps are process-lifetime for
     // embed hosts that do not retain Ori objects across unload.
     std::sync::atomic::fence(Ordering::SeqCst);
+    ori_host_clear_error();
     let _ = RT_INIT_COUNT.swap(0, Ordering::SeqCst);
+}
+
+/// Return the package version of the loaded Ori runtime.
+///
+/// The returned pointer is process-lifetime storage and must not be freed or
+/// mutated by the host. It is UTF-8 and NUL terminated.
+#[no_mangle]
+extern "C" fn ori_rt_version() -> *const c_char {
+    ORI_RUNTIME_VERSION_C.as_ptr().cast()
+}
+
+/// Return the native ABI revision implemented by the loaded Ori runtime.
+///
+/// The returned pointer is process-lifetime storage and must not be freed or
+/// mutated by the host. It is UTF-8 and NUL terminated.
+#[no_mangle]
+extern "C" fn ori_rt_abi_version() -> *const c_char {
+    ORI_ABI_VERSION_C.as_ptr().cast()
 }
 
 mod debug_agent;

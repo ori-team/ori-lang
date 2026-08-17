@@ -304,6 +304,9 @@ fn evaluate_expression(
                     .map(CompileTimeValue::Int)
                     .ok_or_else(|| overflow(file_id, *span)),
                 (UnaryOp::Not, CompileTimeValue::Bool(value)) => Ok(CompileTimeValue::Bool(!value)),
+                (UnaryOp::BitNot, CompileTimeValue::Int(value)) => {
+                    Ok(CompileTimeValue::Int(!value))
+                }
                 _ => Err(type_mismatch(
                     file_id,
                     *span,
@@ -420,6 +423,28 @@ fn evaluate_integer_binary(
         BinaryOp::Gt => return Ok(CompileTimeValue::Bool(left > right)),
         BinaryOp::Ge => return Ok(CompileTimeValue::Bool(left >= right)),
         BinaryOp::And | BinaryOp::Or => unreachable!("boolean operators handled before integers"),
+        BinaryOp::Band => Some(left & right),
+        BinaryOp::Bor => Some(left | right),
+        BinaryOp::Bxor => Some(left ^ right),
+        // Shifts are well-defined in two's-complement i64; the width rules are
+        // enforced at runtime. Negative shifts are rejected here (UB in most
+        // languages; Ori keeps CT-0 deterministic).
+        BinaryOp::Shl if right < 0 || right >= 64 => {
+            return Err(type_mismatch(
+                file_id,
+                span,
+                "compile-time shift count must be in 0..64",
+            ))
+        }
+        BinaryOp::Shl => Some(left.wrapping_shl(right as u32)),
+        BinaryOp::Shr if right < 0 || right >= 64 => {
+            return Err(type_mismatch(
+                file_id,
+                span,
+                "compile-time shift count must be in 0..64",
+            ))
+        }
+        BinaryOp::Shr => Some(left >> right),
     };
     integer
         .map(CompileTimeValue::Int)

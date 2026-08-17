@@ -195,7 +195,7 @@ const value: int = lazy.force(delayed)
 ### Built-in Functions
 
 ```ori
-len(text: string)            -- int: byte length of a string
+len(text: string)            -- int: Unicode scalar-value count
 string(value: int)           -- string: convert an integer to text
 string(value: float)         -- string: convert a float to text
 string(value: bool)          -- string: convert a boolean to text
@@ -272,6 +272,9 @@ flush(output: io.Output)                             -> result[void, string]
 close_input(input: io.Input)                         -> void
 close_output(output: io.Output)                      -> void
 ```
+
+`io.read_line` returns `none` at end of input or when the input line is not
+valid UTF-8. A successful value is therefore always a valid Ori `string`.
 
 `io.Input` and `io.Output` are opaque runtime-managed handles. They are created
 from the three standard streams (`stdin`, `stdout`, `stderr`) and support
@@ -390,6 +393,13 @@ string.parse_float(s: string)                 -> result[float, string]
 string.to_bytes(s: string)                    -> bytes
 string.from_bytes(b: bytes)                   -> result[string, string]
 ```
+
+String positions use Unicode scalar values, not UTF-8 byte offsets.
+the global `len(string)`, `string.len`, `string.slice`, string indexing,
+`string.index_of`, `string.chars`, and direct string iteration share that index
+space in the native and C/debug backends.
+Extended grapheme clusters can contain multiple scalar values; grapheme
+segmentation is not currently a stdlib API.
 
 Additional `.orl` helpers are available directly under `ori.string`:
 
