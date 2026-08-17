@@ -51,6 +51,7 @@ pub fn lower_type_with_aliases(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn lower_type_with_local_aliases(
     ast_ty: &AstType,
     module_path: &str,
@@ -76,6 +77,7 @@ pub fn lower_type_with_local_aliases(
 
 /// Full lowering entry: `struct_sigs` enables the struct-aware `Inline(T)`
 /// classification used by the checker for `array[InlineStruct, size: N]`.
+#[allow(clippy::too_many_arguments)]
 pub fn lower_type_with_local_aliases_and_structs(
     ast_ty: &AstType,
     module_path: &str,
@@ -138,7 +140,7 @@ pub fn lower_type_with_local_aliases_and_structs(
                 );
                 return Ty::Error;
             }
-            return Ty::Buffer(Box::new(elem_ty));
+            Ty::Buffer(Box::new(elem_ty))
         }
         AstType::Slice(inner, _) => Ty::Slice(Box::new(rec!(inner))),
         // Concrete CT-0 expressions become ConstInt. A direct `size: cap`
@@ -520,6 +522,7 @@ fn emit_const_eval_failure(
     sink.emit(diagnostic.with_action(action));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_named(
     name: &QualifiedName,
     args: &[Ty],
@@ -671,7 +674,7 @@ fn resolve_name(
         if text
             .chars()
             .next()
-            .map_or(false, |c| c.is_ascii_digit() || c == '-')
+            .is_some_and(|c| c.is_ascii_digit() || c == '-')
             || text == "true"
             || text == "false"
         {

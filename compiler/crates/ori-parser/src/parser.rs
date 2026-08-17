@@ -106,7 +106,7 @@ impl<'src> Parser<'src> {
     }
 
     pub fn at_any(&self, kinds: &[TokenKind]) -> bool {
-        self.peek_kind().map_or(false, |k| kinds.contains(k))
+        self.peek_kind().is_some_and(|k| kinds.contains(k))
     }
 
     pub fn at_contextual(&self, keyword: &str) -> bool {

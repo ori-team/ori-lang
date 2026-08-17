@@ -163,7 +163,6 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
                     if args.len() == leaf.params.len() && args.iter().all(|a| !a.spread) {
                         if let Some(inlined) = try_inline_return_expr(leaf, args) {
                             *expr = inlined;
-                            return;
                         }
                     }
                 }

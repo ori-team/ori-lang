@@ -429,7 +429,7 @@ fn evaluate_integer_binary(
         // Shifts are well-defined in two's-complement i64; the width rules are
         // enforced at runtime. Negative shifts are rejected here (UB in most
         // languages; Ori keeps CT-0 deterministic).
-        BinaryOp::Shl if right < 0 || right >= 64 => {
+        BinaryOp::Shl if !(0..64).contains(&right) => {
             return Err(type_mismatch(
                 file_id,
                 span,
@@ -437,7 +437,7 @@ fn evaluate_integer_binary(
             ))
         }
         BinaryOp::Shl => Some(left.wrapping_shl(right as u32)),
-        BinaryOp::Shr if right < 0 || right >= 64 => {
+        BinaryOp::Shr if !(0..64).contains(&right) => {
             return Err(type_mismatch(
                 file_id,
                 span,

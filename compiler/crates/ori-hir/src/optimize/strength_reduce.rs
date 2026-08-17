@@ -75,7 +75,7 @@ fn strength_reduce_stmt(stmt: &mut HirStmt, changed: &mut bool) {
 /// And:
 ///   var s = 0; var i = 0; while i < n { var j = 0; while j < n { s = s + 1; j = j + 1 }; i = i + 1 }
 /// into s = n*n.
-fn rewrite_pure_while_sums(stmts: &mut Vec<HirStmt>) -> bool {
+fn rewrite_pure_while_sums(stmts: &mut [HirStmt]) -> bool {
     if stmts.len() < 3 {
         return false;
     }
@@ -98,7 +98,7 @@ fn rewrite_pure_while_sums(stmts: &mut Vec<HirStmt>) -> bool {
 /// so the rewrite is declined and the original loop is kept.
 const MAX_CLOSED_FORM_BOUND: i64 = 3_037_000_499;
 
-fn try_rewrite_at(stmts: &mut Vec<HirStmt>, i: usize) -> bool {
+fn try_rewrite_at(stmts: &mut [HirStmt], i: usize) -> bool {
     let Some((s_name, s_span)) = match_let_zero(&stmts[i]) else {
         return false;
     };

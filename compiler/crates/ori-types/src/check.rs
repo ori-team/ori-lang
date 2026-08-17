@@ -112,6 +112,7 @@ pub struct Checker<'a> {
 }
 
 impl<'a> Checker<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         def_map: &'a DefMap,
         func_sigs: &'a [FuncSig],
@@ -331,9 +332,7 @@ impl<'a> Checker<'a> {
             );
             return None;
         };
-        let Some(next_sig) = self.func_sig_ref(next_method.func_def_id) else {
-            return None;
-        };
+        let next_sig = self.func_sig_ref(next_method.func_def_id)?;
         let self_ty = Ty::Named(*type_def_id, Vec::new());
         let valid_params =
             next_sig.params.len() == 1 && next_sig.params[0].is_assignable_to(&self_ty);
@@ -1198,17 +1197,8 @@ impl<'a> Checker<'a> {
             // Look up the alias's underlying type.
             let (arity, underlying) = self.type_alias_map.get(&def_id)?;
             match underlying {
-                Ty::Named(target_id, args) if args.is_empty() || *arity > 0 => {
-                    // For generic aliases with args, the where constraint should
-                    // already have concrete types. For non-generic aliases, just
-                    // follow to the target.
-                    if *arity == 0 {
-                        def_id = *target_id;
-                    } else {
-                        // Generic alias used without type args in where clause.
-                        // This is invalid — where clause needs concrete trait.
-                        return None;
-                    }
+                Ty::Named(target_id, args) if args.is_empty() && *arity == 0 => {
+                    def_id = *target_id;
                 }
                 _ => return None,
             }
@@ -4089,15 +4079,11 @@ impl<'a> Checker<'a> {
         if visiting_named.contains(def_id) {
             return None;
         }
-        let Some(def) = self.def_map.all_defs().get(def_id.0 as usize) else {
-            return None;
-        };
+        let def = self.def_map.all_defs().get(def_id.0 as usize)?;
         if def.kind != DefKind::Struct {
             return None;
         }
-        let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
-            return None;
-        };
+        let sig = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id)?;
         visiting_named.push(*def_id);
         let unsupported = sig
             .fields
@@ -4778,10 +4764,10 @@ impl<'a> Checker<'a> {
                 .with_action("use an alternative function or wait for native runtime support"),
             );
         }
-        let (params, mut ret) = freshen_stdlib_infers(params, ret, span.start as u32);
+        let (params, mut ret) = freshen_stdlib_infers(params, ret, span.start);
         self.check_call_args(args, &params, span);
-        let first_arg_ty = args.first().and_then(|arg| match &arg.value {
-            ArgValue::Expr(expr) | ArgValue::Spread(expr) => Some(self.infer_expr(expr)),
+        let first_arg_ty = args.first().map(|arg| match &arg.value {
+            ArgValue::Expr(expr) | ArgValue::Spread(expr) => self.infer_expr(expr),
         });
         let first_list_backed_collection_elem = first_arg_ty
             .as_ref()
@@ -5467,7 +5453,7 @@ impl<'a> Checker<'a> {
                 else {
                     return Some(fallback_ret);
                 };
-                self.expect_closure_params(&closure_params, &[elem_ty.clone()], closure_span);
+                self.expect_closure_params(&closure_params, std::slice::from_ref(&elem_ty), closure_span);
                 if !self.is_current_map_key_supported(&key_ty) {
                     self.sink.emit(
                         Diagnostic::error(
@@ -5525,7 +5511,7 @@ impl<'a> Checker<'a> {
         else {
             return;
         };
-        self.expect_closure_params(&closure_params, &[elem_ty.clone()], closure_span);
+        self.expect_closure_params(&closure_params, std::slice::from_ref(elem_ty), closure_span);
         self.expect_assignable(&closure_ret, &Ty::Bool, closure_span);
     }
 
@@ -7014,8 +7000,8 @@ impl<'a> Checker<'a> {
             return true;
         }
         match (a, b) {
-            (Infer(id), _) => return self.unify_infer(*id, b),
-            (_, Infer(id)) => return self.unify_infer(*id, a),
+            (Infer(id), _) => self.unify_infer(*id, b),
+            (_, Infer(id)) => self.unify_infer(*id, a),
             (Optional(x), Optional(y)) => self.unify(x, y),
             (Result(ok1, err1), Result(ok2, err2)) => {
                 self.unify(ok1, ok2) && self.unify(err1, err2)
@@ -7326,9 +7312,7 @@ impl<'a> Checker<'a> {
             if self.def_map.get(*def_id).kind != DefKind::Enum {
                 return None;
             }
-            let Some(enum_sig) = self.enum_sig(*def_id) else {
-                return None;
-            };
+            let enum_sig = self.enum_sig(*def_id)?;
             let variant = enum_sig
                 .variants
                 .iter()

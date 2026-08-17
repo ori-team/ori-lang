@@ -223,7 +223,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                         let fields: Vec<(SmolStr, Ty)> = s
                             .fields
                             .iter()
-                            .filter_map(|f| {
+                            .map(|f| {
                                 let ty = lower_type_with_aliases(
                                     &f.ty, &namespace, &tp, &def_map, *file_id, sink, &aliases,
                                 );
@@ -249,7 +249,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                     // Still collect the field so lowering doesn't panic on missing
                                     // fields, but the error has been emitted.
                                 }
-                                Some((name, ty))
+                                (name, ty)
                             })
                             .collect();
                         struct_sigs.push(StructSig { def_id, fields });
@@ -325,7 +325,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                         let variants: Vec<EnumVariantSig> = e
                             .variants
                             .iter()
-                            .filter_map(|variant| {
+                            .map(|variant| {
                                 let variant_name = variant.name.text.clone();
                                 if !seen_variants.insert(variant_name.clone()) {
                                     sink.emit(
@@ -346,7 +346,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                 let fields = variant
                                     .fields
                                     .iter()
-                                    .filter_map(|field| {
+                                    .map(|field| {
                                         let ty = lower_type_with_aliases(
                                             &field.ty, &namespace, &tp, &def_map, *file_id,
                                             sink, &aliases,
@@ -366,13 +366,13 @@ pub fn resolve_many<S: Into<SmolStr>>(
                                                 .with_action("rename or remove one of the duplicate fields"),
                                             );
                                         }
-                                        Some((field_name, ty))
+                                        (field_name, ty)
                                     })
                                     .collect();
-                                Some(EnumVariantSig {
+                                EnumVariantSig {
                                     name: variant_name,
                                     fields,
-                                })
+                                }
                             })
                             .collect();
                         enum_sigs.push(EnumSig { def_id, variants });
@@ -950,6 +950,7 @@ pub fn resolve_many<S: Into<SmolStr>>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn combined_where_constraints(
     outer: Option<&WhereClause>,
     inner: Option<&WhereClause>,
@@ -1080,6 +1081,7 @@ fn param_names(params: &[Param]) -> Vec<SmolStr> {
 }
 
 /// Lower a free or trait-method FuncDecl from an `apply` block into `func_sigs`.
+#[allow(clippy::too_many_arguments)]
 fn resolve_apply_method_func_sig(
     m: &ori_ast::item::FuncDecl,
     namespace: &str,
@@ -1504,6 +1506,7 @@ fn register_apply_free_binds(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn register_def(
     def_map: &mut DefMap,
     ns: &str,

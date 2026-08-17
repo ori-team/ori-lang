@@ -677,7 +677,7 @@ fn type_to_string(ty: &ori_ast::ty::Type) -> String {
             if a.is_empty() {
                 name.to_string()
             } else {
-                format!("{}<{}>", name.to_string(), a.join(", "))
+                format!("{}<{}>", name, a.join(", "))
             }
         }
         _ => "?".to_string(),

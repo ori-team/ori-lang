@@ -734,7 +734,7 @@ impl LanguageServer for Backend {
             Vec::new();
 
         for sym in index.all_symbols() {
-            let (token_type, modifiers) = classify_semantic_token(&sym);
+            let (token_type, modifiers) = classify_semantic_token(sym);
             let line = sym.range.start.line;
             let start_char = sym.range.start.character;
             let length = sym.name.len() as u32;
@@ -750,11 +750,11 @@ impl LanguageServer for Backend {
                     || source
                         .as_bytes()
                         .get(abs_pos - 1)
-                        .map_or(true, |b| !b.is_ascii_alphanumeric() && *b != b'_');
+                        .is_none_or(|b| !b.is_ascii_alphanumeric() && *b != b'_');
                 let after = source
                     .as_bytes()
                     .get(abs_pos + kw.len())
-                    .map_or(true, |b| !b.is_ascii_alphanumeric() && *b != b'_');
+                    .is_none_or(|b| !b.is_ascii_alphanumeric() && *b != b'_');
                 if before && after {
                     let pos = utils::position::position_for_byte_offset(&source, abs_pos);
                     raw_tokens.push((

@@ -614,7 +614,7 @@ fn apply_edits(text: &str, edits: &[Value]) -> String {
         let end_off = line_char_to_offset(&lines, end_line, end_char);
         flat.push((start_off, end_off, new_text));
     }
-    flat.sort_by(|a, b| a.0.cmp(&b.0));
+    flat.sort_by_key(|a| a.0);
     let mut result = String::with_capacity(text.len());
     let mut cursor = 0usize;
     for (start, end, new_text) in &flat {
@@ -658,7 +658,7 @@ fn drain_diagnostics(lsp: &mut LspClient, uri: &str, timeout_ms: u64) -> Vec<Val
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     while Instant::now() < deadline {
         if let Some(frame) = lsp.read_notification("textDocument/publishDiagnostics", 300) {
-            if frame["params"]["uri"] == Value::from(uri) {
+            if frame["params"]["uri"] == uri {
                 if let Some(arr) = frame["params"]["diagnostics"].as_array() {
                     last = arr.clone();
                 }

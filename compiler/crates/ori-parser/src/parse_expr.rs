@@ -1357,7 +1357,7 @@ impl<'src> Parser<'src> {
     fn parse_fstr_interpolated_expr(&mut self, source: &str, span: Span) -> Option<Expr> {
         let mut nested_sink = DiagnosticSink::default();
         let mut tokens = lex(source, self.file_id, &mut nested_sink);
-        let offset = span.start as u32;
+        let offset = span.start;
         for token in &mut tokens {
             token.span = offset_span(token.span, offset);
         }

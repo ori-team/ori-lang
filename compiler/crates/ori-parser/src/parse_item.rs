@@ -1460,9 +1460,7 @@ impl<'src> Parser<'src> {
         let start = self.advance().unwrap().span; // implement
         let type_params = self.parse_type_params_opt();
         let trait_name = self.parse_qualified_name()?;
-        if self.at(&TokenKind::For) {
-            self.advance();
-        } else if self.at_contextual("to") {
+        if self.at(&TokenKind::For) || self.at_contextual("to") {
             self.advance();
         } else {
             self.error(
@@ -1522,6 +1520,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Body of a `use Trait` (or recovered legacy implement): methods, binds, assoc types.
+    #[allow(clippy::type_complexity)]
     fn parse_apply_use_body_members(
         &mut self,
     ) -> Option<(

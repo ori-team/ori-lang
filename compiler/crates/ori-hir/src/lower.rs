@@ -999,6 +999,7 @@ struct Lowerer<'a> {
 }
 
 impl<'a> Lowerer<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         def_map: &'a DefMap,
         func_sigs: &'a [FuncSig],
@@ -1889,6 +1890,7 @@ fn lower_impl_sigs(def_map: &DefMap, impl_sigs: &[ImplSig]) -> Vec<HirTraitImpl>
 }
 
 /// Lower an inline method from `apply Type` (free or inside `use Trait`).
+#[allow(clippy::too_many_arguments)]
 fn lower_apply_method(
     l: &mut Lowerer<'_>,
     m: &ori_ast::item::FuncDecl,
@@ -1978,6 +1980,7 @@ fn builtin_stdlib_structs(def_map: &DefMap) -> Vec<HirStruct> {
     }]
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn lower(
     file: &SourceFile,
     def_map: &DefMap,
@@ -2213,7 +2216,7 @@ pub fn lower(
                         lower_apply_method(
                             &mut l,
                             m,
-                            &namespace,
+                            namespace,
                             &type_name,
                             None,
                             &tp,
@@ -2235,7 +2238,7 @@ pub fn lower(
                             lower_apply_method(
                                 &mut l,
                                 m,
-                                &namespace,
+                                namespace,
                                 &type_name,
                                 Some(use_sec.trait_name.last().text.as_str()),
                                 &tp,
@@ -4353,8 +4356,6 @@ impl<'a> Lowerer<'a> {
                 let else_ = self.lower_expr(else_expr, tp);
                 let ty = if then.ty.is_never() {
                     else_.ty.clone()
-                } else if else_.ty.is_never() {
-                    then.ty.clone()
                 } else {
                     then.ty.clone()
                 };
@@ -4813,11 +4814,11 @@ fn build_iter_inline_construct(
     n: usize,
 ) -> Stmt {
     let sp = f.span;
-    let done = Name::new(&format!("__iter_done_{n}"), sp);
+    let done = Name::new(format!("__iter_done_{n}"), sp);
     let idx = f
         .second_binding
         .as_ref()
-        .map(|_| Name::new(&format!("__iter_idx_{n}"), sp));
+        .map(|_| Name::new(format!("__iter_idx_{n}"), sp));
 
     let mut body = bind_iter_params(decl, args, sp);
     body.push(Stmt::Var(LocalVar {
@@ -4871,7 +4872,7 @@ fn bind_iter_params(decl: &ori_ast::item::FuncDecl, args: &[Arg], sp: Span) -> V
                 }
             }
         } else if let Some(d) = iter_param_default(p) {
-            (**d).clone()
+            d.clone()
         } else {
             continue; // checker reported the missing argument already
         };
@@ -4895,7 +4896,7 @@ fn bind_iter_params(decl: &ori_ast::item::FuncDecl, args: &[Arg], sp: Span) -> V
                             span: sp,
                         }),
                         Stmt::Check(ori_ast::stmt::CheckStmt {
-                            condition: Box::new((**contract).clone()),
+                            condition: Box::new(contract.clone()),
                             message: Some(SmolStr::new(format!(
                                 "iterator parameter `{}` violates its contract",
                                 p.name.text
@@ -4913,18 +4914,18 @@ fn bind_iter_params(decl: &ori_ast::item::FuncDecl, args: &[Arg], sp: Span) -> V
     out
 }
 
-fn iter_param_default(p: &ori_ast::item::Param) -> Option<&Box<Expr>> {
+fn iter_param_default(p: &ori_ast::item::Param) -> Option<&Expr> {
     match &p.kind {
         ori_ast::item::ParamKind::Default(e)
-        | ori_ast::item::ParamKind::DefaultAndContract(e, _) => Some(e),
+        | ori_ast::item::ParamKind::DefaultAndContract(e, _) => Some(e.as_ref()),
         _ => None,
     }
 }
 
-fn iter_param_contract(p: &ori_ast::item::Param) -> Option<&Box<Expr>> {
+fn iter_param_contract(p: &ori_ast::item::Param) -> Option<&Expr> {
     match &p.kind {
         ori_ast::item::ParamKind::Contract(e)
-        | ori_ast::item::ParamKind::DefaultAndContract(_, e) => Some(e),
+        | ori_ast::item::ParamKind::DefaultAndContract(_, e) => Some(e.as_ref()),
         _ => None,
     }
 }
