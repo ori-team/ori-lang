@@ -205,6 +205,10 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 | **OPT-TYPE-INTERN-1** | Type Arena Interning (`TyId`) | 2 | L | **done** | **2026-08-17:** arena-backed `TyInterner` and lightweight 32-bit `TyId` handles in `ori-types` with seeded primitives and O(1) deduplication. |
 | **OPT-PAR-TYPECHECK-1** | Parallel Module Type-Checking | 3 | M | **done** | **2026-08-17:** multi-threaded function-body type checking via `rayon` across independent loaded source modules in `check_loaded_sources`. |
 | **DX-LINT-EXT-1** | Extended Semantic Linters | 3 | S | **done** | **2026-08-17:** added `lint.prefer_const` for unmutated `var` bindings, `lint.shadowed_variable` for scope shadowing, and complete AST expression traversal in `ori lint`. |
+| **OPT-RC-ELISION-1** | Static Retain/Release Elision in HIR | 2 | L | **done** | **2026-08-17:** intraprocedural escape and ownership analysis pass in `ori-hir/src/optimize/rc_elision.rs` eliding redundant copies and intermediate stores for non-escaping locals. |
+| **OPT-ACYCLIC-1** | Acyclic Type Inference | 2 | M | **done** | **2026-08-17:** compile-time `Ty::is_acyclic()` analysis identifying types that cannot form recursive reference cycles. |
+| **OPT-SSO-1** | Small String Optimization / Fast Paths | 2 | M | **done** | **2026-08-17:** short-string fast-paths and direct slice copies without intermediary malloc churn. |
+| **STR-VIEW-1** | Zero-Copy String Views (`ori.string_view`) | 2 | M | **done** | **2026-08-17:** added `stdlib/string_view.orl` providing `StringView`, `from_string`, `from_sub`, `subview`, `starts_with`, `ends_with`, `to_string`. |
 
 **Rejected by decision — do not reopen without a new ADR:**
 

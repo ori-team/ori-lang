@@ -8,6 +8,7 @@ mod const_fold;
 mod dce;
 mod inline_leafs;
 mod pipeline;
+mod rc_elision;
 mod strength_reduce;
 
 pub use pipeline::{optimize_module, OptLevel};

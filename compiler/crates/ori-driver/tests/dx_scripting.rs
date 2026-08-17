@@ -715,3 +715,90 @@ end
     assert!(ppm_out.exists(), "ppm output should exist");
     assert!(bmp_out.exists(), "bmp output should exist");
 }
+
+#[test]
+fn e2e_string_view_operations() {
+    let dir = TestDir::new("string_view_ops");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.string_view = sv
+import ori.io = io
+
+public main() -> void
+    const original: string = "Hello, Ori Language World!"
+    const view = sv.from_string(original)
+    
+    if sv.len(view) != 26
+        panic("expected len 26")
+    end
+    if not sv.starts_with(view, "Hello")
+        panic("expected starts with Hello")
+    end
+    if not sv.ends_with(view, "World!")
+        panic("expected ends with World!")
+    end
+
+    const sub = sv.subview(view, 7, 12)
+    if sv.to_string(sub) != "Ori Language"
+        panic("expected subview Ori Language")
+    end
+
+    io.println("STRING_VIEW_OK")
+end
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .output()
+        .expect("failed to run string view test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "string view failed:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("STRING_VIEW_OK"), "expected STRING_VIEW_OK in stdout: {stdout}");
+}
+
+#[test]
+fn e2e_hir_rc_elision_optimization() {
+    let dir = TestDir::new("rc_elision");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+public compute(a: int, b: int) -> int
+    const x: int = a + 10
+    const y: int = x * 2
+    const z: int = y + b
+    return z
+end
+
+public main() -> void
+    const res: int = compute(5, 7)
+    if res != 37
+        panic("computation mismatch")
+    end
+    io.println("RC_ELISION_OK")
+end
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .output()
+        .expect("failed to run rc elision test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "rc elision failed:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("RC_ELISION_OK"), "expected RC_ELISION_OK in stdout: {stdout}");
+}
+

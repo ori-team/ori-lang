@@ -12,6 +12,15 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Static retain/release and copy elision in HIR (OPT-RC-ELISION-1).** Added intraprocedural escape
+  and ownership analysis in `ori-hir/src/optimize/rc_elision.rs` to elide redundant retain/release
+  pairs and dead temporary assignments for non-escaping locals.
+- **Acyclic type inference (OPT-ACYCLIC-1).** Added `Ty::is_acyclic()` to identify types that cannot form
+  recursive reference cycles, avoiding suspect queue tracking in the cycle collector.
+- **Small string optimization and fast paths (OPT-SSO-1).** Short string acceleration and direct slice copies
+  without intermediary allocation churn.
+- **Zero-copy string view slicing (STR-VIEW-1).** Added `stdlib/string_view.orl` providing `StringView`
+  with zero-copy slicing, prefix/suffix inspection, and subviews over underlying strings.
 - **Image export helpers `ori.image` (GFX-ECO-1).** Added `stdlib/image.orl` providing `encode_ppm`,
   `write_ppm`, `encode_bmp`, and `write_bmp` for direct PPM text and 24-bit uncompressed BMP binary
   image export from numeric color arrays and software rasterizer framebuffers.

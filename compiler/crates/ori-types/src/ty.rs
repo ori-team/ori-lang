@@ -257,6 +257,39 @@ impl Ty {
         )
     }
 
+    /// Returns `true` if this type is provably acyclic (cannot form recursive reference cycles).
+    pub fn is_acyclic(&self) -> bool {
+        match self {
+            Ty::Bool
+            | Ty::Int
+            | Ty::Int8
+            | Ty::Int16
+            | Ty::Int32
+            | Ty::Int64
+            | Ty::U8
+            | Ty::U16
+            | Ty::U32
+            | Ty::U64
+            | Ty::Float
+            | Ty::Float32
+            | Ty::Float64
+            | Ty::String
+            | Ty::Bytes
+            | Ty::Void
+            | Ty::Never
+            | Ty::AtomicInt => true,
+            Ty::Buffer(elem) | Ty::Slice(elem) | Ty::Range(elem) => elem.is_acyclic(),
+            Ty::List(elem) | Ty::Set(elem) => elem.is_acyclic(),
+            Ty::Map(k, v) => k.is_acyclic() && v.is_acyclic(),
+            Ty::Optional(inner) => inner.is_acyclic(),
+            Ty::Result(ok, err) => ok.is_acyclic() && err.is_acyclic(),
+            Ty::Tuple(elems) => elems.iter().all(|e| e.is_acyclic()),
+            Ty::Array(elem, _) => elem.is_acyclic(),
+            Ty::Named(_, args) => args.iter().all(|a| a.is_acyclic()),
+            _ => false,
+        }
+    }
+
     /// Returns `true` if this type or any contained type is an inference variable.
     pub fn contains_infer(&self) -> bool {
         match self {

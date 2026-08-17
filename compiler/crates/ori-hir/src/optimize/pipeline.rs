@@ -5,6 +5,7 @@ use crate::hir::HirModule;
 use super::const_fold::fold_module;
 use super::dce::dce_module;
 use super::inline_leafs::inline_leafs_module;
+use super::rc_elision::elide_rc_copies_module;
 use super::strength_reduce::strength_reduce_module;
 
 /// Optimisation aggressiveness for HIR mid-end.
@@ -34,15 +35,11 @@ pub fn optimize_module(module: &mut HirModule, level: OptLevel) {
     match level {
         OptLevel::None => {}
         OptLevel::Default | OptLevel::Aggressive => {
-            // Bounded fixed-point: fold → strength reduce → DCE.
-            //
-            // Each pass reports whether it rewrote anything; the alternative —
-            // serialising the whole module through `Debug` twice per round —
-            // costs time and memory proportional to the program size on every
-            // build, even when nothing is left to optimise.
+            // Bounded fixed-point: fold → strength reduce → RC copy elision → DCE.
             for _ in 0..4 {
                 let mut changed = fold_module(module);
                 changed |= strength_reduce_module(module);
+                changed |= elide_rc_copies_module(module);
                 changed |= dce_module(module);
                 if !changed {
                     break;
@@ -52,6 +49,7 @@ pub fn optimize_module(module: &mut HirModule, level: OptLevel) {
                 inline_leafs_module(module);
                 // One more fold/DCE round after inlining exposes constants.
                 fold_module(module);
+                elide_rc_copies_module(module);
                 dce_module(module);
             }
         }
