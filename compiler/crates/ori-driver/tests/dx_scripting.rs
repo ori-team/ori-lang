@@ -852,4 +852,83 @@ end
     assert!(stdout.contains("STRUCT_CONC_OK"), "expected STRUCT_CONC_OK in stdout: {stdout}");
 }
 
+#[test]
+fn e2e_doctest_extraction_and_execution() {
+    let dir = TestDir::new("doctest_demo");
+    dir.write(
+        "math.oridoc",
+        r#"# Math Utilities
+
+Computes integer multiplication.
+
+```ori
+const x: int = 6 * 7
+if x != 42
+    panic("math doctest failure")
+end
+```
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("test")
+        .arg("--doc")
+        .arg(dir.path("math.oridoc"))
+        .output()
+        .expect("failed to run doctest command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "doctest failed:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(stderr.contains("ok:") || stdout.contains("ok:"), "expected ok in test output:\nstdout: {stdout}\nstderr: {stderr}");
+}
+
+#[test]
+fn e2e_daemon_jsonrpc_compilation_and_diagnostics() {
+    use std::io::Write;
+
+    let dir = TestDir::new("daemon_demo");
+    dir.write(
+        "sample.orl",
+        r#"module app.main
+
+import ori.io = io
+
+public main() -> void
+    io.println("DAEMON_EVAL_OK")
+end
+"#,
+    );
+
+    let mut child = Command::new(ori_exe())
+        .arg("daemon")
+        .arg("--stdio")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn daemon process");
+
+    {
+        let stdin = child.stdin.as_mut().expect("failed to get stdin");
+        let check_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"check","params":{{"file":"{}"}},"id":1}}"#,
+            dir.path("sample.orl").display()
+        );
+        writeln!(stdin, "{}", check_req).unwrap();
+
+        let fmt_req = r#"{"jsonrpc":"2.0","method":"fmt","params":{"code":"module app.main\npublic foo()->int\nreturn 42\nend\n"},"id":2}"#;
+        writeln!(stdin, "{}", fmt_req).unwrap();
+
+        let shutdown_req = r#"{"jsonrpc":"2.0","method":"shutdown","id":3}"#;
+        writeln!(stdin, "{}", shutdown_req).unwrap();
+    }
+
+    let output = child.wait_with_output().expect("daemon failed to exit");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "daemon process failed with status {:?}", output.status);
+    assert!(stdout.contains(r#""has_errors":false"#), "expected has_errors:false in check response: {stdout}");
+    assert!(stdout.contains(r#""result":{"status":"shutdown"}"#), "expected shutdown response: {stdout}");
+}
+
+
 

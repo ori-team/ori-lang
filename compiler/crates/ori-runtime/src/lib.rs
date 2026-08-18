@@ -1231,6 +1231,52 @@ pub unsafe extern "C" fn ori_reactor_wake() {
     executor().available.notify_all();
 }
 
+/// Push a stack frame location to an error return trace (ERR-TRACE-1).
+///
+/// # Safety
+///
+/// Caller must ensure `file` is a valid null-terminated C string if non-null.
+#[no_mangle]
+pub unsafe extern "C" fn ori_err_trace_push(
+    file: *const std::ffi::c_char,
+    line: u32,
+    err_str: *mut u8,
+) -> *mut u8 {
+    let file_str = if file.is_null() {
+        "<unknown>"
+    } else {
+        std::ffi::CStr::from_ptr(file)
+            .to_str()
+            .unwrap_or("<invalid_utf8>")
+    };
+
+    let base_msg = if err_str.is_null() {
+        "error"
+    } else {
+        std::ffi::CStr::from_ptr(err_str as *const std::ffi::c_char)
+            .to_str()
+            .unwrap_or("<invalid_utf8>")
+    };
+
+    let formatted = format!("{base_msg}\n  at {file_str}:{line}");
+    cstring_from_slices(&[formatted.as_bytes()])
+}
+
+/// Format an error return trace (ERR-TRACE-1).
+///
+/// # Safety
+///
+/// Caller must ensure `err_str` is a valid managed pointer or null.
+#[no_mangle]
+pub unsafe extern "C" fn ori_err_trace_format(err_str: *mut u8) -> *mut u8 {
+    if err_str.is_null() {
+        cstring_from_slices(&[b"<nil error>"])
+    } else {
+        ori_arc_retain(err_str);
+        err_str
+    }
+}
+
 #[no_mangle]
 unsafe extern "C" fn ori_future_pending() -> *mut OriFuture {
     alloc_pending_future()

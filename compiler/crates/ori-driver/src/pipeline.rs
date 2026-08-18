@@ -9,9 +9,11 @@
 use std::path::{Path, PathBuf};
 
 mod compile;
+mod daemon;
 mod debug;
 mod doc_html;
 mod docs;
+mod doctest;
 mod fmt;
 mod frontend;
 mod lowering;
@@ -26,10 +28,12 @@ mod timing;
 pub use compile::{
     run_build, run_compile_with_options, run_emit_c, BuildOutput, CompileOptions, CompileOutput,
 };
+pub use daemon::run_daemon;
 pub use docs::{
     oridoc_hover_for_symbol, run_doc, run_doc_check, run_doc_with_options, stdlib_doc_signature,
 };
 pub use docs::{DocCheckOutput, DocFormat, DocOptions, DocOutput};
+pub use doctest::{extract_doctests, run_doctests, DocTestCase};
 pub use fmt::{format_source_text, run_fmt, run_fmt_path, FmtBatchOutput, FmtOptions, FmtOutput};
 pub use frontend::{
     run_check, run_check_source, run_check_source_with_options, run_lex, run_parse, CheckOptions,

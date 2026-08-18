@@ -1128,6 +1128,7 @@ impl LanguageServer for Backend {
                         &std::path::PathBuf::from(file_path),
                         ori_driver::pipeline::TestOptions {
                             filter: test_filter.map(str::to_string),
+                            ..Default::default()
                         },
                     )
                 }));

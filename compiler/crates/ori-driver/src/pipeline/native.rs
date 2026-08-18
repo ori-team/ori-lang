@@ -34,6 +34,7 @@ pub struct TestResult {
 #[derive(Debug, Clone, Default)]
 pub struct TestOptions {
     pub filter: Option<String>,
+    pub doc: bool,
 }
 
 /// Output of a JIT `run` (Rust removal Phase 3). When `has_errors` is false,
@@ -60,16 +61,12 @@ pub struct JitCompileOutput {
     pub module: Option<ori_codegen::CompiledJitModule>,
 }
 
-/// Checked and lowered source graph ready for persistent JIT finalization.
-///
-/// The HIR is kept separate from the Cranelift module so callers that need a
-/// large frontend stack can perform parsing/type checking on a worker thread,
-/// then finalize executable code on their owning thread.
+/// Result of lowering an in-memory source graph into optimized HIR without backend codegen.
 pub struct JitLowerOutput {
     pub cache: SourceCache,
     pub diagnostics: Vec<Diagnostic>,
     pub has_errors: bool,
-    pub hir: Option<HirModule>,
+    pub hir: Option<ori_hir::HirModule>,
     pub cdylib: Option<PathBuf>,
     pub native_libs: Vec<PathBuf>,
 }
@@ -81,7 +78,10 @@ pub(super) struct TestCase {
     is_async: bool,
 }
 
-/// Discover, filter, lower, and execute `@test` functions through the native
+/// Check and run native tests declared in `path` through the native backend.
+///
+/// Discovers all `@test` functions across the project tree, checks the source,
+/// lowers to HIR, and executes each test through Cranelift JIT or the staged
 /// backend. Keeping this orchestration beside the native harness makes the
 /// pipeline facade responsible only for the public command contract.
 pub fn run_test(path: &Path) -> Result<TestOutput, String> {
@@ -89,12 +89,30 @@ pub fn run_test(path: &Path) -> Result<TestOutput, String> {
 }
 
 pub fn run_test_with_options(path: &Path, options: TestOptions) -> Result<TestOutput, String> {
-    let mut cache = SourceCache::default();
-    let mut sink = DiagnosticSink::default();
     let filter = options
         .filter
         .map(|filter| filter.trim().to_string())
         .filter(|filter| !filter.is_empty());
+
+    if options.doc {
+        let cases = crate::pipeline::extract_doctests(path)?;
+        let discovered = cases.len();
+        let (results, cache) = crate::pipeline::run_doctests(&cases, filter.as_deref());
+        let selected = results.len();
+        let has_errors = results.iter().any(|r| !r.passed);
+        return Ok(TestOutput {
+            cache,
+            diagnostics: Vec::new(),
+            has_errors,
+            results,
+            discovered,
+            selected,
+            filter,
+        });
+    }
+
+    let mut cache = SourceCache::default();
+    let mut sink = DiagnosticSink::default();
     let sources = load_and_resolve(path, &mut cache, &mut sink)?;
     let loaded = sources.loaded;
     let resolved = sources.resolved;

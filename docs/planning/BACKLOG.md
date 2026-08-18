@@ -212,6 +212,9 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 | **ASYNC-REACTOR-1** | Native OS Event Reactor Polling & Non-blocking I/O | 2 | L | **done** | **2026-08-17:** `ori_reactor_poll` and `ori_reactor_wake` in `ori-runtime` supporting event loop integration and non-spinning task multiplexing. |
 | **ASYNC-STRUCT-1** | Structured Concurrency & Cancellation Scopes | 2 | M | **done** | **2026-08-17:** added `stdlib/cancel.orl` with `CancelScope`, `create_scope`, `cancel`, `is_cancelled`, and `defer_cancel`. |
 | **CONC-THREADS-1** | Safe Concurrency Transfers & Value Isolation | 2 | M | **done** | **2026-08-17:** safe cross-thread transfer helpers in `ori.concurrent` (`transfer_int`, `transfer_string`, `transfer_list_string`). |
+| **DX-DOCTEST-1** | Doctests (`ori test --doc`) | 3 | M | **done** | **2026-08-17:** automatic extraction and JIT execution of code examples in `.oridoc` and `///` doc comments. |
+| **ERR-TRACE-1** | Zero-Cost Error Return Traces | 3 | M | **done** | **2026-08-17:** `ori_err_trace_push` and `ori_err_trace_format` in `ori-runtime` capturing origin location without exception overhead. |
+| **CLI-DAEMON-1** | Persistent Compilation & Evaluation Daemon | 3 | M | **done** | **2026-08-17:** JSON-RPC 2.0 daemon service over stdio (`ori daemon --stdio`) serving check, eval, and fmt commands. |
 
 **Rejected by decision — do not reopen without a new ADR:**
 

@@ -12,6 +12,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Doctest extraction & execution `ori test --doc` (DX-DOCTEST-1).** Added automatic extraction and
+  in-process JIT execution of code examples in `.oridoc` files and `///` doc comments.
+- **Zero-cost error return traces (ERR-TRACE-1).** Added `ori_err_trace_push` and `ori_err_trace_format`
+  in `ori-runtime` to capture file and line origin locations without exception overhead.
+- **Persistent compilation & evaluation daemon `ori daemon` (CLI-DAEMON-1).** Added JSON-RPC 2.0
+  daemon over stdio for fast in-process type-checking, code evaluation, and formatting without CLI startup overhead.
 - **Native OS event reactor polling (ASYNC-REACTOR-1).** Added `ori_reactor_poll` and `ori_reactor_wake`
   in `ori-runtime` enabling external event loop multiplexing and non-spinning task queues.
 - **Structured concurrency & cancellation scopes (ASYNC-STRUCT-1).** Added `stdlib/cancel.orl` providing

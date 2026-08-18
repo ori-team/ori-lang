@@ -9890,6 +9890,7 @@ end
         &dir.path("main.orl"),
         TestOptions {
             filter: Some("second".to_string()),
+            ..Default::default()
         },
     )
     .unwrap();

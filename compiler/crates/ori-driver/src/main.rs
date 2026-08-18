@@ -137,6 +137,9 @@ enum Commands {
         /// Run only tests whose fully-qualified or short name contains this text.
         #[arg(long)]
         filter: Option<String>,
+        /// Run tests embedded in documentation comments and .oridoc files.
+        #[arg(long)]
+        doc: bool,
     },
     /// Format an Ori source file or directory.
     Fmt {
@@ -271,6 +274,12 @@ enum Commands {
         /// Module name for the generated Ori file (default: derived from header name).
         #[arg(short, long)]
         module: Option<String>,
+    },
+    /// Start a persistent JSON-RPC background compilation service over stdio.
+    Daemon {
+        /// Keep process alive and accept requests on stdin.
+        #[arg(long)]
+        stdio: bool,
     },
 }
 
@@ -564,10 +573,11 @@ fn run_cli() {
             }
         },
 
-        Commands::Test { file, filter } => match pipeline::run_test_with_options(
+        Commands::Test { file, filter, doc } => match pipeline::run_test_with_options(
             file,
             pipeline::TestOptions {
                 filter: filter.clone(),
+                doc: *doc,
             },
         ) {
             Err(e) => {
@@ -1091,6 +1101,14 @@ fn run_cli() {
                     }
                 }
             }
+        }
+
+        Commands::Daemon { stdio: _ } => {
+            if let Err(e) = pipeline::run_daemon() {
+                eprintln!("ori: daemon error: {e}");
+                process::exit(2);
+            }
+            process::exit(0);
         }
     }
 }
