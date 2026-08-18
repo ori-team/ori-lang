@@ -37,6 +37,24 @@ tipados e `atomic.AtomicInt` oferece load/store/add atômicos, não um mutex.
 Veja os exemplos executáveis em [`examples/async_demo`](../../examples/async_demo)
 e [`examples/concurrency`](../../examples/concurrency).
 
+## Cancelamento estruturado e transferência entre threads
+
+Escopos estruturados de cancelamento no módulo `ori.cancel` permitem árvores determinísticas de cancelamento:
+
+```ori
+import ori.cancel = cancel
+
+const scope: cancel.CancelScope = cancel.create_scope()
+if cancel.is_cancelled(scope)
+    return
+end
+cancel.defer_cancel(scope, 500) -- cancela após timeout
+```
+
+Transferências seguras entre threads em `ori.concurrent` (`transfer_int`, `transfer_string`, `transfer_list_string`) garantem isolamento de dados entre threads sem riscos de corrida de memória.
+
+`task.block_on` é uma ponte síncrona explícita: aguarda a resolução do future drenando o executor e o reator nativo de eventos (`ori_reactor_poll`).
+
 ## Iteradores
 
 `iter` + `suspend` é outro mecanismo: gera valores inline e só pode ser

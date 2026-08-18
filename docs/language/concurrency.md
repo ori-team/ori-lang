@@ -67,12 +67,23 @@ general-purpose mutex.
 
 The complete runnable example is [`examples/concurrency/main.orl`](../../examples/concurrency/main.orl).
 
-## Cancellation and synchronous bridges
+## Structured cancellation and thread transfer
 
-`task.create_token`, `task.cancel`, and `task.associate` connect cancellation to
-a future. `task.block_on` is an explicit synchronous bridge; it waits for a
-future and drains executor continuations while waiting. It is not inserted
-implicitly by `await`.
+Structured cancellation scopes in `ori.cancel` provide deterministic cancellation trees:
+
+```ori
+import ori.cancel = cancel
+
+const scope: cancel.CancelScope = cancel.create_scope()
+if cancel.is_cancelled(scope)
+    return
+end
+cancel.defer_cancel(scope, 500) -- cancel after timeout
+```
+
+Safe cross-thread transfers in `ori.concurrent` (`transfer_int`, `transfer_string`, `transfer_list_string`) ensure value isolation across thread boundaries without shared-mutable race hazards.
+
+`task.block_on` is an explicit synchronous bridge; it waits for a future and drains executor continuations and OS reactor polls (`ori_reactor_poll`) while waiting. It is not inserted implicitly by `await`.
 
 ## Iter generators are different
 

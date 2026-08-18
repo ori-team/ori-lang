@@ -3,7 +3,7 @@
 > **Audience:** end users who want to write Ori programs **without** cloning this
 > repository and **without** a Rust toolchain.  
 > **Portuguese:** [install.pt-BR.md](install.pt-BR.md)  
-> **Surface:** S3 + inference B · latest release **v0.3.7** · workspace `0.3.8-dev` · M1 complete
+> **Surface:** S3 + inference B · latest release **v0.3.8** · M1 complete
 
 ## System prerequisites
 

@@ -177,9 +177,34 @@ The supported keys are `target_os`, `target_arch`, `target_family`,
 `all`, `any`, and `not`. Syntax is still checked in inactive code, while name
 and type errors inside it are not. See the [normative attribute rules](../spec/02-lexical.md#conditional-compilation)
 and [manifest feature fields](../spec/17-project-and-docs.md#oriproj).
-`@inline` and `@no_inline` are likewise preserved but not yet acted on by the
-native optimizer. The normative target and argument rules are in
-[02-lexical.md](../spec/02-lexical.md#attributes).
+
+## Contiguous buffers and SIMD vectorization
+
+`buffer[T]` represents flat, contiguous heap memory for numeric arrays, pixel arrays, and audio samples.
+The native HIR optimizer auto-vectorizes and strip-mines countable elementwise loops (`GFX-SIMD-1`) on buffers and arrays into 128-bit vector operations:
+
+```ori
+import ori.buffer = buf
+
+var pixels: buffer[int] = buf.alloc[int](1920 * 1080)
+buf.set(pixels, 0, 0xFF0000FF)
+```
+
+## Custom destructors
+
+Structs and enums can implement `core.Destructor` with `mut destroy(self) -> void` to free external resources deterministically before the ARC payload is deallocated:
+
+```ori
+struct ForeignResource
+    handle: int
+end
+
+apply ForeignResource use core.Destructor
+    mut destroy(self) -> void
+        -- Close OS descriptor or foreign resource
+    end
+end
+```
 
 ## What is intentionally not here
 

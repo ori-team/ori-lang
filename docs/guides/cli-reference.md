@@ -20,7 +20,7 @@ ori --version
 | `ori new <path>` | Create a new project (`--lib` for a library) |
 | `ori check <file>` | Type-check and report diagnostics — no binary produced |
 | `ori run <file>` | Compile and run through the native runtime |
-| `ori test <file>` | Run functions marked `@test` |
+| `ori test <file> [--doc]` | Run functions marked `@test` (or `--doc` to run markdown doctests) |
 | `ori explain <code>` | Explain a diagnostic code, e.g. `ori explain type.type_mismatch` |
 
 ```bash
@@ -118,6 +118,7 @@ Manifest fields are specified in
 |---|---|
 | `ori fmt <path> [-w / --write] [-c / --check]` | Format a source file or recursively format directory (`-w` in-place, `-c` check) |
 | `ori lint <path>` | Run semantic code linter for unused variables and code redundancy |
+| `ori daemon [--stdio]` | Run persistent JSON-RPC 2.0 compiler daemon service over stdio for instant evaluation/formatting |
 | `ori bindgen <header.h> [--module <name>]` | Generate low-level Ori `extern "c"` bindings and `@repr("C")` structs from C header |
 | `ori migrate-syntax <path>` | Best-effort rewrite of pre-S3 syntax in `.orl` files |
 

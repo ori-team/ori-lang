@@ -3,7 +3,7 @@
 > **Público-alvo:** usuários finais que querem desenvolver em Ori **sem** clonar
 > o repositório e **sem** toolchain Rust.  
 > **English:** [install.md](install.md)  
-> **Superfície:** S3 + inference B · último release **v0.3.7** · workspace `0.3.8-dev` · M1 fechada
+> **Superfície:** S3 + inference B · último release **v0.3.8** · M1 fechada
 
 ## Requisitos do sistema
 

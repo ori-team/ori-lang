@@ -98,9 +98,34 @@ Os predicados podem ser combinados com `all`, `any` e `not`. A sintaxe do
 código inativo continua sendo verificada; nomes e tipos dentro dele, não.
 Consulte as [regras normativas](../spec/02-lexical.md#conditional-compilation)
 e os [campos de features](../spec/17-project-and-docs.md#oriproj).
-`@inline` e `@no_inline` também são preservados, mas ainda não controlam o
-otimizador nativo. As regras normativas estão em
-[02-lexical.md](../spec/02-lexical.md#attributes).
+
+## Buffers contíguos e vetorização SIMD
+
+`buffer[T]` representa memória contígua e plana na heap para arrays numéricos, buffers de pixels e amostras de áudio.
+O otimizador HIR vetoriza automaticamente e divide em blocos laços numéricos contáveis (`GFX-SIMD-1`) sobre buffers e arrays em instruções SIMD de 128 bits:
+
+```ori
+import ori.buffer = buf
+
+var pixels: buffer[int] = buf.alloc[int](1920 * 1080)
+buf.set(pixels, 0, 0xFF0000FF)
+```
+
+## Destrutores customizados
+
+Structs e enums podem implementar `core.Destructor` com `mut destroy(self) -> void` para liberar recursos externos deterministicamente antes que o payload ARC seja desalocado:
+
+```ori
+struct RecursoNativo
+    handle: int
+end
+
+apply RecursoNativo use core.Destructor
+    mut destroy(self) -> void
+        -- Fecha descritor do SO ou recurso externo
+    end
+end
+```
 
 HKTs, move explícito, layouts diretos de collections na ABI e paridade completa
 do backend C continuam fora do contrato estável.
