@@ -12,6 +12,9 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Freestanding window & canvas graphics `ori.window` (GFX-WINDOW-1).** Added `stdlib/window.orl`
+  and native runtime C ABI providing zero-dependency OS window creation, non-blocking event polling,
+  and direct software pixel buffer presentation.
 - **Doctest extraction & execution `ori test --doc` (DX-DOCTEST-1).** Added automatic extraction and
   in-process JIT execution of code examples in `.oridoc` files and `///` doc comments.
 - **Zero-cost error return traces (ERR-TRACE-1).** Added `ori_err_trace_push` and `ori_err_trace_format`

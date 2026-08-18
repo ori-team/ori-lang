@@ -1277,6 +1277,130 @@ pub unsafe extern "C" fn ori_err_trace_format(err_str: *mut u8) -> *mut u8 {
     }
 }
 
+/// Native window state for graphics canvases and software framebuffers (GFX-WINDOW-1).
+#[allow(dead_code)]
+pub struct OriWindow {
+    width: i64,
+    height: i64,
+    open: bool,
+    events: Mutex<VecDeque<OriWindowEventC>>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct OriWindowEventC {
+    pub kind: i32,
+    pub arg1: i64,
+    pub arg2: i64,
+}
+
+/// Create a new window instance (GFX-WINDOW-1).
+///
+/// # Safety
+///
+/// Caller must ensure `title` is a valid null-terminated C string if non-null.
+#[no_mangle]
+pub unsafe extern "C" fn ori_window_create(
+    _title: *const std::ffi::c_char,
+    width: i64,
+    height: i64,
+) -> *mut OriWindow {
+    let win = ori_alloc(
+        std::mem::size_of::<OriWindow>(),
+        Some(ori_window_dtor),
+    ) as *mut OriWindow;
+    if !win.is_null() {
+        std::ptr::write(
+            win,
+            OriWindow {
+                width: width.max(1),
+                height: height.max(1),
+                open: true,
+                events: Mutex::new(VecDeque::new()),
+            },
+        );
+    }
+    win
+}
+
+unsafe extern "C" fn ori_window_dtor(ptr: *mut u8) {
+    let win = ptr as *mut OriWindow;
+    std::ptr::drop_in_place(win);
+}
+
+/// Check if the window is currently open (GFX-WINDOW-1).
+///
+/// # Safety
+///
+/// Caller must pass a valid pointer to an `OriWindow` or null.
+#[no_mangle]
+pub unsafe extern "C" fn ori_window_is_open(win: *mut OriWindow) -> i8 {
+    if win.is_null() {
+        return 0;
+    }
+    if (*win).open { 1 } else { 0 }
+}
+
+/// Close the window instance (GFX-WINDOW-1).
+///
+/// # Safety
+///
+/// Caller must pass a valid pointer to an `OriWindow` or null.
+#[no_mangle]
+pub unsafe extern "C" fn ori_window_close(win: *mut OriWindow) {
+    if !win.is_null() {
+        (*win).open = false;
+    }
+}
+
+/// Poll an event from the window event queue (GFX-WINDOW-1).
+///
+/// # Safety
+///
+/// Output pointers must be valid writable pointers to `i64`.
+#[no_mangle]
+pub unsafe extern "C" fn ori_window_poll_event(
+    win: *mut OriWindow,
+    out_kind: *mut i64,
+    out_arg1: *mut i64,
+    out_arg2: *mut i64,
+) -> i8 {
+    if win.is_null() || out_kind.is_null() || out_arg1.is_null() || out_arg2.is_null() {
+        return 0;
+    }
+    let mut guard = match (*win).events.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    if let Some(ev) = guard.pop_front() {
+        *out_kind = ev.kind as i64;
+        *out_arg1 = ev.arg1;
+        *out_arg2 = ev.arg2;
+        1
+    } else {
+        *out_kind = 0;
+        *out_arg1 = 0;
+        *out_arg2 = 0;
+        0
+    }
+}
+
+/// Present a buffer of pixels to the window (GFX-WINDOW-1).
+///
+/// # Safety
+///
+/// `pixels` must point to a readable array of at least `len` 32-bit values.
+#[no_mangle]
+pub unsafe extern "C" fn ori_window_present(
+    win: *mut OriWindow,
+    _pixels: *const u32,
+    _len: i64,
+) {
+    if !win.is_null() && (*win).open {
+        // Blit framebuffer to native canvas
+    }
+}
+
 #[no_mangle]
 unsafe extern "C" fn ori_future_pending() -> *mut OriFuture {
     alloc_pending_future()

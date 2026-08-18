@@ -2241,6 +2241,7 @@ const STDLIB_MODULE_ONLY_PATHS: &[&str] = &[
     "ori.image",
     "ori.string_view",
     "ori.cancel",
+    "ori.window",
 ];
 
 /// Extracts the module prefix from a canonical stdlib path.

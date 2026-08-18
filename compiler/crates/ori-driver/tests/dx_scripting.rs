@@ -930,5 +930,60 @@ end
     assert!(stdout.contains(r#""result":{"status":"shutdown"}"#), "expected shutdown response: {stdout}");
 }
 
+#[test]
+fn e2e_window_graphics_surface() {
+    let dir = TestDir::new("window_demo");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.window = win
+import ori.io = io
+
+public main() -> void
+    var w: win.Window = win.create("Test Window", 320, 240)
+    if not win.is_open(w)
+        panic("window should be initially open")
+    end
+
+    const ev: win.Event = win.poll_event(w)
+    var is_none: bool = false
+    match ev
+        case None:
+            is_none = true
+        case else:
+            is_none = false
+    end
+    if not is_none
+        panic("initial event should be None in headless/test session")
+    end
+
+    const pixels: list[int] = [16711680, 65280, 255, 16777215]
+    win.present_pixels(w, pixels)
+
+    w = win.close(w)
+    if win.is_open(w)
+        panic("window should be closed")
+    end
+
+    io.println("WINDOW_SURFACE_OK")
+end
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .output()
+        .expect("failed to run window test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "window test failed:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("WINDOW_SURFACE_OK"), "expected WINDOW_SURFACE_OK in stdout: {stdout}");
+}
+
+
 
 
