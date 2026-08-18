@@ -2243,14 +2243,6 @@ impl CCodegen {
             self.out.push('\n');
         }
 
-        let abi_types = collect_abi_types(module);
-        for ty in &abi_types {
-            self.emit_abi_type_def(ty);
-        }
-        if !abi_types.is_empty() {
-            self.out.push('\n');
-        }
-
         // Struct definitions
         let mut emitted_structs = HashSet::new();
         for s in &module.structs {
@@ -2258,6 +2250,14 @@ impl CCodegen {
                 continue;
             }
             self.emit_struct(s);
+        }
+
+        let abi_types = collect_abi_types(module);
+        for ty in &abi_types {
+            self.emit_abi_type_def(ty);
+        }
+        if !abi_types.is_empty() {
+            self.out.push('\n');
         }
 
         // Emit static inline equality helper functions for structs
@@ -3456,9 +3456,6 @@ impl CCodegen {
                             | "ori_io_read"
                             | "ori_string_from_bytes"
                             | "ori_string_to_bytes"
-                            | "ori_random_choice"
-                            | "ori_random_int"
-                            | "ori_random_float"
                             | "ori_os_args"
                             | "ori_os_current_dir"
                             | "ori_os_read_env"

@@ -2,6 +2,8 @@ module ori.buffer
 
 -- Contiguous, fixed-length, indexed numeric buffer for high-performance CPU graphics and FFI (GFX-BUFFER-1).
 
+public alias Buffer[T] = buffer[T]
+
 public from_list[T](items: list[T]) -> buffer[T]
     const n: int = ori.list.len(items)
     var b: buffer[T] = ori.buffer.new(n)
