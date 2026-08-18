@@ -12,6 +12,9 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Loop vectorization & SIMD unrolling (GFX-SIMD-1).** Added `ori-hir/src/optimize/vectorize.rs`
+  for recognizing and unrolling countable numeric elementwise loops on buffers and arrays, enabling
+  vector instruction scheduling on SIMD-capable backends.
 - **Freestanding window & canvas graphics `ori.window` (GFX-WINDOW-1).** Added `stdlib/window.orl`
   and native runtime C ABI providing zero-dependency OS window creation, non-blocking event polling,
   and direct software pixel buffer presentation.

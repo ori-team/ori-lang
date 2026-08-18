@@ -10,6 +10,7 @@ mod inline_leafs;
 mod pipeline;
 mod rc_elision;
 mod strength_reduce;
+mod vectorize;
 
 pub use pipeline::{optimize_module, OptLevel};
 

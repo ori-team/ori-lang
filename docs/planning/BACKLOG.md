@@ -216,6 +216,7 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 | **ERR-TRACE-1** | Zero-Cost Error Return Traces | 3 | M | **done** | **2026-08-17:** `ori_err_trace_push` and `ori_err_trace_format` in `ori-runtime` capturing origin location without exception overhead. |
 | **CLI-DAEMON-1** | Persistent Compilation & Evaluation Daemon | 3 | M | **done** | **2026-08-17:** JSON-RPC 2.0 daemon service over stdio (`ori daemon --stdio`) serving check, eval, and fmt commands. |
 | **GFX-WINDOW-1** | Freestanding Window & Canvas Graphics | 2 | M | **done** | **2026-08-17:** added `stdlib/window.orl` and `OriWindow` runtime C ABI providing zero-dependency native window creation, event polling, and pixel buffer presentation. |
+| **GFX-SIMD-1** | Loop Vectorization & SIMD Unrolling | 2 | L | **done** | **2026-08-18:** loop vectorization and unrolling pass in `ori-hir/src/optimize/vectorize.rs` accelerating contiguous numeric buffer, list, and array elementwise loops. |
 
 **Rejected by decision — do not reopen without a new ADR:**
 

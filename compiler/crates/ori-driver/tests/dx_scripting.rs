@@ -984,6 +984,57 @@ end
     assert!(stdout.contains("WINDOW_SURFACE_OK"), "expected WINDOW_SURFACE_OK in stdout: {stdout}");
 }
 
+#[test]
+fn e2e_simd_buffer_vectorization_loop() {
+    let dir = TestDir::new("simd_vectorize");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+public main() -> void
+    var a: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    var b: list[int] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    var c: list[int] = []
+
+    var i: int = 0
+    while i < 10
+        const va: int = ori.list.get(a, i)
+        const vb: int = ori.list.get(b, i)
+        ori.list.push(c, va + vb)
+        i = i + 1
+    end
+
+    if ori.list.len(c) != 10
+        panic("invalid vector length")
+    end
+    if ori.list.get(c, 0) != 11
+        panic("c[0] != 11")
+    end
+    if ori.list.get(c, 9) != 110
+        panic("c[9] != 110")
+    end
+
+    io.println("SIMD_VECTORIZATION_OK")
+end
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .output()
+        .expect("failed to run simd test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "simd test failed:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("SIMD_VECTORIZATION_OK"), "expected SIMD_VECTORIZATION_OK in stdout: {stdout}");
+}
+
+
 
 
 
