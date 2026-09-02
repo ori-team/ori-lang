@@ -1,0 +1,33 @@
+module app.timer_heap_churn
+
+-- Timer queue workload: enough concurrent sleeps to cross the heap compaction
+-- threshold while worker joins verify that every future reaches a terminal
+-- state. Run with tools/bench/run_timer_heap_churn.sh.
+imports
+    ori.io = io
+    ori.list = lists
+    ori.task = task
+end
+
+wait_and_return() -> int
+    task.block_on(task.sleep(10))
+    return 1
+end
+
+main()
+    var jobs: list[task.Job[int]] = lists.with_capacity(128)
+    repeat 128
+        lists.push(jobs, task.spawn(() => wait_and_return()))
+    end
+
+    var completed: int = 0
+    for job in jobs
+        match task.join(job)
+            case ok(_):
+                completed = completed + 1
+            case err(_):
+                io.eprintln("timer job failed")
+        end
+    end
+    io.println(string(completed))
+end

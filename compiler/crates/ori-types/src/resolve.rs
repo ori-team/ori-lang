@@ -1,4 +1,5 @@
-use crate::def::{DefId, DefKind, DefMap};
+use crate::check::{collect_transferable_global_function_defs, CheckerIndexes};
+use crate::def::{DefId, DefKind, DefMap, BUILTIN_FILE_ID};
 use crate::lower::lower_type_with_aliases;
 use crate::ty::{expand_ty_aliases, Ty};
 use ori_ast::common::{AttrArg, WhereClause, WhereConstraint};
@@ -145,6 +146,11 @@ pub struct ResolvedModule {
     pub deprecated_sigs: Vec<DeprecatedSig>,
     pub reexports: Vec<ReExport>,
     pub namespace: SmolStr,
+    /// Functions whose bodies directly or transitively access a top-level
+    /// mutable variable.  Task-boundary checking uses this cross-file summary
+    /// to avoid treating imported helpers as automatically thread-safe.
+    pub(crate) transferable_global_function_defs: HashSet<DefId>,
+    pub(crate) checker_indexes: CheckerIndexes,
 }
 
 /// Build a `ResolvedModule` from a `SourceFile`.
@@ -934,6 +940,20 @@ pub fn resolve_many<S: Into<SmolStr>>(
         }
     }
 
+    let checker_indexes = CheckerIndexes::build(
+        &func_sigs,
+        &value_sigs,
+        &struct_sigs,
+        &enum_sigs,
+        &trait_sigs,
+        &impl_sigs,
+        &type_alias_sigs,
+        &newtype_sigs,
+        &deprecated_sigs,
+    );
+    let transferable_global_function_defs =
+        collect_transferable_global_function_defs(files, &def_map, &reexports);
+
     ResolvedModule {
         def_map,
         func_sigs,
@@ -947,6 +967,8 @@ pub fn resolve_many<S: Into<SmolStr>>(
         deprecated_sigs,
         reexports,
         namespace: entry_namespace.into(),
+        transferable_global_function_defs,
+        checker_indexes,
     }
 }
 
@@ -1249,6 +1271,7 @@ fn register_core_traits(def_map: &mut DefMap) -> Vec<(SmolStr, DefId)> {
                 name_s.clone(),
                 path,
                 true,
+                BUILTIN_FILE_ID,
                 ori_diagnostics::Span::DUMMY,
             );
             (name_s, def_id)
@@ -1262,6 +1285,7 @@ fn register_stdlib_error_type(def_map: &mut DefMap) -> DefId {
         SmolStr::new("Error"),
         SmolStr::new("ori.Error"),
         true,
+        BUILTIN_FILE_ID,
         ori_diagnostics::Span::DUMMY,
     )
 }
@@ -1272,6 +1296,7 @@ fn register_stdlib_json_value_enum(def_map: &mut DefMap) -> DefId {
         SmolStr::new("Value"),
         SmolStr::new("ori.json.Value"),
         true,
+        BUILTIN_FILE_ID,
         ori_diagnostics::Span::DUMMY,
     )
 }
@@ -1380,6 +1405,19 @@ fn builtin_core_trait_sigs(core_traits: &[(SmolStr, DefId)]) -> Vec<TraitSig> {
                     return_ty: Ty::Bool,
                     is_mut: false,
                     has_default: false,
+                    has_self: true,
+                    span: ori_diagnostics::Span::DUMMY,
+                }],
+                "Hashable" => vec![TraitMethodSig {
+                    name: SmolStr::new("hash"),
+                    params: vec![self_ty],
+                    return_ty: Ty::Int,
+                    is_mut: false,
+                    // Keep the marker-only form source-compatible while the
+                    // generated structural hash remains the default. An
+                    // implementation may opt into a user-defined hash
+                    // function by supplying this method.
+                    has_default: true,
                     has_self: true,
                     span: ori_diagnostics::Span::DUMMY,
                 }],
@@ -1526,7 +1564,7 @@ fn register_def(
         );
         return;
     }
-    def_map.register(kind, name.clone(), path, is_public, span);
+    def_map.register(kind, name.clone(), path, is_public, file_id, span);
 }
 
 fn register_item(

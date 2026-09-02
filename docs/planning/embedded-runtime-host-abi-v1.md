@@ -1,6 +1,7 @@
 # Plano de implementação — runtime hospedado e Host ABI v1
 
-> **Status:** implementação incremental; a primeira fundação Rust está disponível, mas o contrato C final ainda exige decisão por fatia.  
+> **Status:** base ABI v1 implementada e validada; endurecimentos de integração
+> (sanitizers, matriz de hosts e providers opcionais) permanecem como P2.
 > **Baseline verificada:** workspace `0.3.8-dev`, `ori-native-abi-1`.  
 > **Escopo:** embedding nativo geral para hosts C/C++, ferramentas, plugins e
 > aplicações interativas. Não pertence a uma engine específica.  
@@ -37,24 +38,24 @@ adaptadores externos sobre essa fronteira.
 | Números, `bool`, `string` e structs escalares | implementado |
 | Structs gerenciadas como handles ARC opacos | implementado |
 | `optional` / `result` diretos | implementado dentro das restrições da ABI-1 |
-| `ori_rt_init` / `ori_rt_shutdown` | implementado; shutdown é best-effort |
-| Consulta de versão do runtime pelo host | implementado (`ori_rt_version` / `ori_rt_abi_version`) |
-| Callback host → Ori no caminho `ori-embed` | parcial: inteiro, Rust, com `user_data` |
-| Reentrância host → Ori → host documentada | parcial: síncrona e limitada a 64 níveis |
-| `bytes` / buffer por ponteiro + comprimento | ausente no `@c_export` direto |
-| Diagnósticos estruturados para o host | DTO Rust experimental em `ori-embed`; ABI C versionada ainda ausente |
-| Tipo opaco pertencente ao host | não há declaração pública; APIs usam escalares ou wrappers manuais |
+| `ori_rt_init` / shutdown | implementado: ciclo serializado (`Stopped → Running → Stopping`), `ori_rt_shutdown_ex(timeout_ms)` encerra/junta workers, cancela filas e só autoriza unload após quiescência |
+| Consulta de identidade do runtime pelo host | implementado (`ori_rt_version`, `ori_rt_abi_version`, `ori_rt_target` + digest SHA-256 do artefato staged) |
+| Callback host → Ori no caminho `ori-embed` | implementado: ABI C agregada com escalares, strings/bytes, `user_data`, capabilities e dispatch por afinidade |
+| Reentrância host → Ori → host documentada | implementado: síncrona, limitada a 64 níveis e com unregister protegido por contagem ativa |
+| `bytes` / buffer por ponteiro + comprimento | `@c_export` usa `OriBytes { data, len }`; `ori-embed` retorna bytes gerenciados com `as_bytes_with_len()`, enquanto buffers genéricos continuam abertos |
+| Diagnósticos estruturados para o host | implementado: DTO C versionado (`OriEmbedDiagnosticView`) com código, severidade, mensagem e span |
+| Tipo opaco pertencente ao host | implementado: `OriEmbedOpaqueType`/`OriEmbedOpaqueHandle` com identidade nominal por contexto e destrutor opcional |
 | Falhas recuperáveis | primeira fatia Rust para contracts, `check`, divisão inteira e bounds diretos de escalares; aborts arbitrários ainda não |
 | Budget para código síncrono | ausente |
-| Smoke genérico de host | Linux cobre o caminho atual; matriz completa ausente |
+| Smoke genérico de host | handshake LSP e smoke nativo Linux; matriz ASan/TSan Windows/macOS permanece P2 |
 
-O caminho Rust experimental já possui um `OriHostRegistry` para símbolos
+O caminho Rust histórico possuiu um `OriHostRegistry` para símbolos
 `extern host` escalares usados pelo JIT. A primeira fatia de callback agora
 adiciona `user_data` opaco, IDs estáveis, dispatchers tipados por aridade,
 unregister que falha enquanto há chamada ativa e reentrada síncrona limitada.
-Isso ainda não é o callback Host ABI C: afinidade de thread, cancelamento
-cooperativo, callbacks de aggregates/managed e integração com `--lib` continuam
-fora do contrato.
+Esse registro escalar permanece compatível, mas o contrato público atual é a
+camada C agregada descrita abaixo, que cobre afinidade, cancelamento,
+callbacks managed e integração com `--lib`.
 
 ### Primeira fatia implementada (2026-08-13)
 
@@ -68,28 +69,68 @@ torna handles antigos obsoletos. `check_source` é puramente não-destrutivo:
 valida um candidato sem avançar a geração nem tocar o executável corrente, e
 registra apenas o source aceito para inspeção (`module_source`).
 
-Essa fatia ainda é experimental e não é o Host ABI C: as chamadas aceitam
+Essa fatia foi consolidada no Host ABI C v1: as chamadas aceitam
 somente funções públicas com argumentos homogêneos `bool`/`int`/`float`/`slice`/`string`/`bytes` (até
 quatro) e retorno escalar, `void`, `slice`, `string` ou `bytes`. Desde 2026-08-17, funções públicas também
 podem retornar e receber `slice[T]`, `string` e `bytes`: o host recebe
-`OriValue::Slice`, `OriValue::String` ou `OriValue::Bytes` com accessors seguros (`as_str()`,
-`as_bytes()`); ponteiros de slice/string/bytes nunca são registráveis como funções ou
-callbacks do host. Além disso, `extern host` pode usar a
+`OriValue::Slice`, `OriValue::String` ou `OriValue::Bytes` com accessors
+experimentais (`as_str()`, `as_bytes()`). A auditoria de 2026-08-24 demonstrou
+que essas variantes públicas não carregavam lifetime, ownership ou identidade
+de sessão suficientes. Desde a correção de 2026-08-24, `OriValue` usa
+tokens opacos; retornos do JIT carregam uma capacidade ARC privada, liberam no
+`Drop`, argumentos gerenciados são retidos durante a chamada e bytes têm
+comprimento explícito por `as_bytes_with_len()`. Construtores raw continuam
+emprestados e `unsafe`, e identidade de geração ainda não está codificada no
+valor. Ponteiros de slice/string/bytes nunca são registráveis como funções
+ou callbacks do host. Além disso, `extern host` pode usar a
 fatia Rust de callbacks inteiros com até quatro parâmetros e `user_data` opaco.
 O modo hospedado captura por retorno
 explícito contracts, `check`, guards de divisão inteira e bounds diretos de
 listas/texto/bytes; ele não intercepta qualquer abort interno de um runtime
-helper. A fatia de callbacks não cobre C header, afinidade de thread,
-cancelamento cooperativo ou migração durante reload. O
+helper. A camada C cobre callbacks agregados, afinidade de thread,
+cancelamento cooperativo e migração segura durante reload. O
 `unload_module` já libera explicitamente as gerações retidas, `unload_all`
 libera todas mantendo a sessão utilizável, e `modules`/`module_source`/
-`functions` permitem inspecionar o estado da sessão; frames e tasks
-ativos ainda não têm coordenação. Esses limites continuam pertencendo às fases
-seguintes do plano.
+`functions` permitem inspecionar o estado da sessão. Frames e tasks ativos são
+coordenados pelo lease do runtime; recuperação de falha nativa arbitrária
+continua fora do contrato.
 
 O plano original de shared library permanece em
 [`PLANO-CDYLIB-EMBED.md`](PLANO-CDYLIB-EMBED.md). Ele documenta a fundação já
 entregue; este arquivo é canônico para a evolução do contrato hospedado.
+
+### Lifecycle implementado na fatia de auditoria
+
+Uma geração JIT hospedada executa seu inicializador de globais antes de ser
+publicada. A substituição cria outra geração, inicializada uma única vez; o
+`Drop` da geração chama o teardown pareado e zera cada slot antes de liberar o
+valor gerenciado, impedindo reentrada de destructor no valor em finalização.
+Shared libraries exportam o mesmo par
+`__ori_module_init`/`__ori_module_shutdown`, com guarda idempotente.
+
+O host C deve usar esta ordem:
+
+1. `ori_rt_init()`;
+2. `ori_rt_thread_attach()` em cada thread estrangeira que entrará em Ori;
+3. `__ori_module_init()` uma vez para a geração;
+4. chamadas exportadas;
+5. `__ori_module_shutdown()`;
+6. `ori_rt_thread_detach()` nas threads anexadas;
+7. `ori_rt_shutdown_ex(timeout_ms)` e `dlclose`/`FreeLibrary` somente após
+   retorno zero.
+
+O shutdown acorda, cancela e junta os workers persistentes, drena closures do
+executor e espera workers avulsos até o deadline. Erro `1006` significa que o
+artefato deve permanecer carregado e o host precisa tentar novamente. No Linux,
+handlers anteriores de `SIGSEGV`/`SIGBUS` são encadeados/restaurados; tamanho de
+página é cacheado fora do signal handler e cada thread anexada possui altstack
+própria. O shutdown também falha enquanto outra thread estrangeira continua
+anexada, evitando que o destructor TLS ou o handler sobrevivam ao `dlclose`.
+
+O runtime staged é conferido antes de `dlopen`: target, versão, revisão ABI,
+nome do cdylib e SHA-256 precisam coincidir com `runtime-link.json`. Depois do
+load, os três valores também são consultados no próprio artefato. Artefato
+alterado falha com `native.abi_mismatch` antes do registro de símbolos JIT.
 
 ## 3. Casos de uso mínimos
 
@@ -157,12 +198,12 @@ layouts privados das coleções.
 
 | ID | Entrega | Dependências | Critério observável |
 |---|---|---|---|
-| **EMBED-HOST-1.0** | Fechar contrato atual + diagnostics DTO | nenhuma | `@repr` inválido é rejeitado; ABI/runtime podem ser consultadas; host recebe diagnostic estruturado; header e spec concordam |
-| **EMBED-HOST-1.1** | Resultado estruturado e boundary de traps | 1.0 | **parcial:** bounds diretos, divisão por zero, contract, `check` e `panic` escalar retornam controle; helpers arbitrários e async ainda não |
-| **EMBED-HOST-1.2** | Callbacks com `user_data` | 1.1 | **parcial:** callback Rust inteiro é registrado, chamado por Ori, reentra de forma síncrona e tem unregister protegido; callback C, thread dispatch e cancelamento cooperativo continuam abertos |
-| **EMBED-HOST-1.3** | Tipos opacos pertencentes ao host | 1.0 | dois handles nativos de domínios distintos não são intercambiáveis em Ori e nenhum layout host é exposto |
-| **EMBED-HOST-1.4** | Views/buffers e FFI em batch | 1.1 | host envia e recebe buffers contíguos sem uma chamada por elemento e sem expor layout de `list` |
-| **EMBED-HOST-1.5** | Lifecycle, threads e shutdown verificável | 1.2/1.3/1.4 | handles vivos bloqueiam unload com erro; shutdown detecta leaks; chamadas em thread inválida falham de forma definida |
+| **EMBED-HOST-1.0** | Fechar contrato atual + diagnostics DTO | nenhuma | **done:** `@repr`/ABI/runtime são validados; host recebe diagnostics estruturados; header e spec concordam |
+| **EMBED-HOST-1.1** | Resultado estruturado e boundary de traps | 1.0 | **done para traps controlados:** bounds diretos, divisão por zero, contract, `check` e `panic` escalar retornam controle; falhas nativas arbitrárias continuam fora de escopo |
+| **EMBED-HOST-1.2** | Callbacks com `user_data` | 1.1 | **done:** callbacks C agregados, `C-unwind`, dispatch síncrono por afinidade, cancelamento cooperativo e unregister protegido |
+| **EMBED-HOST-1.3** | Tipos opacos pertencentes ao host | 1.0 | **done:** handles nominais por contexto, destrutor opcional e nenhuma exposição de layout host |
+| **EMBED-HOST-1.4** | Views/buffers e FFI em batch | 1.1 | **done no ABI atual:** `OriHostValue`/`OriBytes` carregam ponteiro + comprimento e cópia ocorre dentro da chamada |
+| **EMBED-HOST-1.5** | Lifecycle, threads e shutdown verificável | 1.2/1.3/1.4 | **done:** init/drop de globais é pareado por geração; attach/detach é por thread; leases impedem unload prematuro; handles e callbacks são drenados antes do contexto |
 | **EMBED-HOST-1.6** | Capabilities e providers opcionais | 1.5 | contexto nega imports/capacidades não concedidas; tempo/random podem ser injetados |
 
 Cada linha deve ser uma fatia vertical. Não implementar todas em um único PR.
@@ -221,16 +262,19 @@ Handles geracionais pertencem ao host/runtime que controla reload. O compilador
 não deve impor `index + generation` a toda FFI. Uma biblioteca `SlotMap[T]` pode
 oferecer o mesmo padrão para aplicações comuns.
 
-### Tipos opacos pertencentes ao host
+### Tipos opacos pertencentes ao host (implementado)
 
 Os handles ARC atuais representam valores que pertencem à Ori e são entregues
 ao host. Também falta o caminho inverso: um valor cujo conteúdo e lifecycle
 pertencem ao host, mas que Ori enxerga como um tipo nominal seguro.
 
-Enquanto esse recurso não existe, um wrapper `@repr("C")` com inteiro é uma
-ponte possível, porém deixa o identificador acessível e não impede toda mistura
-acidental. A fase **EMBED-HOST-1.3** deve comparar duas opções antes de congelar
-sintaxe:
+O C Host ABI fornece `OriEmbedOpaqueType` e `OriEmbedOpaqueHandle`. O type-id é
+gerado por contexto, o payload continua propriedade do host e o destrutor é
+chamado uma vez no `release`. Handles de tipos/contextos diferentes retornam
+`StaleHandle`; nenhum layout nativo é exposto. Um wrapper `@repr("C")` com
+inteiro continua disponível apenas para compatibilidade de APIs antigas.
+
+A decisão de sintaxe da linguagem permanece fora do ABI v1:
 
 1. declaração Ori explícita de tipo externo/opaco;
 2. tipo nominal gerado pelo binding a partir de metadata/manifest.
@@ -241,7 +285,7 @@ nem liberar memória que não possui.
 
 ## 9. Callbacks
 
-### Fatia Rust entregue
+### Compatibilidade escalar Rust
 
 `ori-embed::OriHostRegistry::register_int_callback` é a primeira implementação
 vertical. A assinatura Ori continua mostrando apenas seus parâmetros normais;
@@ -249,7 +293,7 @@ o backend injeta internamente um ID `i64` antes dos argumentos e resolve esse
 ID em um dispatcher fixo. O callback nativo recebe:
 
 ```text
-unsafe extern "C" fn(
+unsafe extern "C-unwind" fn(
     user_data: *mut u8,
     arg0: i64,
     arg1: i64,
@@ -265,10 +309,12 @@ durante uma chamada ativa retorna `CallbackActive`; chamadas posteriores
 retornam um trap estruturado de callback cancelado. Reentrada síncrona na mesma
 sessão é permitida, com limite de 64 frames para impedir recursão ilimitada.
 
-O callback é código nativo confiável: ponteiro inválido, panic através de FFI,
+O callback é código nativo confiável: ponteiro inválido, exceção estrangeira,
 bloqueio e acesso concorrente ao estado do host continuam sendo responsabilidade
-do host. A implementação não afirma sandbox, não despacha para a thread
-principal e ainda não publica esse contrato no header C gerado.
+do host. Um panic Rust é capturado antes de retornar pelo dispatcher `C-unwind`
+e vira trap `1005`, sem envenenar o registro nem escapar pela ABI. A camada C
+agregada adiciona dispatch síncrono opcional para a thread proprietária e
+publica o contrato no header gerado; isso não é sandbox.
 
 Todo callback público precisa definir:
 

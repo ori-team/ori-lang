@@ -34,6 +34,12 @@ Each target directory should also contain `runtime-link.json`. That file records
 the system libraries required by the Rust `staticlib` when a raw native linker is
 used. It also records the Ori version and native ABI version used to stage the
 runtime, so the driver can reject stale or incompatible runtime packages early.
+The staged metadata also binds both native artifacts with
+`runtime_sha256`/`runtime_cdylib_sha256`. JIT validates the cdylib digest before
+`dlopen` and then queries version, ABI revision, and target from the loaded
+library before registering any runtime symbol. `--skip-build` refuses to stage
+an artifact older than the runtime sources; it is not a way to relabel stale
+output with current metadata.
 
 The optional `runtime/bin/rust-lld[.exe]` (staged by `tools/stage_native_runtime.{ps1,sh}`
 when `-SkipBundleLld`/`--skip-bundle-lld` is not set) lets users opt into the

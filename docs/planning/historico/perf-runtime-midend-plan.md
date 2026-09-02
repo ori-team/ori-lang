@@ -1,11 +1,13 @@
 # Plan: runtime / mid-end performance (LANG-PERF-2)
 
-> **Status:** proposed implementation plan (2026-07-13)  
+> **Status:** `LANG-PERF-2` **done** for the measured baseline suite (implementation 2026-07-14; closure audit 2026-08-25); the original bounds-elision PR3 scope was deliberately narrowed
 > **Audience:** maintainers / implementers  
 > **Surface:** FREEZE-1 on **0.3.x** — no user-facing syntax break without bump + freeze note  
 > **Evidence:** polyglot microbench (`tools/bench/polyglot/`, `docs/guides/performance.md`)  
 > **Supersedes for *runtime* work:** living residual of `DONE-LANG-PERF` (waves 1–3 were compile/link/JIT flags only)  
 > **Out of scope for this plan:** LLVM ORC / alternate JIT backends — **discussion after this plan** (see §12)
+> **Backend decision:** Cranelift-only accepted; LLVM/ORC shelved in
+> [`adr-lang-perf-2-backend.md`](adr-lang-perf-2-backend.md).
 
 ---
 
@@ -369,7 +371,13 @@ Assuming one focused implementer familiar with the monorepo:
 
 **ORC** here means **LLVM ORC** (On-Request Compilation) — LLVM’s JIT infrastructure — *not* a new Ori language feature.
 
-This plan **does not** implement ORC. After Waves 0–3 (or earlier if you prefer), we will discuss:
+**Closure decision (2026-08-25): option A, stay Cranelift-only.** G1–G3 were
+met on the recorded host after the HIR/native work, so the maintenance cost of
+a second backend is not justified. The accepted decision and objective reopen
+conditions are recorded in
+[`adr-lang-perf-2-backend.md`](adr-lang-perf-2-backend.md).
+
+This plan **does not** implement ORC. The alternatives considered at closure were:
 
 | Option | Idea | When it might make sense |
 |--------|------|---------------------------|
@@ -378,7 +386,7 @@ This plan **does not** implement ORC. After Waves 0–3 (or earlier if you prefe
 | **C. LLVM ORC JIT** | Replace/augment Cranelift JIT for `ori run` | If JIT runtime quality matters more than cold start |
 | **D. Hybrid** | Cranelift JIT (fast start) + LLVM AOT (release) | Common industry pattern; highest maintenance |
 
-**Discussion agenda (next conversation):**
+**Required evidence if the decision is reopened:**
 
 1. Product goal: optimize **AOT binaries**, **`ori run` scripts**, or both?  
 2. Acceptable cost: compile-time, binary size, dependency on LLVM, CI complexity.  
@@ -386,31 +394,40 @@ This plan **does not** implement ORC. After Waves 0–3 (or earlier if you prefe
 4. FREEZE-1 / 0.3.x: backend swap can stay under the hood if ABI and semantics hold.  
 5. Whether mid-end HIR is **backend-agnostic** (it should be — D1 supports B/C later).
 
-No decision is made in this document.
+The linked ADR records option A as the accepted decision.
 
 ---
 
-## 13. Open questions (for plan acceptance)
+## 13. Resolved questions
 
-| # | Question | Default if unanswered |
-|---|----------|----------------------|
-| Q1 | Accept LANG-PERF-2 into active BACKLOG now? | Yes — user asked for full plan to implement |
-| Q2 | JIT: run Default mid-end or None? | Measure in PR1; start with **same as AOT Default** if startup OK |
-| Q3 | Bounds elision aggressiveness | **Conservative** (D2) until proven patterns only |
-| Q4 | Closed-form sum as intentional product opt? | Yes under Aggressive; Default may include if pure and tested |
-| Q5 | Start ORC discussion immediately after plan merge? | Yes — user already queued that conversation |
+| # | Resolution |
+|---|------------|
+| Q1 | Accepted and implemented for the measured baseline suite. |
+| Q2 | AOT and JIT use the bounded Default HIR pipeline unless `ORI_OPT` overrides it. |
+| Q3 | General bounds elision did not land. The wave closed on removal of per-iteration cycle collection; unchecked access remains out without a proof-backed gate. |
+| Q4 | Pure, recognized sum/nested loops use the measured Default strength reduction; effectful shapes are preserved. |
+| Q5 | Cranelift-only accepted; alternate backends shelved by the linked ADR. |
 
 ---
 
 ## 14. Definition of done (LANG-PERF-2)
 
-Plan is **done** when:
+Closure audit:
 
-1. PR0–PR3 merged (minimum); PR4–PR7 as capacity allows.  
-2. Goals G1–G3 measured on the same harness host class (or documented shortfall with root cause).  
-3. Performance guide + baseline updated.  
-4. No FREEZE-1 break; `cargo test --workspace` green.  
-5. ORC decision recorded in a short ADR or BACKLOG note (accept or shelve).
+1. **Met under the measured, revised scope:** instrumentation, smoke harness,
+   HIR fold/DCE, removal of per-iteration cycle collection, strength reduction,
+   conservative leaf inlining and productization are present. The original PR3
+   IV/bounds-elision design did **not** land; it was not retained as a residual
+   after G1–G3 were met, because unchecked access without a proof would add
+   correctness risk without a demonstrated product need.
+2. **Met:** G1–G3 are measured in
+   [`../perf-baseline-2026-07-13.md`](../perf-baseline-2026-07-13.md); `fib_iter`
+   is about 1.6–2× Rust, `list_sum` about 1.25× Rust, and `nested` about 1.2 ms.
+3. **Met:** the performance guide and versioned baseline were updated.
+4. **Met by the implementation campaign:** no surface break was introduced;
+   ongoing workspace QA remains the release gate rather than a reason to keep
+   this historical plan open.
+5. **Met:** Cranelift-only is accepted and LLVM/ORC shelved in the linked ADR.
 
 ---
 
@@ -419,7 +436,7 @@ Plan is **done** when:
 1. **HIR mid-end before any backend swap.**  
 2. **fib / list / nested** are the scoreboard.  
 3. **Correctness over cleverness** on bounds.  
-4. **Cranelift stays** for this plan; **ORC is next discussion, not this work.**  
+4. **Cranelift stays; LLVM/ORC is shelved until new measured evidence meets the ADR reopen conditions.**
 5. **Incremental PRs** with polyglot remeasure each wave.
 
 ---

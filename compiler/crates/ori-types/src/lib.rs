@@ -4,7 +4,6 @@ pub mod check;
 pub mod conditional;
 pub mod const_eval;
 pub mod def;
-pub mod interner;
 pub mod literal;
 pub mod lower;
 pub mod resolve;
@@ -16,7 +15,6 @@ pub use def::{
     CompileTimeValue, ConstEvalFailure, ConstEvalFailureKind, ConstEvaluation, Def, DefId, DefKind,
     DefMap,
 };
-pub use interner::{TyId, TyInterner};
 pub use lower::{
     is_inline_ty, is_inline_ty_with_structs, is_inline_ty_with_structs_visiting, lower_type,
     lower_type_with_aliases, lower_type_with_local_aliases,
@@ -28,6 +26,6 @@ pub use resolve::{
     StructSig, TraitMethodSig, TraitSig, TypeAliasSig, ValueSig, WhereConstraintSig,
 };
 pub use ty::{
-    expand_ty_aliases, normalize_ty_aliases, substitute_trait_self, substitute_ty_params, OpaqueTy,
-    Ty,
+    expand_ty_aliases, normalize_ty_aliases, replace_json_placeholder, substitute_trait_self,
+    substitute_ty_params, OpaqueTy, Ty,
 };

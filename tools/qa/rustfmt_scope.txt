@@ -1,0 +1,6 @@
+# AUD-QA-1 incremental rustfmt baseline.
+# Keep one repository-relative Rust source path per line. Expand this list as
+# legacy formatting drift is removed; never delete a path to hide a regression.
+compiler/crates/ori-driver/src/package.rs
+compiler/crates/ori-driver/src/update.rs
+compiler/crates/ori-driver/tests/self_update.rs

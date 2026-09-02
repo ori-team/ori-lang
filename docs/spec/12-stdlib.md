@@ -127,7 +127,7 @@ Every module below is importable today. The list is verified against
 
 | Group | Modules |
 |---|---|
-| Core / runtime | `ori.core`, `ori.Error`, `ori.mem`, `ori.convert` |
+| Core / runtime | `ori.core`, `ori.Error`, `ori.mem`, `ori.convert`, `ori.handle` |
 | I/O and system | `ori.io`, `ori.fs`, `ori.files` *(compat alias for `ori.fs`)*, `ori.path`, `ori.os`, `ori.process`, `ori.args`, `ori.config`, `ori.log` |
 | Text and bytes | `ori.string`, `ori.bytes`, `ori.buffer`, `ori.format`, `ori.json` |
 | Collections | `ori.list`, `ori.map`, `ori.set`, `ori.iter` |
@@ -173,15 +173,51 @@ No import required. These types and functions are built into the language.
 
 `bool`, `int`, `int8`–`int64`, `u8`–`u64`, `float`, `float32`–`float64`,
 `string`, `bytes`, `void`, `list[T]`, `map[K,V]`, `set[T]`, `optional[T]`,
-`result[T,E]`, `range[int]`, `lazy[T]`, `future[T]`, `any[Trait]`,
+`result[T,E]`, `range[int]`, `lazy[T]`, `future[T]`, `handle[T]`, `any[Trait]`,
 `tuple[...]`
+
+`ori.handle.is_null` is the standard-library null-sentinel probe for borrowed
+`handle[T]` values. It returns `bool` and only compares the opaque pointer with
+zero; it never dereferences, retains, or releases the pointee. This helper does
+not make a handle nullable by construction and does not prove lifetime or
+thread affinity. Those guarantees remain part of the host API contract.
 
 Current collection limit:
 
-- `map` keys currently support `int`, `string`, or a user-defined type that
-  implements both `ori.core.Hashable` and `ori.core.Equatable`.
-- `set` elements currently support `int`, `string`, or a user-defined type that
-  implements both `ori.core.Hashable` and `ori.core.Equatable`.
+`Hashable` may remain a marker, or may provide a custom native hash:
+
+```ori
+apply UserKey use core.Hashable
+    hash(self) -> int
+        return self.id
+    end
+end
+```
+
+The method must return a stable `int` and obey the usual invariant: values
+that `Equatable.equals` considers equal must return the same hash. The compiler
+does not prove that invariant; violating it can make a key unreachable in a
+hash table.
+
+- `map` keys currently support `int`, `string`, or a non-recursive user-defined
+  type that implements `ori.core.Hashable` and has structural or explicit
+  `ori.core.Equatable`.
+- `set` elements currently support `int`, `string`, or a non-recursive
+  user-defined type that implements `ori.core.Hashable` and has structural or
+  explicit `ori.core.Equatable`.
+- For user-defined keys/elements, `Equatable.equals` is the native membership
+  predicate, so distinct values that compare equal are treated as one key or
+  element. A user-defined `hash(self) -> int` method on `Hashable` is used when
+  present; marker-only `Hashable` uses generated hashing for non-recursive
+  structural values (scalar/string/bytes fields and nested generated
+  aggregates). An explicit non-structural `Equatable` without `hash` safely
+  falls back to a constant hash. Recursive aggregate-key support and
+  benchmarked performance remain open.
+- `graph.Graph[T]` uses the same `Equatable.equals` callback for user-defined
+  struct and non-recursive enum nodes. Because `graph.new` is type-erased at the
+  source boundary, the first concrete node operation attaches the callback;
+  later operations keep the established node kind, and `clone`/closure preserve
+  the callback.
 - The checker rejects unsupported map keys and set elements with
   `type.collection_hash_unsupported`.
 
@@ -243,7 +279,12 @@ calling it reports `type.no_such_field`:
 |---|---|
 | `Iterable` | Recognized by `for` when the type exposes `mut next() -> optional[T]` — checked structurally, not through the trait table (`type.iterable_next_missing`). **This is the lazy-iteration mechanism**; see chapter 06 |
 | `Transferable` | Enforced for values crossing task or channel boundaries (`concurrency.not_transferable`) |
-| `Hashable` | Checked structurally for `map` keys and `set` elements |
+
+`Hashable` is the exception: it gates `map`/`set`/`hash_table` keys and
+registers an optional `hash(self) -> int` method. Marker-only implementations
+use generated structural hashes for non-recursive structs/enums; explicit
+non-structural `Equatable` without `hash` uses a constant hash. Generic graph
+nodes use structural or explicit `Equatable`.
 
 If you need a callable contract that a marker does not provide, declare your
 own trait.
@@ -340,7 +381,13 @@ move_path(from: string, to: string) -> result[void, string]
 ```
 
 The async variants complete on the native runtime and return the same
-`result[string,string]` shape after `await`.
+`result[string,string]` shape after `await`. Blocking filesystem operations
+share a bounded native I/O pool: the queue holds at most 256 pending jobs and
+the runtime creates no more than four workers (clamped to the host's available
+parallelism). Submitting while the queue is full waits for capacity, preserving
+bounded memory use. Worker panics, shutdown admission, and worker-creation
+failures complete the associated future as a terminal failure and never discard
+the future ownership.
 
 `read_all(path)` is a text convenience alias for `read_text(path)`.
 `read_bytes(path)` returns the exact file bytes, including embedded `0x00`
@@ -453,9 +500,12 @@ bytes.get(b: bytes, index: int)              -> u8
 ## `ori.list`, `ori.map`, and `ori.set` - Collections
 
 The native runtime stores collection values as runtime handles. `map` keys and
-`set` elements currently support built-in hashable scalar values and
-user-defined values that satisfy the checker rules for `Hashable` and
-`Equatable`.
+`set` elements support built-in hashable scalar values and non-recursive
+user-defined values that satisfy the checker rules for `Hashable` plus
+structural or explicit `Equatable`; a user `hash(self) -> int` method supplies
+the native hash callback when present, while marker-only non-recursive
+structural values use generated hashing. Explicit non-structural equality
+without `hash` keeps a constant-hash correctness fallback.
 
 `ori.list` also exposes small `.orl` helpers directly:
 
@@ -697,8 +747,8 @@ Comparable contract is stable.
 `hash_table.HashTable[K,V]` is a public advanced API over the same native hash
 engine used by `map[K,V]`. It exists for explicit capacity control and for
 `get/remove` APIs that return `optional[V]`. Keys follow the same rule as
-`map`: use `int`, `string`, or a user type that implements both
-`ori.core.Hashable` and `ori.core.Equatable`.
+`map`: use `int`, `string`, or a non-recursive user type with
+`ori.core.Hashable` plus structural or explicit `ori.core.Equatable`.
 
 `graph.Graph[N]` is an opaque adjacency-list graph. `graph.new(true)` creates a
 directed graph; `graph.new(false)` creates an undirected graph. `graph.add_edge`
@@ -712,6 +762,12 @@ when the graph is undirected or cyclic. New code can use
 `graph.shortest_path` is unweighted BFS shortest path.
 `graph.shortest_weighted_path` uses stored edge weights.
 `for node in graph_value` iterates a snapshot of graph nodes.
+For user-defined struct and non-recursive enum nodes, `Equatable.equals` is used
+for node identity and edge endpoint matching. Since `graph.new` is type-erased,
+the first operation that carries a concrete node value installs this callback;
+subsequent operations must use a compatible node kind. `graph.clone` and
+`graph.transitive_closure` preserve the callback. Recursive/generic edge cases
+and linked-list complexity remain tracked by `LANG-GRAPH-LIST-1`.
 
 `heap.Heap[T]` is an opaque min-heap. The smallest value according to the
 element ordering is returned first. The v1 runtime supports `int`, `string`,
@@ -1033,11 +1089,38 @@ Currently transferable:
   `future[T]`, `task.Job[T]`, `channel.Channel[T]`, and the opaque collection
   handles above when their contents are transferable;
 - structs when all fields are transferable;
-- enum values without payload tracking in the current resolver;
+- enum values when every variant payload field is transferable (recursive enum
+  definitions are checked with a cycle-safe instantiation guard);
 - `atomic.AtomicInt` and the opaque task/channel error handles.
 
+Resource handles are deliberately not transferable: `fs.File`, `io.Input`,
+`io.Output`, `net.Connection`, `net.Listener`, and `net.UdpSocket` borrow
+process/OS state whose lifetime and thread affinity are controlled by their
+owning scope. `task.CancelToken` is the explicit exception because it contains
+only an atomic cancellation flag and is designed for cross-task coordination.
+
 Function values, lazy thunks, and `any[Trait]` values are not transferable by
-default. A closure passed to `task.spawn` also cannot capture a `var` binding.
+default. A direct named function value is accepted when its definition summary
+proves no mutable-global effect; an unsafe named function is rejected with
+`concurrency.global_mutable_capture`. Function values stored in local bindings
+are accepted when the checker records their closure captures and every
+captured value is transferable. Unknown function environments and nested
+function captures remain rejected with `concurrency.not_transferable`. A
+closure passed to `task.spawn` also
+cannot capture a lexical `var` binding or directly read/write a top-level
+mutable `var`. A module-level `var`
+is shared by all threads and has no implicit synchronization. Use an
+`atomic.AtomicInt`, a channel, or explicit single-owner state instead. The
+checker reports `concurrency.global_mutable_capture`. Same-module helper calls
+and imported named helpers are checked by conservative call-graph passes;
+receiver methods and `any[Trait]` dispatch are conservatively matched by method
+name. Local closure environments are represented by a checker-side capture
+summary today; a complete type-level isolation model and richer transitive
+function-value effects remain tracked in `CONC-THREADS-1`.
+
+Extern function values are treated as unknown effects and remain rejected at a
+task boundary until the host contract supplies an explicit transfer/effect
+summary.
 
 `ori.concurrent` is importable today as the umbrella module for this contract.
 Its concrete APIs currently live in `ori.task`, `ori.channel`, and
@@ -1115,6 +1198,7 @@ Status: implemented in the native runtime with real synchronization.
 import ori.channel = channel
 
 channel.create[T]() -> channel.Channel[T]
+channel.create_bounded[T](capacity: int) -> optional[channel.Channel[T]]
 channel.send[T](ch: channel.Channel[T], value: T) -> result[void, channel.SendError]
 channel.receive[T](ch: channel.Channel[T]) -> result[T, channel.ReceiveError]
 channel.close[T](ch: channel.Channel[T]) -> void
@@ -1122,7 +1206,12 @@ channel.close[T](ch: channel.Channel[T]) -> void
 
 Behavior:
 
-- `channel.create` creates an unbounded FIFO channel.
+- `channel.create` creates an unbounded FIFO channel. Use
+  `channel.create_bounded` when the producer must have a finite queue.
+- `channel.create_bounded` returns `some(channel)` for a positive capacity and
+  `none` for zero or negative capacities. A bounded channel blocks `send` while
+  its queue is full; closing it wakes blocked senders, which then receive
+  `err(...)`. The queue never grows beyond the declared capacity.
 - `channel.send` enqueues a transferable value, or returns `err(...)` when
   the channel is closed.
 - `channel.receive` waits until a value is available, or returns `err(...)`

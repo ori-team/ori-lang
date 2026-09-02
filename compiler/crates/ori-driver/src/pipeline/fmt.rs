@@ -114,7 +114,8 @@ fn collect_orl_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = std::fs::read_dir(dir)
         .map_err(|e| format!("failed to read directory `{}`: {e}", dir.display()))?;
     for entry in entries {
-        let entry = entry.map_err(|e| format!("failed to read entry in `{}`: {e}", dir.display()))?;
+        let entry =
+            entry.map_err(|e| format!("failed to read entry in `{}`: {e}", dir.display()))?;
         let path = entry.path();
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");

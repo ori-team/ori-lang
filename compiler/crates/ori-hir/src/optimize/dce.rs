@@ -64,7 +64,7 @@ fn dce_block(block: &mut HirBlock, contract_structs: &HashSet<DefId>, changed: &
             if used.contains(name) {
                 return true;
             }
-            expr_may_effect(value, contract_structs)
+            !matches!(expr_effect(value, contract_structs), ExprEffect::Pure)
         }
         _ => true,
     });
@@ -156,6 +156,9 @@ fn collect_stmt_uses(stmt: &HirStmt, used: &mut HashSet<SmolStr>) {
         } => {
             collect_expr_uses(scrutinee, used);
             for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_expr_uses(guard, used);
+                }
                 for s in &arm.body {
                     collect_stmt_uses(s, used);
                 }
@@ -236,6 +239,15 @@ fn collect_expr_uses(expr: &HirExpr, used: &mut HashSet<SmolStr>) {
                 collect_expr_uses(a, used);
             }
         }
+        // Associated calls have no receiver expression, but their arguments
+        // are still evaluated at the call site. Missing this arm made DCE
+        // delete bindings used only by `Type.method(value)`, leaving the
+        // lowered call with a dangling variable reference.
+        HirExprKind::AssociatedCall { args, .. } => {
+            for arg in args {
+                collect_expr_uses(arg, used);
+            }
+        }
         HirExprKind::IfExpr { cond, then, else_ } => {
             collect_expr_uses(cond, used);
             collect_expr_uses(then, used);
@@ -304,69 +316,178 @@ fn collect_expr_uses(expr: &HirExpr, used: &mut HashSet<SmolStr>) {
     }
 }
 
-fn expr_may_effect(expr: &HirExpr, contract_structs: &HashSet<DefId>) -> bool {
+/// Observable behavior of an expression when its value is unused.
+///
+/// `MayTrap` is deliberately separate from `Effectful`: allocation and bounds
+/// checks must remain in the program, but they do not necessarily execute user
+/// code. DCE may remove only `Pure` expressions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExprEffect {
+    Pure,
+    MayTrap,
+    Effectful,
+}
+
+impl ExprEffect {
+    fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Effectful, _) | (_, Self::Effectful) => Self::Effectful,
+            (Self::MayTrap, _) | (_, Self::MayTrap) => Self::MayTrap,
+            (Self::Pure, Self::Pure) => Self::Pure,
+        }
+    }
+}
+
+fn combine_effects(effects: impl IntoIterator<Item = ExprEffect>) -> ExprEffect {
+    effects
+        .into_iter()
+        .fold(ExprEffect::Pure, ExprEffect::combine)
+}
+
+fn expr_effect(expr: &HirExpr, contract_structs: &HashSet<DefId>) -> ExprEffect {
+    use ori_ast::expr::BinaryOp;
+
     match &expr.kind {
         HirExprKind::Call { .. }
         | HirExprKind::MethodCall { .. }
+        | HirExprKind::AssociatedCall { .. }
         | HirExprKind::Await(_)
-        | HirExprKind::Propagate(_) => true,
-        HirExprKind::Binary { lhs, rhs, .. } => {
-            expr_may_effect(lhs, contract_structs) || expr_may_effect(rhs, contract_structs)
+        | HirExprKind::Propagate(_) => ExprEffect::Effectful,
+        HirExprKind::Binary { op, lhs, rhs } => {
+            let operands = combine_effects([
+                expr_effect(lhs, contract_structs),
+                expr_effect(rhs, contract_structs),
+            ]);
+            if matches!(
+                op,
+                BinaryOp::Div | BinaryOp::Rem | BinaryOp::Shl | BinaryOp::Shr
+            ) && lhs.ty.is_integer()
+            {
+                operands.combine(ExprEffect::MayTrap)
+            } else {
+                operands
+            }
         }
         HirExprKind::Unary { operand, .. }
         | HirExprKind::Field {
             object: operand, ..
         }
-        | HirExprKind::Some_(operand)
-        | HirExprKind::Ok_(operand)
-        | HirExprKind::Err_(operand) => expr_may_effect(operand, contract_structs),
-        HirExprKind::Index { object, index } => {
-            expr_may_effect(object, contract_structs) || expr_may_effect(index, contract_structs)
+        | HirExprKind::TupleIndex {
+            object: operand, ..
         }
-        HirExprKind::IfExpr { cond, then, else_ } => {
-            expr_may_effect(cond, contract_structs)
-                || expr_may_effect(then, contract_structs)
-                || expr_may_effect(else_, contract_structs)
+        | HirExprKind::IsCheck { value: operand, .. } => expr_effect(operand, contract_structs),
+        HirExprKind::Some_(operand) | HirExprKind::Ok_(operand) | HirExprKind::Err_(operand) => {
+            expr_effect(operand, contract_structs).combine(ExprEffect::MayTrap)
         }
-        HirExprKind::MatchExpr { scrutinee, arms } => {
-            expr_may_effect(scrutinee, contract_structs)
-                || arms.iter().any(|arm| {
+        // Indexing can execute a bounds guard for lists, strings, bytes and
+        // slices. Arrays are retained too: their current backend path lacks a
+        // dynamic guard, so dropping the expression would hide an invalid
+        // memory access instead of fixing it.
+        HirExprKind::Index { object, index } => combine_effects([
+            expr_effect(object, contract_structs),
+            expr_effect(index, contract_structs),
+            ExprEffect::MayTrap,
+        ]),
+        HirExprKind::IfExpr { cond, then, else_ } => combine_effects([
+            expr_effect(cond, contract_structs),
+            expr_effect(then, contract_structs),
+            expr_effect(else_, contract_structs),
+        ]),
+        HirExprKind::MatchExpr { scrutinee, arms } => combine_effects(
+            std::iter::once(expr_effect(scrutinee, contract_structs)).chain(arms.iter().flat_map(
+                |arm| {
                     arm.guard
                         .as_ref()
-                        .is_some_and(|g| expr_may_effect(g, contract_structs))
-                        || expr_may_effect(&arm.body, contract_structs)
-                })
-        }
+                        .into_iter()
+                        .map(|expr| expr_effect(expr, contract_structs))
+                        .chain(std::iter::once(expr_effect(&arm.body, contract_structs)))
+                },
+            )),
+        ),
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
-        | HirExprKind::TupleLit(elements) => elements
-            .iter()
-            .any(|e| expr_may_effect(e, contract_structs)),
+        | HirExprKind::TupleLit(elements)
+        | HirExprKind::SetLit { elements, .. } => combine_effects(
+            elements
+                .iter()
+                .map(|element| expr_effect(element, contract_structs))
+                .chain(std::iter::once(ExprEffect::MayTrap)),
+        ),
+        HirExprKind::ListSpreadLit { elements, .. } => combine_effects(
+            elements
+                .iter()
+                .map(|element| expr_effect(&element.value, contract_structs))
+                .chain(std::iter::once(ExprEffect::MayTrap)),
+        ),
+        // Building a map or range allocates runtime storage even when all
+        // operands are literals, so allocation failure remains observable.
+        HirExprKind::MapLit { entries, .. } => combine_effects(
+            entries
+                .iter()
+                .flat_map(|(key, value)| [key, value])
+                .map(|expr| expr_effect(expr, contract_structs))
+                .chain(std::iter::once(ExprEffect::MayTrap)),
+        ),
+        HirExprKind::Range { start, end } => combine_effects([
+            expr_effect(start, contract_structs),
+            expr_effect(end, contract_structs),
+            ExprEffect::MayTrap,
+        ]),
         // Building a struct whose type carries field contracts runs those
-        // contracts (and can trap): keep the binding even when unused.
-        HirExprKind::StructLit { def_id, fields } => {
-            contract_structs.contains(def_id)
-                || fields
-                    .iter()
-                    .any(|(_, e)| expr_may_effect(e, contract_structs))
-        }
-        HirExprKind::EnumVariant { def_id, fields, .. } => {
-            contract_structs.contains(def_id)
-                || fields
-                    .iter()
-                    .any(|(_, e)| expr_may_effect(e, contract_structs))
+        // contracts. A custom destructor is also user-visible when the unused
+        // value is dropped, so both cases remain fully effectful.
+        HirExprKind::StructLit { def_id, fields }
+        | HirExprKind::EnumVariant { def_id, fields, .. } => {
+            let fields = fields
+                .iter()
+                .map(|(_, expr)| expr_effect(expr, contract_structs));
+            let allocation = if contract_structs.contains(def_id) {
+                ExprEffect::Effectful
+            } else {
+                ExprEffect::MayTrap
+            };
+            combine_effects(fields.chain(std::iter::once(allocation)))
         }
         HirExprKind::StructUpdate {
             def_id,
             base,
             updates,
         } => {
-            contract_structs.contains(def_id)
-                || expr_may_effect(base, contract_structs)
-                || updates
-                    .iter()
-                    .any(|(_, e)| expr_may_effect(e, contract_structs))
+            let values = updates
+                .iter()
+                .map(|(_, expr)| expr_effect(expr, contract_structs));
+            let allocation = if contract_structs.contains(def_id) {
+                ExprEffect::Effectful
+            } else {
+                ExprEffect::MayTrap
+            };
+            combine_effects(
+                std::iter::once(expr_effect(base, contract_structs))
+                    .chain(values)
+                    .chain(std::iter::once(allocation)),
+            )
         }
-        _ => false,
+        HirExprKind::InterpolatedStr(parts) => combine_effects(
+            parts
+                .iter()
+                .filter_map(|part| match part {
+                    HirStrPart::Expr(expr) => Some(expr_effect(expr, contract_structs)),
+                    HirStrPart::Literal(_) => None,
+                })
+                .chain(std::iter::once(ExprEffect::MayTrap)),
+        ),
+        // Unlike `StrLit`, which points at a static module data block,
+        // `BytesLit` allocates a managed payload in native codegen. Keep it
+        // even when the value is unused so allocation failure and ownership
+        // setup are not optimized away.
+        HirExprKind::BytesLit(_) => ExprEffect::MayTrap,
+        HirExprKind::Closure { .. } => ExprEffect::MayTrap,
+        HirExprKind::BoolLit(_)
+        | HirExprKind::IntLit(_)
+        | HirExprKind::FloatLit(_)
+        | HirExprKind::StrLit(_)
+        | HirExprKind::Unit
+        | HirExprKind::Var(_)
+        | HirExprKind::None_ => ExprEffect::Pure,
     }
 }

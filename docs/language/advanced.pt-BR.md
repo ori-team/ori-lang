@@ -37,7 +37,35 @@ const value: int = lazy.force(delayed)
 ```
 
 `handle[T]` é um valor opaco para recursos ou fronteiras FFI. Ele não permite
-acesso direto a ponteiros nem libera memória manualmente.
+acesso direto a ponteiros nem libera memória manualmente, não pode atravessar
+tasks e só é emprestado pelo tempo garantido pela API hospedeira. Agregados
+exportados que contenham handles emprestados são rejeitados. `==` e `!=`
+comparam apenas a identidade do ponteiro e nunca acessam o objeto apontado;
+igualdade semântica, lifetime e afinidade de thread ainda não formam um
+contrato completo (`LANG-HANDLE-1`). Para criar explicitamente o sentinela
+nulo, atribua `handles.null()` a um valor `handle[T]`. Para testar apenas o
+sentinela, importe `ori.handle` e use `handles.is_null(value)`; esse helper
+nunca acessa o ponteiro.
+Wrappers `@c_export` validam handles gerenciados opacos no registro do runtime
+antes de entrar no código Ori. Para payloads concretos e não genéricos, o
+compilador grava uma tag e o wrapper confere tamanho e tipo-fonte; ponteiros
+nulos, estrangeiros, com tamanho incorreto ou de outro tipo seguem a falha
+determinística de limites. Não há fallback somente por procedência: se o layout
+concreto ou a tag de tipo não puderem ser gerados, a exportação falha em tempo de
+compilação. O host deve usar o handle devolvido pelo export correspondente.
+
+Nós genéricos de `graph.Graph[T]` usam o mesmo contrato `Equatable.equals` de
+mapas e conjuntos. Para uma struct do usuário, a primeira operação concreta no
+grafo instala esse callback; valores equivalentes passam a compartilhar um nó,
+e consultas de arestas não direcionadas comparam por valor. `graph.clone` e
+`graph.transitive_closure` preservam o callback. Enums suportam `==`/`!=`
+estrutural diretamente e podem ser nós de grafo quando têm `Hashable`; um
+`Equatable` explícito continua sobrescrevendo a igualdade estrutural. Chaves
+estruturais não recursivas usam callbacks nativos de hash gerados pelo
+compilador. Um método `hash(self) -> int` em `Hashable` sobrescreve o callback
+gerado. Quando `Equatable` explícito não é estrutural e não há método `hash`, o
+runtime usa hash constante para preservar a correção; admissão recursiva e
+ajuste de performance continuam abertos.
 
 Contratos de parâmetros usam `it`:
 
@@ -99,10 +127,14 @@ código inativo continua sendo verificada; nomes e tipos dentro dele, não.
 Consulte as [regras normativas](../spec/02-lexical.md#conditional-compilation)
 e os [campos de features](../spec/17-project-and-docs.md#oriproj).
 
-## Buffers contíguos e vetorização SIMD
+## Buffers contíguos e estado da vetorização SIMD
 
 `buffer[T]` representa memória contígua e plana na heap para arrays numéricos, buffers de pixels e amostras de áudio.
-O otimizador HIR vetoriza automaticamente e divide em blocos laços numéricos contáveis (`GFX-SIMD-1`) sobre buffers e arrays em instruções SIMD de 128 bits:
+O backend nativo atualmente emite operações escalares para laços sobre buffers
+e arrays. `GFX-SIMD-1` continua planejado; nenhum passe de vetorização fica ativo no
+pipeline HIR até existir transformação comprovada, política de recursos do alvo
+e limiar de benchmark. O backend ainda não transforma laços nem emite operações
+vetoriais de 128 bits.
 
 ```ori
 import ori.buffer = buf

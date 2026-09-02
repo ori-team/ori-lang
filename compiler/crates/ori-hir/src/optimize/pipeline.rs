@@ -5,16 +5,14 @@ use crate::hir::HirModule;
 use super::const_fold::fold_module;
 use super::dce::dce_module;
 use super::inline_leafs::inline_leafs_module;
-use super::rc_elision::elide_rc_copies_module;
 use super::strength_reduce::strength_reduce_module;
-use super::vectorize::vectorize_loops_module;
 
 /// Optimisation aggressiveness for HIR mid-end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptLevel {
     /// No mid-end rewrites (tests / raw lower).
     None,
-    /// Product default: const fold + DCE + pure-loop strength reduction + SIMD loop vectorization.
+    /// Product default: const fold + DCE + pure-loop strength reduction.
     Default,
     /// Default passes plus monomorphic leaf inlining.
     Aggressive,
@@ -36,12 +34,10 @@ pub fn optimize_module(module: &mut HirModule, level: OptLevel) {
     match level {
         OptLevel::None => {}
         OptLevel::Default | OptLevel::Aggressive => {
-            // Bounded fixed-point: fold → strength reduce → vectorize → RC copy elision → DCE.
+            // Bounded fixed-point: fold → strength reduce → DCE.
             for _ in 0..4 {
                 let mut changed = fold_module(module);
                 changed |= strength_reduce_module(module);
-                changed |= vectorize_loops_module(module);
-                changed |= elide_rc_copies_module(module);
                 changed |= dce_module(module);
                 if !changed {
                     break;
@@ -51,7 +47,6 @@ pub fn optimize_module(module: &mut HirModule, level: OptLevel) {
                 inline_leafs_module(module);
                 // One more fold/DCE round after inlining exposes constants.
                 fold_module(module);
-                elide_rc_copies_module(module);
                 dce_module(module);
             }
         }

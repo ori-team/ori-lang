@@ -159,8 +159,14 @@ module).
   `s_len`, `sub_len`, `total_len` instead.
 - [ ] Prefer indexed iteration over `for item in list[string]` in Layer 2/3
   stdlib (ARC loop binding still fragile for managed string elements).
-- [ ] Map/set/graph modules: use concrete key types (`string`, `int`) until
-  the `Hashable` + `Equatable` trait gate supports generic keys.
+- [ ] Map/set/graph modules: use concrete key types (`string`, `int`) when
+  performance matters; non-recursive structural map/set/hash-table keys now
+  use generated native hash callbacks, while an optional user
+  `hash(self) -> int` method on `Hashable` overrides that callback. Explicit
+  non-structural equality without `hash` keeps a constant-hash correctness
+  fallback. Non-recursive user-defined struct and enum graph nodes with
+  `Hashable` dispatch `Equatable.equals` through the native callback installed
+  by the first concrete node operation.
 - [ ] Add a regression test in `multifile_imports.rs` that imports the module
       and validates behavior end-to-end (check -> compile -> run).
 

@@ -1,6 +1,6 @@
 use super::*;
 use ori_types::stdlib::stdlib_runtime_functions;
-use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashSet};
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Mutex;
@@ -13,11 +13,337 @@ static TEST_ARC_LOCK: Mutex<()> = Mutex::new(());
 fn exported_runtime_version_queries_are_stable_and_nul_terminated() {
     let runtime_version = unsafe { CStr::from_ptr(ori_rt_version()) };
     let abi_version = unsafe { CStr::from_ptr(ori_rt_abi_version()) };
+    let target = unsafe { CStr::from_ptr(ori_rt_target()) };
 
     assert_eq!(runtime_version.to_str().unwrap(), ORI_RUNTIME_VERSION);
     assert_eq!(abi_version.to_str().unwrap(), ORI_ABI_VERSION);
+    assert_eq!(target.to_str().unwrap(), ORI_RUNTIME_TARGET);
     assert!(!runtime_version.to_bytes().is_empty());
     assert!(!abi_version.to_bytes().is_empty());
+    assert!(!target.to_bytes().is_empty());
+}
+
+#[test]
+fn borrowed_handle_null_probe_only_checks_pointer_sentinel() {
+    assert!(unsafe { ori_handle_null() }.is_null());
+    assert_eq!(unsafe { ori_handle_is_null(std::ptr::null_mut()) }, 1);
+    let non_null = std::ptr::NonNull::<u8>::dangling().as_ptr();
+    assert_eq!(unsafe { ori_handle_is_null(non_null) }, 0);
+}
+
+#[test]
+fn opaque_handle_validation_accepts_only_live_runtime_allocations() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    arc_state().lock().unwrap().allocations.clear();
+    arc_state().lock().unwrap().edges.clear();
+
+    unsafe {
+        let handle = ori_alloc(8, None);
+        ori_handle_validate(handle);
+        ori_arc_release(handle);
+    }
+    assert_eq!(ori_arc_live_allocations(), 0);
+}
+
+#[test]
+fn opaque_handle_size_validation_accepts_the_registered_payload_layout() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let handle = ori_alloc(24, None);
+        ori_handle_validate_size(handle, 24);
+        ori_arc_release(handle);
+    }
+    assert_eq!(ori_arc_live_allocations(), 0);
+}
+
+#[test]
+fn opaque_handle_type_validation_accepts_the_compiler_tagged_payload() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let handle = ori_alloc_typed(24, None, 7);
+        ori_handle_validate_size_type(handle, 24, 7);
+        ori_arc_release(handle);
+    }
+    assert_eq!(ori_arc_live_allocations(), 0);
+}
+
+#[test]
+fn managed_allocation_size_check_rejects_header_overflow() {
+    assert_eq!(allocation_total(usize::MAX), None);
+    assert_eq!(
+        allocation_total(0),
+        Some(std::mem::size_of::<OriHeapHeader>())
+    );
+}
+
+#[test]
+fn nul_terminated_payload_size_is_checked_before_the_sentinel() {
+    assert_eq!(nul_terminated_payload_size(0), 1);
+    assert_eq!(nul_terminated_payload_size(usize::MAX - 1), usize::MAX);
+}
+
+#[test]
+fn arc_registry_contention_counter_is_observable() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+    let before = arc_lock_contention_count();
+    unsafe {
+        let value = ori_alloc(8, None);
+        assert!(!value.is_null());
+        ori_arc_retain(value);
+        ori_arc_release(value);
+        ori_arc_release(value);
+    }
+    assert!(
+        arc_lock_contention_count() >= before,
+        "contention counter must be monotonic"
+    );
+}
+
+#[test]
+fn timer_heap_pops_earliest_deadline_with_stable_ties() {
+    let now = Instant::now();
+    let mut timers = BinaryHeap::new();
+    timers.push(TimerEntry {
+        due: now + Duration::from_millis(20),
+        future: 20,
+        sequence: 0,
+    });
+    timers.push(TimerEntry {
+        due: now + Duration::from_millis(10),
+        future: 10,
+        sequence: 1,
+    });
+    timers.push(TimerEntry {
+        due: now + Duration::from_millis(10),
+        future: 11,
+        sequence: 2,
+    });
+
+    assert_eq!(timers.pop().map(|entry| entry.future), Some(10));
+    assert_eq!(timers.pop().map(|entry| entry.future), Some(11));
+    assert_eq!(timers.pop().map(|entry| entry.future), Some(20));
+}
+
+#[test]
+fn timer_heap_compaction_returns_terminal_future_owners() {
+    let now = Instant::now();
+    let mut timers = BinaryHeap::new();
+    timers.push(TimerEntry {
+        due: now + Duration::from_millis(20),
+        future: 20,
+        sequence: 0,
+    });
+    timers.push(TimerEntry {
+        due: now + Duration::from_millis(10),
+        future: 10,
+        sequence: 1,
+    });
+
+    let stale = compact_timer_heap(&mut timers, |future| future != 20);
+
+    assert_eq!(stale, vec![20]);
+    assert_eq!(timers.len(), 1);
+    assert_eq!(timers.pop().map(|entry| entry.future), Some(10));
+}
+
+#[test]
+fn cancellation_token_association_storage_compacts_after_burst() {
+    let mut associations = Vec::with_capacity(128);
+    associations.push(std::ptr::null_mut());
+    let peak = associations.capacity();
+
+    compact_cancel_token_associations(&mut associations);
+
+    assert!(
+        associations.capacity() < peak,
+        "long-lived cancellation tokens must not retain burst capacity"
+    );
+    assert_eq!(associations.len(), 1);
+}
+
+#[test]
+fn checked_calloc_zeroes_storage_after_validating_size() {
+    unsafe {
+        let ptr = checked_calloc(3, std::mem::size_of::<i64>()) as *mut i64;
+        assert!(!ptr.is_null());
+        let values = std::slice::from_raw_parts(ptr, 3);
+        assert_eq!(values, &[0, 0, 0]);
+        libc::free(ptr.cast());
+    }
+}
+
+#[test]
+fn fallible_runtime_buffers_reject_invalid_sizes_without_unwinding() {
+    assert!(try_zeroed_bytes(-1).is_err());
+    assert!(try_zeroed_bytes(i64::MAX).is_err());
+    assert_eq!(repeat_string_or_abort("ab", 3), "ababab");
+}
+
+#[test]
+fn string_concat_rejects_invalid_utf8_in_both_abi_shapes() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    let invalid = [0xff_u8, 0];
+    let valid = b"ok\0";
+
+    unsafe {
+        ori_host_clear_error();
+        let result = ori_string_concat(invalid.as_ptr(), valid.as_ptr());
+        assert_eq!(cstr_str(result), "");
+        assert_eq!(ori_host_error_code(), ORI_HOST_ERROR_INVALID_UTF8);
+        ori_arc_release(result);
+
+        ori_host_clear_error();
+        let result = ori_string_concat_parts(invalid.as_ptr(), 1, valid.as_ptr(), 2);
+        assert_eq!(cstr_str(result), "");
+        assert_eq!(ori_host_error_code(), ORI_HOST_ERROR_INVALID_UTF8);
+        ori_arc_release(result);
+    }
+}
+
+#[test]
+fn string_case_fold_uses_full_non_turkic_unicode_mapping() {
+    let input = b"Stra\xC3\x9Fe\0";
+    unsafe {
+        let result = ori_string_case_fold(input.as_ptr());
+        assert_eq!(cstr_str(result), "strasse");
+        ori_arc_release(result);
+    }
+}
+
+#[test]
+fn worker_spawn_failure_completes_future_with_terminal_failure() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+    ori_host_clear_error();
+    TEST_FORCE_THREAD_SPAWN_FAILURE.store(true, AtomicOrdering::SeqCst);
+
+    let future = unsafe { spawn_io_result_future(std::ptr::null_mut::<u8>) };
+
+    TEST_FORCE_THREAD_SPAWN_FAILURE.store(false, AtomicOrdering::SeqCst);
+    unsafe {
+        assert_eq!(ori_future_poll(future), 2);
+        assert_eq!(ori_host_error_code(), ORI_HOST_ERROR_THREAD_SPAWN);
+        let message = CStr::from_ptr(ori_host_error_message());
+        assert!(message.to_string_lossy().contains("ori-io-worker"));
+        ori_arc_release(future as *mut u8);
+    }
+}
+
+#[test]
+fn operating_system_spawn_failure_is_reported_without_unwinding() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    ori_host_clear_error();
+    TEST_THREAD_STACK_SIZE.store(u64::MAX, AtomicOrdering::SeqCst);
+    let result = try_spawn_named("ori-runtime-os-failure", || {});
+    TEST_THREAD_STACK_SIZE.store(0, AtomicOrdering::SeqCst);
+
+    assert!(result.is_err(), "an impossible stack reservation must fail");
+    unsafe {
+        assert_eq!(ori_host_error_code(), ORI_HOST_ERROR_THREAD_SPAWN);
+        let message = CStr::from_ptr(ori_host_error_message());
+        assert!(message.to_string_lossy().contains("ori-runtime-os-failure"));
+    }
+}
+
+#[test]
+fn task_spawn_failure_releases_closure_and_returns_failed_join() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+    TEST_FORCE_THREAD_SPAWN_FAILURE.store(true, AtomicOrdering::SeqCst);
+
+    let (job, result) = unsafe {
+        let closure = test_closure_object();
+        let job = ori_task_spawn(closure);
+        let result = ori_task_join(job);
+        (job, result)
+    };
+
+    TEST_FORCE_THREAD_SPAWN_FAILURE.store(false, AtomicOrdering::SeqCst);
+    unsafe {
+        assert_eq!(result_flag(result), 0);
+        free_result(result);
+        ori_arc_release(job as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn lazy_worker_start_retries_after_transient_spawn_failure() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    let state = std::sync::OnceLock::new();
+
+    TEST_FORCE_THREAD_SPAWN_FAILURE.store(true, AtomicOrdering::SeqCst);
+    let first = ensure_named_thread(&state, "ori-runtime-test-retry", || {});
+    assert!(first.is_err());
+
+    TEST_FORCE_THREAD_SPAWN_FAILURE.store(false, AtomicOrdering::SeqCst);
+    let second = ensure_named_thread(&state, "ori-runtime-test-retry", || {});
+    assert!(second.is_ok());
+
+    // Once a worker starts successfully, future callers do not create
+    // duplicate threads and therefore do not execute this closure.
+    let third = ensure_named_thread(&state, "ori-runtime-test-retry", || {
+        panic!("a started worker must not be spawned twice")
+    });
+    assert!(third.is_ok());
+}
+
+#[test]
+fn cancelling_associated_future_releases_every_association_reference() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let token = ori_task_create_token();
+        let future = alloc_pending_future();
+        assert!(!token.is_null());
+        assert!(!future.is_null());
+
+        ori_task_associate(token, future as *mut u8);
+        ori_task_cancel(token);
+        assert_eq!(ori_future_poll(future), 3);
+
+        ori_arc_release(future as *mut u8);
+        ori_arc_release(token);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn association_after_cancellation_cancels_without_leaking() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let token = ori_task_create_token();
+        let future = alloc_pending_future();
+        ori_task_cancel(token);
+        ori_task_associate(token, future as *mut u8);
+        assert_eq!(ori_future_poll(future), 3);
+
+        ori_arc_release(future as *mut u8);
+        ori_arc_release(token);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn io_read_reports_an_unrepresentable_buffer_size() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let stream = ori_io_stdin();
+        let result = ori_io_read(stream, i64::MAX);
+        assert_eq!(result_flag(result), 0);
+        free_result(result);
+        ori_arc_release(stream);
+    }
 }
 
 #[test]
@@ -32,8 +358,51 @@ fn hosted_error_slot_is_thread_local_and_clearable() {
     assert!(ori_host_error_message().is_null());
 }
 
+#[test]
+fn invalid_utf8_cstr_sets_recoverable_host_error_instead_of_becoming_empty() {
+    ori_host_clear_error();
+    let invalid = [0xff_u8, 0];
+
+    unsafe {
+        assert_eq!(ori_string_len(invalid.as_ptr()), 0);
+    }
+
+    assert_eq!(ori_host_error_code(), ORI_HOST_ERROR_INVALID_UTF8);
+    let message = unsafe { CStr::from_ptr(ori_host_error_message()) };
+    assert_eq!(
+        message.to_bytes(),
+        b"invalid UTF-8 string passed across the Ori host ABI"
+    );
+
+    ori_host_clear_error();
+    assert_eq!(ori_host_error_code(), 0);
+}
+
 unsafe extern "C" fn test_destructor(_ptr: *mut u8) {
     TEST_DTOR_CALLS.fetch_add(1, AtomicOrdering::SeqCst);
+}
+
+unsafe extern "C" fn test_graph_node_equals(left: *mut u8, right: *mut u8) -> c_uchar {
+    if left.is_null() || right.is_null() {
+        return 0;
+    }
+    // SAFETY: the test installs this callback only for the two live eight-byte
+    // allocations created below, each containing one initialized `i64`.
+    u8::from(*(left as *const i64) == *(right as *const i64)) as c_uchar
+}
+
+unsafe extern "C" fn test_structural_key_hash(value: i64) -> i64 {
+    if value == 0 {
+        return 0;
+    }
+    *(value as *const i64)
+}
+
+unsafe extern "C" fn test_structural_key_equals(left: *mut u8, right: *mut u8) -> c_uchar {
+    if left.is_null() || right.is_null() {
+        return 0;
+    }
+    u8::from(*(left as *const i64) == *(right as *const i64)) as c_uchar
 }
 
 unsafe fn header_for(ptr: *mut u8) -> *mut OriHeapHeader {
@@ -94,10 +463,22 @@ unsafe extern "C" fn test_executor_entry(_env: *mut u8) -> i64 {
     0
 }
 
+unsafe extern "C-unwind" fn test_panicking_task_entry(_env: *mut u8) -> i64 {
+    panic!("injected task callback panic")
+}
+
 unsafe fn test_closure_object() -> *mut u8 {
     let ptr_size = std::mem::size_of::<*mut u8>();
     let closure = ori_alloc(ptr_size * 2, None);
     *(closure as *mut usize) = test_task_entry as *const () as usize;
+    *(closure.add(ptr_size) as *mut usize) = 0;
+    closure
+}
+
+unsafe fn test_panicking_task_closure_object() -> *mut u8 {
+    let ptr_size = std::mem::size_of::<*mut u8>();
+    let closure = ori_alloc(ptr_size * 2, None);
+    *(closure as *mut usize) = test_panicking_task_entry as *const () as usize;
     *(closure.add(ptr_size) as *mut usize) = 0;
     closure
 }
@@ -162,6 +543,12 @@ fn string_and_bytes_use_nul_terminated_payload_layout() {
         assert_eq!(*bytes_with_nul.add(3), 0);
         assert!(header_for_registered(bytes_with_nul).is_some());
         ori_arc_release(bytes_with_nul);
+
+        let literal = std::ffi::CString::new("ping").unwrap();
+        let copied = ori_string_to_bytes(literal.as_ptr().cast());
+        assert_eq!(bytes_payload(copied), b"ping");
+        assert!(header_for_registered(copied).is_some());
+        ori_arc_release(copied);
     }
 }
 
@@ -731,7 +1118,6 @@ fn runtime_created_collection_snapshots_keep_managed_elements_alive() {
         let key = cstring_from_str("key");
         let value = cstring_from_str("value");
         ori_map_set_string(map, key, value as i64);
-        ori_map_register_borrowed_key_value_maybe_managed(map, key as i64, value as i64);
         ori_arc_release(key);
         ori_arc_release(value);
 
@@ -870,14 +1256,12 @@ fn collection_removal_paths_unregister_arc_edges() {
         let key = cstring_from_str("key");
         let old_value = cstring_from_str("old");
         ori_map_set_string(map, key, old_value as i64);
-        ori_map_register_borrowed_key_value_maybe_managed(map, key as i64, old_value as i64);
         ori_arc_release(key);
         ori_arc_release(old_value);
         assert_eq!(ori_arc_live_allocations(), 3);
 
         let new_value = cstring_from_str("new");
         ori_map_set_string(map, key, new_value as i64);
-        ori_map_register_borrowed_key_value_maybe_managed(map, key as i64, new_value as i64);
         ori_arc_release(new_value);
         assert_eq!(ori_arc_live_allocations(), 3);
 
@@ -965,6 +1349,109 @@ fn arc_retain_release_updates_refcount_and_runs_destructor() {
 
         ori_arc_release(ptr);
         assert_eq!(TEST_DTOR_CALLS.load(AtomicOrdering::SeqCst), 1);
+    }
+}
+
+/// Each managed field/slot is an independent ownership edge, even when two
+/// slots happen to contain the same pointer. Removing one slot must not release
+/// the child still held by the other slot.
+#[test]
+fn arc_edges_preserve_duplicate_slots() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let owner = ori_alloc(8, None);
+        let child = ori_alloc(8, Some(test_destructor));
+        assert!(!owner.is_null() && !child.is_null());
+
+        ori_arc_register_edge(owner, child);
+        ori_arc_register_edge(owner, child);
+        assert_eq!(
+            arc_state()
+                .lock()
+                .unwrap()
+                .edges
+                .by_owner
+                .get(&(owner as usize))
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!((*header_for(child)).refcount.load(Ordering::SeqCst), 3);
+
+        // Drop the child's original external reference. The two slot
+        // references must keep the child alive while the owner stays live so
+        // its slots can be removed safely.
+        ori_arc_release(child);
+        assert_eq!(TEST_DTOR_CALLS.load(AtomicOrdering::SeqCst), 0);
+
+        ori_arc_unregister_edge(owner, child);
+        assert_eq!(
+            arc_state()
+                .lock()
+                .unwrap()
+                .edges
+                .by_owner
+                .get(&(owner as usize))
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(TEST_DTOR_CALLS.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(ori_arc_live_allocations(), 2);
+
+        ori_arc_unregister_edge(owner, child);
+        assert_eq!(TEST_DTOR_CALLS.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(ori_arc_live_allocations(), 1);
+
+        ori_arc_release(owner);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+/// Releasing an owner must cascade once per stored slot, including when every
+/// slot contains the same child pointer. This exercises `take_children_of`, not
+/// the explicit unregister path covered above.
+#[test]
+fn arc_owner_teardown_releases_every_duplicate_slot() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let owner = ori_alloc(8, None);
+        let child = ori_alloc(8, Some(test_destructor));
+
+        ori_arc_register_edge(owner, child);
+        ori_arc_register_edge(owner, child);
+        ori_arc_release(child);
+
+        assert_eq!(ori_arc_live_allocations(), 2);
+        ori_arc_release(owner);
+        assert_eq!(TEST_DTOR_CALLS.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+/// Trial deletion must subtract every internal slot reference. Deduplicating
+/// either direction of the edge index would leave this two-node cycle live.
+#[test]
+fn arc_cycle_collection_counts_parallel_edges() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let left = ori_alloc(8, Some(test_destructor));
+        let right = ori_alloc(8, Some(test_destructor));
+
+        ori_arc_register_edge(left, right);
+        ori_arc_register_edge(left, right);
+        ori_arc_register_edge(right, left);
+        ori_arc_release(left);
+        ori_arc_release(right);
+
+        assert_eq!(ori_arc_live_allocations(), 2);
+        assert_eq!(ori_arc_collect_cycles(), 2);
+        assert_eq!(TEST_DTOR_CALLS.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(ori_arc_live_allocations(), 0);
     }
 }
 
@@ -1117,6 +1604,82 @@ fn arc_collect_cycles_reclaims_graph_cycle() {
 }
 
 #[test]
+fn graph_custom_nodes_use_equatable_callback_for_lookup_and_edges() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    arc_state().lock().unwrap().allocations.clear();
+    arc_state().lock().unwrap().edges.clear();
+
+    // SAFETY: the test serializes all ARC state with `TEST_ARC_LOCK` and keeps
+    // every graph/node allocation live until its explicit release below.
+    unsafe {
+        let callback = test_graph_node_equals as *const () as *const std::ffi::c_void;
+        let graph = ori_graph_new(0);
+        ori_graph_set_eq(graph, callback);
+        let first = ori_alloc(8, None);
+        let equivalent = ori_alloc(8, None);
+        *(first as *mut i64) = 7;
+        *(equivalent as *mut i64) = 7;
+
+        ori_graph_add_node(graph, first as i64);
+        assert_eq!(ori_graph_has_node(graph, equivalent as i64), 1);
+        ori_graph_add_edge(graph, first as i64, equivalent as i64);
+        assert_eq!(
+            ori_graph_has_edge(graph, equivalent as i64, first as i64),
+            1
+        );
+
+        ori_arc_release(graph as *mut u8);
+        ori_arc_release(first);
+        ori_arc_release(equivalent);
+    }
+    assert_eq!(ori_arc_live_allocations(), 0);
+}
+
+#[test]
+fn custom_map_and_set_use_hash_callback_and_repair_dense_slots() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    arc_state().lock().unwrap().allocations.clear();
+    arc_state().lock().unwrap().edges.clear();
+
+    // SAFETY: callbacks read only the initialized i64 payloads below.  Every
+    // managed allocation is released after the containers drop their edges.
+    unsafe {
+        let hash = test_structural_key_hash as *const () as *const std::ffi::c_void;
+        let equals = test_structural_key_equals as *const () as *const std::ffi::c_void;
+        let first = ori_alloc(8, None);
+        let equivalent = ori_alloc(8, None);
+        let different = ori_alloc(8, None);
+        *(first as *mut i64) = 11;
+        *(equivalent as *mut i64) = 11;
+        *(different as *mut i64) = 22;
+
+        let set = ori_set_new_custom_with_hash(hash, equals);
+        ori_set_add_custom_with_hash_eq(set, first as i64, hash, equals);
+        ori_set_add_custom_with_hash_eq(set, different as i64, hash, equals);
+        assert_eq!(ori_set_contains_custom(set, equivalent as i64), 1);
+        assert_eq!(ori_set_len(set), 2);
+        ori_set_remove_custom(set, first as i64);
+        assert_eq!(ori_set_contains_custom(set, different as i64), 1);
+        assert_eq!(ori_set_len(set), 1);
+        ori_arc_release(set as *mut u8);
+
+        let map = ori_map_new_custom(hash, equals);
+        ori_map_set_custom(map, first as i64, 101);
+        ori_map_set_custom(map, different as i64, 202);
+        assert_eq!(ori_map_contains_custom(map, equivalent as i64), 1);
+        assert_eq!(ori_map_get_custom(map, equivalent as i64), 101);
+        ori_map_remove_custom(map, first as i64);
+        assert_eq!(ori_map_contains_custom(map, different as i64), 1);
+        ori_arc_release(map as *mut u8);
+
+        ori_arc_release(first);
+        ori_arc_release(equivalent);
+        ori_arc_release(different);
+    }
+    assert_eq!(ori_arc_live_allocations(), 0);
+}
+
+#[test]
 fn arc_collect_cycles_reclaims_closure_environment_cycle() {
     let _guard = TEST_ARC_LOCK.lock().unwrap();
     arc_state().lock().unwrap().allocations.clear();
@@ -1214,6 +1777,22 @@ fn task_spawn_join_returns_result_payload() {
 }
 
 #[test]
+fn task_callback_panic_fails_join_and_releases_the_closure() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let closure = test_panicking_task_closure_object();
+        let job = ori_task_spawn(closure);
+        let result = ori_task_join(job);
+        assert_eq!(result_flag(result), 0);
+        free_result(result);
+        ori_arc_release(job as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
 fn channel_send_receive_uses_synchronized_queue() {
     let _guard = TEST_ARC_LOCK.lock().unwrap();
     arc_state().lock().unwrap().allocations.clear();
@@ -1225,6 +1804,12 @@ fn channel_send_receive_uses_synchronized_queue() {
         let send = ori_channel_send(channel, 7);
         assert_eq!(result_flag(send), 1);
         free_result(send);
+        assert!(!arc_state()
+            .lock()
+            .unwrap()
+            .edges
+            .by_owner
+            .contains_key(&(channel as usize)));
 
         let received = ori_channel_receive(channel);
         assert_eq!(result_flag(received), 1);
@@ -1236,6 +1821,437 @@ fn channel_send_receive_uses_synchronized_queue() {
         assert_eq!(result_flag(closed), 0);
         free_result(closed);
         ori_arc_release(channel as *mut u8);
+    }
+}
+
+#[test]
+fn bounded_channel_applies_backpressure_and_rejects_invalid_capacity() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        for capacity in [0, -1] {
+            let invalid = ori_channel_create_bounded(capacity);
+            assert_eq!(result_flag(invalid), 0);
+            free_result(invalid);
+        }
+
+        let channel_option = ori_channel_create_bounded(1);
+        assert_eq!(result_flag(channel_option), 1);
+        let channel = result_ptr_payload(channel_option);
+        let first = ori_channel_send(channel as *mut OriChannel, 7);
+        assert_eq!(result_flag(first), 1);
+        free_result(first);
+
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let channel_addr = channel as usize;
+        std::thread::spawn(move || {
+            let second = ori_channel_send(channel_addr as *mut OriChannel, 8);
+            let accepted = result_flag(second) == 1;
+            free_result(second);
+            finished_tx.send(accepted).unwrap();
+        });
+
+        assert!(
+            finished_rx
+                .recv_timeout(std::time::Duration::from_millis(20))
+                .is_err(),
+            "a full bounded channel must block a sender"
+        );
+
+        let received = ori_channel_receive(channel as *mut OriChannel);
+        assert_eq!(result_flag(received), 1);
+        assert_eq!(result_i64_payload(received), 7);
+        free_result(received);
+        assert!(finished_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap());
+
+        ori_channel_close(channel as *mut OriChannel);
+        free_result(channel_option);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn channel_scalar_route_does_not_classify_pointer_shaped_integer() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let channel = ori_channel_create();
+        let managed = cstring_from_str("not-a-managed-channel-element");
+        assert!(!channel.is_null() && !managed.is_null());
+
+        let sent = ori_channel_send(channel, managed as i64);
+        assert_eq!(result_flag(sent), 1);
+        free_result(sent);
+        assert!(!arc_state()
+            .lock()
+            .unwrap()
+            .edges
+            .by_owner
+            .contains_key(&(channel as usize)));
+
+        let received = ori_channel_receive(channel);
+        assert_eq!(result_flag(received), 1);
+        assert_eq!(result_i64_payload(received), managed as i64);
+        free_result(received);
+
+        ori_arc_release(managed);
+        ori_channel_close(channel);
+        ori_arc_release(channel as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn channel_managed_route_rejects_unregistered_payload() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let channel = ori_channel_create();
+        let sent = ori_channel_send_managed(channel, 1);
+        assert_eq!(result_flag(sent), 0);
+        free_result(sent);
+
+        ori_channel_close(channel);
+        let received = ori_channel_receive(channel);
+        assert_eq!(result_flag(received), 0);
+        free_result(received);
+        ori_arc_release(channel as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn channel_transfers_managed_value_ownership_to_result() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let channel = ori_channel_create();
+        let value = cstring_from_str("queued");
+        assert!(!channel.is_null() && !value.is_null());
+
+        let sent = ori_channel_send_managed(channel, value as i64);
+        assert_eq!(result_flag(sent), 1);
+        free_result(sent);
+        // The queue owns the value after the caller drops its temporary.
+        ori_arc_release(value);
+        assert_eq!(ori_arc_live_allocations(), 2);
+
+        let received = ori_channel_receive(channel);
+        assert_eq!(result_flag(received), 1);
+        let received_value = result_ptr_payload(received);
+        assert_eq!(cstr_str(received_value), "queued");
+
+        // The result now owns the value; destroying the channel must not
+        // release it a second time or leave a dangling queue edge.
+        ori_channel_close(channel);
+        ori_arc_release(channel as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 2);
+
+        free_result(received);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn channel_drops_unreceived_managed_values_with_queue() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let channel = ori_channel_create();
+        let value = cstring_from_str("discarded");
+        let sent = ori_channel_send_managed(channel, value as i64);
+        free_result(sent);
+        ori_arc_release(value);
+        assert_eq!(ori_arc_live_allocations(), 2);
+
+        ori_channel_close(channel);
+        ori_arc_release(channel as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+/// `send` and `close` share the channel-state mutex: every racing send must
+/// either publish one independently owned queue slot or fail without taking an
+/// edge. Reusing the same managed pointer stresses edge multiplicity as well as
+/// the close boundary.
+#[test]
+fn channel_close_race_balances_duplicate_managed_slots() {
+    const SENDER_COUNT: usize = 4;
+    const ATTEMPTS_PER_SENDER: usize = 128;
+
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let channel = ori_channel_create();
+        let value = cstring_from_str("shared");
+        assert!(!channel.is_null() && !value.is_null());
+
+        // Seed two identical slots so multiplicity is exercised even when the
+        // closer wins immediately after the barrier below.
+        for _ in 0..2 {
+            let sent = ori_channel_send_managed(channel, value as i64);
+            assert_eq!(result_flag(sent), 1);
+            free_result(sent);
+        }
+
+        let start = std::sync::Arc::new(std::sync::Barrier::new(SENDER_COUNT + 1));
+        let mut senders = Vec::with_capacity(SENDER_COUNT);
+        // The main thread owns both allocations until every sender joins, so
+        // the raw addresses remain live for the complete contention window.
+        for _ in 0..SENDER_COUNT {
+            let start = std::sync::Arc::clone(&start);
+            let channel_addr = channel as usize;
+            let value_addr = value as usize;
+            senders.push(std::thread::spawn(move || {
+                start.wait();
+                let mut successful = 0;
+                for _ in 0..ATTEMPTS_PER_SENDER {
+                    let sent = ori_channel_send_managed(
+                        channel_addr as *mut OriChannel,
+                        value_addr as i64,
+                    );
+                    let was_sent = result_flag(sent) == 1;
+                    free_result(sent);
+                    successful += usize::from(was_sent);
+                    std::thread::yield_now();
+                }
+                successful
+            }));
+        }
+
+        start.wait();
+        std::thread::yield_now();
+        ori_channel_close(channel);
+
+        let successful_sends = 2 + senders
+            .into_iter()
+            .map(|sender| sender.join().expect("channel sender must not panic"))
+            .sum::<usize>();
+
+        let mut received_values = 0;
+        loop {
+            let received = ori_channel_receive(channel);
+            if result_flag(received) == 0 {
+                free_result(received);
+                break;
+            }
+            assert_eq!(result_ptr_payload(received), value);
+            received_values += 1;
+            free_result(received);
+        }
+        assert_eq!(received_values, successful_sends);
+
+        ori_arc_release(value);
+        ori_arc_release(channel as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn async_udp_operation_keeps_socket_alive_until_completion() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let host = cstring_from_str("127.0.0.1");
+        let bind_result = ori_net_udp_bind(host, 0);
+        assert_eq!(result_flag(bind_result), 1);
+        let socket = result_ptr_payload(bind_result);
+        assert!(!socket.is_null());
+
+        // Keep a caller-owned reference for the explicit close operation. The
+        // bind result and the async job each own independent references too.
+        ori_arc_retain(socket);
+        let future = ori_net_udp_recv_from_async(socket, 1);
+        assert!(!future.is_null());
+        ori_net_udp_close(socket);
+
+        let result = ori_task_block_on_ptr(future);
+        assert!(!result.is_null());
+        assert_eq!(result_flag(result), 0, "closed socket must report an error");
+
+        ori_arc_release(result);
+        ori_arc_release(future as *mut u8);
+        free_result(bind_result);
+        ori_arc_release(host);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn cancelled_udp_job_releases_future_and_socket_keepalives() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let host = cstring_from_str("127.0.0.1");
+        let bind_result = ori_net_udp_bind(host, 0);
+        assert_eq!(result_flag(bind_result), 1);
+        let socket = result_ptr_payload(bind_result);
+        assert!(!socket.is_null());
+
+        ori_arc_retain(socket);
+        let future = ori_net_udp_recv_from_async(socket, 1);
+        let token = ori_task_create_token();
+        assert!(!future.is_null() && !token.is_null());
+        ori_task_associate(token, future as *mut u8);
+        ori_task_cancel(token);
+        ori_net_udp_close(socket);
+
+        assert!(ori_task_block_on_ptr(future).is_null());
+        assert_eq!(ori_task_last_await_status(), 3);
+
+        ori_arc_release(future as *mut u8);
+        ori_arc_release(token);
+        free_result(bind_result);
+        ori_arc_release(host);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while ori_arc_live_allocations() != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn managed_bytes_preserve_embedded_nul_across_list_and_udp_paths() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let bytes = cstring_from_bytes(vec![0x41, 0x00, 0x42]);
+        let list = ori_bytes_to_list(bytes);
+        assert_eq!(ori_list_len(list), 3);
+        assert_eq!(ori_list_get(list, 0), 0x41);
+        assert_eq!(ori_list_get(list, 1), 0x00);
+        assert_eq!(ori_list_get(list, 2), 0x42);
+        ori_arc_release(list as *mut u8);
+
+        let host = cstring_from_str("127.0.0.1");
+        let bind_result = ori_net_udp_bind(host, 0);
+        assert_eq!(result_flag(bind_result), 1);
+        let sender = result_ptr_payload(bind_result);
+        let receiver = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind UDP receiver");
+        receiver
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .expect("set UDP read timeout");
+        let receiver_port = receiver.local_addr().expect("receiver address").port();
+
+        let send_result = ori_net_udp_send_to(sender, host, i64::from(receiver_port), bytes);
+        assert_eq!(result_flag(send_result), 1);
+        assert_eq!(result_i64_payload(send_result), 3);
+        free_result(send_result);
+
+        let mut received = [0_u8; 8];
+        let (count, _) = receiver
+            .recv_from(&mut received)
+            .expect("receive UDP payload");
+        assert_eq!(&received[..count], &[0x41, 0x00, 0x42]);
+
+        ori_arc_release(bytes);
+        free_result(bind_result);
+        ori_arc_release(host);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn managed_bytes_preserve_embedded_nul_across_sync_tcp_write() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind TCP listener");
+    let port = listener.local_addr().expect("listener address").port();
+    let receiver = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept TCP connection");
+        let mut received = [0_u8; 8];
+        use std::io::Read;
+        let count = stream.read(&mut received).expect("read TCP payload");
+        (count, received)
+    });
+
+    unsafe {
+        let host = cstring_from_str("127.0.0.1");
+        let connect_result = ori_net_connect(host, i64::from(port), 1_000);
+        assert_eq!(result_flag(connect_result), 1);
+        let connection = result_ptr_payload(connect_result);
+        let bytes = cstring_from_bytes(vec![0x41, 0x00, 0x42]);
+        let write_result = ori_net_write_all(connection, bytes);
+        assert_eq!(result_flag(write_result), 1);
+        free_result(write_result);
+
+        ori_arc_retain(connection);
+        ori_net_close(connection);
+        free_result(connect_result);
+        ori_arc_release(bytes);
+        ori_arc_release(host);
+    }
+
+    let (count, received) = receiver.join().expect("join TCP receiver");
+    assert_eq!(&received[..count], &[0x41, 0x00, 0x42]);
+    assert_eq!(ori_arc_live_allocations(), 0);
+}
+
+#[test]
+fn io_reactor_contains_panicking_jobs_and_keeps_processing() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    unsafe {
+        let failed = spawn_readiness_io_future(
+            std::ptr::null_mut(),
+            || None,
+            IoInterest::Read,
+            || panic!("test I/O job panic"),
+        );
+        assert_eq!(ori_task_block_on(failed), 0);
+        assert_eq!(ori_task_last_await_status(), 2);
+        ori_arc_release(failed as *mut u8);
+
+        let succeeded = spawn_readiness_io_future(
+            std::ptr::null_mut(),
+            || None,
+            IoInterest::Read,
+            || 7usize as *mut u8,
+        );
+        assert_eq!(ori_task_block_on(succeeded), 7);
+        assert_eq!(ori_task_last_await_status(), 1);
+        ori_arc_release(succeeded as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
+    }
+}
+
+#[test]
+fn io_reactor_recovers_a_poisoned_queue_lock() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    reset_arc_state_for_test();
+
+    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _queue = io_reactor().jobs.lock().unwrap();
+        panic!("poison the reactor queue for recovery testing");
+    }));
+    assert!(poisoned.is_err());
+
+    unsafe {
+        let future = spawn_readiness_io_future(
+            std::ptr::null_mut(),
+            || None,
+            IoInterest::Read,
+            || 11usize as *mut u8,
+        );
+        assert_eq!(ori_task_block_on(future), 11);
+        assert_eq!(ori_task_last_await_status(), 1);
+        ori_arc_release(future as *mut u8);
+        assert_eq!(ori_arc_live_allocations(), 0);
     }
 }
 

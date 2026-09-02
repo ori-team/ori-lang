@@ -193,6 +193,18 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_unary(&mut self) -> Option<Expr> {
+        // Unary operators recurse directly instead of passing through the
+        // precedence parser. Keep their depth under the same front-end bound
+        // so a generated `not not not ...` input cannot exhaust the stack.
+        if !self.enter_nesting() {
+            return None;
+        }
+        let parsed = self.parse_unary_inner();
+        self.leave_nesting();
+        parsed
+    }
+
+    fn parse_unary_inner(&mut self) -> Option<Expr> {
         let span = self.current_span();
         if self.eat(&TokenKind::Minus) {
             let operand = self.parse_unary()?;
@@ -989,7 +1001,7 @@ impl<'src> Parser<'src> {
         Some((fields, end))
     }
 
-    fn unescape_string_content(&mut self, content: &str, base: usize) -> SmolStr {
+    pub(crate) fn unescape_string_content(&mut self, content: &str, base: usize) -> SmolStr {
         let mut out = String::new();
         let mut iter = content.char_indices().peekable();
         while let Some((i, ch)) = iter.next() {

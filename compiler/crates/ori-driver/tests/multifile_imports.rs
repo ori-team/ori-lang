@@ -4957,6 +4957,34 @@ end
 }
 
 #[test]
+fn check_reports_canonical_result_constructor_names() {
+    let dir = TestDir::new("canonical_result_constructor_names");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+main(value: result[int, string])
+    match value
+    case ok(number):
+        return
+    end
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let diagnostic = out
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "match.non_exhaustive")
+        .expect("result match should report the missing err case");
+    assert!(diagnostic.message.contains("err(...)") || diagnostic.message.contains("err("));
+    assert!(
+        !diagnostic.message.contains("error(...)") && !diagnostic.message.contains("success(...)")
+    );
+}
+
+#[test]
 fn check_reports_non_exhaustive_enum_match() {
     let dir = TestDir::new("non_exhaustive_enum_match");
     dir.write(
@@ -10156,6 +10184,28 @@ end
 }
 
 #[test]
+fn check_rejects_namespaced_attribute_until_schema_support_exists() {
+    let dir = TestDir::new("unknown_namespaced_attr");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@editor.inspect
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "unregistered metadata must fail closed");
+    assert!(
+        diagnostic_codes(&out).contains(&"attr.unknown"),
+        "expected attr.unknown for a namespaced attribute without schema: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
 fn cfg_filters_inactive_declarations_before_resolution_and_checking() {
     let dir = TestDir::new("cfg_filter_before_resolution");
     dir.write(
@@ -10863,6 +10913,16 @@ fn compile_lib_c_export_produces_shared_object_on_linux() {
 public add_scores(a: int, b: int) -> int
     return a + b
 end
+
+@c_export
+public keep_optional_bytes(value: optional[bytes]) -> optional[bytes]
+    return value
+end
+
+@c_export
+public keep_result_bytes(value: result[bytes, bytes]) -> result[bytes, bytes]
+    return value
+end
 "#,
     );
     let out_so = dir.path("libexport.so");
@@ -10888,12 +10948,29 @@ end
         header.contains("int64_t add_scores(int64_t a, int64_t b);"),
         "{header}"
     );
+    assert!(header.contains("typedef struct OriBytes"), "{header}");
+    assert!(
+        header.contains("Borrowed string inputs must be NULL or readable NUL-terminated UTF-8"),
+        "{header}"
+    );
+    assert!(
+        header.contains("len >= 0 and data != NULL when len > 0"),
+        "{header}"
+    );
+    assert!(
+        header.contains("bool keep_optional_bytes(bool value_has_value, const OriBytes *value_value, OriBytes *out);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("OriResultTag keep_result_bytes(OriResultTag value_tag, const OriBytes *value_ok, const OriBytes *value_error, OriBytes *ok_out, OriBytes *error_out);"),
+        "{header}"
+    );
 }
 
-// ── `@c_export` accepts `string` and scalar structs ────────────────────────
+// ── `@c_export` accepts `string`, length-aware `bytes`, and scalar structs ──
 //
-// An Ori `string` value is already a NUL-terminated `const char*`, so it can
-// cross the C boundary directly. Scalar structs use pointer/out wrappers.
+// Ori strings use NUL-terminated `const char*` at the host boundary and are
+// copied before the call. Scalar structs use pointer/out wrappers.
 
 #[test]
 fn check_c_export_accepts_string_params_and_return() {
@@ -10912,6 +10989,23 @@ end
 @c_export
 public name_len(name: string) -> int
     return str.len(name)
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_c_export_accepts_length_aware_bytes_params_and_return() {
+    let dir = TestDir::new("c_export_bytes_ok");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@c_export
+public preserve(data: bytes) -> bytes
+    return data
 end
 "#,
     );
@@ -10979,6 +11073,35 @@ end
     );
     let out = run_check(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_c_export_rejects_borrowed_handle_inside_managed_aggregate() {
+    let dir = TestDir::new("c_export_borrowed_handle_aggregate");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Borrowed
+    value: handle[int]
+end
+
+@c_export
+public keep(value: Borrowed) -> Borrowed
+    return value
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "borrowed handles must not escape an export aggregate"
+    );
+    assert!(
+        diagnostic_codes(&out).contains(&"attr.c_export_bad_type"),
+        "expected an FFI type diagnostic: {:?}",
+        out.diagnostics
+    );
 }
 
 #[test]
@@ -11140,8 +11263,40 @@ int main(int argc, char **argv) {
 "#,
     );
 
+    dir.write("asan_probe.c", "int main(void) { return 0; }\n");
+    let asan_probe = dir.path("asan_probe");
+    let asan_compile = Command::new("cc")
+        .args(["-fsanitize=address,undefined", "-fno-sanitize-recover=all"])
+        .arg(dir.path("asan_probe.c"))
+        .arg("-o")
+        .arg(&asan_probe)
+        .output()
+        .expect("probe cc sanitizers");
+    let sanitizers_available = asan_compile.status.success()
+        && Command::new(&asan_probe)
+            .env("ASAN_OPTIONS", "detect_leaks=0:halt_on_error=1")
+            .env("UBSAN_OPTIONS", "halt_on_error=1")
+            .output()
+            .is_ok_and(|run| run.status.success());
+    if !sanitizers_available
+        && std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1")
+    {
+        panic!(
+            "C export sanitizer gate is required but unavailable: {}",
+            String::from_utf8_lossy(&asan_compile.stderr)
+        );
+    }
+
     let host_bin = dir.path("host");
-    let cc = Command::new("cc")
+    let mut cc = Command::new("cc");
+    if sanitizers_available {
+        cc.args([
+            "-fsanitize=address,undefined",
+            "-fno-sanitize-recover=all",
+            "-fno-omit-frame-pointer",
+        ]);
+    }
+    let cc = cc
         .arg("-o")
         .arg(&host_bin)
         .arg(dir.path("host.c"))
@@ -11156,7 +11311,15 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&cc.stderr)
     );
 
-    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    let run = Command::new(&host_bin)
+        .arg(&out_so)
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .unwrap();
     assert!(
         run.status.success(),
         "C host failed: stdout={:?} stderr={:?}",
@@ -11185,9 +11348,19 @@ struct Profile
     score: int
 end
 
+struct OtherProfile
+    name: string
+    score: int
+end
+
 @c_export
 public make_profile(name: string, score: int) -> Profile
     return Profile { name: "user:" + name, score: score }
+end
+
+@c_export
+public make_other_profile(name: string, score: int) -> OtherProfile
+    return OtherProfile { name: name, score: score }
 end
 
 @c_export
@@ -11242,6 +11415,14 @@ end
         "{header}"
     );
     assert!(
+        header.contains("#define ORI_HOST_ERROR_INVALID_UTF8 1003"),
+        "{header}"
+    );
+    assert!(
+        header.contains("#define ORI_HOST_ERROR_THREAD_SPAWN 1004"),
+        "{header}"
+    );
+    assert!(
         header.contains("typedef struct OriProfileHandle OriProfileHandle;"),
         "{header}"
     );
@@ -11274,15 +11455,30 @@ int main(int argc, char **argv) {
         dlsym(handle, "profile_score");
     OriProfileHandle *(*same_profile_fn)(const OriProfileHandle *) =
         dlsym(handle, "same_profile");
+    void *(*make_other_profile_fn)(const char *, int64_t) =
+        dlsym(handle, "make_other_profile");
     void (*release_fn)(void *) = dlsym(handle, "ori_arc_release");
+    void *(*alloc_fn)(int64_t, void *) = dlsym(handle, "ori_alloc");
     int64_t (*live_allocations_fn)(void) = dlsym(handle, "ori_arc_live_allocations");
     if (!runtime_init_fn || !make_profile_fn || !profile_name_fn
         || !profile_score_fn || !same_profile_fn || !release_fn
-        || !live_allocations_fn) {
+        || !make_other_profile_fn || !alloc_fn || !live_allocations_fn) {
         fprintf(stderr, "dlsym\n");
         return 1;
     }
     if (runtime_init_fn() != 0) { fprintf(stderr, "runtime init\n"); return 1; }
+    if (argc > 2) {
+        if (strcmp(argv[2], "wrong-size") == 0) {
+            void *wrong_size = alloc_fn(8, NULL);
+            profile_score_fn((const OriProfileHandle *)wrong_size);
+        } else if (strcmp(argv[2], "wrong-type") == 0) {
+            void *wrong_type = make_other_profile_fn("other", 7);
+            profile_score_fn((const OriProfileHandle *)wrong_type);
+        } else {
+            profile_score_fn((const OriProfileHandle *)(uintptr_t)1);
+        }
+        return 0;
+    }
     int64_t allocations_before = live_allocations_fn();
 
     OriProfileHandle *profile = make_profile_fn("Ada", 42);
@@ -11319,8 +11515,40 @@ int main(int argc, char **argv) {
 "#,
     );
 
+    dir.write("asan_probe.c", "int main(void) { return 0; }\n");
+    let asan_probe = dir.path("asan_probe");
+    let asan_compile = Command::new("cc")
+        .args(["-fsanitize=address,undefined", "-fno-sanitize-recover=all"])
+        .arg(dir.path("asan_probe.c"))
+        .arg("-o")
+        .arg(&asan_probe)
+        .output()
+        .expect("probe cc sanitizers");
+    let sanitizers_available = asan_compile.status.success()
+        && Command::new(&asan_probe)
+            .env("ASAN_OPTIONS", "detect_leaks=0:halt_on_error=1")
+            .env("UBSAN_OPTIONS", "halt_on_error=1")
+            .output()
+            .is_ok_and(|run| run.status.success());
+    if !sanitizers_available
+        && std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1")
+    {
+        panic!(
+            "C export sanitizer gate is required but unavailable: {}",
+            String::from_utf8_lossy(&asan_compile.stderr)
+        );
+    }
+
     let host_bin = dir.path("host");
-    let cc = Command::new("cc")
+    let mut cc = Command::new("cc");
+    if sanitizers_available {
+        cc.args([
+            "-fsanitize=address,undefined",
+            "-fno-sanitize-recover=all",
+            "-fno-omit-frame-pointer",
+        ]);
+    }
+    let cc = cc
         .arg("-o")
         .arg(&host_bin)
         .arg(dir.path("host.c"))
@@ -11335,7 +11563,15 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&cc.stderr)
     );
 
-    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    let run = Command::new(&host_bin)
+        .arg(&out_so)
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .unwrap();
     assert!(
         run.status.success(),
         "C host failed: stdout={:?} stderr={:?}",
@@ -11343,6 +11579,69 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "ok");
+
+    let invalid = Command::new(&host_bin)
+        .args([out_so.as_os_str(), std::ffi::OsStr::new("invalid")])
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .expect("run invalid-handle C host");
+    assert!(
+        !invalid.status.success(),
+        "foreign handles must be rejected before user code: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&invalid.stdout),
+        String::from_utf8_lossy(&invalid.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&invalid.stderr).contains("foreign pointer"),
+        "invalid-handle diagnostic missing: stderr={:?}",
+        String::from_utf8_lossy(&invalid.stderr)
+    );
+
+    let wrong_size = Command::new(&host_bin)
+        .args([out_so.as_os_str(), std::ffi::OsStr::new("wrong-size")])
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .expect("run wrong-size-handle C host");
+    assert!(
+        !wrong_size.status.success(),
+        "wrong-size handles must be rejected before user code: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&wrong_size.stdout),
+        String::from_utf8_lossy(&wrong_size.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&wrong_size.stderr).contains("payload size"),
+        "wrong-size handle diagnostic missing: stderr={:?}",
+        String::from_utf8_lossy(&wrong_size.stderr)
+    );
+
+    let wrong_type = Command::new(&host_bin)
+        .args([out_so.as_os_str(), std::ffi::OsStr::new("wrong-type")])
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .expect("run wrong-type-handle C host");
+    assert!(
+        !wrong_type.status.success(),
+        "same-size wrong-type handles must be rejected before user code: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&wrong_type.stdout),
+        String::from_utf8_lossy(&wrong_type.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&wrong_type.stderr).contains("source type"),
+        "wrong-type handle diagnostic missing: stderr={:?}",
+        String::from_utf8_lossy(&wrong_type.stderr)
+    );
 }
 
 #[test]
@@ -11509,7 +11808,7 @@ int main(int argc, char **argv) {
     error = NULL;
     if (keep_profile_result_fn(
             ORI_RESULT_ERR, NULL, foreign_error, &profile, &error) != ORI_RESULT_ERR
-        || error != foreign_error) {
+        || error == foreign_error || strcmp(error, "foreign") != 0) {
         fprintf(stderr, "result parameter err\n");
         return 1;
     }
@@ -11557,10 +11856,18 @@ int main(int argc, char **argv) {
 #[test]
 fn compile_lib_c_export_string_round_trips_through_a_c_host() {
     if !cfg!(target_os = "linux") {
+        if std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1") {
+            panic!("C export sanitizer gate is required but its host fixture is Linux-only");
+        }
+        eprintln!("SKIP C export ASan host gate: dynamic host fixture is currently Linux-only");
         return;
     }
     // Skip rather than fail when the box has no C compiler.
     if Command::new("cc").arg("--version").output().is_err() {
+        if std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1") {
+            panic!("C export sanitizer gate is required but `cc` is unavailable");
+        }
+        eprintln!("SKIP C export ASan host gate: `cc` is unavailable");
         return;
     }
 
@@ -11579,6 +11886,16 @@ end
 @c_export
 public name_len(name: string) -> int
     return str.len(name)
+end
+
+@c_export
+public preserve_foreign_name(name: string) -> string
+    return name
+end
+
+@c_export
+public preserve_bytes(data: bytes) -> bytes
+    return data
 end
 "#,
     );
@@ -11599,6 +11916,7 @@ end
         "host.c",
         r#"#include "libstrexport.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <dlfcn.h>
 
@@ -11609,11 +11927,32 @@ int main(int argc, char **argv) {
     if (rt_init_fn && rt_init_fn() != 0) { fprintf(stderr, "runtime init\n"); return 1; }
     const char *(*shout_fn)(const char *) = dlsym(h, "shout");
     int64_t (*name_len_fn)(const char *) = dlsym(h, "name_len");
+    const char *(*preserve_foreign_name_fn)(const char *) =
+        dlsym(h, "preserve_foreign_name");
+    void (*preserve_bytes_fn)(const OriBytes *, OriBytes *) =
+        dlsym(h, "preserve_bytes");
     void (*release_fn)(void *) = dlsym(h, "ori_arc_release");
     int64_t (*live_allocations_fn)(void) = dlsym(h, "ori_arc_live_allocations");
-    if (!shout_fn || !name_len_fn || !release_fn || !live_allocations_fn) {
+    void (*clear_error_fn)(void) = dlsym(h, "ori_host_clear_error");
+    int32_t (*error_code_fn)(void) = dlsym(h, "ori_host_error_code");
+    if (!shout_fn || !name_len_fn || !preserve_foreign_name_fn || !preserve_bytes_fn
+        || !release_fn || !live_allocations_fn || !clear_error_fn || !error_code_fn) {
         fprintf(stderr, "dlsym\n");
         return 1;
+    }
+
+    if (argc == 3 && strcmp(argv[2], "null-bytes") == 0) {
+        OriBytes invalid = {NULL, 1};
+        OriBytes ignored = {NULL, 0};
+        preserve_bytes_fn(&invalid, &ignored);
+        return 91;
+    }
+    if (argc == 3 && strcmp(argv[2], "negative-bytes") == 0) {
+        const uint8_t byte = 0x41;
+        OriBytes invalid = {&byte, -1};
+        OriBytes ignored = {NULL, 0};
+        preserve_bytes_fn(&invalid, &ignored);
+        return 92;
     }
 
     if (name_len_fn("Ada") != 3) { fprintf(stderr, "len\n"); return 1; }
@@ -11632,14 +11971,106 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    char *input = malloc(32);
+    if (!input) { fprintf(stderr, "malloc input\n"); return 1; }
+    strcpy(input, "before");
+    const char *kept = preserve_foreign_name_fn(input);
+    if (kept == input) { fprintf(stderr, "foreign string was not copied\n"); return 1; }
+    free(input);
+    char *string_clobber = malloc(32);
+    if (!string_clobber) { fprintf(stderr, "malloc clobber\n"); return 1; }
+    memset(string_clobber, 'X', 31);
+    string_clobber[31] = '\0';
+    if (strcmp(kept, "before") != 0) {
+        fprintf(stderr, "foreign input escaped: %s\n", kept);
+        return 1;
+    }
+    free(string_clobber);
+    release_fn((void *) kept);
+
+    clear_error_fn();
+    const char invalid_utf8[2] = {(char)0xff, '\0'};
+    const char *invalid_result = preserve_foreign_name_fn(invalid_utf8);
+    if (error_code_fn() != ORI_HOST_ERROR_INVALID_UTF8
+        || strcmp(invalid_result, "") != 0) {
+        fprintf(stderr, "invalid UTF-8 was not rejected\n");
+        return 1;
+    }
+    release_fn((void *) invalid_result);
+    clear_error_fn();
+    const char *empty = preserve_foreign_name_fn(NULL);
+    if (error_code_fn() != 0 || strcmp(empty, "") != 0) {
+        fprintf(stderr, "null string contract\n");
+        return 1;
+    }
+    release_fn((void *) empty);
+
+    uint8_t *raw_bytes = malloc(3);
+    if (!raw_bytes) { fprintf(stderr, "malloc bytes\n"); return 1; }
+    raw_bytes[0] = 0x41;
+    raw_bytes[1] = 0x00;
+    raw_bytes[2] = 0x42;
+    OriBytes bytes_input = {raw_bytes, 3};
+    OriBytes output = {NULL, 0};
+    preserve_bytes_fn(&bytes_input, &output);
+    if (output.data == raw_bytes) {
+        fprintf(stderr, "foreign bytes were not copied\n");
+        return 1;
+    }
+    free(raw_bytes);
+    uint8_t *bytes_clobber = malloc(3);
+    if (!bytes_clobber) { fprintf(stderr, "malloc bytes clobber\n"); return 1; }
+    memset(bytes_clobber, 0xee, 3);
+    if (output.data == NULL || output.len != 3
+        || output.data[0] != 0x41 || output.data[1] != 0x00 || output.data[2] != 0x42) {
+        fprintf(stderr, "bytes payload was truncated\n");
+        return 1;
+    }
+    free(bytes_clobber);
+    release_fn((void *) output.data);
+    if (live_allocations_fn() != allocations_before) {
+        fprintf(stderr, "bytes ownership leak\n");
+        return 1;
+    }
+
     printf("ok\n");
     return 0;
 }
 "#,
     );
 
+    dir.write("asan_probe.c", "int main(void) { return 0; }\n");
+    let asan_probe = dir.path("asan_probe");
+    let asan_compile = Command::new("cc")
+        .arg("-fsanitize=address,undefined")
+        .arg("-fno-sanitize-recover=all")
+        .arg(dir.path("asan_probe.c"))
+        .arg("-o")
+        .arg(&asan_probe)
+        .output()
+        .expect("probe cc sanitizers");
+    let sanitizers_available = asan_compile.status.success()
+        && Command::new(&asan_probe)
+            .env("ASAN_OPTIONS", "detect_leaks=0:halt_on_error=1")
+            .env("UBSAN_OPTIONS", "halt_on_error=1")
+            .output()
+            .is_ok_and(|run| run.status.success());
+    if !sanitizers_available {
+        let reason = String::from_utf8_lossy(&asan_compile.stderr);
+        if std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1") {
+            panic!("C export sanitizer gate is required but unavailable: {reason}");
+        }
+        eprintln!("SKIP C export ASan/UBSan instrumentation: {reason}");
+    }
+
     let host_bin = dir.path("host");
-    let cc = Command::new("cc")
+    let mut cc = Command::new("cc");
+    if sanitizers_available {
+        cc.arg("-fsanitize=address,undefined")
+            .arg("-fno-sanitize-recover=all")
+            .arg("-fno-omit-frame-pointer");
+    }
+    let cc = cc
         .arg("-o")
         .arg(&host_bin)
         .arg(dir.path("host.c"))
@@ -11654,7 +12085,15 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&cc.stderr)
     );
 
-    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    let run = Command::new(&host_bin)
+        .arg(&out_so)
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .unwrap();
     assert!(
         run.status.success(),
         "C host failed: stdout={:?} stderr={:?}",
@@ -11662,6 +12101,34 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "ok");
+
+    for (case, expected) in [
+        ("null-bytes", "ori bytes input has a null data pointer"),
+        (
+            "negative-bytes",
+            "ori bytes input length cannot be negative",
+        ),
+    ] {
+        let rejected = Command::new(&host_bin)
+            .arg(&out_so)
+            .arg(case)
+            .env(
+                "ASAN_OPTIONS",
+                "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+            )
+            .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+            .output()
+            .unwrap();
+        assert!(
+            !rejected.status.success(),
+            "invalid `{case}` view was accepted"
+        );
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains(expected),
+            "invalid `{case}` diagnostic: {:?}",
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+    }
 }
 
 #[test]
@@ -13392,11 +13859,68 @@ end
 use_handle(h: handle[int]) -> handle[int]
     return h
 end
+
+same_handle(left: handle[int], right: handle[int]) -> bool
+    return left == right
+end
 "#,
     );
 
     let out = run_build(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_handle_null_probe_and_identity_accept_borrowed_ffi_handle() {
+    let dir = TestDir::new("handle_is_null");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.handle = handles
+
+extern c
+    raw_handle() -> handle[int]
+end
+
+check_handle(value: handle[int]) -> bool
+    const empty: handle[int] = handles.null()
+    return handles.is_null(value) == handles.is_null(empty)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn compile_runs_handle_null_constructor_native() {
+    let dir = TestDir::new("handle_null_constructor_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.handle = handles
+import ori.io = io
+
+main()
+    const empty: handle[int] = handles.null()
+    if handles.is_null(empty)
+        io.print("ok")
+    else
+        io.print("bad")
+    end
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "handle_null_constructor");
+    let out = run_compile(&dir.path("main.orl"), &exe).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
 }
 
 #[test]

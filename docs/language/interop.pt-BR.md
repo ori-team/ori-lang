@@ -31,6 +31,15 @@ host aceitar várias revisões, valide a string ABI antes de chamar os exports.
 
 ## Fundação de sessão hospedada
 
+> **Bloqueio de segurança em 0.3.8-dev:** os construtores de ponteiro cru de
+> `ori-embed::OriValue` continuam sendo escapes emprestados e explicitamente
+> `unsafe`. Valores retornados pela Ori carregam ownership ARC privado e são
+> liberados no `Drop`; argumentos gerenciados são retidos durante o cleanup do
+> callee, e `bytes` pode ser lido com comprimento exato por
+> `as_bytes_with_len()`. A sessão ainda é experimental: não fabrique ponteiros,
+> retenha valores crus emprestados nem assuma identidade de geração para um
+> valor criado por construtor raw.
+
 Hosts Rust podem usar o crate experimental `ori-embed` para uma fronteira de
 sessão com análise estruturada e uma superfície deliberadamente pequena de JIT
 persistente:
@@ -42,7 +51,7 @@ persistente:
 - uma atualização inválida preserva a última geração aceita;
 - uma atualização válida pode compilar funções públicas sem `main`, resolver um
   handle opaco amarrado à geração e chamar assinaturas homogêneas de `bool`,
-  `int` ou `float` com no máximo quatro argumentos.
+  `int`, `float`, `slice`, `string` ou `bytes` com no máximo quatro argumentos.
 - `OriHostRegistry` pode registrar uma função escalar `extern host` uma vez por
   sessão; o JIT mantém o endereço em cache e não faz lookup a cada chamada.
 - `OriHostRegistry::register_int_callback`, `register_float_callback` e
@@ -63,9 +72,11 @@ persistente:
   processo.
 
 Isso ainda não é uma API geral de execução nem um sistema completo de hot
-reload. Aggregates/managed values, execução assíncrona, unload concorrente e
-uma ABI C versionada continuam planejados; caminhos de abort do runtime fora
-desse conjunto ainda não estão cobertos. O slice de callback é limitado a
+reload. A ABI C-1 gerada cobre a superfície `@c_export` descrita abaixo, mas a
+sessão Rust hospedada ainda não expõe aggregates nem execução assíncrona.
+Ponteiros gerenciados escalares só têm ownership quando retornados pelo JIT;
+construtores raw continuam emprestados e `unsafe`. Caminhos de abort do runtime
+fora desse conjunto ainda não estão cobertos. O slice de callback é limitado a
 hosts Rust confiáveis e assinaturas escalares homogêneas; header C, dispatch
 por afinidade de thread, destruição de objetos e migração durante reload
 continuam fora.
@@ -74,16 +85,25 @@ e o [plano do compiler service](../planning/interactive-compiler-service.md).
 
 ## Tipos aceitos
 
-ABI-1 aceita escalares, `bool`, `void`, `string`, structs escalares não vazias e
-não genéricas por wrappers pointer/out, structs gerenciadas por handles ARC
-opacos e bridges diretos de `optional`/`result` sobre esses payloads.
+A ABI nativa gerada na versão 1 aceita escalares, `bool`, `void`, `string`
+terminada em NUL, `bytes` por uma view `OriBytes { data, len }` (comprimento
+exato, inclusive NUL interno), structs escalares não vazias e não genéricas por
+wrappers pointer/out, structs gerenciadas por handles ARC opacos e bridges
+diretos de `optional`/`result` sobre esses payloads.
 
 `list`, `map`, `set`, `tuple`, unions aninhadas, structs genéricas e structs
 vazias diretas são rejeitadas. Uma collection pode ficar dentro de uma struct
 gerenciada, pois seu layout permanece privado.
 
 Parâmetros gerenciados são emprestados. Retornos transferem uma referência ao
-host, que deve liberá-la com `ori_arc_release`.
+host, que deve liberá-la com `ori_arc_release`. Retornos `bytes` usam
+`OriBytes *out` e transferem ownership em `out->data`.
+
+> **Restrição para string estrangeira:** o wrapper gerado copia entradas
+> `string` antes de passá-las para Ori, inclusive payloads de `optional`/
+> `result`. Código de usuário ainda não deve fabricar nem armazenar ponteiros
+> emprestados do host por uma fuga FFI manual; mantenha o ponteiro válido apenas
+> durante a chamada.
 
 ## Limites atuais
 
@@ -91,7 +111,8 @@ host, que deve liberá-la com `ori_arc_release`.
 ABI. Callbacks host→Ori continuam fora do header C da ABI-1; a implementação
 Rust experimental aceita apenas callbacks escalares homogêneos (`int`, `float`
 ou `bool`). Layouts diretos de
-collections também continuam fora da ABI-1. Os nomes exportados precisam ser
-identificadores portáveis de C/C++.
+collections também continuam fora da ABI-1. `ori-embed` ainda é uma fronteira
+experimental e não oferece handles gerenciados seguros. Os nomes exportados
+precisam ser identificadores portáveis de C/C++.
 
 O caminho completo está em [`examples/embed`](../../examples/embed).

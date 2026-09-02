@@ -9,7 +9,8 @@ use common::{
     exe_path, normalize_stdout, TestDir,
 };
 use ori_driver::pipeline::{
-    run_check, run_compile, run_doc_with_options, run_parse, DocFormat, DocOptions,
+    run_check, run_check_source, run_compile, run_doc_with_options, run_parse, DocFormat,
+    DocOptions,
 };
 
 struct CheckCase {
@@ -26,6 +27,16 @@ fn malformed_source_corpus_never_panics_and_keeps_spans_bounded() {
     unbalanced_expression.push('1');
     unbalanced_expression.push_str(&")".repeat(12));
     unbalanced_expression.push_str("\nend\n");
+
+    let mut deep_unary = String::from("module app.main\nmain()\n    const value: bool = ");
+    deep_unary.push_str(&"not ".repeat(512));
+    deep_unary.push_str("true\nend\n");
+
+    let mut deep_pattern = String::from("module app.main\nmain()\n    match true\n        case ");
+    deep_pattern.push_str(&"some(".repeat(512));
+    deep_pattern.push_str("true");
+    deep_pattern.push_str(&")".repeat(512));
+    deep_pattern.push_str(":\n            return\n    end\nend\n");
 
     let cases = [
         ("empty_file", ""),
@@ -46,7 +57,21 @@ fn malformed_source_corpus_never_panics_and_keeps_spans_bounded() {
             "bad_import_shape",
             "module app.main\nimport app.\nmain()\nend\n",
         ),
+        (
+            "invalid_arrow_token",
+            "module app.main\nmain()\n    using value -->\nend\n",
+        ),
+        (
+            "short_result_type",
+            "module app.main\nmain()\n    const value: result[int] = err(1)\nend\n",
+        ),
+        (
+            "short_map_type",
+            "module app.main\nmain()\n    const value: map[string] = none\nend\n",
+        ),
         ("unbalanced_expression", unbalanced_expression.as_str()),
+        ("deep_unary_expression", deep_unary.as_str()),
+        ("deep_constructor_pattern", deep_pattern.as_str()),
     ];
 
     for (name, source) in cases {
@@ -64,6 +89,135 @@ fn malformed_source_corpus_never_panics_and_keeps_spans_bounded() {
             "case `{name}` emitted too many diagnostics: {:?}",
             parsed.diagnostics
         );
+    }
+}
+
+#[test]
+fn recursive_parser_constructor_matrix_has_cli_lsp_parity() {
+    const DEPTH: usize = 256;
+    let expression_source = |expression: String| {
+        format!("module app.main\nmain()\n    const value = {expression}\nend\n")
+    };
+    let pattern_source = |pattern: String| {
+        format!(
+            "module app.main\nmain()\n    match true\n    case {pattern}:\n        return\n    end\nend\n"
+        )
+    };
+    let nested = |prefix: &str, value: &str, suffix: &str| {
+        format!("{}{value}{}", prefix.repeat(DEPTH), suffix.repeat(DEPTH))
+    };
+
+    let cases = vec![
+        // Keep adjacent `-` tokens separated: `--` starts an Ori comment.
+        ("unary_neg", expression_source(nested("- ", "1", ""))),
+        ("unary_not", expression_source(nested("not ", "true", ""))),
+        ("unary_bit_not", expression_source(nested("~", "1", ""))),
+        ("unary_try", expression_source(nested("try ", "value", ""))),
+        (
+            "unary_await",
+            expression_source(nested("await ", "value", "")),
+        ),
+        ("grouped", expression_source(nested("(", "1", ")"))),
+        ("call", expression_source(nested("id(", "1", ")"))),
+        (
+            "tuple_expression",
+            expression_source(nested("tuple(", "1", ", 0)")),
+        ),
+        ("list", expression_source(nested("[", "1", "]"))),
+        ("set", expression_source(nested("set {", "1", "}"))),
+        (
+            "struct_literal",
+            expression_source(nested("Node { value: ", "1", " }")),
+        ),
+        (
+            "if_expression",
+            expression_source(nested("if true then ", "1", " else 0")),
+        ),
+        (
+            "match_expression",
+            expression_source(nested("match true case true: ", "1", " case else: 0 end")),
+        ),
+        (
+            "closure_expression",
+            expression_source(nested("() => ", "1", "")),
+        ),
+        ("pattern_some", pattern_source(nested("some(", "true", ")"))),
+        ("pattern_ok", pattern_source(nested("ok(", "true", ")"))),
+        ("pattern_err", pattern_source(nested("err(", "true", ")"))),
+        (
+            "pattern_tuple",
+            pattern_source(nested("tuple(", "true", ", false)")),
+        ),
+        (
+            "pattern_variant",
+            pattern_source(nested("Node(value: ", "true", ")")),
+        ),
+    ];
+
+    for (name, source) in cases {
+        let dir = TestDir::new(name);
+        let path = dir.path("main.orl");
+        dir.write("main.orl", &source);
+
+        let cli = catch_unwind(AssertUnwindSafe(|| run_check(&path)))
+            .unwrap_or_else(|panic| panic!("CLI check panicked for `{name}`: {panic:?}"))
+            .unwrap();
+        let lsp = catch_unwind(AssertUnwindSafe(|| run_check_source(&path, source.clone())))
+            .unwrap_or_else(|panic| panic!("LSP check panicked for `{name}`: {panic:?}"))
+            .unwrap();
+
+        for (path_name, output) in [("CLI", &cli), ("LSP", &lsp)] {
+            assert_diagnostic_spans_within_sources(&output.cache, &output.diagnostics);
+            let nesting_count = output
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == "parse.nesting_too_deep")
+                .count();
+            assert_eq!(
+                nesting_count, 1,
+                "{path_name} must emit one bounded nesting diagnostic for `{name}`: {:?}",
+                output.diagnostics
+            );
+        }
+    }
+}
+
+#[test]
+fn fixed_arity_type_matrix_never_panics() {
+    let constructors = [
+        "optional", "list", "set", "range", "lazy", "handle", "result", "map",
+    ];
+    let argument_lists = [
+        "[]",
+        "[int]",
+        "[int, string]",
+        "[int, string, bool]",
+        "<>",
+        "<int>",
+        "<int, string>",
+        "<int, string, bool>",
+    ];
+
+    for constructor in constructors {
+        for arguments in argument_lists {
+            let source = format!(
+                "module app.main\nmain()\n    const value: {constructor}{arguments} = none\nend\n"
+            );
+            let dir = TestDir::new("fixed_arity_type_matrix");
+            dir.write("main.orl", &source);
+            let parsed = catch_unwind(AssertUnwindSafe(|| run_parse(&dir.path("main.orl"))))
+                .unwrap_or_else(|panic| {
+                    panic!(
+                        "parser panicked for type form `{constructor}{arguments}`: {panic:?}"
+                    )
+                })
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "parser returned infrastructure error for type form `{constructor}{arguments}`: {error}"
+                    )
+                });
+            assert_diagnostic_spans_within_sources(&parsed.cache, &parsed.diagnostics);
+        }
     }
 }
 
@@ -132,6 +286,22 @@ fn semantic_security_rules_report_stable_diagnostic_codes() {
             expected_codes: &["bind.const_reassignment"],
         },
         CheckCase {
+            name: "check_message_must_be_string",
+            files: vec![(
+                "main.orl",
+                "module app.main\nmain()\n    check true, 42\n    const after: int = 1\nend\n",
+            )],
+            expected_codes: &["parse.check_message_literal"],
+        },
+        CheckCase {
+            name: "dynamic_check_message_must_be_string",
+            files: vec![(
+                "main.orl",
+                "module app.main\nmain()\n    const message: string = \"failure\"\n    check true, message\n    const after: int = 1\nend\n",
+            )],
+            expected_codes: &["parse.check_message_literal"],
+        },
+        CheckCase {
             name: "duplicate_struct_field",
             files: vec![(
                 "main.orl",
@@ -174,8 +344,10 @@ end
                 "main.orl",
                 r#"module app.main
 import ori.task = task
+import ori.lazy = lz
 main()
-    const callback: func() -> int = () => 1
+    const delayed: lazy[int] = lz.once(() => 1)
+    const callback: func() -> int = () => lz.force(delayed)
     const job: task.Job[int] = task.spawn(() => callback())
 end
 "#,

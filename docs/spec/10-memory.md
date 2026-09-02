@@ -249,6 +249,10 @@ Current native status:
 - Managed params, pre-await locals and await bindings stored in the frame have
   ARC edges. The state machine calculates liveness after each `await`, releases
   dead managed frame values after resumption, and still runs terminal cleanup.
+  Before emission, a frame ownership verifier checks native slot bounds,
+  alignment/range overlap, and layout availability; managed await-binding slots
+  are zero-initialized so failure/cancellation cleanup never inspects garbage.
+  The verifier does not yet prove full HIR data-flow ownership.
 - Failed/cancelled future states observed by the state machine are propagated by
   the generated async wrapper.
 - `using` inside an `async` function is **allowed**. The async frame stores the

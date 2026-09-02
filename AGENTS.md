@@ -92,7 +92,7 @@ ori-lang/
 | `compiler/crates/ori-runtime/src/lib.rs` | Canonical native runtime (Rust) |
 | `compiler/crates/ori-driver/src/main.rs` | CLI entry point |
 | `CHANGELOG.md` | All notable changes (Keep a Changelog format) |
-| `Cargo.toml` | Workspace root (10 crates) |
+| `Cargo.toml` | Workspace root (11 crates) |
 | `docs/spec/13-error-catalog.md` | Diagnostic code registry |
 | `.cargo/config.toml` | relocation-model=pic for PIE-compatible runtime |
 
@@ -167,7 +167,7 @@ Source (.orl)
   → Binary
 ```
 
-## Current Status (2026-08-08)
+## Current Status (2026-09-01)
 
 - **Rust:** 1.95.0 (via `rust-toolchain.toml`)
 - **Language surface:** **`0.3.0` S3** + **`0.3.1`** Nim-local inference + **option B** (field/index/call/pipe). Manifesto: `docs/spec/00-manifesto.md`. Decisões: `docs/planning/ori-surface-s3-auk9.md`. Spec: `04-types`, `05-expressions` (pipe), `06-statements`.
@@ -181,17 +181,29 @@ Source (.orl)
   (VS Code + Zed under `extensions/`). **No** Marketplace/store publish and **no**
   multi-OS distribution push until that focus is done. Game/imgui packages do
   not exist and must not reappear in docs or plans.
-- **`tools/qa/daily_fast.sh`:** PASSES (2026-08-08: workspace check, strict
-  Clippy, frontend units, 238 `ori_spec`, diagnostic catalog, ARC/memory,
-  robustness, residual product surface).
-- **Release smoke:** `tools/smoke_native_release.ps1 -SkipBuild` passes — `ori compile` + `ori test` validados em package isolado com runtime empacotada (Windows MSVC).
+- **`tools/qa/daily_fast.sh`:** **passa** em 2026-08-31: Atlas/Docs, scoped
+  rustfmt, workspace check, strict workspace Clippy, unit crates, `ori_spec`
+  (247 testes), catálogo de diagnósticos, memória/segurança e superfície
+  residual. O workspace ainda mantém dívida histórica de formatação fora do
+  escopo ratchet; `cargo fmt --all -- --check` deve ser tratado como cleanup
+  separado (`AUD-QA-1`).
+- **Release smoke:** o smoke Linux completo passou em 2026-08-31 (`ori compile`,
+  `ori test`, JIT, runtime empacotado e handshake JSON-RPC real do `ori-lsp`).
+  Scripts Linux/PowerShell usam `cargo --locked` e archive determinístico. A
+  execução de artefatos Windows/macOS continua dependente dos runners
+  correspondentes; não é declarada como executada neste host Linux.
 - **Rust removal Phase 1 — Windows MSVC (unreleased):** `ORI_USE_BUNDLED_RUST_LLD=1` engaja estratégia `BundledRustLld` que invoca `rust-lld` diretamente (sem `rustc` driver). CRT discovery via `vswhere.exe` + Windows SDK layout. Validado end-to-end com `examples/hello_world.orl` em Windows MSVC. `tools/stage_native_runtime.ps1` agora copia `rust-lld.exe` para `runtime/bin/`.
 - **Rust removal Phase 1 — Linux GNU (unreleased):** Estratégia `BundledRustLld` estendida para `x86_64-unknown-linux-gnu`. CRT discovery via `cc -print-file-name` (crt1.o/crti.o/crtn.o) + `cc -print-search-dirs` (lib dirs) + fallback de paths comuns para dynamic linker. `tools/stage_native_runtime.sh` agora copia `rust-lld` para `runtime/bin/`.
-- **Rust removal Phase 1 — macOS (unreleased):** Estratégia `BundledRustLld` estendida para `x86_64-apple-darwin` e `aarch64-apple-darwin`. CRT/SDK discovery via `xcrun --show-sdk-path` + `xcrun --show-sdk-version` (requer Xcode Command Line Tools). Link line `rust-lld -flavor darwin` com `-arch`, `-platform_version macos <min> <sdk>`, `-syslibroot`. Deployment target default `10.12` (x86_64) / `11.0` (arm64), override via `MACOSX_DEPLOYMENT_TARGET`. **Phase 1 completa para todos os 3 desktop OSes** (Windows MSVC, Linux GNU, macOS).
+- **Rust removal Phase 1 — macOS (unreleased):** Estratégia `BundledRustLld` estendida para `x86_64-apple-darwin` e `aarch64-apple-darwin`. CRT/SDK discovery via `xcrun --show-sdk-path` + `xcrun --show-sdk-version` (requer Xcode Command Line Tools). Link line `rust-lld -flavor darwin` com `-arch`, `-platform_version macos <min> <sdk>`, `-syslibroot`. Deployment target default `10.12` (x86_64) / `11.0` (arm64), override via `MACOSX_DEPLOYMENT_TARGET`. A rota de executável existe nos 3 desktop OSes; a matriz compartilhada está fechada em `AUD-LINK-1`, com execução final nos runners de cada OS.
 - **Rust removal Phase 2 — SystemLinker (unreleased):** Estratégia `SystemLinker` (`link.exe`/`ld`) sem `rustc`. Opt-in forçado via `ORI_USE_SYSTEM_LINKER=1`. Discovery: Windows MSVC / Linux GNU / macOS. **Prioridade default (LANG-PERF 2026-07-13):** `ORI_NATIVE_LINKER` → force `ORI_USE_BUNDLED_RUST_LLD` → force `ORI_USE_SYSTEM_LINKER` → **auto BundledRustLld if found** → **auto SystemLinker** → `RustcDriver`. 4 testes de regressão em `native_backend/tests.rs`.
-- **Rust removal Phase 3 — JIT Cranelift (unreleased):** `ori run` usa JIT por default quando cdylib disponível; `ORI_USE_JIT=1` força JIT; `ORI_USE_AOT=1` força AOT. Código Cranelift executado in-process via `JITModule` com símbolos `ori_*` resolvidos on-demand da cdylib do runtime através de `libloading`. Sem `.o` temporário, sem linker, sem subprocesso. `ori-runtime` builda 3 artefatos (`staticlib` + `rlib` + `cdylib`); stage scripts copiam cdylib para `runtime/<triple>/`; smoke release valida cdylib staged + `ori run` JIT no package isolado. `ori compile` e `ori test` permanecem AOT. **Híbrido A→B→D completo** para `ori run`.
+- **Rust removal Phase 3 — JIT Cranelift (unreleased):** `ori run` usa JIT por default quando cdylib disponível; `ORI_USE_JIT=1` força JIT; `ORI_USE_AOT=1` força AOT. Código Cranelift executa in-process sem `.o`, linker ou subprocesso. Identidade/digest da cdylib, inicialização global e teardown pareado estão fechados (`AUD-JIT-ABI-1`/`AUD-RT-INIT-1`). `ori compile` e `ori test` permanecem AOT.
 - **Stdlib Phase 0 + Gap parity (unreleased):** Prelude loading + **Layer 2/3 `.orl` fechados** para paridade `std.*` v1 (`docs/planning/historico/stdlib-gap-parity.md`): 28 utils + 8 algorithms + `validate`/`path`; Layer 1 hot path Rust (FS metadados, `os.current_dir`, `process.*`, `net.*`, `lazy.is_consumed`, …). Lowering `ori.net.Connection`/`Listener`/`UdpSocket` e `ori.io.Input`/`Output` para módulos `.orl`. ~36 testes stdlib E2E em `multifile_imports.rs` (incl. rede v2).
 - **Stdlib/Rede v2 (unreleased):** `connect_tls`, servidor TCP (`listen`/`accept`), UDP síncrono, `task.run_blocking`; design histórico em `docs/planning/historico/net-v2-design.md`; exemplo `examples/http_get.orl`.
+- **Concorrência/I-O (2026-09-01):** `ori.channel.create_bounded` aplica
+  capacidade positiva e backpressure com fechamento acordado; FS/connect/TLS
+  bloqueantes compartilham pool de até 4 workers e fila de 256 jobs. Attributes
+  namespaced sem schema falham com `attr.unknown`; `ori.handle.null()` cria o
+  sentinela nulo tipado. Os contratos P0 restantes estão no backlog.
 - **FFI aggregates ABI v1 scope (unreleased):** `@c_export` accepts non-empty,
   non-generic scalar-field structs through portable pointer/out wrappers and
   managed structs through typed opaque ARC handles, plus direct
@@ -201,6 +213,10 @@ Source (.orl)
   from HIR, including scalar typedefs, incomplete handle declarations,
   `OriResultTag`, export signatures, runtime retain/release lifecycle, and C++
   guards. Direct collection layouts remain private behind opaque handles.
+  Strings estrangeiras são copiadas antes de entrar em agregados; o bridge
+  `OriBytes { data, len }` preserva NUL e comprimento explícito. Testes de
+  sanitizer/hosts estrangeiros continuam como QA adicional, não como gap de
+  ownership conhecido.
 - **Custom destructors (unreleased):** `core.Destructor` exposes
   `mut destroy(self) -> void` on structs/enums. Native AOT/JIT call it once
   before payload/field cleanup; cycle collection finalizes all members before
@@ -210,9 +226,13 @@ Source (.orl)
   language decision; the size-class free-list experiment was ~2% slower than
   glibc tcache and reverted, with
   `tools/bench/managed_temporary_churn.orl` retained as evidence.
-- **LSP/VS Code (unreleased):** Catálogo stdlib Layer 1+2, hover/goto stdlib, sync incremental, dot-complete via aliases, `ori doctor`, extensão `extensions/vscode-orl/`.
+- **LSP/VS Code (unreleased):** Catálogo stdlib Layer 1+2, hover/goto stdlib,
+  sync incremental, dot-complete via aliases, `ori doctor`, extensão
+  `extensions/vscode-orl/`. UTF-16, identidade semântica, invalidação de
+  snapshots e publicação geração-segura estão fechados em `AUD-LSP-1..3`;
+  completion canônico e lint semântico permanecem P2 (`AUD-LSP-4/5`).
 - **Docs website (unreleased):** Site Starlight em [github.com/raillen/ori-website](https://github.com/raillen/ori-website) — i18n en/pt/es/ja, Pagefind + busca ⌘K, referência gerada via `ori doc export`. Deploy Vercel-ready (`vercel.json`).
-- **Master plan histórico:** `docs/planning/historico/PLANO-MATURIDADE-COMPLETO.md` — Etapas 0–9 concluídas; backlog vigente em `docs/planning/BACKLOG.md`. **M2 ✅** (stdlib + `public alias` de domínio); **M3 ✅** (`19-abi.md`); **M1 ✅** (`docs/install.md`, `tools/smoke_no_rust.sh`, CI smoke-no-rust). Próximo opcional: publicar package; **M4** self-host por último.
+- **Master plan histórico:** `docs/planning/historico/PLANO-MATURIDADE-COMPLETO.md` — Etapas 0–9 concluídas; backlog vigente em `docs/planning/BACKLOG.md`. **M2 ✅** (stdlib + `public alias` de domínio); **M3 ✅** (`19-abi.md`); **M1 ✅** (`docs/install.md`, `tools/smoke_no_rust.sh`, CI smoke-no-rust). Os P0/P1 de linguagem do audit continuam em fechamento incremental; a ordem atual está em `docs/planning/roadmap-code-audit-performance-architecture.md` e no backlog. Ferramentas/QA P2 entram depois das linhas de linguagem, e **M4** self-host permanece por último.
 
 ## Versioning policy (2026-07-13)
 

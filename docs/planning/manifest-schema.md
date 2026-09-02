@@ -84,6 +84,20 @@ tls = []
 2. Registry (`ORI_REGISTRY`) — see `registry-v1.md`
 3. Error (`package.cache_miss` / `package.registry_*`)
 
+## `ori.lock` v2
+
+`ori lock` writes an atomic, generated snapshot. Every flat dependency entry
+records source kind, exact version, normalized source identity, SHA-256 tree
+digest, and exact Git commit when applicable. Once the file exists, `ori get`
+and compile-time validation restore from the lock instead of re-resolving a
+branch, tag, or mutable registry index. A one-byte cache/source change is an
+error; `ori lock --locked --offline` additionally refuses network access.
+
+Path dependencies keep a normalized project-relative identity plus the content
+digest. This avoids leaking local absolute paths and keeps the lock portable
+when the dependency remains at the same relative location; use registry or Git
+sources when the source tree itself must be fetched.
+
 ## Edge cases (tested)
 
 - Missing `entry` / missing file → error
@@ -95,6 +109,6 @@ tls = []
 
 ## Non-goals
 
-- Lockfile format (future)
+- Signed package/publisher identity
 - Registry auth schema beyond `ORI_REGISTRY_TOKEN`
 - Windows-specific path rules beyond OS path handling

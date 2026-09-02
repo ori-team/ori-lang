@@ -18,8 +18,15 @@ if [ -z "${ORI_RUNTIME_CDYLIB:-}" ] && [ -f "$repo/runtime/x86_64-unknown-linux-
   export ORI_RUNTIME_CDYLIB="$repo/runtime/x86_64-unknown-linux-gnu/libori_runtime.so"
 fi
 
-cd "$repo/packages/ori-web-auth/examples/smoke"
-rm -rf "${HOME}/.ori/packages/web" "${HOME}/.ori/packages/web_auth" 2>/dev/null || true
+smoke_root="$repo/packages/ori-web-auth/examples/smoke"
+if [ ! -d "$smoke_root" ]; then
+  echo "web_auth_smoke: SKIP (package fixture is not present)" >&2
+  exit 0
+fi
+package_cache=$(mktemp -d "${TMPDIR:-/tmp}/ori-web-auth-cache.XXXXXX")
+trap 'rm -rf -- "$package_cache"' EXIT HUP INT TERM
+export ORI_PACKAGE_CACHE="$package_cache"
+cd "$smoke_root"
 
 echo "== web_auth_smoke: $ORI_BIN run main.orl =="
 out=$("$ORI_BIN" run main.orl 2>&1) || {

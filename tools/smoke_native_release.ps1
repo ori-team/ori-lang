@@ -85,8 +85,8 @@ try {
         Write-Host "Building release CLI from $manifest (target root: $targetRoot)"
         Invoke-Checked {
             # Cargo 1.95+: --manifest-path must follow the subcommand (not global).
-            & cargo build --manifest-path $manifest -p ori-driver -p ori-lsp --release
-        } "cargo build -p ori-driver -p ori-lsp --release"
+            & cargo build --manifest-path $manifest -p ori-driver -p ori-lsp --release --locked
+        } "cargo build -p ori-driver -p ori-lsp --release --locked"
     }
 
     if (-not (Test-Path -LiteralPath $sourceOri -PathType Leaf)) {

@@ -1,7 +1,5 @@
 use crate::{DefId, OpaqueTy, Ty};
 
-pub const JSON_VALUE_PLACEHOLDER: DefId = DefId(9999);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StdlibRuntimeFunction {
     pub canonical_path: &'static str,
@@ -162,6 +160,8 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.io.println" => "ori_io_print", c_backend),
     stdlib!("ori.mem.string_as_ptr" => "ori_mem_string_as_ptr", c_backend),
     stdlib!("ori.mem.string_len" => "ori_mem_string_len", c_backend),
+    stdlib!("ori.handle.null" => "ori_handle_null"),
+    stdlib!("ori.handle.is_null" => "ori_handle_is_null", c_backend),
     stdlib!("ori.io.eprint" => "ori_io_eprint", c_backend),
     stdlib!("ori.io.eprintln" => "ori_io_eprint", c_backend),
     stdlib!("ori.io.read_line" => "ori_io_read_line", c_backend),
@@ -493,7 +493,9 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.task.is_cancelled", ["task.is_cancelled"] => "ori_task_is_cancelled"),
     stdlib!("ori.task.associate", ["task.associate"] => "ori_task_associate"),
     stdlib!("ori.channel.create", ["channel.create"] => "ori_channel_create"),
+    stdlib!("ori.channel.create_bounded" => "ori_channel_create_bounded"),
     stdlib!("ori.channel.send", ["channel.send"] => "ori_channel_send"),
+    stdlib!("ori.channel.__send_managed" => "ori_channel_send_managed"),
     stdlib!("ori.channel.receive", ["channel.receive"] => "ori_channel_receive"),
     stdlib!("ori.channel.close", ["channel.close"] => "ori_channel_close"),
     stdlib!("ori.atomic.new", ["atomic.new"] => "ori_atomic_new"),
@@ -925,6 +927,8 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
         "ori.bytes.get" => (vec![Ty::Bytes, Ty::Int], Ty::U8),
         "ori.mem.size_of" | "ori.mem.align_of" => (vec![Ty::Infer(0)], Ty::Int),
         "ori.mem.string_as_ptr" | "ori.mem.string_len" => (vec![Ty::String], Ty::Int),
+        "ori.handle.null" => (vec![], Ty::Handle(Box::new(Ty::Infer(0)))),
+        "ori.handle.is_null" => (vec![Ty::Handle(Box::new(Ty::Infer(0)))], Ty::Bool),
         "ori.time.now" => (vec![], Ty::Int),
         "ori.time.sleep" => (vec![Ty::Int], Ty::Void),
         "ori.time.duration_ms" => (vec![Ty::Int, Ty::Int], Ty::Int),
@@ -992,7 +996,15 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
             Ty::Void,
         ),
         "ori.channel.create" => (vec![], Ty::Channel(Box::new(Ty::Infer(0)))),
+        "ori.channel.create_bounded" => (
+            vec![Ty::Int],
+            Ty::Optional(Box::new(Ty::Channel(Box::new(Ty::Infer(0))))),
+        ),
         "ori.channel.send" => (
+            vec![Ty::Channel(Box::new(Ty::Infer(0))), Ty::Infer(0)],
+            Ty::Result(Box::new(Ty::Void), Box::new(Ty::ChannelSendError)),
+        ),
+        "ori.channel.__send_managed" => (
             vec![Ty::Channel(Box::new(Ty::Infer(0))), Ty::Infer(0)],
             Ty::Result(Box::new(Ty::Void), Box::new(Ty::ChannelSendError)),
         ),
@@ -1245,16 +1257,16 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
         "ori.json.parse" => (
             vec![Ty::String],
             Ty::Result(
-                Box::new(Ty::Named(JSON_VALUE_PLACEHOLDER, Vec::new())),
+                Box::new(Ty::Named(DefId::SYNTHETIC_JSON_VALUE, Vec::new())),
                 Box::new(Ty::String),
             ),
         ),
         "ori.json.stringify" => (
-            vec![Ty::Named(JSON_VALUE_PLACEHOLDER, Vec::new())],
+            vec![Ty::Named(DefId::SYNTHETIC_JSON_VALUE, Vec::new())],
             Ty::String,
         ),
         "ori.json.stringify_pretty" => (
-            vec![Ty::Named(JSON_VALUE_PLACEHOLDER, Vec::new())],
+            vec![Ty::Named(DefId::SYNTHETIC_JSON_VALUE, Vec::new())],
             Ty::String,
         ),
         path if list_backed_collection_kind(path, &["new"]).is_some() => {
@@ -1844,6 +1856,8 @@ pub fn stdlib_native_abi(
         "ori_io_flush" => (vec![Ptr], Some(Ptr)),
         "ori_io_close_input" | "ori_io_close_output" => (vec![Ptr], None),
         "ori_string_len" | "ori_len" => (vec![Ptr], Some(I64)),
+        "ori_handle_null" => (vec![], Some(Ptr)),
+        "ori_handle_is_null" => (vec![Ptr], Some(I8)),
         "ori_string_concat" | "ori_string_split" => (vec![Ptr, Ptr], Some(Ptr)),
         "ori_string_slice" => (vec![Ptr, I64, I64], Some(Ptr)),
         "ori_string_contains" | "ori_string_starts_with" | "ori_string_ends_with" => {
@@ -2140,7 +2154,8 @@ pub fn stdlib_native_abi(
         "ori_task_is_cancelled" => (vec![Ptr], Some(I8)),
         "ori_task_associate" => (vec![Ptr, Ptr], None),
         "ori_channel_create" => (vec![], Some(Ptr)),
-        "ori_channel_send" => (vec![Ptr, I64], Some(Ptr)),
+        "ori_channel_create_bounded" => (vec![I64], Some(Ptr)),
+        "ori_channel_send" | "ori_channel_send_managed" => (vec![Ptr, I64], Some(Ptr)),
         "ori_channel_receive" => (vec![Ptr], Some(Ptr)),
         "ori_channel_close" => (vec![Ptr], None),
         "ori_atomic_new" => (vec![I64], Some(Ptr)),
@@ -2234,6 +2249,7 @@ const STDLIB_MODULE_ONLY_PATHS: &[&str] = &[
     "ori.core",
     "ori.Error",
     "ori.mem",
+    "ori.handle",
     "ori.concurrent",
     "ori.buffer",
     "ori.span",
@@ -2427,7 +2443,7 @@ mod tests {
         );
 
         // json.parse: (string) -> result[Value, string]
-        let json_value = Ty::Named(JSON_VALUE_PLACEHOLDER, Vec::new());
+        let json_value = Ty::Named(DefId::SYNTHETIC_JSON_VALUE, Vec::new());
         let (params, ret) = stdlib_func_sig("ori.json.parse").expect("json.parse sig");
         assert_eq!(params, vec![Ty::String], "json.parse params");
         assert_eq!(

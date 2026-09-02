@@ -13,8 +13,15 @@ else
   ORI_BIN="${ORI_BIN:-ori}"
 fi
 
-cd "$repo/packages/ori-web/examples/sec8_tests"
-rm -rf "${HOME}/.ori/packages/web" 2>/dev/null || true
+smoke_root="$repo/packages/ori-web/examples/sec8_tests"
+if [ ! -d "$smoke_root" ]; then
+  echo "web_sec8: SKIP (package fixture is not present)" >&2
+  exit 0
+fi
+package_cache=$(mktemp -d "${TMPDIR:-/tmp}/ori-web-sec8-cache.XXXXXX")
+trap 'rm -rf -- "$package_cache"' EXIT HUP INT TERM
+export ORI_PACKAGE_CACHE="$package_cache"
+cd "$smoke_root"
 
 echo "== web_sec8: $ORI_BIN run main.orl =="
 out=$("$ORI_BIN" run main.orl 2>&1) || {

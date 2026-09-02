@@ -4,11 +4,17 @@
 //! It deliberately exposes checked source modules and owned diagnostics, not
 //! compiler internals, Cranelift pointers, or a false promise of hot reload.
 
+mod c_api;
+
+pub use c_api::*;
+
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::ThreadId;
 
 use ori_diagnostics::{Diagnostic, FileId, Severity, SourceCache, Span};
 use ori_driver::pipeline::{
@@ -26,6 +32,10 @@ const FIRST_MODULE_GENERATION: u64 = 1;
 pub const ORI_HOST_CALLBACK_CANCELLED: i32 = 1001;
 /// Error code returned when callback recursion reaches the hosted limit.
 pub const ORI_HOST_CALLBACK_REENTRANCY_LIMIT: i32 = 1002;
+/// A registered host callback unwound instead of returning through its ABI.
+pub const ORI_HOST_CALLBACK_PANICKED: i32 = 1005;
+/// Error code returned when a hosted operation was cooperatively cancelled.
+pub const ORI_HOST_CANCELLED: i32 = 1008;
 const MAX_HOST_CALLBACK_DEPTH: usize = 64;
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_CALLBACK_ID: AtomicU64 = AtomicU64::new(1);
@@ -39,6 +49,12 @@ static CALLBACK_STATES: OnceLock<Mutex<HashMap<u64, Arc<CallbackState>>>> = Once
 
 fn callback_states() -> &'static Mutex<HashMap<u64, Arc<CallbackState>>> {
     CALLBACK_STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn lock_callback_states() -> std::sync::MutexGuard<'static, HashMap<u64, Arc<CallbackState>>> {
+    callback_states()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn set_callback_error(code: i32, message: impl Into<String>) {
@@ -158,6 +174,10 @@ pub enum OriConfigError {
     InvalidFeature(String),
     #[error("feature `{0}` is not declared")]
     UndeclaredFeature(String),
+    #[error("invalid capability name `{0}`")]
+    InvalidCapability(String),
+    #[error("hosted engine configuration must run on its owner thread")]
+    WrongThread,
 }
 
 /// Stable identity of a logical module inside an `OriEngine`.
@@ -238,23 +258,84 @@ pub struct OriFunctionInfo {
     pub is_public: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ManagedValueOrigin {
+    session: SessionId,
+    module: ModuleId,
+    generation: ModuleGeneration,
+}
+
+/// Opaque, generation-bound slice token returned by hosted Ori code.
+///
+/// The pointer and its runtime capability are private. A safe caller can only
+/// obtain this value from [`OriEngine::call`], and a later call validates its
+/// session, module, and generation before generated code can observe it.
+#[derive(Debug)]
+pub struct OriSliceValue {
+    pointer: NonNull<u8>,
+    owner: ori_codegen::JitManagedValueOwner,
+    origin: ManagedValueOrigin,
+}
+
+impl PartialEq for OriSliceValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.pointer == other.pointer && self.origin == other.origin
+    }
+}
+
+impl Drop for OriSliceValue {
+    fn drop(&mut self) {
+        // SAFETY: slice tokens are created only from owned JIT return values.
+        // Drop is the matching release for that ownership reference.
+        unsafe { self.owner.release(self.pointer.as_ptr()) };
+    }
+}
+
+/// Host-owned UTF-8 input or copied output used by [`OriValue::String`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OriStringValue(String);
+
+/// Host-owned binary input or copied output used by [`OriValue::Bytes`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OriBytesValue(Vec<u8>);
+
 /// Values accepted by the experimental hosted invocation boundary.
 ///
-/// [`Self::Slice`], [`Self::String`], and [`Self::Bytes`] carry raw pointers;
-/// they are only meaningful while the module that produced them is alive and
-/// can be inspected safely through accessors such as [`Self::as_str`] and
-/// [`Self::as_bytes`].
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Strings and bytes are always owned by Rust at the public boundary. Slice
+/// pointers stay opaque and carry their session/module generation internally.
+/// No safe or unsafe raw-pointer constructor is exposed.
+///
+/// ```compile_fail
+/// use ori_embed::OriValue;
+///
+/// // Raw managed-pointer construction is intentionally not part of the API.
+/// let _ = unsafe { OriValue::from_raw_string(1usize as *const u8) };
+/// ```
+#[derive(Debug, PartialEq)]
 pub enum OriValue {
     Bool(bool),
     Int(i64),
     Float(f64),
-    Slice(*const u8),
-    String(*const u8),
-    Bytes(*const u8),
+    Slice(OriSliceValue),
+    String(OriStringValue),
+    Bytes(OriBytesValue),
 }
 
 impl OriValue {
+    /// Construct a host-owned Ori string argument.
+    pub fn string(value: impl Into<String>) -> Result<Self, OriValueError> {
+        let value = value.into();
+        if value.as_bytes().contains(&0) {
+            return Err(OriValueError::InteriorNul);
+        }
+        Ok(Self::String(OriStringValue(value)))
+    }
+
+    /// Construct a host-owned Ori bytes argument, preserving embedded NULs.
+    pub fn bytes(value: impl Into<Vec<u8>>) -> Self {
+        Self::Bytes(OriBytesValue(value.into()))
+    }
+
     /// Return the boolean value if this is [`Self::Bool`].
     pub fn as_bool(&self) -> Option<bool> {
         match self {
@@ -280,58 +361,49 @@ impl OriValue {
     }
 
     /// Return the raw slice pointer if this is [`Self::Slice`].
-    pub fn as_slice_ptr(&self) -> Option<*const u8> {
-        match self {
-            Self::Slice(pointer) => Some(*pointer),
-            _ => None,
-        }
-    }
-
-    /// Return the raw string pointer if this is [`Self::String`].
-    pub fn as_string_ptr(&self) -> Option<*const u8> {
-        match self {
-            Self::String(pointer) => Some(*pointer),
-            _ => None,
-        }
-    }
-
-    /// Return the raw bytes pointer if this is [`Self::Bytes`].
-    pub fn as_bytes_ptr(&self) -> Option<*const u8> {
-        match self {
-            Self::Bytes(pointer) => Some(*pointer),
-            _ => None,
-        }
-    }
-
-    /// Return the string slice if this value is a valid UTF-8 string pointer.
     ///
-    /// # Safety / Lifetimes
+    /// # Safety
     ///
-    /// The returned reference is borrowed from the C string pointed to by this
-    /// value and is valid as long as the underlying JIT module / allocation is alive.
+    /// The caller must keep the originating JIT generation alive and obey the
+    /// pointer lifetime contract documented on [`OriValue`].
+    pub unsafe fn as_slice_ptr(&self) -> Option<*const u8> {
+        match self {
+            Self::Slice(slice) => Some(slice.pointer.as_ptr()),
+            _ => None,
+        }
+    }
+
+    /// Borrow the host-owned UTF-8 contents of a string value.
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            Self::String(pointer) if !pointer.is_null() => {
-                unsafe { std::ffi::CStr::from_ptr(*pointer as *const std::os::raw::c_char) }
-                    .to_str()
-                    .ok()
-            }
+            Self::String(value) => Some(&value.0),
             _ => None,
         }
     }
 
-    /// Return the byte slice if this value is a string or bytes pointer.
+    /// Borrow the exact host-owned payload of a string or bytes value.
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
-            Self::Bytes(pointer) | Self::String(pointer) if !pointer.is_null() => {
-                Some(
-                    unsafe { std::ffi::CStr::from_ptr(*pointer as *const std::os::raw::c_char) }
-                        .to_bytes(),
-                )
-            }
+            Self::Bytes(value) => Some(&value.0),
+            Self::String(value) => Some(value.0.as_bytes()),
             _ => None,
         }
     }
+
+    /// Borrow the exact payload of a bytes value, including embedded NULs.
+    pub fn as_bytes_with_len(&self) -> Option<&[u8]> {
+        match self {
+            Self::Bytes(value) => Some(&value.0),
+            _ => None,
+        }
+    }
+}
+
+/// Invalid host value construction at the safe embedding boundary.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum OriValueError {
+    #[error("Ori strings cannot contain an interior NUL byte; use bytes instead")]
+    InteriorNul,
 }
 
 /// A recoverable failure reported by an embedded Ori invocation.
@@ -377,17 +449,68 @@ pub struct OriHostCallback {
 }
 
 /// Fixed native ABI for homogeneous integer callbacks.
-pub type OriIntCallback = unsafe extern "C" fn(*mut u8, i64, i64, i64, i64) -> i64;
+pub type OriIntCallback = unsafe extern "C-unwind" fn(*mut u8, i64, i64, i64, i64) -> i64;
 /// Fixed native ABI for homogeneous floating-point callbacks.
-pub type OriFloatCallback = unsafe extern "C" fn(*mut u8, f64, f64, f64, f64) -> f64;
+pub type OriFloatCallback = unsafe extern "C-unwind" fn(*mut u8, f64, f64, f64, f64) -> f64;
 /// Fixed native ABI for homogeneous boolean callbacks.
-pub type OriBoolCallback = unsafe extern "C" fn(*mut u8, i8, i8, i8, i8) -> i8;
+pub type OriBoolCallback = unsafe extern "C-unwind" fn(*mut u8, i8, i8, i8, i8) -> i8;
+/// Stable tag for one callback value view.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OriHostValueTag {
+    Void = 0,
+    Bool = 1,
+    Int = 2,
+    Float = 3,
+    String = 4,
+    Bytes = 5,
+    Opaque = 6,
+}
+
+/// Borrowed callback value or host-provided return description.
+///
+/// `data` is readable for `len` bytes only during the callback. For callback
+/// returns, the host keeps `data` readable until the callback returns and Ori
+/// copies it into runtime-owned storage.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct OriHostValue {
+    pub tag: OriHostValueTag,
+    pub int_value: i64,
+    pub float_value: f64,
+    pub data: *const u8,
+    pub len: usize,
+    pub type_id: u64,
+}
+
+impl OriHostValue {
+    fn void() -> Self {
+        Self {
+            tag: OriHostValueTag::Void,
+            int_value: 0,
+            float_value: 0.0,
+            data: std::ptr::null(),
+            len: 0,
+            type_id: 0,
+        }
+    }
+}
+
+/// Aggregate C callback ABI used for managed values and batch arguments.
+pub type OriValueCallback = unsafe extern "C-unwind" fn(
+    user_data: *mut u8,
+    args: *const OriHostValue,
+    arg_count: usize,
+    out_result: *mut OriHostValue,
+) -> i32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CallbackValueKind {
     Int,
     Float,
     Bool,
+    String,
+    Bytes,
 }
 
 #[derive(Debug)]
@@ -395,8 +518,12 @@ struct CallbackState {
     callback: usize,
     user_data: usize,
     kind: CallbackValueKind,
+    aggregate: bool,
+    signature: OriFunctionSignature,
     active_calls: AtomicUsize,
     orphaned: AtomicBool,
+    runtime_owner: Mutex<Option<ori_codegen::JitManagedValueOwner>>,
+    cancellation: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 // SAFETY: callback addresses and user_data are opaque values supplied by the
@@ -409,6 +536,18 @@ unsafe impl Sync for CallbackState {}
 struct RegisteredHostCallback {
     info: OriHostCallback,
     kind: CallbackValueKind,
+    aggregate: bool,
+    capability: Option<String>,
+}
+
+struct CallbackRegistrationInput {
+    name: String,
+    signature: OriFunctionSignature,
+    user_data: *mut u8,
+    callback: usize,
+    kind: CallbackValueKind,
+    capability: Option<String>,
+    aggregate: bool,
 }
 
 #[derive(Debug, Default)]
@@ -421,6 +560,7 @@ pub struct OriHostRegistry {
 struct RegisteredHostFunction {
     info: OriHostFunction,
     address: usize,
+    capability: Option<String>,
 }
 
 impl OriHostRegistry {
@@ -451,6 +591,7 @@ impl OriHostRegistry {
             RegisteredHostFunction {
                 info: OriHostFunction { name, signature },
                 address: address as usize,
+                capability: None,
             },
         );
         Ok(())
@@ -475,13 +616,15 @@ impl OriHostRegistry {
         user_data: *mut u8,
         callback: OriIntCallback,
     ) -> Result<OriCallbackId, OriHostRegistryError> {
-        self.register_callback(
-            name,
+        self.register_callback(CallbackRegistrationInput {
+            name: name.into(),
             signature,
             user_data,
-            callback as *const () as usize,
-            CallbackValueKind::Int,
-        )
+            callback: callback as *const () as usize,
+            kind: CallbackValueKind::Int,
+            capability: None,
+            aggregate: false,
+        })
     }
 
     /// Register a floating-point callback used by an `extern host` declaration.
@@ -500,13 +643,15 @@ impl OriHostRegistry {
         user_data: *mut u8,
         callback: OriFloatCallback,
     ) -> Result<OriCallbackId, OriHostRegistryError> {
-        self.register_callback(
-            name,
+        self.register_callback(CallbackRegistrationInput {
+            name: name.into(),
             signature,
             user_data,
-            callback as *const () as usize,
-            CallbackValueKind::Float,
-        )
+            callback: callback as *const () as usize,
+            kind: CallbackValueKind::Float,
+            capability: None,
+            aggregate: false,
+        })
     }
 
     /// Register a boolean callback used by an `extern host` declaration.
@@ -525,24 +670,62 @@ impl OriHostRegistry {
         user_data: *mut u8,
         callback: OriBoolCallback,
     ) -> Result<OriCallbackId, OriHostRegistryError> {
-        self.register_callback(
-            name,
+        self.register_callback(CallbackRegistrationInput {
+            name: name.into(),
             signature,
             user_data,
-            callback as *const () as usize,
-            CallbackValueKind::Bool,
-        )
+            callback: callback as *const () as usize,
+            kind: CallbackValueKind::Bool,
+            capability: None,
+            aggregate: false,
+        })
+    }
+
+    /// Register the aggregate callback ABI for homogeneous scalar, string, or
+    /// bytes arguments. Managed values are borrowed as exact pointer/length
+    /// views and managed returns are copied before control returns to Ori.
+    ///
+    /// # Safety
+    ///
+    /// `callback` must obey [`OriValueCallback`]. `user_data` and every buffer
+    /// returned through `out_result` must remain valid for the callback call.
+    pub unsafe fn register_value_callback(
+        &mut self,
+        name: impl Into<String>,
+        signature: OriFunctionSignature,
+        capability: Option<String>,
+        user_data: *mut u8,
+        callback: OriValueCallback,
+    ) -> Result<OriCallbackId, OriHostRegistryError> {
+        if let Some(capability) = capability.as_deref() {
+            validate_capability_name(capability)
+                .map_err(|_| OriHostRegistryError::InvalidCapability(capability.to_owned()))?;
+        }
+        let kind = callback_kind_for_signature(&signature)?;
+        self.register_callback(CallbackRegistrationInput {
+            name: name.into(),
+            signature,
+            user_data,
+            callback: callback as *const () as usize,
+            kind,
+            capability,
+            aggregate: true,
+        })
     }
 
     fn register_callback(
         &mut self,
-        name: impl Into<String>,
-        signature: OriFunctionSignature,
-        user_data: *mut u8,
-        callback: usize,
-        kind: CallbackValueKind,
+        input: CallbackRegistrationInput,
     ) -> Result<OriCallbackId, OriHostRegistryError> {
-        let name = name.into();
+        let CallbackRegistrationInput {
+            name,
+            signature,
+            user_data,
+            callback,
+            kind,
+            capability,
+            aggregate,
+        } = input;
         validate_host_function_name(&name)?;
         validate_callback_signature(&signature, kind)?;
         if self.contains_name(&name) {
@@ -553,13 +736,14 @@ impl OriHostRegistry {
             callback,
             user_data: user_data as usize,
             kind,
+            aggregate,
+            signature: signature.clone(),
             active_calls: AtomicUsize::new(0),
             orphaned: AtomicBool::new(false),
+            runtime_owner: Mutex::new(None),
+            cancellation: Mutex::new(None),
         });
-        callback_states()
-            .lock()
-            .expect("host callback registry mutex poisoned")
-            .insert(id.get(), Arc::clone(&state));
+        lock_callback_states().insert(id.get(), Arc::clone(&state));
         self.callbacks.insert(
             name.clone(),
             RegisteredHostCallback {
@@ -569,6 +753,8 @@ impl OriHostRegistry {
                     signature,
                 },
                 kind,
+                capability,
+                aggregate,
             },
         );
         Ok(id)
@@ -619,8 +805,9 @@ impl OriHostRegistry {
     fn jit_symbols_for_hir(
         &self,
         hir: &HirModule,
+        granted_capabilities: &BTreeSet<String>,
     ) -> Result<Vec<ori_codegen::JitHostSymbol>, OriEmbedError> {
-        validate_host_imports(hir, self)?;
+        validate_host_imports(hir, self, granted_capabilities)?;
         let mut symbols = self.jit_symbols();
         for external in &hir.externs {
             let HirExtern::Func {
@@ -639,6 +826,7 @@ impl OriHostRegistry {
                         address: callback_dispatch_address(
                             &callback.info.signature,
                             callback.kind,
+                            callback.aggregate,
                         )?,
                         callback_id: Some(callback.info.id.get()),
                     });
@@ -657,6 +845,39 @@ impl OriHostRegistry {
             }
         }
         Ok(symbols)
+    }
+
+    fn bind_runtime_context(
+        &self,
+        hir: &HirModule,
+        owner: ori_codegen::JitManagedValueOwner,
+        cancellation: Arc<AtomicBool>,
+    ) {
+        for external in &hir.externs {
+            let HirExtern::Func {
+                path, name, abi, ..
+            } = external
+            else {
+                continue;
+            };
+            if abi != "host" {
+                continue;
+            }
+            let Some(callback) = self.resolve_callback(path, name) else {
+                continue;
+            };
+            let Some(state) = lock_callback_states().get(&callback.info.id.get()).cloned() else {
+                continue;
+            };
+            *state
+                .runtime_owner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(owner.clone());
+            *state
+                .cancellation
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::clone(&cancellation));
+        }
     }
 
     fn contains_name(&self, name: &str) -> bool {
@@ -685,9 +906,7 @@ impl Drop for OriHostRegistry {
 }
 
 fn orphan_callback_state(id: OriCallbackId) {
-    let mut states = callback_states()
-        .lock()
-        .expect("host callback registry mutex poisoned");
+    let mut states = lock_callback_states();
     let Some(state) = states.get(&id.get()).cloned() else {
         return;
     };
@@ -698,9 +917,7 @@ fn orphan_callback_state(id: OriCallbackId) {
 }
 
 fn unregister_callback_state(id: OriCallbackId) -> Result<(), OriHostRegistryError> {
-    let mut states = callback_states()
-        .lock()
-        .expect("host callback registry mutex poisoned");
+    let mut states = lock_callback_states();
     let Some(state) = states.get(&id.get()) else {
         return Err(OriHostRegistryError::CallbackNotFound(id.get().to_string()));
     };
@@ -713,9 +930,7 @@ fn unregister_callback_state(id: OriCallbackId) -> Result<(), OriHostRegistryErr
 }
 
 fn acquire_callback(id: u64) -> Option<Arc<CallbackState>> {
-    let states = callback_states()
-        .lock()
-        .expect("host callback registry mutex poisoned");
+    let states = lock_callback_states();
     let state = states.get(&id)?.clone();
     if state.orphaned.load(Ordering::Acquire) {
         return None;
@@ -730,9 +945,7 @@ fn release_callback(id: u64, state: &Arc<CallbackState>) {
     {
         return;
     }
-    let mut states = callback_states()
-        .lock()
-        .expect("host callback registry mutex poisoned");
+    let mut states = lock_callback_states();
     if states
         .get(&id)
         .is_some_and(|current| Arc::ptr_eq(current, state))
@@ -757,6 +970,20 @@ fn begin_callback(id: u64) -> Option<(usize, Arc<CallbackState>)> {
         );
         return None;
     };
+    let cancelled = state
+        .cancellation
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .is_some_and(|cancelled| cancelled.load(Ordering::Acquire));
+    if cancelled {
+        set_callback_error(
+            ORI_HOST_CANCELLED,
+            format!("host callback {id} was cancelled before invocation"),
+        );
+        release_callback(id, &state);
+        return None;
+    }
     CALLBACK_DEPTH.with(|current| current.set(depth + 1));
     Some((depth, state))
 }
@@ -766,11 +993,21 @@ fn finish_callback(id: u64, depth: usize, state: &Arc<CallbackState>) {
     release_callback(id, state);
 }
 
+fn callback_panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "non-string panic payload".to_owned()
+    }
+}
+
 fn invoke_int_callback(id: u64, args: [i64; 4]) -> i64 {
     let Some((depth, state)) = begin_callback(id) else {
         return 0;
     };
-    if state.kind != CallbackValueKind::Int {
+    if state.kind != CallbackValueKind::Int || state.aggregate {
         set_callback_error(
             ORI_HOST_CALLBACK_CANCELLED,
             format!("host callback {id} was invoked with an incompatible scalar ABI"),
@@ -783,7 +1020,7 @@ fn invoke_int_callback(id: u64, args: [i64; 4]) -> i64 {
     let callback: OriIntCallback = unsafe { std::mem::transmute(state.callback) };
     // SAFETY: the host owns `user_data` and promised its lifetime at
     // registration; this dispatcher only forwards the opaque pointer.
-    let result = unsafe {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
         callback(
             state.user_data as *mut u8,
             args[0],
@@ -791,16 +1028,28 @@ fn invoke_int_callback(id: u64, args: [i64; 4]) -> i64 {
             args[2],
             args[3],
         )
-    };
+    }));
     finish_callback(id, depth, &state);
-    result
+    match result {
+        Ok(result) => result,
+        Err(payload) => {
+            set_callback_error(
+                ORI_HOST_CALLBACK_PANICKED,
+                format!(
+                    "host callback {id} panicked: {}",
+                    callback_panic_message(payload.as_ref())
+                ),
+            );
+            0
+        }
+    }
 }
 
 fn invoke_float_callback(id: u64, args: [f64; 4]) -> f64 {
     let Some((depth, state)) = begin_callback(id) else {
         return 0.0;
     };
-    if state.kind != CallbackValueKind::Float {
+    if state.kind != CallbackValueKind::Float || state.aggregate {
         set_callback_error(
             ORI_HOST_CALLBACK_CANCELLED,
             format!("host callback {id} was invoked with an incompatible scalar ABI"),
@@ -813,7 +1062,7 @@ fn invoke_float_callback(id: u64, args: [f64; 4]) -> f64 {
     let callback: OriFloatCallback = unsafe { std::mem::transmute(state.callback) };
     // SAFETY: the host owns `user_data` and promised its lifetime at
     // registration; this dispatcher only forwards the opaque pointer.
-    let result = unsafe {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
         callback(
             state.user_data as *mut u8,
             args[0],
@@ -821,16 +1070,28 @@ fn invoke_float_callback(id: u64, args: [f64; 4]) -> f64 {
             args[2],
             args[3],
         )
-    };
+    }));
     finish_callback(id, depth, &state);
-    result
+    match result {
+        Ok(result) => result,
+        Err(payload) => {
+            set_callback_error(
+                ORI_HOST_CALLBACK_PANICKED,
+                format!(
+                    "host callback {id} panicked: {}",
+                    callback_panic_message(payload.as_ref())
+                ),
+            );
+            0.0
+        }
+    }
 }
 
 fn invoke_bool_callback(id: u64, args: [i8; 4]) -> i8 {
     let Some((depth, state)) = begin_callback(id) else {
         return 0;
     };
-    if state.kind != CallbackValueKind::Bool {
+    if state.kind != CallbackValueKind::Bool || state.aggregate {
         set_callback_error(
             ORI_HOST_CALLBACK_CANCELLED,
             format!("host callback {id} was invoked with an incompatible scalar ABI"),
@@ -843,7 +1104,7 @@ fn invoke_bool_callback(id: u64, args: [i8; 4]) -> i8 {
     let callback: OriBoolCallback = unsafe { std::mem::transmute(state.callback) };
     // SAFETY: the host owns `user_data` and promised its lifetime at
     // registration; this dispatcher only forwards the opaque pointer.
-    let result = unsafe {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
         callback(
             state.user_data as *mut u8,
             args[0],
@@ -851,9 +1112,230 @@ fn invoke_bool_callback(id: u64, args: [i8; 4]) -> i8 {
             args[2],
             args[3],
         )
+    }));
+    finish_callback(id, depth, &state);
+    match result {
+        Ok(result) => result,
+        Err(payload) => {
+            set_callback_error(
+                ORI_HOST_CALLBACK_PANICKED,
+                format!(
+                    "host callback {id} panicked: {}",
+                    callback_panic_message(payload.as_ref())
+                ),
+            );
+            0
+        }
+    }
+}
+
+enum AggregateCallbackArguments {
+    Int([i64; 4]),
+    Float([f64; 4]),
+    Bool([i8; 4]),
+    Managed([*const u8; 4]),
+}
+
+enum AggregateCallbackResult {
+    Void,
+    Int(i64),
+    Float(f64),
+    Bool(i8),
+    Managed(*const u8),
+}
+
+fn invoke_aggregate_callback(
+    id: u64,
+    arguments: AggregateCallbackArguments,
+) -> AggregateCallbackResult {
+    let Some((depth, state)) = begin_callback(id) else {
+        return AggregateCallbackResult::Void;
+    };
+    if !state.aggregate {
+        set_callback_error(
+            ORI_HOST_CALLBACK_CANCELLED,
+            format!("host callback {id} was invoked with an incompatible aggregate ABI"),
+        );
+        finish_callback(id, depth, &state);
+        return AggregateCallbackResult::Void;
+    }
+
+    let argument_count = state.signature.params.len();
+    let mut managed_storage = Vec::<Vec<u8>>::new();
+    let mut views = Vec::with_capacity(argument_count);
+    let argument_result: Result<(), String> = match arguments {
+        AggregateCallbackArguments::Int(values) if state.kind == CallbackValueKind::Int => {
+            views.extend(values[..argument_count].iter().map(|value| OriHostValue {
+                tag: OriHostValueTag::Int,
+                int_value: *value,
+                ..OriHostValue::void()
+            }));
+            Ok(())
+        }
+        AggregateCallbackArguments::Float(values) if state.kind == CallbackValueKind::Float => {
+            views.extend(values[..argument_count].iter().map(|value| OriHostValue {
+                tag: OriHostValueTag::Float,
+                float_value: *value,
+                ..OriHostValue::void()
+            }));
+            Ok(())
+        }
+        AggregateCallbackArguments::Bool(values) if state.kind == CallbackValueKind::Bool => {
+            views.extend(values[..argument_count].iter().map(|value| OriHostValue {
+                tag: OriHostValueTag::Bool,
+                int_value: i64::from(*value != 0),
+                ..OriHostValue::void()
+            }));
+            Ok(())
+        }
+        AggregateCallbackArguments::Managed(values)
+            if matches!(
+                state.kind,
+                CallbackValueKind::String | CallbackValueKind::Bytes
+            ) =>
+        {
+            let owner = state
+                .runtime_owner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+                .ok_or_else(|| "host callback runtime owner is not bound".to_owned());
+            match owner {
+                Ok(owner) => (|| -> Result<(), String> {
+                    for pointer in &values[..argument_count] {
+                        let bytes = if state.kind == CallbackValueKind::String {
+                            // SAFETY: generated code borrows every managed
+                            // argument for the complete callback invocation.
+                            unsafe { owner.copy_borrowed_string(*pointer) }
+                                .map(String::into_bytes)?
+                        } else {
+                            // SAFETY: same borrowed lifetime as above; the
+                            // runtime supplies the exact registered length.
+                            unsafe { owner.copy_borrowed_bytes(*pointer) }?
+                        };
+                        managed_storage.push(bytes);
+                    }
+                    for bytes in &managed_storage {
+                        views.push(OriHostValue {
+                            tag: if state.kind == CallbackValueKind::String {
+                                OriHostValueTag::String
+                            } else {
+                                OriHostValueTag::Bytes
+                            },
+                            data: if bytes.is_empty() {
+                                std::ptr::null()
+                            } else {
+                                bytes.as_ptr()
+                            },
+                            len: bytes.len(),
+                            ..OriHostValue::void()
+                        });
+                    }
+                    Ok(())
+                })(),
+                Err(error) => Err(error),
+            }
+        }
+        _ => Err("host callback arguments do not match the registered ABI".to_owned()),
+    };
+    if let Err(error) = argument_result {
+        set_callback_error(
+            ORI_HOST_CALLBACK_CANCELLED,
+            format!("host callback {id}: {error}"),
+        );
+        finish_callback(id, depth, &state);
+        return AggregateCallbackResult::Void;
+    }
+
+    // SAFETY: aggregate registration requires this exact ABI and the state
+    // remains active until `finish_callback` below.
+    let callback: OriValueCallback = unsafe { std::mem::transmute(state.callback) };
+    let mut output = OriHostValue::void();
+    let invocation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        callback(
+            state.user_data as *mut u8,
+            views.as_ptr(),
+            views.len(),
+            &raw mut output,
+        )
+    }));
+    let result = match invocation {
+        Ok(0) => aggregate_callback_result(&state, output),
+        Ok(status) => Err(format!("host callback returned status {status}")),
+        Err(payload) => {
+            set_callback_error(
+                ORI_HOST_CALLBACK_PANICKED,
+                format!(
+                    "host callback {id} panicked: {}",
+                    callback_panic_message(payload.as_ref())
+                ),
+            );
+            finish_callback(id, depth, &state);
+            return AggregateCallbackResult::Void;
+        }
     };
     finish_callback(id, depth, &state);
-    result
+    match result {
+        Ok(result) => result,
+        Err(error) => {
+            set_callback_error(
+                ORI_HOST_CALLBACK_CANCELLED,
+                format!("host callback {id}: {error}"),
+            );
+            AggregateCallbackResult::Void
+        }
+    }
+}
+
+fn aggregate_callback_result(
+    state: &CallbackState,
+    output: OriHostValue,
+) -> Result<AggregateCallbackResult, String> {
+    let Some(return_type) = state.signature.return_type else {
+        return Ok(AggregateCallbackResult::Void);
+    };
+    match (return_type, output.tag) {
+        (OriScalarType::Int, OriHostValueTag::Int) => {
+            Ok(AggregateCallbackResult::Int(output.int_value))
+        }
+        (OriScalarType::Float, OriHostValueTag::Float) => {
+            Ok(AggregateCallbackResult::Float(output.float_value))
+        }
+        (OriScalarType::Bool, OriHostValueTag::Bool) => Ok(AggregateCallbackResult::Bool(
+            i8::from(output.int_value != 0),
+        )),
+        (OriScalarType::String, OriHostValueTag::String)
+        | (OriScalarType::Bytes, OriHostValueTag::Bytes) => {
+            if output.len != 0 && output.data.is_null() {
+                return Err("managed callback result has a null data pointer".to_owned());
+            }
+            if output.len > isize::MAX as usize {
+                return Err("managed callback result exceeds the ABI length limit".to_owned());
+            }
+            // SAFETY: the callback contract keeps the output buffer readable
+            // until it returns; we copy it before leaving this function.
+            let bytes = if output.len == 0 {
+                &[][..]
+            } else {
+                unsafe { std::slice::from_raw_parts(output.data, output.len) }
+            };
+            let owner = state
+                .runtime_owner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+                .ok_or_else(|| "host callback runtime owner is not bound".to_owned())?;
+            let pointer = if return_type == OriScalarType::String {
+                let string = std::str::from_utf8(bytes)
+                    .map_err(|_| "managed callback returned invalid UTF-8".to_owned())?;
+                owner.copy_string_input(string)?
+            } else {
+                owner.copy_bytes_input(bytes)?
+            };
+            Ok(AggregateCallbackResult::Managed(pointer))
+        }
+        _ => Err("host callback returned a value with the wrong tag".to_owned()),
+    }
 }
 
 macro_rules! define_callback_dispatchers {
@@ -1013,13 +1495,262 @@ define_callback_dispatchers!(
     [a, b, c, d]
 );
 
+macro_rules! define_aggregate_dispatchers {
+    ($name:ident, $void_name:ident, $arg_ty:ty, $arguments:ident, $result:ident, $zero:expr, (), [$($value:expr),*]) => {
+        unsafe extern "C" fn $name(id: i64) -> $arg_ty {
+            match invoke_aggregate_callback(
+                id as u64,
+                AggregateCallbackArguments::$arguments([$($value),*]),
+            ) {
+                AggregateCallbackResult::$result(value) => value,
+                _ => $zero,
+            }
+        }
+
+        unsafe extern "C" fn $void_name(id: i64) {
+            let _ = invoke_aggregate_callback(
+                id as u64,
+                AggregateCallbackArguments::$arguments([$($value),*]),
+            );
+        }
+    };
+    ($name:ident, $void_name:ident, $arg_ty:ty, $arguments:ident, $result:ident, $zero:expr, ($($arg:ident),*), [$($value:expr),*]) => {
+        unsafe extern "C" fn $name(id: i64, $($arg: $arg_ty),*) -> $arg_ty {
+            match invoke_aggregate_callback(
+                id as u64,
+                AggregateCallbackArguments::$arguments([$($value),*]),
+            ) {
+                AggregateCallbackResult::$result(value) => value,
+                _ => $zero,
+            }
+        }
+
+        unsafe extern "C" fn $void_name(id: i64, $($arg: $arg_ty),*) {
+            let _ = invoke_aggregate_callback(
+                id as u64,
+                AggregateCallbackArguments::$arguments([$($value),*]),
+            );
+        }
+    };
+}
+
+define_aggregate_dispatchers!(
+    dispatch_value_int_0,
+    dispatch_value_void_int_0,
+    i64,
+    Int,
+    Int,
+    0,
+    (),
+    [0, 0, 0, 0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_int_1,
+    dispatch_value_void_int_1,
+    i64,
+    Int,
+    Int,
+    0,
+    (a),
+    [a, 0, 0, 0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_int_2,
+    dispatch_value_void_int_2,
+    i64,
+    Int,
+    Int,
+    0,
+    (a, b),
+    [a, b, 0, 0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_int_3,
+    dispatch_value_void_int_3,
+    i64,
+    Int,
+    Int,
+    0,
+    (a, b, c),
+    [a, b, c, 0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_int_4,
+    dispatch_value_void_int_4,
+    i64,
+    Int,
+    Int,
+    0,
+    (a, b, c, d),
+    [a, b, c, d]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_float_0,
+    dispatch_value_void_float_0,
+    f64,
+    Float,
+    Float,
+    0.0,
+    (),
+    [0.0, 0.0, 0.0, 0.0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_float_1,
+    dispatch_value_void_float_1,
+    f64,
+    Float,
+    Float,
+    0.0,
+    (a),
+    [a, 0.0, 0.0, 0.0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_float_2,
+    dispatch_value_void_float_2,
+    f64,
+    Float,
+    Float,
+    0.0,
+    (a, b),
+    [a, b, 0.0, 0.0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_float_3,
+    dispatch_value_void_float_3,
+    f64,
+    Float,
+    Float,
+    0.0,
+    (a, b, c),
+    [a, b, c, 0.0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_float_4,
+    dispatch_value_void_float_4,
+    f64,
+    Float,
+    Float,
+    0.0,
+    (a, b, c, d),
+    [a, b, c, d]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_bool_0,
+    dispatch_value_void_bool_0,
+    i8,
+    Bool,
+    Bool,
+    0,
+    (),
+    [0, 0, 0, 0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_bool_1,
+    dispatch_value_void_bool_1,
+    i8,
+    Bool,
+    Bool,
+    0,
+    (a),
+    [a, 0, 0, 0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_bool_2,
+    dispatch_value_void_bool_2,
+    i8,
+    Bool,
+    Bool,
+    0,
+    (a, b),
+    [a, b, 0, 0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_bool_3,
+    dispatch_value_void_bool_3,
+    i8,
+    Bool,
+    Bool,
+    0,
+    (a, b, c),
+    [a, b, c, 0]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_bool_4,
+    dispatch_value_void_bool_4,
+    i8,
+    Bool,
+    Bool,
+    0,
+    (a, b, c, d),
+    [a, b, c, d]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_managed_0,
+    dispatch_value_void_managed_0,
+    *const u8,
+    Managed,
+    Managed,
+    std::ptr::null(),
+    (),
+    [
+        std::ptr::null(),
+        std::ptr::null(),
+        std::ptr::null(),
+        std::ptr::null()
+    ]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_managed_1,
+    dispatch_value_void_managed_1,
+    *const u8,
+    Managed,
+    Managed,
+    std::ptr::null(),
+    (a),
+    [a, std::ptr::null(), std::ptr::null(), std::ptr::null()]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_managed_2,
+    dispatch_value_void_managed_2,
+    *const u8,
+    Managed,
+    Managed,
+    std::ptr::null(),
+    (a, b),
+    [a, b, std::ptr::null(), std::ptr::null()]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_managed_3,
+    dispatch_value_void_managed_3,
+    *const u8,
+    Managed,
+    Managed,
+    std::ptr::null(),
+    (a, b, c),
+    [a, b, c, std::ptr::null()]
+);
+define_aggregate_dispatchers!(
+    dispatch_value_managed_4,
+    dispatch_value_void_managed_4,
+    *const u8,
+    Managed,
+    Managed,
+    std::ptr::null(),
+    (a, b, c, d),
+    [a, b, c, d]
+);
+
 fn callback_dispatch_address(
     signature: &OriFunctionSignature,
     kind: CallbackValueKind,
+    aggregate: bool,
 ) -> Result<usize, OriEmbedError> {
     validate_callback_signature(signature, kind)
         .map_err(|error| OriEmbedError::Compiler(error.to_string()))?;
     let returns_value = signature.return_type.is_some();
+    if aggregate {
+        return aggregate_callback_dispatch_address(kind, signature.params.len(), returns_value);
+    }
     let address = match (kind, signature.params.len(), returns_value) {
         (CallbackValueKind::Int, 0, true) => dispatch_int_callback_0 as *const () as usize,
         (CallbackValueKind::Int, 0, false) => dispatch_void_callback_0 as *const () as usize,
@@ -1070,6 +1801,81 @@ fn callback_dispatch_address(
     Ok(address)
 }
 
+fn aggregate_callback_dispatch_address(
+    kind: CallbackValueKind,
+    parameter_count: usize,
+    returns_value: bool,
+) -> Result<usize, OriEmbedError> {
+    let address = match (kind, parameter_count, returns_value) {
+        (CallbackValueKind::Int, 0, true) => dispatch_value_int_0 as *const () as usize,
+        (CallbackValueKind::Int, 0, false) => dispatch_value_void_int_0 as *const () as usize,
+        (CallbackValueKind::Int, 1, true) => dispatch_value_int_1 as *const () as usize,
+        (CallbackValueKind::Int, 1, false) => dispatch_value_void_int_1 as *const () as usize,
+        (CallbackValueKind::Int, 2, true) => dispatch_value_int_2 as *const () as usize,
+        (CallbackValueKind::Int, 2, false) => dispatch_value_void_int_2 as *const () as usize,
+        (CallbackValueKind::Int, 3, true) => dispatch_value_int_3 as *const () as usize,
+        (CallbackValueKind::Int, 3, false) => dispatch_value_void_int_3 as *const () as usize,
+        (CallbackValueKind::Int, 4, true) => dispatch_value_int_4 as *const () as usize,
+        (CallbackValueKind::Int, 4, false) => dispatch_value_void_int_4 as *const () as usize,
+        (CallbackValueKind::Float, 0, true) => dispatch_value_float_0 as *const () as usize,
+        (CallbackValueKind::Float, 0, false) => dispatch_value_void_float_0 as *const () as usize,
+        (CallbackValueKind::Float, 1, true) => dispatch_value_float_1 as *const () as usize,
+        (CallbackValueKind::Float, 1, false) => dispatch_value_void_float_1 as *const () as usize,
+        (CallbackValueKind::Float, 2, true) => dispatch_value_float_2 as *const () as usize,
+        (CallbackValueKind::Float, 2, false) => dispatch_value_void_float_2 as *const () as usize,
+        (CallbackValueKind::Float, 3, true) => dispatch_value_float_3 as *const () as usize,
+        (CallbackValueKind::Float, 3, false) => dispatch_value_void_float_3 as *const () as usize,
+        (CallbackValueKind::Float, 4, true) => dispatch_value_float_4 as *const () as usize,
+        (CallbackValueKind::Float, 4, false) => dispatch_value_void_float_4 as *const () as usize,
+        (CallbackValueKind::Bool, 0, true) => dispatch_value_bool_0 as *const () as usize,
+        (CallbackValueKind::Bool, 0, false) => dispatch_value_void_bool_0 as *const () as usize,
+        (CallbackValueKind::Bool, 1, true) => dispatch_value_bool_1 as *const () as usize,
+        (CallbackValueKind::Bool, 1, false) => dispatch_value_void_bool_1 as *const () as usize,
+        (CallbackValueKind::Bool, 2, true) => dispatch_value_bool_2 as *const () as usize,
+        (CallbackValueKind::Bool, 2, false) => dispatch_value_void_bool_2 as *const () as usize,
+        (CallbackValueKind::Bool, 3, true) => dispatch_value_bool_3 as *const () as usize,
+        (CallbackValueKind::Bool, 3, false) => dispatch_value_void_bool_3 as *const () as usize,
+        (CallbackValueKind::Bool, 4, true) => dispatch_value_bool_4 as *const () as usize,
+        (CallbackValueKind::Bool, 4, false) => dispatch_value_void_bool_4 as *const () as usize,
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 0, true) => {
+            dispatch_value_managed_0 as *const () as usize
+        }
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 0, false) => {
+            dispatch_value_void_managed_0 as *const () as usize
+        }
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 1, true) => {
+            dispatch_value_managed_1 as *const () as usize
+        }
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 1, false) => {
+            dispatch_value_void_managed_1 as *const () as usize
+        }
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 2, true) => {
+            dispatch_value_managed_2 as *const () as usize
+        }
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 2, false) => {
+            dispatch_value_void_managed_2 as *const () as usize
+        }
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 3, true) => {
+            dispatch_value_managed_3 as *const () as usize
+        }
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 3, false) => {
+            dispatch_value_void_managed_3 as *const () as usize
+        }
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 4, true) => {
+            dispatch_value_managed_4 as *const () as usize
+        }
+        (CallbackValueKind::String | CallbackValueKind::Bytes, 4, false) => {
+            dispatch_value_void_managed_4 as *const () as usize
+        }
+        _ => {
+            return Err(OriEmbedError::Compiler(
+                "invalid aggregate callback signature".to_owned(),
+            ))
+        }
+    };
+    Ok(address)
+}
+
 /// Errors raised while registering a host function.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum OriHostRegistryError {
@@ -1093,6 +1899,8 @@ pub enum OriHostRegistryError {
     UnsupportedType,
     #[error("host callback must use only integer parameters and an integer or void return")]
     UnsupportedCallbackSignature,
+    #[error("invalid host capability name `{0}`")]
+    InvalidCapability(String),
 }
 
 /// A function address represented without exposing a raw code pointer.
@@ -1212,6 +2020,31 @@ pub enum OriEmbedError {
     UnsupportedFunctionSignature { module: String, function: String },
     #[error("function handle belongs to another hosted session")]
     WrongSession,
+    #[error("hosted engine operation must run on its owner thread")]
+    WrongThread,
+    #[error("host capability `{capability}` is required by import `{import}`")]
+    CapabilityDenied { capability: String, import: String },
+    #[error(
+        "managed value belongs to hosted session {value_session}, not current session {current_session}"
+    )]
+    ManagedValueWrongSession {
+        value_session: u64,
+        current_session: u64,
+    },
+    #[error("managed value belongs to module {value_module}, not target module {target_module}")]
+    ManagedValueWrongModule {
+        value_module: u64,
+        target_module: u64,
+    },
+    #[error(
+        "managed value is stale (value generation {value_generation}, target generation {target_generation})"
+    )]
+    StaleManagedValue {
+        value_generation: u64,
+        target_generation: u64,
+    },
+    #[error("invalid managed value at the hosted boundary: {0}")]
+    InvalidManagedValue(String),
     #[error(
         "function handle for module `{module}` is stale (handle generation {handle_generation}, current generation {current_generation})"
     )]
@@ -1236,8 +2069,11 @@ pub enum OriEmbedError {
 #[derive(Debug)]
 pub struct OriEngine {
     session_id: SessionId,
+    owner_thread: ThreadId,
     config: OriConfig,
     host_registry: OriHostRegistry,
+    granted_capabilities: BTreeSet<String>,
+    cancellation: Arc<AtomicBool>,
     next_module_id: u64,
     modules: HashMap<String, ModuleState>,
     module_names: HashMap<ModuleId, String>,
@@ -1260,8 +2096,11 @@ impl OriEngine {
     pub fn with_host_registry(config: OriConfig, host_registry: OriHostRegistry) -> Self {
         Self {
             session_id: SessionId(NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)),
+            owner_thread: std::thread::current().id(),
             config,
             host_registry,
+            granted_capabilities: BTreeSet::new(),
+            cancellation: Arc::new(AtomicBool::new(false)),
             next_module_id: 1,
             modules: HashMap::new(),
             module_names: HashMap::new(),
@@ -1280,6 +2119,40 @@ impl OriEngine {
         &mut self.host_registry
     }
 
+    /// Grant one import capability to this engine.
+    pub fn grant_capability(
+        &mut self,
+        capability: impl Into<String>,
+    ) -> Result<bool, OriConfigError> {
+        self.ensure_owner_thread()
+            .map_err(|_| OriConfigError::WrongThread)?;
+        let capability = capability.into();
+        validate_capability_name(&capability)?;
+        Ok(self.granted_capabilities.insert(capability))
+    }
+
+    /// Revoke one import capability from future compilations.
+    pub fn revoke_capability(&mut self, capability: &str) -> Result<bool, OriConfigError> {
+        self.ensure_owner_thread()
+            .map_err(|_| OriConfigError::WrongThread)?;
+        validate_capability_name(capability)?;
+        Ok(self.granted_capabilities.remove(capability))
+    }
+
+    /// Request cooperative cancellation of the next hosted boundary check.
+    ///
+    /// This method is thread-safe and does not access executable module state.
+    pub fn cancel(&self) {
+        self.cancellation.store(true, Ordering::Release);
+    }
+
+    /// Clear a prior cancellation request from the engine owner thread.
+    pub fn reset_cancellation(&self) -> Result<(), OriEmbedError> {
+        self.ensure_owner_thread()?;
+        self.cancellation.store(false, Ordering::Release);
+        Ok(())
+    }
+
     /// Check a source update without publishing a new executable generation.
     ///
     /// A valid check never advances the module generation: only
@@ -1292,6 +2165,8 @@ impl OriEngine {
         module_name: impl Into<String>,
         source: impl Into<String>,
     ) -> Result<CheckResult, OriEmbedError> {
+        self.ensure_owner_thread()?;
+        self.ensure_not_cancelled()?;
         let module_name = module_name.into();
         validate_module_name(&module_name)?;
         let source = source.into();
@@ -1333,6 +2208,8 @@ impl OriEngine {
         module_name: impl Into<String>,
         source: impl Into<String>,
     ) -> Result<CompileResult, OriEmbedError> {
+        self.ensure_owner_thread()?;
+        self.ensure_not_cancelled()?;
         let module_name = module_name.into();
         validate_module_name(&module_name)?;
         let source = source.into();
@@ -1353,16 +2230,22 @@ impl OriEngine {
         let diagnostics = diagnostics_from_output(&output.diagnostics, &output.cache);
         let module = match (output.has_errors, output.hir, output.cdylib) {
             (false, Some(hir), Some(cdylib)) => {
-                let host_symbols = self.host_registry.jit_symbols_for_hir(&hir)?;
-                Some(
-                    ori_codegen::CompiledJitModule::compile_with_host_symbols(
-                        &hir,
-                        &cdylib,
-                        &output.native_libs,
-                        &host_symbols,
-                    )
-                    .map_err(OriEmbedError::Compiler)?,
+                let host_symbols = self
+                    .host_registry
+                    .jit_symbols_for_hir(&hir, &self.granted_capabilities)?;
+                let module = ori_codegen::CompiledJitModule::compile_with_host_symbols(
+                    &hir,
+                    &cdylib,
+                    &output.native_libs,
+                    &host_symbols,
                 )
+                .map_err(OriEmbedError::Compiler)?;
+                self.host_registry.bind_runtime_context(
+                    &hir,
+                    module.managed_value_owner(),
+                    Arc::clone(&self.cancellation),
+                );
+                Some(module)
             }
             _ => None,
         };
@@ -1409,6 +2292,7 @@ impl OriEngine {
         module_name: &str,
         function_name: &str,
     ) -> Result<OriFunctionHandle, OriEmbedError> {
+        self.ensure_owner_thread()?;
         let state = self
             .modules
             .get(module_name)
@@ -1443,6 +2327,8 @@ impl OriEngine {
         handle: &OriFunctionHandle,
         args: &[OriValue],
     ) -> Result<Option<OriValue>, OriEmbedError> {
+        self.ensure_owner_thread()?;
+        self.ensure_not_cancelled()?;
         if handle.session != self.session_id {
             return Err(OriEmbedError::WrongSession);
         }
@@ -1469,24 +2355,28 @@ impl OriEngine {
             .current
             .as_ref()
             .ok_or_else(|| OriEmbedError::ModuleNotCompiled(module_name.clone()))?;
-        let args = args
-            .iter()
-            .copied()
-            .map(jit_value_from_ori)
-            .collect::<Vec<_>>();
+        let origin = ManagedValueOrigin {
+            session: self.session_id,
+            module: handle.module,
+            generation: current_generation,
+        };
+        validate_managed_argument_origins(args, origin)?;
+        let shape = args.iter().map(jit_value_shape).collect::<Vec<_>>();
+        module
+            .validate_call(&handle.name, &shape)
+            .map_err(map_jit_call_error)?;
+        let prepared = prepare_jit_arguments(args, &module.managed_value_owner())?;
+        let args = prepared.transfer_to_callee();
         clear_callback_error();
         let result = module
             .call(&handle.name, &args)
-            .map(|value| value.map(ori_value_from_jit));
+            .map_err(map_jit_call_error)?
+            .map(|value| ori_value_from_jit(value, module.managed_value_owner(), origin))
+            .transpose()?;
         if let Some(error) = take_callback_error() {
             return Err(OriEmbedError::FunctionTrap(error));
         }
-        result.map_err(|error| match error {
-            ori_codegen::JitCallError::Invocation(message) => OriEmbedError::FunctionCall(message),
-            ori_codegen::JitCallError::Runtime { code, message } => {
-                OriEmbedError::FunctionTrap(OriExecutionError { code, message })
-            }
-        })
+        Ok(result)
     }
 
     /// Remove one module and release all executable generations it owns.
@@ -1495,6 +2385,7 @@ impl OriEngine {
     /// `ModuleNotCompiled` when used afterwards. The mutable borrow prevents
     /// an unload from racing with a call through the same engine instance.
     pub fn unload_module(&mut self, module_name: &str) -> Result<UnloadResult, OriEmbedError> {
+        self.ensure_owner_thread()?;
         let generation = self
             .modules
             .get(module_name)
@@ -1589,6 +2480,25 @@ impl OriEngine {
         self.modules
             .get_mut(module_name)
             .expect("module was inserted or already existed")
+    }
+
+    fn ensure_owner_thread(&self) -> Result<(), OriEmbedError> {
+        if std::thread::current().id() == self.owner_thread {
+            Ok(())
+        } else {
+            Err(OriEmbedError::WrongThread)
+        }
+    }
+
+    fn ensure_not_cancelled(&self) -> Result<(), OriEmbedError> {
+        if self.cancellation.load(Ordering::Acquire) {
+            Err(OriEmbedError::FunctionTrap(OriExecutionError {
+                code: ORI_HOST_CANCELLED,
+                message: "hosted operation was cancelled".to_owned(),
+            }))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -1707,11 +2617,15 @@ fn validate_callback_signature(
     signature: &OriFunctionSignature,
     kind: CallbackValueKind,
 ) -> Result<(), OriHostRegistryError> {
-    validate_host_signature(signature)?;
+    if signature.params.len() > 4 {
+        return Err(OriHostRegistryError::TooManyParameters);
+    }
     let expected = match kind {
         CallbackValueKind::Int => OriScalarType::Int,
         CallbackValueKind::Float => OriScalarType::Float,
         CallbackValueKind::Bool => OriScalarType::Bool,
+        CallbackValueKind::String => OriScalarType::String,
+        CallbackValueKind::Bytes => OriScalarType::Bytes,
     };
     if signature
         .params
@@ -1724,6 +2638,29 @@ fn validate_callback_signature(
         return Err(OriHostRegistryError::UnsupportedCallbackSignature);
     }
     Ok(())
+}
+
+fn callback_kind_for_signature(
+    signature: &OriFunctionSignature,
+) -> Result<CallbackValueKind, OriHostRegistryError> {
+    let value_type = signature
+        .params
+        .first()
+        .copied()
+        .or(signature.return_type)
+        .unwrap_or(OriScalarType::Int);
+    let kind = match value_type {
+        OriScalarType::Int => CallbackValueKind::Int,
+        OriScalarType::Float => CallbackValueKind::Float,
+        OriScalarType::Bool => CallbackValueKind::Bool,
+        OriScalarType::String => CallbackValueKind::String,
+        OriScalarType::Bytes => CallbackValueKind::Bytes,
+        OriScalarType::Slice | OriScalarType::Unsupported => {
+            return Err(OriHostRegistryError::UnsupportedCallbackSignature)
+        }
+    };
+    validate_callback_signature(signature, kind)?;
+    Ok(kind)
 }
 
 fn ori_scalar_type_from_ty(ty: &Ty) -> OriScalarType {
@@ -1748,7 +2685,11 @@ fn host_signature_from_hir(params: &[ori_hir::HirParam], return_ty: &Ty) -> OriF
     }
 }
 
-fn validate_host_imports(hir: &HirModule, registry: &OriHostRegistry) -> Result<(), OriEmbedError> {
+fn validate_host_imports(
+    hir: &HirModule,
+    registry: &OriHostRegistry,
+    granted_capabilities: &BTreeSet<String>,
+) -> Result<(), OriEmbedError> {
     for external in &hir.externs {
         let HirExtern::Func {
             path,
@@ -1765,12 +2706,22 @@ fn validate_host_imports(hir: &HirModule, registry: &OriHostRegistry) -> Result<
             continue;
         }
         let declared = host_signature_from_hir(params, return_ty);
-        validate_host_signature(&declared).map_err(|_| OriEmbedError::HostSignatureMismatch {
-            name: path.to_string(),
-            registered: declared.clone(),
-            declared: declared.clone(),
-        })?;
         if let Some(registered) = registry.resolve_callback(path, name) {
+            validate_callback_signature(&declared, registered.kind).map_err(|_| {
+                OriEmbedError::HostSignatureMismatch {
+                    name: path.to_string(),
+                    registered: registered.info.signature.clone(),
+                    declared: declared.clone(),
+                }
+            })?;
+            if let Some(capability) = &registered.capability {
+                if !granted_capabilities.contains(capability) {
+                    return Err(OriEmbedError::CapabilityDenied {
+                        capability: capability.clone(),
+                        import: path.to_string(),
+                    });
+                }
+            }
             if registered.info.signature != declared {
                 return Err(OriEmbedError::HostSignatureMismatch {
                     name: registered.info.name.clone(),
@@ -1780,14 +2731,26 @@ fn validate_host_imports(hir: &HirModule, registry: &OriHostRegistry) -> Result<
             }
             continue;
         }
+        validate_host_signature(&declared).map_err(|_| OriEmbedError::HostSignatureMismatch {
+            name: path.to_string(),
+            registered: declared.clone(),
+            declared: declared.clone(),
+        })?;
         let registered = registry
             .resolve_function(path, name)
-            .map(|function| &function.info)
             .ok_or_else(|| OriEmbedError::MissingHostFunction(name.to_string()))?;
-        if registered.signature != declared {
+        if let Some(capability) = &registered.capability {
+            if !granted_capabilities.contains(capability) {
+                return Err(OriEmbedError::CapabilityDenied {
+                    capability: capability.clone(),
+                    import: path.to_string(),
+                });
+            }
+        }
+        if registered.info.signature != declared {
             return Err(OriEmbedError::HostSignatureMismatch {
-                name: registered.name.clone(),
-                registered: registered.signature.clone(),
+                name: registered.info.name.clone(),
+                registered: registered.info.signature.clone(),
                 declared,
             });
         }
@@ -1807,25 +2770,175 @@ fn ori_scalar_type_from_jit(ty: ori_codegen::JitScalarType) -> OriScalarType {
     }
 }
 
-fn jit_value_from_ori(value: OriValue) -> ori_codegen::JitValue {
+fn jit_value_shape(value: &OriValue) -> ori_codegen::JitValue {
     match value {
-        OriValue::Bool(value) => ori_codegen::JitValue::Bool(value),
-        OriValue::Int(value) => ori_codegen::JitValue::Int(value),
-        OriValue::Float(value) => ori_codegen::JitValue::Float(value),
-        OriValue::Slice(pointer) => ori_codegen::JitValue::Slice(pointer),
-        OriValue::String(pointer) => ori_codegen::JitValue::String(pointer),
-        OriValue::Bytes(pointer) => ori_codegen::JitValue::Bytes(pointer),
+        OriValue::Bool(value) => ori_codegen::JitValue::Bool(*value),
+        OriValue::Int(value) => ori_codegen::JitValue::Int(*value),
+        OriValue::Float(value) => ori_codegen::JitValue::Float(*value),
+        OriValue::Slice(value) => ori_codegen::JitValue::Slice(value.pointer.as_ptr()),
+        OriValue::String(_) => ori_codegen::JitValue::String(std::ptr::null()),
+        OriValue::Bytes(_) => ori_codegen::JitValue::Bytes(std::ptr::null()),
     }
 }
 
-fn ori_value_from_jit(value: ori_codegen::JitValue) -> OriValue {
+fn validate_managed_argument_origins(
+    args: &[OriValue],
+    target: ManagedValueOrigin,
+) -> Result<(), OriEmbedError> {
+    for value in args {
+        let OriValue::Slice(slice) = value else {
+            continue;
+        };
+        if slice.origin.session != target.session {
+            return Err(OriEmbedError::ManagedValueWrongSession {
+                value_session: slice.origin.session.get(),
+                current_session: target.session.get(),
+            });
+        }
+        if slice.origin.module != target.module {
+            return Err(OriEmbedError::ManagedValueWrongModule {
+                value_module: slice.origin.module.get(),
+                target_module: target.module.get(),
+            });
+        }
+        if slice.origin.generation != target.generation {
+            return Err(OriEmbedError::StaleManagedValue {
+                value_generation: slice.origin.generation.get(),
+                target_generation: target.generation.get(),
+            });
+        }
+    }
+    Ok(())
+}
+
+struct PreparedManagedArgument {
+    pointer: *const u8,
+    owner: ori_codegen::JitManagedValueOwner,
+    transferred: bool,
+}
+
+impl Drop for PreparedManagedArgument {
+    fn drop(&mut self) {
+        if !self.transferred {
+            // SAFETY: every prepared argument owns exactly one temporary ARC
+            // reference until ownership transfers to generated callee cleanup.
+            unsafe { self.owner.release(self.pointer) };
+        }
+    }
+}
+
+struct PreparedJitArguments {
+    values: Vec<ori_codegen::JitValue>,
+    managed: Vec<PreparedManagedArgument>,
+}
+
+impl PreparedJitArguments {
+    fn transfer_to_callee(mut self) -> Vec<ori_codegen::JitValue> {
+        for value in &mut self.managed {
+            value.transferred = true;
+        }
+        std::mem::take(&mut self.values)
+    }
+}
+
+fn prepare_jit_arguments(
+    args: &[OriValue],
+    runtime: &ori_codegen::JitManagedValueOwner,
+) -> Result<PreparedJitArguments, OriEmbedError> {
+    let mut prepared = PreparedJitArguments {
+        values: Vec::with_capacity(args.len()),
+        managed: Vec::new(),
+    };
+    for value in args {
+        let (jit_value, owned_pointer) = match value {
+            OriValue::Bool(value) => (ori_codegen::JitValue::Bool(*value), None),
+            OriValue::Int(value) => (ori_codegen::JitValue::Int(*value), None),
+            OriValue::Float(value) => (ori_codegen::JitValue::Float(*value), None),
+            OriValue::Slice(slice) => {
+                let pointer = slice.pointer.as_ptr() as *const u8;
+                // SAFETY: origin validation proves this live token belongs to
+                // the target generation. Retain creates the callee-owned slot.
+                unsafe { slice.owner.retain(pointer) };
+                (
+                    ori_codegen::JitValue::Slice(pointer),
+                    Some((pointer, slice.owner.clone())),
+                )
+            }
+            OriValue::String(value) => {
+                let pointer = runtime
+                    .copy_string_input(&value.0)
+                    .map_err(OriEmbedError::InvalidManagedValue)?;
+                (
+                    ori_codegen::JitValue::String(pointer),
+                    Some((pointer, runtime.clone())),
+                )
+            }
+            OriValue::Bytes(value) => {
+                let pointer = runtime
+                    .copy_bytes_input(&value.0)
+                    .map_err(OriEmbedError::InvalidManagedValue)?;
+                (
+                    ori_codegen::JitValue::Bytes(pointer),
+                    Some((pointer, runtime.clone())),
+                )
+            }
+        };
+        prepared.values.push(jit_value);
+        if let Some((pointer, owner)) = owned_pointer {
+            prepared.managed.push(PreparedManagedArgument {
+                pointer,
+                owner,
+                transferred: false,
+            });
+        }
+    }
+    Ok(prepared)
+}
+
+fn map_jit_call_error(error: ori_codegen::JitCallError) -> OriEmbedError {
+    match error {
+        ori_codegen::JitCallError::Invocation(message) => OriEmbedError::FunctionCall(message),
+        ori_codegen::JitCallError::Runtime { code, message } => {
+            OriEmbedError::FunctionTrap(OriExecutionError { code, message })
+        }
+    }
+}
+
+fn ori_value_from_jit(
+    value: ori_codegen::JitValue,
+    owner: ori_codegen::JitManagedValueOwner,
+    origin: ManagedValueOrigin,
+) -> Result<OriValue, OriEmbedError> {
     match value {
-        ori_codegen::JitValue::Bool(value) => OriValue::Bool(value),
-        ori_codegen::JitValue::Int(value) => OriValue::Int(value),
-        ori_codegen::JitValue::Float(value) => OriValue::Float(value),
-        ori_codegen::JitValue::Slice(pointer) => OriValue::Slice(pointer),
-        ori_codegen::JitValue::String(pointer) => OriValue::String(pointer),
-        ori_codegen::JitValue::Bytes(pointer) => OriValue::Bytes(pointer),
+        ori_codegen::JitValue::Bool(value) => Ok(OriValue::Bool(value)),
+        ori_codegen::JitValue::Int(value) => Ok(OriValue::Int(value)),
+        ori_codegen::JitValue::Float(value) => Ok(OriValue::Float(value)),
+        ori_codegen::JitValue::Slice(pointer) => {
+            let pointer = NonNull::new(pointer.cast_mut()).ok_or_else(|| {
+                OriEmbedError::InvalidManagedValue(
+                    "hosted function returned a null slice pointer".to_string(),
+                )
+            })?;
+            Ok(OriValue::Slice(OriSliceValue {
+                pointer,
+                owner,
+                origin,
+            }))
+        }
+        ori_codegen::JitValue::String(pointer) => {
+            // SAFETY: hosted code returned one owned string reference. The
+            // owner copies it while live and consumes exactly that reference.
+            let value = unsafe { owner.take_string(pointer) }
+                .map_err(OriEmbedError::InvalidManagedValue)?;
+            Ok(OriValue::String(OriStringValue(value)))
+        }
+        ori_codegen::JitValue::Bytes(pointer) => {
+            // SAFETY: hosted code returned one owned bytes reference. The
+            // owner copies its registered range and consumes that reference.
+            let value =
+                unsafe { owner.take_bytes(pointer) }.map_err(OriEmbedError::InvalidManagedValue)?;
+            Ok(OriValue::Bytes(OriBytesValue(value)))
+        }
     }
 }
 
@@ -1870,6 +2983,24 @@ fn validate_feature_name(name: &str) -> Result<(), OriConfigError> {
         .ok_or_else(|| OriConfigError::InvalidFeature(name.to_owned()))
 }
 
+fn validate_capability_name(name: &str) -> Result<(), OriConfigError> {
+    let valid = !name.is_empty()
+        && !name.starts_with('.')
+        && !name.ends_with('.')
+        && name.split('.').all(|segment| {
+            let mut characters = segment.chars();
+            characters
+                .next()
+                .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+                && characters.all(|character| {
+                    character == '_' || character == '-' || character.is_ascii_alphanumeric()
+                })
+        });
+    valid
+        .then_some(())
+        .ok_or_else(|| OriConfigError::InvalidCapability(name.to_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1878,7 +3009,7 @@ mod tests {
         left + right
     }
 
-    unsafe extern "C" fn callback_add_user_data(
+    unsafe extern "C-unwind" fn callback_add_user_data(
         user_data: *mut u8,
         value: i64,
         _arg1: i64,
@@ -1890,7 +3021,7 @@ mod tests {
         value + unsafe { *(user_data as *const i64) }
     }
 
-    unsafe extern "C" fn callback_record_value(
+    unsafe extern "C-unwind" fn callback_record_value(
         user_data: *mut u8,
         value: i64,
         _arg1: i64,
@@ -1903,12 +3034,22 @@ mod tests {
         0
     }
 
+    unsafe extern "C-unwind" fn callback_panics(
+        _user_data: *mut u8,
+        _value: i64,
+        _arg1: i64,
+        _arg2: i64,
+        _arg3: i64,
+    ) -> i64 {
+        panic!("intentional host callback panic")
+    }
+
     struct ReentrantContext {
         engine: *const OriEngine,
         nested: Option<OriFunctionHandle>,
     }
 
-    unsafe extern "C" fn callback_reenters_ori(
+    unsafe extern "C-unwind" fn callback_reenters_ori(
         user_data: *mut u8,
         value: i64,
         _arg1: i64,
@@ -1931,7 +3072,7 @@ mod tests {
         unregister_blocked: bool,
     }
 
-    unsafe extern "C" fn callback_attempts_unregister(
+    unsafe extern "C-unwind" fn callback_attempts_unregister(
         user_data: *mut u8,
         value: i64,
         _arg1: i64,
@@ -1950,7 +3091,7 @@ mod tests {
         id: OriCallbackId,
     }
 
-    unsafe extern "C" fn callback_recurses(
+    unsafe extern "C-unwind" fn callback_recurses(
         user_data: *mut u8,
         value: i64,
         _arg1: i64,
@@ -2043,7 +3184,7 @@ mod tests {
             .expect("slice call")
             .expect("slice result");
         assert!(
-            matches!(value, OriValue::Slice(pointer) if !pointer.is_null()),
+            matches!(value, OriValue::Slice(_)),
             "slice window must return a live opaque pointer"
         );
     }
@@ -2064,11 +3205,11 @@ mod tests {
         let sum = engine
             .function("slicesum.orl", "sum")
             .expect("sum resolves");
-        let Some(OriValue::Slice(pointer)) = engine.call(&make, &[]).expect("make call") else {
+        let Some(value @ OriValue::Slice(_)) = engine.call(&make, &[]).expect("make call") else {
             panic!("make must return a slice");
         };
         let total = engine
-            .call(&sum, &[OriValue::Slice(pointer)])
+            .call(&sum, &[value])
             .expect("sum call")
             .expect("sum result");
         assert_eq!(total, OriValue::Int(60));
@@ -2118,14 +3259,12 @@ mod tests {
         let concat = engine
             .function("strings.orl", "concat")
             .expect("concat resolves");
-        let arg1 = std::ffi::CString::new("Hello").unwrap();
-        let arg2 = std::ffi::CString::new("Ori").unwrap();
         let combined = engine
             .call(
                 &concat,
                 &[
-                    OriValue::String(arg1.as_ptr() as *const u8),
-                    OriValue::String(arg2.as_ptr() as *const u8),
+                    OriValue::string("Hello").expect("valid string"),
+                    OriValue::string("Ori").expect("valid string"),
                 ],
             )
             .expect("concat call")
@@ -2146,11 +3285,10 @@ mod tests {
         let length = engine
             .function("strlen.orl", "length")
             .expect("length resolves");
-        let test_str = std::ffi::CString::new("testing").unwrap();
         let len = engine
             .call(
                 &length,
-                &[OriValue::String(test_str.as_ptr() as *const u8)],
+                &[OriValue::string("testing").expect("valid string")],
             )
             .expect("length call")
             .expect("length result");
@@ -2163,7 +3301,7 @@ mod tests {
         let _result = engine
             .compile_source(
                 "bytes_test.orl",
-                "module app.bytes_test\n\nimport ori.bytes = by\n\npublic make() -> bytes\n    return \"abc\".to_bytes()\nend\n\npublic len_of(b: bytes) -> int\n    return by.len(b)\nend\n",
+                "module app.bytes_test\n\nimport ori.bytes = by\n\npublic make() -> bytes\n    return by.from_list([97, 0, 98])\nend\n\npublic len_of(b: bytes) -> int\n    return by.len(b)\nend\n",
             )
             .expect("compile bytes functions");
 
@@ -2178,13 +3316,157 @@ mod tests {
             .call(&make, &[])
             .expect("make call")
             .expect("make result");
-        assert_eq!(make_result.as_bytes(), Some(b"abc".as_slice()));
+        assert_eq!(make_result.as_bytes_with_len(), Some(b"a\0b".as_slice()));
 
+        let args = [make_result];
         let len_result = engine
-            .call(&len_of, &[make_result])
+            .call(&len_of, &args)
             .expect("len_of call")
             .expect("len_of result");
         assert_eq!(len_result, OriValue::Int(3));
+        assert_eq!(args[0].as_bytes_with_len(), Some(b"a\0b".as_slice()));
+    }
+
+    #[test]
+    fn hosted_managed_return_survives_module_unload_until_value_drop() {
+        let mut engine = OriEngine::new(OriConfig::default());
+        let result = engine
+            .compile_source(
+                "owned.orl",
+                "module app.owned\n\npublic make() -> bytes\n    return \"persist\".to_bytes()\nend\n",
+            )
+            .expect("compile owned bytes function");
+        assert!(result.accepted);
+        let make = engine.function("owned.orl", "make").expect("make resolves");
+        let value = engine
+            .call(&make, &[])
+            .expect("make call")
+            .expect("make result");
+
+        let unloaded = engine.unload_module("owned.orl").expect("unload module");
+        assert_eq!(unloaded.module.id, result.module.id);
+        assert_eq!(value.as_bytes_with_len(), Some(b"persist".as_slice()));
+    }
+
+    #[test]
+    fn hosted_value_construction_rejects_interior_nul_strings() {
+        assert_eq!(
+            OriValue::string("not\0a string"),
+            Err(OriValueError::InteriorNul)
+        );
+        assert_eq!(
+            OriValue::bytes(b"valid\0bytes".to_vec()).as_bytes_with_len(),
+            Some(b"valid\0bytes".as_slice())
+        );
+    }
+
+    #[test]
+    fn hosted_slice_identity_rejects_cross_session_module_and_generation_calls() {
+        let source = "module app.identity\n\nimport ori.list = lists\nimport ori.slice = sl\n\npublic make() -> slice[int]\n    var xs: list[int] = [10, 20, 30]\n    return lists.window(xs, 0, 3)\nend\n\npublic sum(w: slice[int]) -> int\n    return sl.get(w, 0) + sl.get(w, 1) + sl.get(w, 2)\nend\n";
+        let mut first = OriEngine::new(OriConfig::default());
+        first
+            .compile_source("identity.orl", source)
+            .expect("compile first session");
+        let make = first.function("identity.orl", "make").expect("make handle");
+        let value = first
+            .call(&make, &[])
+            .expect("make call")
+            .expect("slice value");
+
+        let mut second = OriEngine::new(OriConfig::default());
+        second
+            .compile_source("identity.orl", source)
+            .expect("compile second session");
+        let second_sum = second
+            .function("identity.orl", "sum")
+            .expect("second sum handle");
+        assert!(matches!(
+            second.call(&second_sum, std::slice::from_ref(&value)),
+            Err(OriEmbedError::ManagedValueWrongSession { .. })
+        ));
+
+        let other_source = source.replace("module app.identity", "module app.other");
+        first
+            .compile_source("other.orl", other_source)
+            .expect("compile other module");
+        let other_sum = first
+            .function("other.orl", "sum")
+            .expect("other sum handle");
+        assert!(matches!(
+            first.call(&other_sum, std::slice::from_ref(&value)),
+            Err(OriEmbedError::ManagedValueWrongModule { .. })
+        ));
+
+        first
+            .compile_source("identity.orl", source)
+            .expect("publish next generation");
+        let next_sum = first
+            .function("identity.orl", "sum")
+            .expect("next sum handle");
+        assert!(matches!(
+            first.call(&next_sum, std::slice::from_ref(&value)),
+            Err(OriEmbedError::StaleManagedValue { .. })
+        ));
+
+        let current_make = first
+            .function("identity.orl", "make")
+            .expect("current make handle");
+        let before_reload = first
+            .call(&current_make, &[])
+            .expect("current make call")
+            .expect("current slice value");
+        first
+            .unload_module("identity.orl")
+            .expect("unload identity module");
+        first
+            .compile_source("identity.orl", source)
+            .expect("reload identity module");
+        let reloaded_sum = first
+            .function("identity.orl", "sum")
+            .expect("reloaded sum handle");
+        assert!(matches!(
+            first.call(&reloaded_sum, std::slice::from_ref(&before_reload)),
+            Err(OriEmbedError::ManagedValueWrongModule { .. })
+        ));
+    }
+
+    #[test]
+    fn repeated_managed_returns_are_copied_and_released() {
+        let mut engine = OriEngine::new(OriConfig::default());
+        engine
+            .compile_source(
+                "owned_repeats.orl",
+                "module app.owned_repeats\n\nimport ori.bytes = by\nimport ori.test = test\n\npublic make() -> bytes\n    return by.from_list([65, 0, 66])\nend\n\npublic live() -> int\n    return test.live_allocations()\nend\n",
+            )
+            .expect("compile managed return probe");
+        let make = engine
+            .function("owned_repeats.orl", "make")
+            .expect("make handle");
+        let live = engine
+            .function("owned_repeats.orl", "live")
+            .expect("live handle");
+        let before = engine
+            .call(&live, &[])
+            .expect("live before")
+            .expect("live result")
+            .as_int()
+            .expect("integer live count");
+
+        for _ in 0..32 {
+            let value = engine
+                .call(&make, &[])
+                .expect("make call")
+                .expect("bytes result");
+            assert_eq!(value.as_bytes_with_len(), Some(b"A\0B".as_slice()));
+        }
+
+        let after = engine
+            .call(&live, &[])
+            .expect("live after")
+            .expect("live result")
+            .as_int()
+            .expect("integer live count");
+        assert_eq!(after, before, "managed JIT returns leaked ARC references");
     }
 
     #[test]
@@ -2425,6 +3707,69 @@ mod tests {
     }
 
     #[test]
+    fn hosted_generation_initializes_dynamic_globals_before_publication() {
+        let mut engine = OriEngine::new(OriConfig::default());
+        let first_source = "module app.globals\n\nvar values: list[int] = [11, 12]\n\npublic first() -> int\n    return values[0]\nend\n";
+        let first = engine
+            .compile_source("globals.orl", first_source)
+            .expect("compile first global generation");
+        assert!(first.accepted);
+        let first_handle = engine
+            .function("globals.orl", "first")
+            .expect("resolve first generation getter");
+        assert!(matches!(
+            engine.call(&first_handle, &[]),
+            Ok(Some(OriValue::Int(11)))
+        ));
+
+        let second_source = "module app.globals\n\nvar values: list[int] = [21, 22]\n\npublic first() -> int\n    return values[0]\nend\n";
+        let second = engine
+            .compile_source("globals.orl", second_source)
+            .expect("compile replacement global generation");
+        assert!(second.accepted);
+        assert!(matches!(
+            engine.call(&first_handle, &[]),
+            Err(OriEmbedError::StaleFunctionHandle { .. })
+        ));
+        let second_handle = engine
+            .function("globals.orl", "first")
+            .expect("resolve replacement getter");
+        assert!(matches!(
+            engine.call(&second_handle, &[]),
+            Ok(Some(OriValue::Int(21)))
+        ));
+    }
+
+    #[test]
+    fn failed_global_initialization_preserves_the_live_generation() {
+        let mut engine = OriEngine::new(OriConfig::default());
+        engine
+            .compile_source(
+                "global_init_failure.orl",
+                "module app.globals\n\nvar values: list[int] = [11]\n\npublic first() -> int\n    return values[0]\nend\n",
+            )
+            .expect("compile healthy generation");
+        let live = engine
+            .function("global_init_failure.orl", "first")
+            .expect("resolve healthy generation");
+
+        let error = engine
+            .compile_source(
+                "global_init_failure.orl",
+                "module app.globals\n\nbad_values() -> list[int]\n    const nested: list[list[int]] = [[21]]\n    return nested[4]\nend\n\nvar values: list[int] = bad_values()\n\npublic first() -> int\n    return values[0]\nend\n",
+            )
+            .expect_err("trapping global initializer must reject the candidate generation");
+        assert!(
+            error.to_string().contains("global initialization failed"),
+            "{error}"
+        );
+        assert!(matches!(
+            engine.call(&live, &[]),
+            Ok(Some(OriValue::Int(11)))
+        ));
+    }
+
+    #[test]
     fn function_handles_cannot_cross_sessions() {
         let source = "module app.player\n\npublic answer() -> int\n    return 42\nend\n";
         let mut first = OriEngine::new(OriConfig::default());
@@ -2605,6 +3950,95 @@ mod tests {
     }
 
     #[test]
+    fn callback_panic_becomes_a_structured_trap_and_does_not_escape_c_abi() {
+        let mut engine = OriEngine::new(OriConfig::default());
+        unsafe {
+            engine
+                .host_registry_mut()
+                .register_int_callback(
+                    "app.callback.panics",
+                    OriFunctionSignature {
+                        params: vec![OriScalarType::Int],
+                        return_type: Some(OriScalarType::Int),
+                    },
+                    std::ptr::null_mut(),
+                    callback_panics,
+                )
+                .expect("register panicking callback");
+        }
+        engine
+            .compile_source(
+                "callback_panic.orl",
+                "module app.callback\n\nextern host\n    panics(value: int) -> int\nend\n\npublic invoke(value: int) -> int\n    return panics(value)\nend\n\npublic healthy(value: int) -> int\n    return value + 1\nend\n",
+            )
+            .expect("compile panicking callback import");
+        let invoke = engine
+            .function("callback_panic.orl", "invoke")
+            .expect("resolve callback wrapper");
+        assert!(matches!(
+            engine.call(&invoke, &[OriValue::Int(7)]),
+            Err(OriEmbedError::FunctionTrap(OriExecutionError {
+                code: ORI_HOST_CALLBACK_PANICKED,
+                message,
+            })) if message.contains("intentional host callback panic")
+        ));
+
+        let healthy = engine
+            .function("callback_panic.orl", "healthy")
+            .expect("resolve healthy function");
+        assert!(matches!(
+            engine.call(&healthy, &[OriValue::Int(7)]),
+            Ok(Some(OriValue::Int(8)))
+        ));
+    }
+
+    #[test]
+    fn poisoned_callback_registry_recovers_without_aborting_later_calls() {
+        let states = callback_states();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = states
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            panic!("intentional callback registry poison");
+        }));
+
+        let mut recorded = 0_i64;
+        let mut engine = OriEngine::new(OriConfig::default());
+        unsafe {
+            engine
+                .host_registry_mut()
+                .register_int_callback(
+                    "app.callback.poison.record",
+                    OriFunctionSignature {
+                        params: vec![OriScalarType::Int],
+                        return_type: None,
+                    },
+                    (&mut recorded as *mut i64).cast(),
+                    callback_record_value,
+                )
+                .expect("register callback after poison");
+        }
+        engine
+            .compile_source(
+                "callback_poison.orl",
+                "module app.callback.poison\n\nextern host\n    record(value: int) -> void\nend\n\npublic invoke(value: int) -> void\n    record(value)\nend\n",
+            )
+            .expect("compile callback after poison");
+        let handle = engine
+            .function("callback_poison.orl", "invoke")
+            .expect("resolve callback after poison");
+        assert!(matches!(
+            engine.call(&handle, &[OriValue::Int(13)]),
+            Ok(None)
+        ));
+        assert_eq!(recorded, 13);
+        engine
+            .host_registry_mut()
+            .remove_callback("app.callback.poison.record")
+            .expect("remove recovered callback");
+    }
+
+    #[test]
     fn callback_can_reenter_the_same_ori_session() {
         let mut engine = OriEngine::new(OriConfig::default());
         let mut context = Box::new(ReentrantContext {
@@ -2772,7 +4206,9 @@ mod tests {
         engine
             .compile_source("fresh.orl", source)
             .expect("session remains usable after unload_all");
-        let fresh = engine.function("fresh.orl", "answer").expect("fresh handle");
+        let fresh = engine
+            .function("fresh.orl", "answer")
+            .expect("fresh handle");
         assert_eq!(
             engine.call(&fresh, &[]).expect("fresh call"),
             Some(OriValue::Int(42))

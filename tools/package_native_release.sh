@@ -104,11 +104,29 @@ if [ -e "$archive_path" ] && [ "$force" -eq 0 ]; then
     echo "archive already exists at $archive_path; pass --force to replace it" >&2
     exit 2
 fi
-if [ -e "$archive_path" ]; then
-    rm -f "$archive_path"
-fi
-
-tar -czf "$archive_path" -C "$(dirname -- "$package_root")" "$(basename -- "$package_root")"
+archive_temp=$(mktemp "${archive_path}.tmp.XXXXXX")
+cleanup_package_temps() {
+    if [ -n "${archive_temp:-}" ] && [ -e "$archive_temp" ]; then
+        rm -f -- "$archive_temp"
+    fi
+    if [ -n "${deb_temp_dir:-}" ] && [ -d "$deb_temp_dir" ]; then
+        rm -rf -- "$deb_temp_dir"
+    fi
+}
+trap cleanup_package_temps EXIT HUP INT TERM
+archive_epoch="${SOURCE_DATE_EPOCH:-0}"
+case "$archive_epoch" in
+    ''|*[!0-9]*)
+        echo "SOURCE_DATE_EPOCH must be a non-negative integer" >&2
+        exit 2
+        ;;
+esac
+python3 "$repo_root/tools/release/create_archive.py" \
+    --root "$package_root" \
+    --archive "$archive_temp" \
+    --epoch "$archive_epoch"
+mv -f -- "$archive_temp" "$archive_path"
+archive_temp=""
 
 printf 'native release package: %s\n' "$package_root"
 printf 'native release archive: %s\n' "$archive_path"
@@ -124,14 +142,23 @@ case "$(uname -s)" in
                 echo "deb already exists at $deb_path; pass --force to replace it" >&2
                 exit 2
             fi
+            deb_parent=$(dirname -- "$deb_path")
+            mkdir -p "$deb_parent"
+            deb_temp_dir=$(mktemp -d "$deb_parent/.ori-deb.XXXXXX")
+            deb_temp="$deb_temp_dir/package.deb"
             "$script_dir/package_deb.sh" \
                 --package-root "$package_root" \
-                --output "$deb_path" \
+                --output "$deb_temp" \
                 --version "$version" \
                 --arch amd64
+            mv -f -- "$deb_temp" "$deb_path"
+            rmdir "$deb_temp_dir"
+            deb_temp_dir=""
             printf 'native release deb: %s\n' "$deb_path"
         elif [ "$skip_deb" -eq 0 ]; then
             echo "warning: dpkg-deb not found; skipping .deb (install dpkg-dev to enable)" >&2
         fi
         ;;
 esac
+
+trap - EXIT HUP INT TERM

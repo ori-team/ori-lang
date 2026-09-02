@@ -8,6 +8,19 @@
 
 use std::os::raw::c_uchar;
 
+/// Return whether the native suite dispatcher selected `index`.
+#[no_mangle]
+pub extern "C" fn ori_test_selected(index: i64) -> c_uchar {
+    u8::from(test_selected_index(
+        std::env::var("ORI_TEST_INDEX").ok().as_deref(),
+        index,
+    )) as c_uchar
+}
+
+fn test_selected_index(raw: Option<&str>, index: i64) -> bool {
+    raw.and_then(|value| value.parse::<i64>().ok()) == Some(index)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ori_test_assert(condition: c_uchar, message: *const u8) {
     if condition == 0 {
@@ -138,4 +151,17 @@ pub unsafe extern "C" fn ori_test_assert_no_leaks(label: *const u8) -> i64 {
         }
     }
     live
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_selected_index;
+
+    #[test]
+    fn selector_matches_only_a_valid_requested_index() {
+        assert!(test_selected_index(Some("3"), 3));
+        assert!(!test_selected_index(Some("3"), 2));
+        assert!(!test_selected_index(Some("invalid"), 3));
+        assert!(!test_selected_index(None, 0));
+    }
 }

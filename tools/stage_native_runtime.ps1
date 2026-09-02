@@ -231,6 +231,17 @@ try {
         throw "Runtime artifact $artifact was not found after build."
     }
 
+    if ($SkipBuild) {
+        $runtimeSourceRoot = Join-Path $repoRoot "compiler/crates/ori-runtime"
+        $runtimeArtifactTime = (Get-Item -LiteralPath $source.Path).LastWriteTimeUtc
+        $newerSource = Get-ChildItem -LiteralPath $runtimeSourceRoot -File -Recurse |
+            Where-Object { $_.LastWriteTimeUtc -gt $runtimeArtifactTime } |
+            Select-Object -First 1
+        if ($null -ne $newerSource) {
+            throw "--skip-build refused: runtime source $($newerSource.FullName) is newer than $($source.Path); rebuild before staging."
+        }
+    }
+
     $cdylibCandidates = @(
         (Join-Path $targetRoot (Join-Path $Target (Join-Path $Profile $cdylibArtifact))),
         (Join-Path $targetRoot (Join-Path $Profile $cdylibArtifact))
@@ -241,6 +252,15 @@ try {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
             $cdylibSource = Resolve-Path -LiteralPath $candidate
             break
+        }
+    }
+    if ($SkipBuild -and ($null -ne $cdylibSource)) {
+        $runtimeCdylibTime = (Get-Item -LiteralPath $cdylibSource.Path).LastWriteTimeUtc
+        $newerCdylibSource = Get-ChildItem -LiteralPath (Join-Path $repoRoot "compiler/crates/ori-runtime") -File -Recurse |
+            Where-Object { $_.LastWriteTimeUtc -gt $runtimeCdylibTime } |
+            Select-Object -First 1
+        if ($null -ne $newerCdylibSource) {
+            throw "--skip-build refused: runtime source $($newerCdylibSource.FullName) is newer than $($cdylibSource.Path); rebuild before staging."
         }
     }
 
@@ -254,12 +274,15 @@ try {
 
     $dest = Join-Path $targetDir $artifact
     Copy-Item -LiteralPath $source -Destination $dest -Force
+    $runtimeSha256 = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLowerInvariant()
 
     if ($null -ne $cdylibSource) {
         $cdylibDest = Join-Path $targetDir $cdylibArtifact
         Copy-Item -LiteralPath $cdylibSource -Destination $cdylibDest -Force
+        $runtimeCdylibSha256 = (Get-FileHash -LiteralPath $cdylibDest -Algorithm SHA256).Hash.ToLowerInvariant()
         Write-Host "staged runtime cdylib: $cdylibDest"
     } else {
+        $runtimeCdylibSha256 = ""
         Write-Warning "runtime cdylib $cdylibArtifact was not found after build; JIT mode (ORI_USE_JIT=1) will not be available."
     }
 
@@ -268,6 +291,8 @@ try {
         target = $Target
         runtime = $artifact
         runtime_cdylib = if ($null -ne $cdylibSource) { $cdylibArtifact } else { "" }
+        runtime_sha256 = $runtimeSha256
+        runtime_cdylib_sha256 = $runtimeCdylibSha256
         ori_version = $oriVersion
         abi_version = $abiVersion
         profile = $Profile

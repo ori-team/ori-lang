@@ -96,12 +96,19 @@ if (-not (Test-Path -LiteralPath $PackageRoot -PathType Container)) {
 if ((Test-Path -LiteralPath $ArchivePath) -and -not $Overwrite) {
     throw "Archive already exists at $ArchivePath. Pass -Overwrite to replace it."
 }
-if (Test-Path -LiteralPath $ArchivePath) {
-    Remove-Item -LiteralPath $ArchivePath -Force
-}
-
 $PackageRoot = $PackageRoot.TrimEnd('\', '/')
-Compress-Archive -LiteralPath $PackageRoot -DestinationPath $ArchivePath -Force
+$archiveParent = Split-Path -Parent $ArchivePath
+$archiveStage = Join-Path $archiveParent (".ori-archive-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $archiveStage | Out-Null
+$stagedArchive = Join-Path $archiveStage (Split-Path -Leaf $ArchivePath)
+try {
+    Compress-Archive -LiteralPath $PackageRoot -DestinationPath $stagedArchive
+    Move-Item -LiteralPath $stagedArchive -Destination $ArchivePath -Force
+} finally {
+    if (Test-Path -LiteralPath $archiveStage) {
+        Remove-Item -LiteralPath $archiveStage -Recurse -Force
+    }
+}
 
 if (-not (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
     throw "failed to create archive at $ArchivePath"

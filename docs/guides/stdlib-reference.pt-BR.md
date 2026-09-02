@@ -17,7 +17,7 @@ Paths antigos como `.utils` e `.algorithms` existem apenas por compatibilidade.
 | I/O | `ori.io`, `ori.fs`, `ori.path` |
 | Texto e bytes | `ori.string`, `ori.string_view`, `ori.bytes`, `ori.convert` |
 | Collections e memória | `ori.list`, `ori.map`, `ori.set`, `ori.queue`, `ori.stack`, `ori.deque`, `ori.heap`, `ori.buffer`, `ori.slotmap`, `ori.span` |
-| Gráficos e janelas | `ori.window`, `ori.image` |
+| Gráficos e janelas | `ori.image` implementa BMP/PPM; `ori.window` é um stub desconectado, sem janela do SO, eventos reais ou apresentação de pixels |
 | Dados | `ori.json`, `ori.validate` |
 | Tempo e aleatoriedade | `ori.time`, `ori.random`, `ori.format` |
 | Processos | `ori.args`, `ori.config`, `ori.os`, `ori.process` |
@@ -40,6 +40,10 @@ end
 As assinaturas completas estão em [12-stdlib.md](../spec/12-stdlib.md). O site
 usa os dados gerados por `ori doc export`; `ori doc check` valida docs inline e
 sidecars `.oridoc`.
+
+Os helpers assíncronos de filesystem, conexão e TLS usam um pool nativo
+compartilhado e limitado (até quatro workers e 256 jobs na fila). Assim, uma
+operação bloqueante não cria uma thread por requisição.
 
 ## Posições de texto e bytes
 

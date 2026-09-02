@@ -52,7 +52,18 @@ fn ori_exe() -> PathBuf {
 }
 
 fn run_jit(main_orl: &std::path::Path) -> std::process::Output {
-    Command::new(ori_exe())
+    run_jit_at_opt_level(main_orl, None)
+}
+
+fn run_jit_at_opt_level(
+    main_orl: &std::path::Path,
+    opt_level: Option<&str>,
+) -> std::process::Output {
+    let mut command = Command::new(ori_exe());
+    if let Some(opt_level) = opt_level {
+        command.env("ORI_OPT", opt_level);
+    }
+    command
         .arg("run")
         .arg(main_orl)
         .env("ORI_USE_JIT", "1")
@@ -155,6 +166,208 @@ end
     assert!(
         stdout.contains("answer=42"),
         "expected `answer=42` in stdout, got: {stdout}"
+    );
+}
+
+#[test]
+fn jit_optimizer_keeps_unused_integer_division_trap() {
+    let dir = TestDir::new("jit_unused_division");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const unused: int = 1 / 0
+    io.print("unreachable")
+end
+"#,
+    );
+
+    let output = run_jit(&dir.path("main.orl"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "JIT must preserve an unused division trap, got stdout={:?} stderr={stderr}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        stderr.contains("ori integer division or remainder by zero"),
+        "unexpected JIT trap diagnostic: {stderr}"
+    );
+}
+
+#[test]
+fn jit_optimizer_keeps_remaining_traps_at_every_opt_level() {
+    let cases = [
+        (
+            "remainder",
+            r#"module app.main
+
+import ori.io = io
+
+main()
+    var divisor: int = 0
+    const unused: int = 1 % divisor
+    io.print("unreachable")
+end
+"#,
+            "ori integer division or remainder by zero",
+        ),
+        (
+            "shift",
+            r#"module app.main
+
+import ori.io = io
+
+main()
+    var count: int = 64
+    const unused: int = 1 << count
+    io.print("unreachable")
+end
+"#,
+            "ori shift count out of range",
+        ),
+        (
+            "index",
+            r#"module app.main
+
+import ori.io = io
+
+main()
+    const values: list[int] = [1]
+    const unused: int = values[2]
+    io.print("unreachable")
+end
+"#,
+            "ori list index out of bounds",
+        ),
+        (
+            "field_contract",
+            r#"module app.main
+
+import ori.io = io
+
+struct Positive
+    value: int if it > 0
+end
+
+main()
+    const unused: Positive = Positive { value: 0 }
+    io.print("unreachable")
+end
+"#,
+            "contract.field_violation",
+        ),
+    ];
+
+    for opt_level in ["none", "default", "aggressive"] {
+        for (case_name, source, expected_diagnostic) in cases {
+            let dir = TestDir::new(&format!("jit_unused_{case_name}_{opt_level}"));
+            dir.write("main.orl", source);
+            let output = run_jit_at_opt_level(&dir.path("main.orl"), Some(opt_level));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !output.status.success(),
+                "JIT must preserve `{case_name}` at ORI_OPT={opt_level}, stdout={:?}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            assert!(
+                stderr.contains(expected_diagnostic),
+                "unexpected `{case_name}` diagnostic at ORI_OPT={opt_level}: {stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn jit_aggressive_inlining_preserves_call_boundaries() {
+    let dir = TestDir::new("jit_aggressive_inline_boundaries");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+var current: int = 1
+var calls: int = 0
+
+change() -> int
+    current = 2
+    return 0
+end
+
+produce() -> int
+    calls = calls + 1
+    return 4
+end
+
+combine(first: int, second: int) -> int
+    return first + change() + second
+end
+
+twice(value: int) -> int
+    return value + value
+end
+
+positive(value: int if it > 0) -> int
+    return value
+end
+
+main()
+    io.println(f"{combine(current, current)}")
+    io.println(f"{twice(produce())}")
+    io.println(f"{calls}")
+    io.println(f"{positive(0)}")
+end
+"#,
+    );
+
+    let output = run_jit_at_opt_level(&dir.path("main.orl"), Some("aggressive"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "parameter contract must still abort under JIT aggressive inlining"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "2\n8\n1\n"
+    );
+    assert!(
+        stderr.contains("contract.param_violation"),
+        "aggressive inlining erased the parameter contract: {stderr}"
+    );
+}
+
+#[test]
+fn jit_aggressive_inlining_keeps_unused_trapping_arguments() {
+    let dir = TestDir::new("jit_aggressive_inline_unused_trap");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+ignore(value: int) -> int
+    return 1
+end
+
+main()
+    io.print(f"{ignore(1 / 0)}")
+end
+"#,
+    );
+
+    let output = run_jit_at_opt_level(&dir.path("main.orl"), Some("aggressive"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "unused trapping argument was omitted"
+    );
+    assert!(
+        stderr.contains("ori integer division or remainder by zero"),
+        "unexpected JIT trap diagnostic: {stderr}"
     );
 }
 
@@ -263,17 +476,20 @@ end
 "#,
     );
 
-    let output = run_jit(&dir.path("main.orl"));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "ori run (JIT) failed: status={:?} stderr={stderr}",
-        output.status
-    );
-    assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        "destroy:jit-resource\ndone\n"
-    );
+    for opt_level in ["none", "default", "aggressive"] {
+        let output = run_jit_at_opt_level(&dir.path("main.orl"), Some(opt_level));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "ori run (JIT) failed at ORI_OPT={opt_level}: status={:?} stderr={stderr}",
+            output.status
+        );
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            "destroy:jit-resource\ndone\n",
+            "custom destructor changed at ORI_OPT={opt_level}"
+        );
+    }
 }
 
 /// Guarded cases must fall through to the next arm when the guard is false

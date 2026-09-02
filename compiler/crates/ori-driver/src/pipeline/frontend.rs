@@ -147,17 +147,7 @@ pub(super) fn check_loaded_sources(
                 validate_doc_tags(source, &mut local_sink);
                 let namespace = namespace_of(&source.ast);
                 let mut checker = ori_types::check::Checker::new(
-                    &resolved.def_map,
-                    &resolved.func_sigs,
-                    &resolved.value_sigs,
-                    &resolved.struct_sigs,
-                    &resolved.enum_sigs,
-                    &resolved.trait_sigs,
-                    &resolved.impl_sigs,
-                    &resolved.type_alias_sigs,
-                    &resolved.newtype_sigs,
-                    &resolved.deprecated_sigs,
-                    &resolved.reexports,
+                    resolved,
                     &namespace,
                     source.file_id,
                     &mut local_sink,
@@ -176,22 +166,8 @@ pub(super) fn check_loaded_sources(
         for source in loaded {
             validate_doc_tags(source, sink);
             let namespace = namespace_of(&source.ast);
-            let mut checker = ori_types::check::Checker::new(
-                &resolved.def_map,
-                &resolved.func_sigs,
-                &resolved.value_sigs,
-                &resolved.struct_sigs,
-                &resolved.enum_sigs,
-                &resolved.trait_sigs,
-                &resolved.impl_sigs,
-                &resolved.type_alias_sigs,
-                &resolved.newtype_sigs,
-                &resolved.deprecated_sigs,
-                &resolved.reexports,
-                &namespace,
-                source.file_id,
-                sink,
-            );
+            let mut checker =
+                ori_types::check::Checker::new(resolved, &namespace, source.file_id, sink);
             checker.check_file(&source.ast);
         }
     }

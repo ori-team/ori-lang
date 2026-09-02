@@ -2,8 +2,9 @@
 
 > **Status:** reaberto por decisão de 2026-08-09; execução posterior às
 > fundações de linguagem/DX prioritárias.  
-> **Baseline:** path/git/registry local ou HTTP, publish, cache e lockfile já
-> existem; não há serviço oficial operado nem política completa de supply chain.
+> **Baseline:** path/git/registry local ou HTTPS, publish imutável, cache
+> verificado e lockfile v2 já existem; não há serviço oficial operado nem
+> política completa de autenticidade/transparência da supply chain.
 
 ## 1. Resultado desejado
 
@@ -17,10 +18,11 @@ cliente, validação e uma implementação de referência testável.
 
 - ausência de catálogo oficial/discovery;
 - autenticação, ownership de nomes e recuperação de conta indefinidos;
-- checksums/assinaturas/provenance de pacotes incompletos;
+- digest SHA-256 garante integridade, mas assinatura/proveniência de identidade
+  do publicador ainda não existe;
 - política de yanking, retenção, moderação e disponibilidade ausente;
 - sem canais stable/dev de toolchain ou versões lado a lado;
-- mirror/offline corporativo não formalizado;
+- restore offline do lock existe; mirror corporativo e política de retenção não;
 - `ori add/remove` ainda não oferece o fluxo diário esperado.
 
 ## 3. Fases
@@ -28,7 +30,7 @@ cliente, validação e uma implementação de referência testável.
 | ID | Entrega | Critério observável |
 |---|---|---|
 | **PKG-REG-1.0** | protocolo/schema v1 fechado | cliente e servidor de referência passam contract tests |
-| **PKG-REG-1.1** | integridade/provenance | lock registra digest; conteúdo alterado é rejeitado |
+| **PKG-REG-1.1** | integridade por conteúdo | **concluído:** lock v2 registra SHA-256; cache/registry alterados são rejeitados |
 | **PKG-REG-1.2** | `ori add/remove/search` | manifest/lock mudam atomicamente e possuem rollback |
 | **PKG-REG-1.3** | auth e ownership | token de escopo mínimo; colisão/transferência auditáveis |
 | **PKG-REG-1.4** | yank/retention/mirror | builds travados continuam reproduzíveis após yank |
@@ -39,10 +41,13 @@ cliente, validação e uma implementação de referência testável.
 ## 4. Segurança
 
 - publicação é imutável por versão;
-- upload tem limites, valida archive traversal e arquivos permitidos;
+- download limita 64 MiB comprimidos/256 MiB expandidos, 10.000 entradas e
+  profundidade 64; traversal, links, devices e colisão de case são recusados;
 - tokens nunca entram em lockfile/log;
 - resolver não executa scripts de pacote durante descoberta;
 - dependências Git registram commit exato;
+- `ori.lock` restaura o commit/registry exato, valida todos os bytes e aceita
+  `ori lock --locked --offline` sem rede quando o cache está íntegro;
 - SBOM/provenance são aditivos e versionados;
 - serviço segue threat model próprio antes de exposição pública.
 
@@ -52,7 +57,8 @@ cliente, validação e uma implementação de referência testável.
 - pacote corrompido, replay, nome tomado e token revogado;
 - publish concorrente e rollback de falha parcial;
 - mirror/offline e restore de backup;
-- lockfile idêntico em Linux/macOS/Windows;
+- lockfile idêntico em Linux/macOS/Windows; dependências locais registram path
+  relativo normalizado e digest, sem vazar o caminho absoluto da máquina;
 - teste sem rede após cache materializado.
 
 ## 6. Fora de escopo inicial

@@ -22,6 +22,11 @@ if [ -f "$repo/runtime/x86_64-unknown-linux-gnu/libori_runtime.a" ]; then
 fi
 
 # Prefer monorepo symlink packages/ori-sqlite, then ORI_SQLITE_ROOT, then Documentos default.
+smoke_root="$repo/packages/ori-web-session-sqlite/examples/smoke"
+if [ ! -d "$smoke_root" ]; then
+  echo "web_session_sqlite_smoke: SKIP (package fixture is not present)" >&2
+  exit 0
+fi
 if [ -n "${ORI_SQLITE_ROOT:-}" ]; then
   SQLITE_ROOT="$ORI_SQLITE_ROOT"
 elif [ -d "$repo/packages/ori-sqlite" ]; then
@@ -43,8 +48,10 @@ if [ ! -f "$SQLITE_ROOT/lib/x86_64-unknown-linux-gnu/libsqlite3.a" ]; then
   fi
 fi
 
-cd "$repo/packages/ori-web-session-sqlite/examples/smoke"
-rm -rf "${HOME}/.ori/packages/web" "${HOME}/.ori/packages/web_session_sqlite" "${HOME}/.ori/packages/sqlite" 2>/dev/null || true
+package_cache=$(mktemp -d "${TMPDIR:-/tmp}/ori-web-session-cache.XXXXXX")
+trap 'rm -rf -- "$package_cache"' EXIT HUP INT TERM
+export ORI_PACKAGE_CACHE="$package_cache"
+cd "$smoke_root"
 
 echo "== web_session_sqlite_smoke: $ORI_BIN run main.orl (AOT) =="
 out=$("$ORI_BIN" run main.orl 2>&1) || {

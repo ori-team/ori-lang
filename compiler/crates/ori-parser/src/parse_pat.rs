@@ -11,6 +11,19 @@ impl<'src> Parser<'src> {
     /// `parse_primary_expr`, which never consumes binary operators, so the
     /// `or` can only belong to the pattern.
     pub fn parse_pattern(&mut self) -> Option<Pattern> {
+        // Constructor and tuple patterns recurse through this entry point.
+        // Bound the recursion before descending into attacker-controlled
+        // source so malformed/generated input produces a diagnostic instead
+        // of overflowing the compiler stack.
+        if !self.enter_nesting() {
+            return None;
+        }
+        let parsed = self.parse_pattern_inner();
+        self.leave_nesting();
+        parsed
+    }
+
+    fn parse_pattern_inner(&mut self) -> Option<Pattern> {
         let first = self.parse_pattern_alternative()?;
         if !self.at(&TokenKind::Or) {
             return Some(first);

@@ -94,16 +94,25 @@ inferência menores e mensagens de erro mais claras.
 
 | Área | Status |
 |---|---|
-| Versão | **S3 `0.3.0`** · inferência B **`0.3.1`** · package/M1 **`0.3.2`** (Cargo) |
+| Versão | **S3 `0.3.0`** · inferência B **`0.3.1`** · workspace **`0.3.8-dev`** (release mais recente `v0.3.7`) |
 | Estabilidade | pre-1.0; S3 quebra sintaxe pré-0.3 |
 | Compilador | workspace Rust em `compiler/` |
 | Backend nativo | Cranelift AOT + `ori-runtime`; ABI `ori-native-abi-1` |
 | `ori run` | JIT por padrão com cdylib |
-| `ori compile` / `ori test` | AOT; **SystemLinker** default |
+| `ori compile` / `ori test` | AOT; `rust-lld` empacotado primeiro, depois linker do SO |
 | Biblioteca padrão | Layer 1 + `.orl`; API canônica `ori.X` |
 | Docs | inglês primário + português paralelo · [examples/](examples/) |
 | Foco agora | Linguagem, docs/exemplos, performance — não marketing multi-OS |
 | Editores | VS Code + Zed **locais** (sem loja) |
+
+> **Status da release de desenvolvimento:** a auditoria de 2026-08-24
+> encontrou defeitos P0/P1 de semântica, memória, empacotamento e ciclo de vida
+> no baseline `0.3.8-dev`. A onda atual fechou canais limitados, o pool
+> compartilhado de I/O bloqueante, attributes fail-closed e o construtor de
+> handle nulo tipado. Ainda faltam na linguagem: isolamento completo de tasks,
+> chaves recursivas de collections, lifetime/afinidade de handles, prova total
+> de ownership async no HIR e a matriz FFI hostil em várias plataformas.
+> Ordem e evidências: [auditoria de implementação](docs/planning/roadmap-code-audit-performance-architecture.md).
 
 S3: [CHANGELOG.md](CHANGELOG.md) `[0.3.0]`. Inferência: `[0.3.1]`. Package sem
 Rust: `[0.3.2]`. Migrar: `ori migrate-syntax`.
@@ -232,17 +241,25 @@ A CLI `ori` é implementada em `compiler/crates/ori-driver`.
 | `ori doc file <file.orl>` | extrai comentários de documentação como Markdown ou HTML |
 | `ori doc export` | exporta símbolos stdlib, diagnósticos e keywords como JSON |
 | `ori doctor` | reporta saúde da stdlib, runtime, linker, target e JIT |
-| `ori explain <code]` | explica um código de diagnóstico |
+| `ori explain <code>` | explica um código de diagnóstico |
 | `ori summary [path]` | imprime entry file, módulos, imports e contagem de diagnósticos |
-| `ori build <file.orl>` | emite C pelo backend de debug |
+| `ori debug <file.orl>` | executa o debugger cooperativo; `--dap` serve DAP via stdio |
+| `ori build <file.orl>` | compila pelo backend nativo |
+| `ori emit c <file.orl>` | emite C pelo backend parcial de debug |
 | `ori lex <file.orl>` | imprime tokens para debug do compilador |
 | `ori parse <file.orl>` | imprime AST para debug do compilador |
 | `ori install <name> --path <dir>` | instala pacote local no cache |
 | `ori install name[@ver]` | instala de `ORI_REGISTRY` |
+| `ori install github.com/org/repo` | clona e instala um pacote Git no cache |
 | `ori get [path]` | busca deps git/path do manifesto |
-| `ori lock [path]` | resolve dependências e grava um snapshot reprodutível em `ori.lock` (`--locked` apenas valida) |
+| `ori lock [path]` | resolve dependências e grava um snapshot em `ori.lock` (`--locked` detecta divergência da resolução atual; digests de conteúdo e restauração dirigida pelo lock continuam abertos em `AUD-PKG-2`) |
 | `ori publish <path>` | publica em `ORI_REGISTRY` (árvore de arquivos ou HTTP) |
 | `ori migrate-syntax <paths…>` | reescreve sintaxe pré-S3 → S3 |
+
+O consumo remoto de packages é experimental. `AUD-PKG-1/2` agora impõem digest,
+contenção da extração e identidade de fontes no lock; use HTTPS e confira a
+origem do registry. Testes herméticos do registry HTTP e estresse de release
+multiplataforma continuam como QA P2.
 
 Variáveis úteis:
 
@@ -264,8 +281,10 @@ A matriz completa de ambiente está em [AGENTS.md](AGENTS.md).
 Os pacotes mantêm namespaces isolados. Imports locais ficam dentro do pacote
 que os declara; módulos de dependências usam o prefixo qualificado do pacote,
 como `math.format`. Assim, duas dependências podem ter um módulo `format` sem
-colisão. `ori lock` registra o caminho, a versão do registry ou a revisão Git
-exata usada no build.
+colisão. `ori lock` registra um snapshot do caminho, da versão do registry ou da
+revisão Git resolvida. O resolver atual ainda resolve as fontes novamente antes
+de validar o lock; restauração dirigida pelo lock e digests de conteúdo estão
+abertos em `AUD-PKG-2`.
 
 ## Visão geral da linguagem
 

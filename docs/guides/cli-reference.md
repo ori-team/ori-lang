@@ -93,8 +93,9 @@ Ori never frees it. See [../spec/19-abi.md](../spec/19-abi.md) §8.3b.
 | `ori summary` | Print entry, namespaces, and imports of the project |
 | `ori install <name> --path .` | Install a package into the local cache |
 | `ori get` | Fetch git/path dependencies into the local cache |
-| `ori lock [path]` | Resolve dependencies and write `ori.lock`; use `--locked` to validate only |
-| `ori publish` | Publish a package to the registry in `ORI_REGISTRY` |
+| `ori lock [path]` | Resolve dependencies and atomically write digest-bearing `ori.lock` v2 |
+| `ori lock [path] --locked --offline` | Restore the exact lock from verified cache/path content without network |
+| `ori publish` | Immutably publish a package and SHA-256 archive digest to `ORI_REGISTRY` |
 | `ori update` | Update the toolchain to the latest published release |
 
 Manifest fields are specified in
@@ -118,7 +119,7 @@ Manifest fields are specified in
 |---|---|
 | `ori fmt <path> [-w / --write] [-c / --check]` | Format a source file or recursively format directory (`-w` in-place, `-c` check) |
 | `ori lint <path>` | Run semantic code linter for unused variables and code redundancy |
-| `ori daemon [--stdio]` | Run persistent JSON-RPC 2.0 compiler daemon service over stdio for instant evaluation/formatting |
+| `ori daemon [--stdio]` | Run the experimental process-persistent stdio prototype; it rebuilds fresh pipelines and is not yet a complete/cached JSON-RPC service |
 | `ori bindgen <header.h> [--module <name>]` | Generate low-level Ori `extern "c"` bindings and `@repr("C")` structs from C header |
 | `ori migrate-syntax <path>` | Best-effort rewrite of pre-S3 syntax in `.orl` files |
 
@@ -186,6 +187,19 @@ it.
 The C backend is a debug aid, not a semantic reference — the native backend is
 ([../spec/14-backend-support.md](../spec/14-backend-support.md)).
 
+Maintainers can compile and run a hostile `check` message through the generated
+C under AddressSanitizer and UndefinedBehaviorSanitizer:
+
+```sh
+cd compiler
+cargo test -p ori-driver --test c_backend_sanitizers -- --nocapture
+```
+
+The test probes `clang` and then `cc`. It prints an explicit `SKIP` when neither
+compiler can compile and run with both sanitizers. Set `ORI_C_SANITIZER_CC` to
+one compiler executable, or set `ORI_REQUIRE_C_SANITIZERS=1` to turn missing
+sanitizer support into a gate failure (recommended in CI).
+
 ## Program debugging
 
 Use the cooperative native debugger for native programs, including async
@@ -228,8 +242,10 @@ bindings and closure captures with source lines.
 | Variable | Effect |
 |---|---|
 | `ORI_PACKAGE_CACHE` | Where packages are installed (default `~/.ori/packages`) |
-| `ORI_REGISTRY` | Registry URL used by `ori publish` / `ori install` |
+| `ORI_REGISTRY` | Registry path or HTTPS URL used by `ori publish` / `ori install` |
 | `ORI_REGISTRY_TOKEN` | Auth token for the registry |
+| `ORI_OFFLINE` | Refuse package network access and require verified cache entries |
+| `ORI_ALLOW_INSECURE_REGISTRY` | Allow plain HTTP only for an explicitly trusted local-development registry |
 | `ORI_STDLIB_ROOT` | Override the stdlib location |
 | `ORI_RUNTIME_LIB` / `ORI_RUNTIME_CDYLIB` | Point at a specific staged native runtime |
 | `ORI_REQUIRE_PACKAGED_RUNTIME` | Fail instead of falling back to a Cargo build of the runtime |
@@ -241,7 +257,11 @@ bindings and closure captures with source lines.
 `--no-color` is accepted by every command and disables ANSI output.
 
 When a project contains `ori.lock`, dependency resolution is checked before
-compilation. Imports remain package-scoped: use a dependency's qualified module
+compilation. The lock pins normalized source identity, exact Git revision, and
+the SHA-256 of every dependency tree; changed bytes fail instead of being
+silently re-resolved. Registry HTTPS is mandatory by default, published
+versions are immutable, and archive downloads/extraction have hard byte, entry,
+path, and depth limits. Imports remain package-scoped: use a dependency's qualified module
 name (`demo.math`) rather than relying on a bare module search across packages.
 Native rebuilds report the number of changed source modules. Rebuilds keep
 unchanged source objects in `.ori/modules/` and link them with regenerated

@@ -74,7 +74,6 @@ pub fn collect_module_const_evaluations(
         def_map,
         declarations,
         evaluations: HashMap::new(),
-        stack: Vec::new(),
     };
     let ids: Vec<DefId> = evaluator.declarations.keys().copied().collect();
     for id in ids {
@@ -142,7 +141,6 @@ struct ModuleConstEvaluator<'a> {
     def_map: &'a DefMap,
     declarations: HashMap<DefId, ConstDeclaration>,
     evaluations: HashMap<DefId, ConstEvaluation>,
-    stack: Vec<DefId>,
 }
 
 impl ModuleConstEvaluator<'_> {
@@ -150,89 +148,145 @@ impl ModuleConstEvaluator<'_> {
         if let Some(value) = self.evaluations.get(&def_id) {
             return value.clone();
         }
-        if let Some(cycle_start) = self.stack.iter().position(|current| *current == def_id) {
-            let cycle = self.stack[cycle_start..]
-                .iter()
-                .chain(std::iter::once(&def_id))
-                .map(|id| self.def_map.get(*id).name.as_str())
-                .collect::<Vec<_>>()
-                .join(" -> ");
-            let (file_id, span) = self
-                .declarations
-                .get(&def_id)
-                .map(|declaration| (declaration.context.file_id, self.def_map.get(def_id).span))
-                .unwrap_or((fallback_file_id, self.def_map.get(def_id).span));
-            return Err(failure(
-                ConstEvalFailureKind::Cycle,
-                file_id,
-                span,
-                format!("compile-time constant cycle: {cycle}"),
-            ));
+        // Definitions form a dependency graph, not a Rust call tree. Keep an
+        // explicit DFS stack and memoize each completed node so long generated
+        // chains and cycles remain bounded by heap memory and run in linear
+        // time for the common one-reference-per-definition shape.
+        let mut active = vec![def_id];
+        let mut active_positions = HashMap::from([(def_id, 0usize)]);
+
+        while let Some(&current) = active.last() {
+            if self.evaluations.contains_key(&current) {
+                active_positions.remove(&current);
+                active.pop();
+                continue;
+            }
+
+            let Some(declaration) = self.declarations.get(&current).cloned() else {
+                self.evaluations.insert(
+                    current,
+                    Err(failure(
+                        ConstEvalFailureKind::UnsupportedExpression,
+                        fallback_file_id,
+                        self.def_map.get(current).span,
+                        "compile-time constant has no source declaration",
+                    )),
+                );
+                continue;
+            };
+            let expression = match declaration.expression {
+                Ok(expression) => expression,
+                Err(span) => {
+                    self.evaluations.insert(
+                        current,
+                        Err(failure(
+                            ConstEvalFailureKind::UnsupportedExpression,
+                            declaration.context.file_id,
+                            span,
+                            "module constant initializer uses a runtime-only expression",
+                        )),
+                    );
+                    continue;
+                }
+            };
+            if declaration.declared_scalar == DeclaredScalar::Unsupported {
+                self.evaluations.insert(
+                    current,
+                    Err(failure(
+                        ConstEvalFailureKind::TypeMismatch,
+                        declaration.context.file_id,
+                        self.def_map.get(current).span,
+                        "only integer and boolean module constants have CT-0 values",
+                    )),
+                );
+                continue;
+            }
+
+            let mut pending_dependency = None;
+            let mut cycle = None;
+            let mut result =
+                evaluate_expression(&expression, declaration.context.file_id, &mut |name| {
+                    let dependency = self.resolve_reference_id(name, &declaration.context)?;
+                    if let Some(value) = self.evaluations.get(&dependency) {
+                        return value.clone();
+                    }
+                    if let Some(&cycle_start) = active_positions.get(&dependency) {
+                        cycle = Some((dependency, cycle_start));
+                    } else {
+                        pending_dependency = Some(dependency);
+                    }
+                    // This value is internal control flow. The evaluator result
+                    // is ignored whenever either marker above is set.
+                    Err(failure(
+                        ConstEvalFailureKind::UnsupportedExpression,
+                        declaration.context.file_id,
+                        name.span,
+                        "compile-time dependency is pending",
+                    ))
+                });
+
+            if let Some((cycle_def_id, cycle_start)) = cycle {
+                let cycle_path = active[cycle_start..]
+                    .iter()
+                    .chain(std::iter::once(&cycle_def_id))
+                    .map(|id| self.def_map.get(*id).name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" -> ");
+                let cycle_declaration = self.declarations.get(&cycle_def_id);
+                let file_id = cycle_declaration
+                    .map(|item| item.context.file_id)
+                    .unwrap_or(fallback_file_id);
+                self.evaluations.insert(
+                    current,
+                    Err(failure(
+                        ConstEvalFailureKind::Cycle,
+                        file_id,
+                        self.def_map.get(cycle_def_id).span,
+                        format!("compile-time constant cycle: {cycle_path}"),
+                    )),
+                );
+                continue;
+            }
+
+            if let Some(dependency) = pending_dependency {
+                active_positions.insert(dependency, active.len());
+                active.push(dependency);
+                continue;
+            }
+
+            if let Ok(value) = result {
+                let matches_declaration = matches!(
+                    (declaration.declared_scalar, value),
+                    (DeclaredScalar::Int, CompileTimeValue::Int(_))
+                        | (DeclaredScalar::Bool, CompileTimeValue::Bool(_))
+                );
+                if !matches_declaration {
+                    result = Err(failure(
+                        ConstEvalFailureKind::TypeMismatch,
+                        declaration.context.file_id,
+                        expression.span(),
+                        "compile-time value does not match the constant's declared type",
+                    ));
+                }
+            }
+            self.evaluations.insert(current, result);
         }
 
-        let Some(declaration) = self.declarations.get(&def_id).cloned() else {
-            return Err(failure(
+        self.evaluations.get(&def_id).cloned().unwrap_or_else(|| {
+            Err(failure(
                 ConstEvalFailureKind::UnsupportedExpression,
                 fallback_file_id,
                 self.def_map.get(def_id).span,
-                "compile-time constant has no source declaration",
-            ));
-        };
-        let expression = match declaration.expression {
-            Ok(expression) => expression,
-            Err(span) => {
-                let result = Err(failure(
-                    ConstEvalFailureKind::UnsupportedExpression,
-                    declaration.context.file_id,
-                    span,
-                    "module constant initializer uses a runtime-only expression",
-                ));
-                self.evaluations.insert(def_id, result.clone());
-                return result;
-            }
-        };
-        if declaration.declared_scalar == DeclaredScalar::Unsupported {
-            let result = Err(failure(
-                ConstEvalFailureKind::TypeMismatch,
-                declaration.context.file_id,
-                self.def_map.get(def_id).span,
-                "only integer and boolean module constants have CT-0 values",
-            ));
-            self.evaluations.insert(def_id, result.clone());
-            return result;
-        }
-
-        self.stack.push(def_id);
-        let mut result =
-            evaluate_expression(&expression, declaration.context.file_id, &mut |name| {
-                self.evaluate_reference(name, &declaration.context)
-            });
-        self.stack.pop();
-
-        if let Ok(value) = result {
-            let matches_declaration = matches!(
-                (declaration.declared_scalar, value),
-                (DeclaredScalar::Int, CompileTimeValue::Int(_))
-                    | (DeclaredScalar::Bool, CompileTimeValue::Bool(_))
-            );
-            if !matches_declaration {
-                result = Err(failure(
-                    ConstEvalFailureKind::TypeMismatch,
-                    declaration.context.file_id,
-                    expression.span(),
-                    "compile-time value does not match the constant's declared type",
-                ));
-            }
-        }
-        self.evaluations.insert(def_id, result.clone());
-        result
+                "compile-time constant evaluation did not complete",
+            ))
+        })
     }
 
-    fn evaluate_reference(
-        &mut self,
+    fn resolve_reference_id(
+        &self,
         name: &QualifiedName,
         context: &ConstContext,
-    ) -> ConstEvaluation {
+    ) -> Result<DefId, ConstEvalFailure> {
         let Some(def_id) = resolve_name(name, &context.namespace, &context.aliases, self.def_map)
         else {
             return Err(failure(
@@ -263,7 +317,7 @@ impl ModuleConstEvaluator<'_> {
                 format!("compile-time constant `{name}` is private"),
             ));
         }
-        self.evaluate_definition(def_id, context.file_id)
+        Ok(def_id)
     }
 }
 

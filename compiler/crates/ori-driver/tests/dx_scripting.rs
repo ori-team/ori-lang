@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use ori_driver::pipeline::run_lint_source;
+
 static NEXT_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TestDir {
@@ -90,8 +92,14 @@ end
         output.status.success(),
         "JIT run with args failed:\nstdout: {stdout}\nstderr: {stderr}"
     );
-    assert!(stdout.contains("hello"), "stdout should contain 'hello': {stdout}");
-    assert!(stdout.contains("world"), "stdout should contain 'world': {stdout}");
+    assert!(
+        stdout.contains("hello"),
+        "stdout should contain 'hello': {stdout}"
+    );
+    assert!(
+        stdout.contains("world"),
+        "stdout should contain 'world': {stdout}"
+    );
 }
 
 #[test]
@@ -134,8 +142,14 @@ end
         output.status.success(),
         "AOT run with args failed:\nstdout: {stdout}\nstderr: {stderr}"
     );
-    assert!(stdout.contains("foo"), "stdout should contain 'foo': {stdout}");
-    assert!(stdout.contains("bar"), "stdout should contain 'bar': {stdout}");
+    assert!(
+        stdout.contains("foo"),
+        "stdout should contain 'foo': {stdout}"
+    );
+    assert!(
+        stdout.contains("bar"),
+        "stdout should contain 'bar': {stdout}"
+    );
 }
 
 #[test]
@@ -155,7 +169,10 @@ fn e2e_fmt_check_and_write_directory() {
         .output()
         .expect("failed to spawn ori fmt --check");
 
-    assert!(!check_out.status.success(), "fmt --check should fail on unformatted files");
+    assert!(
+        !check_out.status.success(),
+        "fmt --check should fail on unformatted files"
+    );
 
     // 2. Format in-place with --write
     let write_out = Command::new(ori_exe())
@@ -176,7 +193,10 @@ fn e2e_fmt_check_and_write_directory() {
         .expect("failed to spawn ori fmt --check second time");
 
     let stderr = String::from_utf8_lossy(&recheck_out.stderr);
-    assert!(recheck_out.status.success(), "fmt --check after --write should succeed: {stderr}");
+    assert!(
+        recheck_out.status.success(),
+        "fmt --check after --write should succeed: {stderr}"
+    );
 }
 
 #[test]
@@ -203,9 +223,18 @@ end
         .expect("failed to spawn ori lint");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unused variable") || stderr.contains("lint.unused_variable"), "should report unused variable in {stderr}");
-    assert!(stderr.contains("boolean comparison") || stderr.contains("lint.redundant_bool_comparison"), "should report redundant comparison in {stderr}");
-    assert!(stderr.contains("double negation") || stderr.contains("lint.double_negation"), "should report double negation in {stderr}");
+    assert!(
+        stderr.contains("unused variable") || stderr.contains("lint.unused_variable"),
+        "should report unused variable in {stderr}"
+    );
+    assert!(
+        stderr.contains("boolean comparison") || stderr.contains("lint.redundant_bool_comparison"),
+        "should report redundant comparison in {stderr}"
+    );
+    assert!(
+        stderr.contains("double negation") || stderr.contains("lint.double_negation"),
+        "should report double negation in {stderr}"
+    );
 }
 
 #[test]
@@ -294,8 +323,14 @@ end
         output.status.success(),
         "buffer helpers failed:\nstdout: {stdout}\nstderr: {stderr}"
     );
-    assert!(stdout.contains("200"), "stdout should contain 200: {stdout}");
-    assert!(stdout.contains("-99"), "stdout should contain -99: {stdout}");
+    assert!(
+        stdout.contains("200"),
+        "stdout should contain 200: {stdout}"
+    );
+    assert!(
+        stdout.contains("-99"),
+        "stdout should contain -99: {stdout}"
+    );
 }
 
 #[test]
@@ -353,7 +388,7 @@ end
 }
 
 #[test]
-fn e2e_extensible_namespaced_attributes() {
+fn e2e_rejects_unsupported_namespaced_attributes() {
     let dir = TestDir::new("meta_attrs");
     dir.write(
         "main.orl",
@@ -364,15 +399,11 @@ imports
 end
 
 @editor.inspect
-@editor.range(min: 0, max: 100)
-@schema.table(name: "users")
 public struct User
     id: int
     name: string
 end
 
-@route.get(path: "/api/hello")
-@auth.required
 public handle_req() -> string
     return "ok"
 end
@@ -384,7 +415,7 @@ end
     );
 
     let output = Command::new(ori_exe())
-        .arg("run")
+        .arg("check")
         .arg(dir.path("main.orl"))
         .env("ORI_USE_JIT", "1")
         .stdin(Stdio::null())
@@ -396,10 +427,13 @@ end
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success(),
-        "meta attrs test failed:\nstdout: {stdout}\nstderr: {stderr}"
+        !output.status.success(),
+        "unsupported metadata must fail closed:\nstdout: {stdout}\nstderr: {stderr}"
     );
-    assert!(stdout.contains("ok"), "stdout should contain ok: {stdout}");
+    assert!(
+        stderr.contains("attr.unknown"),
+        "missing attr.unknown diagnostic: {stderr}"
+    );
 }
 
 #[test]
@@ -466,9 +500,18 @@ end
         output.status.success(),
         "runtime ctrl test failed:\nstdout: {stdout}\nstderr: {stderr}"
     );
-    assert!(stdout.contains("true"), "stdout should contain true: {stdout}");
-    assert!(stdout.contains("111"), "stdout should contain 111: {stdout}");
-    assert!(stdout.contains("333"), "stdout should contain 333: {stdout}");
+    assert!(
+        stdout.contains("true"),
+        "stdout should contain true: {stdout}"
+    );
+    assert!(
+        stdout.contains("111"),
+        "stdout should contain 111: {stdout}"
+    );
+    assert!(
+        stdout.contains("333"),
+        "stdout should contain 333: {stdout}"
+    );
 }
 
 #[test]
@@ -515,9 +558,18 @@ end
         output.status.success(),
         "unicode text test failed:\nstdout: {stdout}\nstderr: {stderr}"
     );
-    assert!(stdout.contains("true"), "stdout should contain true: {stdout}");
-    assert!(stdout.contains("false"), "stdout should contain false: {stdout}");
-    assert!(stdout.contains("grüssen"), "stdout should contain grüssen: {stdout}");
+    assert!(
+        stdout.contains("true"),
+        "stdout should contain true: {stdout}"
+    );
+    assert!(
+        stdout.contains("false"),
+        "stdout should contain false: {stdout}"
+    );
+    assert!(
+        stdout.contains("grüssen"),
+        "stdout should contain grüssen: {stdout}"
+    );
 }
 
 #[test]
@@ -568,11 +620,26 @@ end
         output.status.success(),
         "web foundation test failed:\nstdout: {stdout}\nstderr: {stderr}"
     );
-    assert!(stdout.contains("POST"), "stdout should contain POST: {stdout}");
-    assert!(stdout.contains("/api/data"), "stdout should contain /api/data: {stdout}");
-    assert!(stdout.contains("payload"), "stdout should contain payload: {stdout}");
-    assert!(stdout.contains("200"), "stdout should contain 200: {stdout}");
-    assert!(stdout.contains("hello response"), "stdout should contain hello response: {stdout}");
+    assert!(
+        stdout.contains("POST"),
+        "stdout should contain POST: {stdout}"
+    );
+    assert!(
+        stdout.contains("/api/data"),
+        "stdout should contain /api/data: {stdout}"
+    );
+    assert!(
+        stdout.contains("payload"),
+        "stdout should contain payload: {stdout}"
+    );
+    assert!(
+        stdout.contains("200"),
+        "stdout should contain 200: {stdout}"
+    );
+    assert!(
+        stdout.contains("hello response"),
+        "stdout should contain hello response: {stdout}"
+    );
 }
 
 #[test]
@@ -665,8 +732,71 @@ end
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}\n{stderr}");
 
-    assert!(combined.contains("lint.prefer_const"), "expected lint.prefer_const in output: {combined}");
-    assert!(combined.contains("lint.shadowed_variable"), "expected lint.shadowed_variable in output: {combined}");
+    assert!(
+        combined.contains("lint.prefer_const"),
+        "expected lint.prefer_const in output: {combined}"
+    );
+    assert!(
+        combined.contains("lint.shadowed_variable"),
+        "expected lint.shadowed_variable in output: {combined}"
+    );
+}
+
+#[test]
+fn lint_tracks_structured_bindings_across_control_flow() {
+    let dir = TestDir::new("lint_structured_bindings");
+    let source = r#"module app.main
+
+trait Disposable
+    mut dispose(self)
+end
+
+struct Resource
+    id: int
+end
+
+apply Resource use Disposable
+    mut dispose(self)
+    end
+end
+
+struct Point
+    x: int
+    y: int
+end
+
+main()
+    const Point { x, y } = Point { x: 1, y: 2 }
+    for item, index in [x, y]
+        item + index
+    end
+    match some(x)
+        case some(value):
+            value
+        case none:
+            y
+    end
+    using resource: Resource = Resource { id: x }
+    resource
+end
+"#;
+
+    let output = run_lint_source(&dir.path("main.orl"), source.to_owned())
+        .expect("structured binding source should be lintable");
+    assert!(
+        !output.has_errors,
+        "structured binding source should not fail checking: {:?}",
+        output.diagnostics
+    );
+    let warnings: Vec<_> = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.starts_with("lint."))
+        .collect();
+    assert!(
+        warnings.is_empty(),
+        "all structured bindings are read and should not warn: {warnings:?}"
+    );
 }
 
 #[test]
@@ -679,7 +809,8 @@ fn e2e_image_ppm_and_bmp_export() {
 
     dir.write(
         "main.orl",
-        &format!(r#"module app.main
+        &format!(
+            r#"module app.main
 
 import ori.image = img
 import ori.io = io
@@ -698,7 +829,9 @@ public main() -> void
 
     io.println("DONE")
 end
-"#, ppm_str_path, bmp_str_path),
+"#,
+            ppm_str_path, bmp_str_path
+        ),
     );
 
     let output = Command::new(ori_exe())
@@ -710,7 +843,10 @@ end
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "image export failed:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        output.status.success(),
+        "image export failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
     assert!(stdout.contains("DONE"), "expected DONE in stdout: {stdout}");
     assert!(ppm_out.exists(), "ppm output should exist");
     assert!(bmp_out.exists(), "bmp output should exist");
@@ -759,8 +895,14 @@ end
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "string view failed:\nstdout: {stdout}\nstderr: {stderr}");
-    assert!(stdout.contains("STRING_VIEW_OK"), "expected STRING_VIEW_OK in stdout: {stdout}");
+    assert!(
+        output.status.success(),
+        "string view failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("STRING_VIEW_OK"),
+        "expected STRING_VIEW_OK in stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -798,8 +940,14 @@ end
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "rc elision failed:\nstdout: {stdout}\nstderr: {stderr}");
-    assert!(stdout.contains("RC_ELISION_OK"), "expected RC_ELISION_OK in stdout: {stdout}");
+    assert!(
+        output.status.success(),
+        "rc elision failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("RC_ELISION_OK"),
+        "expected RC_ELISION_OK in stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -848,8 +996,51 @@ end
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "structured concurrency failed:\nstdout: {stdout}\nstderr: {stderr}");
-    assert!(stdout.contains("STRUCT_CONC_OK"), "expected STRUCT_CONC_OK in stdout: {stdout}");
+    assert!(
+        output.status.success(),
+        "structured concurrency failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("STRUCT_CONC_OK"),
+        "expected STRUCT_CONC_OK in stdout: {stdout}"
+    );
+}
+
+#[test]
+fn e2e_defer_cancel_waits_before_cancelling_scope() {
+    let dir = TestDir::new("defer_cancel");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.cancel = cancel
+import ori.io = io
+
+async main() -> void
+    const scope: cancel.CancelScope = cancel.create_scope()
+    await cancel.defer_cancel(scope, 5)
+    if not cancel.is_cancelled(scope)
+        panic("defer_cancel should cancel after its delay")
+    end
+    io.println("DEFER_CANCEL_OK")
+end
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .output()
+        .expect("failed to run defer_cancel test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "defer_cancel failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.contains("DEFER_CANCEL_OK"), "stdout: {stdout}");
 }
 
 #[test]
@@ -879,8 +1070,14 @@ end
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "doctest failed:\nstdout: {stdout}\nstderr: {stderr}");
-    assert!(stderr.contains("ok:") || stdout.contains("ok:"), "expected ok in test output:\nstdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        output.status.success(),
+        "doctest failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("ok:") || stdout.contains("ok:"),
+        "expected ok in test output:\nstdout: {stdout}\nstderr: {stderr}"
+    );
 }
 
 #[test]
@@ -925,9 +1122,19 @@ end
 
     let output = child.wait_with_output().expect("daemon failed to exit");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "daemon process failed with status {:?}", output.status);
-    assert!(stdout.contains(r#""has_errors":false"#), "expected has_errors:false in check response: {stdout}");
-    assert!(stdout.contains(r#""result":{"status":"shutdown"}"#), "expected shutdown response: {stdout}");
+    assert!(
+        output.status.success(),
+        "daemon process failed with status {:?}",
+        output.status
+    );
+    assert!(
+        stdout.contains(r#""has_errors":false"#),
+        "expected has_errors:false in check response: {stdout}"
+    );
+    assert!(
+        stdout.contains(r#""result":{"status":"shutdown"}"#),
+        "expected shutdown response: {stdout}"
+    );
 }
 
 #[test]
@@ -980,13 +1187,19 @@ end
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "window test failed:\nstdout: {stdout}\nstderr: {stderr}");
-    assert!(stdout.contains("WINDOW_SURFACE_OK"), "expected WINDOW_SURFACE_OK in stdout: {stdout}");
+    assert!(
+        output.status.success(),
+        "window test failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("WINDOW_SURFACE_OK"),
+        "expected WINDOW_SURFACE_OK in stdout: {stdout}"
+    );
 }
 
 #[test]
-fn e2e_simd_buffer_vectorization_loop() {
-    let dir = TestDir::new("simd_vectorize");
+fn e2e_buffer_loop_scalar_baseline() {
+    let dir = TestDir::new("buffer_loop_scalar");
     dir.write(
         "main.orl",
         r#"module app.main
@@ -1016,7 +1229,7 @@ public main() -> void
         panic("c[9] != 110")
     end
 
-    io.println("SIMD_VECTORIZATION_OK")
+    io.println("BUFFER_LOOP_OK")
 end
 "#,
     );
@@ -1026,15 +1239,16 @@ end
         .arg(dir.path("main.orl"))
         .env("ORI_USE_JIT", "1")
         .output()
-        .expect("failed to run simd test");
+        .expect("failed to run buffer loop test");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "simd test failed:\nstdout: {stdout}\nstderr: {stderr}");
-    assert!(stdout.contains("SIMD_VECTORIZATION_OK"), "expected SIMD_VECTORIZATION_OK in stdout: {stdout}");
+    assert!(
+        output.status.success(),
+        "buffer loop test failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("BUFFER_LOOP_OK"),
+        "expected BUFFER_LOOP_OK in stdout: {stdout}"
+    );
 }
-
-
-
-
-

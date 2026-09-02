@@ -110,6 +110,9 @@ enum Commands {
         /// Override the package cache root.
         #[arg(long)]
         cache: Option<PathBuf>,
+        /// Refuse network access and restore only verified entries already in cache.
+        #[arg(long)]
+        offline: bool,
     },
     /// Publish an Ori package to the configured registry (`ORI_REGISTRY`).
     ///
@@ -533,10 +536,12 @@ fn run_cli() {
             path,
             locked,
             cache,
+            offline,
         } => match package::run_lock_package(package::LockPackageOptions {
             path: path.clone(),
             locked: *locked,
             cache_root: cache.clone(),
+            offline: *offline,
         }) {
             Err(e) => {
                 eprintln!("ori: {}", e);
@@ -699,24 +704,25 @@ fn run_cli() {
             }
         }
 
-        Commands::Lint { path, deny_warnings } => {
-            match pipeline::run_lint(path) {
-                Err(e) => {
-                    eprintln!("ori: {}", e);
-                    process::exit(2);
-                }
-                Ok(out) => {
-                    let errors = out.diagnostics.iter().filter(|d| d.is_error()).count();
-                    let warnings = out.diagnostics.len() - errors;
-                    emit::render_all(&out.cache, &out.diagnostics, color);
-                    emit::print_summary(errors, warnings, color);
-                    if out.has_errors || (*deny_warnings && warnings > 0) {
-                        process::exit(1);
-                    }
-                    process::exit(0);
-                }
+        Commands::Lint {
+            path,
+            deny_warnings,
+        } => match pipeline::run_lint(path) {
+            Err(e) => {
+                eprintln!("ori: {}", e);
+                process::exit(2);
             }
-        }
+            Ok(out) => {
+                let errors = out.diagnostics.iter().filter(|d| d.is_error()).count();
+                let warnings = out.diagnostics.len() - errors;
+                emit::render_all(&out.cache, &out.diagnostics, color);
+                emit::print_summary(errors, warnings, color);
+                if out.has_errors || (*deny_warnings && warnings > 0) {
+                    process::exit(1);
+                }
+                process::exit(0);
+            }
+        },
 
         Commands::Lex { file } => match pipeline::run_lex(file) {
             Err(e) => {
@@ -1084,24 +1090,22 @@ fn run_cli() {
             header,
             out,
             module,
-        } => {
-            match ori_driver::bindgen::generate_bindings(header, module.as_deref()) {
-                Err(e) => {
-                    eprintln!("ori: {e}");
-                    process::exit(2);
-                }
-                Ok(generated) => {
-                    if let Some(out_path) = out {
-                        if let Err(e) = std::fs::write(out_path, &generated) {
-                            eprintln!("ori: failed to write '{}': {e}", out_path.display());
-                            process::exit(2);
-                        }
-                    } else {
-                        print!("{generated}");
+        } => match ori_driver::bindgen::generate_bindings(header, module.as_deref()) {
+            Err(e) => {
+                eprintln!("ori: {e}");
+                process::exit(2);
+            }
+            Ok(generated) => {
+                if let Some(out_path) = out {
+                    if let Err(e) = std::fs::write(out_path, &generated) {
+                        eprintln!("ori: failed to write '{}': {e}", out_path.display());
+                        process::exit(2);
                     }
+                } else {
+                    print!("{generated}");
                 }
             }
-        }
+        },
 
         Commands::Daemon { stdio: _ } => {
             if let Err(e) = pipeline::run_daemon() {

@@ -2,6 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ori_diagnostics::Severity;
+use ori_driver::pipeline::run_check_source;
+
 const DIAGNOSTIC_CATEGORIES: &[&str] = &[
     "async",
     "attr",
@@ -82,6 +85,74 @@ fn diagnostic_catalog_matches_emitted_codes() {
         reintroduced.is_empty(),
         "diagnostic codes removed in Etapa 7 audit reappeared as planned: {reintroduced:#?}"
     );
+}
+
+#[test]
+fn representative_diagnostic_has_catalog_shape() {
+    let output = run_check_source(
+        Path::new("diagnostic_catalog_missing_module.orl"),
+        "main()\nend\n".to_owned(),
+    )
+    .expect("in-memory diagnostic fixture should be checkable");
+    let diagnostic = output
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "parse.module_missing")
+        .expect("missing module fixture should emit parse.module_missing");
+
+    assert_eq!(diagnostic.severity, Severity::Error);
+    assert!(
+        !diagnostic.message.trim().is_empty(),
+        "diagnostics need a primary message"
+    );
+    let primary = diagnostic
+        .labels
+        .first()
+        .expect("diagnostics need a primary source label");
+    assert!(
+        primary.span.start <= primary.span.end,
+        "primary diagnostic span must be ordered"
+    );
+    assert!(
+        primary.span.end <= "main()\nend\n".len() as u32,
+        "primary diagnostic span must be inside the source"
+    );
+}
+
+#[test]
+fn emitted_catalog_rows_have_valid_severity_and_description() {
+    let text = fs::read_to_string(repo_root().join("docs/spec/13-error-catalog.md"))
+        .expect("diagnostic catalog should be readable");
+    let mut in_emitted = false;
+    let mut rows = 0;
+    for line in text.lines() {
+        if line.starts_with("## Emitted Diagnostics") {
+            in_emitted = true;
+            continue;
+        }
+        if in_emitted && line.starts_with("## ") {
+            break;
+        }
+        if !in_emitted || table_code(line).is_none() {
+            continue;
+        }
+        let cells: Vec<_> = line.split('|').map(str::trim).collect();
+        assert!(
+            matches!(
+                cells.get(2),
+                Some(&"error") | Some(&"warning") | Some(&"warning/error") | Some(&"runtime abort")
+            ),
+            "invalid severity row: {line}"
+        );
+        assert!(
+            cells
+                .get(3)
+                .is_some_and(|description| !description.is_empty()),
+            "emitted catalog rows need a description: {line}"
+        );
+        rows += 1;
+    }
+    assert!(rows > 0, "emitted diagnostic catalog must contain rows");
 }
 
 fn repo_root() -> PathBuf {

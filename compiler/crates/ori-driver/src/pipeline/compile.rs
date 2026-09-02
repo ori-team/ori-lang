@@ -5,7 +5,10 @@ use super::debug::collect_native_debug_functions;
 use super::frontend::check_loaded_sources;
 use super::lowering::{lower_loaded_sources, split_native_modules};
 use super::project::load_and_resolve;
-use super::runtime::{find_native_runtime_link, native_lib_static_name, native_target_triple};
+use super::runtime::{
+    ensure_native_codegen_target, find_native_runtime_link, native_lib_static_name,
+    native_target_triple,
+};
 use super::timing::report_internal_pipeline_timing;
 
 pub struct CompileOutput {
@@ -102,6 +105,7 @@ pub fn run_compile_with_options(
     output: &Path,
     options: CompileOptions,
 ) -> Result<CompileOutput, String> {
+    ensure_native_codegen_target()?;
     let incremental_options = crate::incremental::BuildOptions {
         shared: options.lib,
     };

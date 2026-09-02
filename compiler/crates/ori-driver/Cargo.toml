@@ -27,4 +27,6 @@ serde_json      = { workspace = true }
 smol_str        = { workspace = true }
 ureq            = { workspace = true }
 sha2            = { workspace = true }
+flate2          = { workspace = true }
+tar             = { workspace = true }
 rayon           = { workspace = true }

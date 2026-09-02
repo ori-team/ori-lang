@@ -16,8 +16,8 @@ mod docs;
 mod doctest;
 mod fmt;
 mod frontend;
-mod lowering;
 mod lint;
+mod lowering;
 mod migrate_syntax;
 mod native;
 mod project;
@@ -39,7 +39,7 @@ pub use frontend::{
     run_check, run_check_source, run_check_source_with_options, run_lex, run_parse, CheckOptions,
     CheckOutput, LexOutput, ParseOutput,
 };
-pub use lint::{run_lint, LintOutput};
+pub use lint::{run_lint, run_lint_source, LintOutput};
 pub use native::{
     compile_jit_source_with_options, lower_jit_source_with_options, run_jit, run_jit_with_args,
     run_test, run_test_with_options, JitCompileOutput, JitLowerOutput, JitRunOutput, TestOptions,

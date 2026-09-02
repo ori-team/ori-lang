@@ -176,6 +176,14 @@ fn uri_for(dir: &std::path::Path, name: &str) -> String {
     }
 }
 
+fn utf16_position(source: &str, byte_offset: usize) -> (u32, u32) {
+    let before = &source[..byte_offset];
+    let line = before.bytes().filter(|byte| *byte == b'\n').count() as u32;
+    let line_start = before.rfind('\n').map_or(0, |offset| offset + 1);
+    let character = source[line_start..byte_offset].encode_utf16().count() as u32;
+    (line, character)
+}
+
 /// Etapa 6.3 gate: a single LSP session exercising 8 scenarios in sequence.
 #[test]
 fn e2e_lsp_session_covers_8_scenarios() {
@@ -926,6 +934,232 @@ fn e2e_lsp_cross_file_find_references() {
     assert!(
         !in_main.is_empty(),
         "cross-file find-references must include occurrences in findref_main.orl: {ref_resp}"
+    );
+
+    let shutdown_id = lsp.request_no_params("shutdown");
+    let _ = lsp.read_response(shutdown_id, DEFAULT_TIMEOUT_MS);
+    lsp.notify("exit", json!(null));
+    lsp.stdin.take();
+    let _ = wait_with_timeout(&mut lsp.child, Duration::from_secs(5));
+}
+
+#[test]
+fn e2e_lsp_utf16_incremental_navigation_and_rename() {
+    let dir = tempfile_dir();
+    let root_uri = uri_for(&dir, "");
+    let main_uri = uri_for(&dir, "unicode_main.orl");
+    let source = "module app.unicode_main\n\nmain()\n    const value: string = \"ok\"\n    const text: string = \"value\"\n    -- value in comment\n    check text == \"value\"\n    check \"é界e\u{301}🙂\" != value\nend\n";
+    write_file(&dir, "unicode_main.orl", source);
+
+    let mut lsp = LspClient::new().expect("spawn ori-lsp");
+    let init_id = lsp.request(
+        "initialize",
+        json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {"general": {"positionEncodings": ["utf-16"]}},
+        }),
+    );
+    let init = lsp.read_response(init_id, DEFAULT_TIMEOUT_MS);
+    assert_eq!(init["result"]["capabilities"]["positionEncoding"], "utf-16");
+    lsp.notify("initialized", json!({}));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": main_uri,
+                "languageId": "ori",
+                "version": 1,
+                "text": source,
+            },
+        }),
+    );
+    let initial_diagnostics = drain_diagnostics(&mut lsp, &main_uri, 6000);
+    assert!(
+        initial_diagnostics.is_empty(),
+        "Unicode fixture must compile cleanly: {initial_diagnostics:?}"
+    );
+
+    let emoji = source.find('🙂').expect("fixture contains emoji");
+    let (emoji_line, emoji_character) = utf16_position(source, emoji);
+    lsp.notify(
+        "textDocument/didChange",
+        json!({
+            "textDocument": {"uri": main_uri, "version": 2},
+            "contentChanges": [{
+                "range": {
+                    "start": {"line": emoji_line, "character": emoji_character},
+                    "end": {"line": emoji_line, "character": emoji_character + 2},
+                },
+                "text": "Ori",
+            }],
+        }),
+    );
+    let diagnostics_after_edit = drain_diagnostics(&mut lsp, &main_uri, 6000);
+    assert!(
+        diagnostics_after_edit.is_empty(),
+        "UTF-16 edit after mixed Unicode must remain valid: {diagnostics_after_edit:?}"
+    );
+
+    let edited_source = source.replacen('🙂', "Ori", 1);
+    let usage = edited_source
+        .rfind("value")
+        .expect("fixture contains value usage");
+    let (usage_line, usage_character) = utf16_position(&edited_source, usage);
+    let declaration = source.find("value").expect("fixture contains declaration");
+    let (declaration_line, declaration_character) = utf16_position(source, declaration);
+
+    let hover_id = lsp.request(
+        "textDocument/hover",
+        json!({
+            "textDocument": {"uri": main_uri},
+            "position": {"line": usage_line, "character": usage_character + 1},
+        }),
+    );
+    let hover = lsp.read_response(hover_id, DEFAULT_TIMEOUT_MS);
+    assert!(hover["result"].is_object(), "Unicode hover failed: {hover}");
+
+    let definition_id = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": {"uri": main_uri},
+            "position": {"line": usage_line, "character": usage_character + 1},
+        }),
+    );
+    let definition = lsp.read_response(definition_id, DEFAULT_TIMEOUT_MS);
+    assert_eq!(
+        definition["result"]["range"]["start"],
+        json!({"line": declaration_line, "character": declaration_character}),
+        "Unicode go-to-definition returned the wrong range: {definition}"
+    );
+
+    let references_id = lsp.request(
+        "textDocument/references",
+        json!({
+            "textDocument": {"uri": main_uri},
+            "position": {"line": usage_line, "character": usage_character + 1},
+            "context": {"includeDeclaration": true},
+        }),
+    );
+    let references = lsp.read_response(references_id, DEFAULT_TIMEOUT_MS);
+    assert_eq!(
+        references["result"].as_array().map(Vec::len),
+        Some(2),
+        "comments and strings must not count as references: {references}"
+    );
+
+    let rename_id = lsp.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": {"uri": main_uri},
+            "position": {"line": usage_line, "character": usage_character + 1},
+            "newName": "renamed",
+        }),
+    );
+    let rename = lsp.read_response(rename_id, DEFAULT_TIMEOUT_MS);
+    let edit_count = rename["result"]["changes"][&main_uri]
+        .as_array()
+        .map(Vec::len);
+    assert_eq!(
+        edit_count,
+        Some(2),
+        "Unicode rename edits were unsafe: {rename}"
+    );
+
+    let shutdown_id = lsp.request_no_params("shutdown");
+    let _ = lsp.read_response(shutdown_id, DEFAULT_TIMEOUT_MS);
+    lsp.notify("exit", json!(null));
+    lsp.stdin.take();
+    let _ = wait_with_timeout(&mut lsp.child, Duration::from_secs(5));
+}
+
+#[test]
+fn e2e_lsp_resolves_duplicate_names_and_selective_alias_identity() {
+    let dir = tempfile_dir();
+    let root_uri = uri_for(&dir, "");
+    write_file(
+        &dir,
+        "app/a.orl",
+        "module app.a\n\npublic target() -> int\n    return 1\nend\n",
+    );
+    write_file(
+        &dir,
+        "app/b.orl",
+        "module app.b\n\npublic target() -> int\n    return 2\nend\n",
+    );
+    let main_source = "module app.main\n\nimport app.a (target = first)\nimport app.b (target = second)\n\nmain()\n    const text: string = \"first second target\"\n    -- first second target\n    const a: int = first()\n    const b: int = second()\n    check text == \"first second target\"\n    check a == 1\n    check b == 2\nend\n";
+    write_file(&dir, "main.orl", main_source);
+    let main_uri = uri_for(&dir, "main.orl");
+
+    let mut lsp = LspClient::new().expect("spawn ori-lsp");
+    let init_id = lsp.request(
+        "initialize",
+        json!({"processId": null, "rootUri": root_uri, "capabilities": {}}),
+    );
+    let _ = lsp.read_response(init_id, DEFAULT_TIMEOUT_MS);
+    lsp.notify("initialized", json!({}));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": main_uri,
+                "languageId": "ori",
+                "version": 1,
+                "text": main_source,
+            },
+        }),
+    );
+    let diagnostics = drain_diagnostics(&mut lsp, &main_uri, 6000);
+    assert!(
+        diagnostics.is_empty(),
+        "alias fixture must be valid: {diagnostics:?}"
+    );
+
+    let second_use = main_source
+        .rfind("second()")
+        .expect("fixture contains second call");
+    let (second_line, second_character) = utf16_position(main_source, second_use);
+    let definition_id = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": {"uri": main_uri},
+            "position": {"line": second_line, "character": second_character + 1},
+        }),
+    );
+    let definition = lsp.read_response(definition_id, DEFAULT_TIMEOUT_MS);
+    assert!(
+        definition["result"]["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("app/b.orl")),
+        "duplicate-name lookup must follow the selected alias: {definition}"
+    );
+
+    let first_use = main_source
+        .rfind("first()")
+        .expect("fixture contains first call");
+    let (first_line, first_character) = utf16_position(main_source, first_use);
+    let references_id = lsp.request(
+        "textDocument/references",
+        json!({
+            "textDocument": {"uri": main_uri},
+            "position": {"line": first_line, "character": first_character + 1},
+            "context": {"includeDeclaration": true},
+        }),
+    );
+    let references = lsp.read_response(references_id, DEFAULT_TIMEOUT_MS);
+    let locations = references["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("references must be an array: {references}"));
+    assert_eq!(
+        locations.len(),
+        2,
+        "alias declaration and use only: {references}"
+    );
+    assert!(
+        locations
+            .iter()
+            .all(|location| location["uri"].as_str() == Some(main_uri.as_str())),
+        "renaming an explicit alias must not rename its upstream declaration: {references}"
     );
 
     let shutdown_id = lsp.request_no_params("shutdown");

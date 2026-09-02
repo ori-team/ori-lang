@@ -172,7 +172,8 @@ fn map_c_type(c_type: &str) -> &'static str {
         return "int";
     }
     match t {
-        "int" | "int32_t" | "int64_t" | "long" | "size_t" | "uint32_t" | "uint64_t" | "uintptr_t" => "int",
+        "int" | "int32_t" | "int64_t" | "long" | "size_t" | "uint32_t" | "uint64_t"
+        | "uintptr_t" => "int",
         "float" | "double" => "float",
         "bool" | "_Bool" => "bool",
         "void" => "void",

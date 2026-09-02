@@ -105,6 +105,15 @@ shorter inference chains, fewer hidden rules, and clearer error messages.
 | Docs | English primary + Portuguese parallel (`docs/README.md`) · [examples/](examples/) |
 | Focus now | Language completeness, docs/examples accuracy, performance — not multi-OS marketing |
 
+> **Development release status:** the 2026-08-24 implementation audit found
+> P0/P1 semantic, memory-safety, packaging, and lifecycle defects in the
+> audited `0.3.8-dev` baseline. The current correction wave has closed bounded
+> channels, the shared blocking-I/O pool, fail-closed attributes, and the typed
+> null handle constructor. Remaining language blockers include full task
+> isolation, recursive collection keys, handle lifetime/affinity, complete HIR
+> async ownership proof, and the hostile cross-platform FFI sanitizer matrix.
+> Full evidence and order: [implementation audit](docs/planning/roadmap-code-audit-performance-architecture.md).
+
 S3 breaking list: [CHANGELOG.md](CHANGELOG.md) `[0.3.0]`. Inference: `[0.3.1]`.
 Package / install without Rust: M1 is complete in the current workspace. Migrate old sources with
 `ori migrate-syntax`.
@@ -266,9 +275,14 @@ The `ori` CLI is implemented by `compiler/crates/ori-driver`.
 | `ori install name[@ver]` | install from `ORI_REGISTRY` into the package cache |
 | `ori install github.com/org/repo` | shallow-clone a Git package and install into the cache |
 | `ori get [path]` | fetch `git`/`path` dependencies declared in `ori.proj` or `ori.pkg.toml` |
-| `ori lock [path]` | resolve dependencies and write a reproducible `ori.lock` snapshot (`--locked` validates it) |
+| `ori lock [path]` | resolve dependencies and write an `ori.lock` snapshot (`--locked` detects current-resolution drift; v2 records content digests and restores exact locked sources) |
 | `ori publish <path>` | publish to `ORI_REGISTRY` (file tree or HTTP PUT tarball) |
 | `ori migrate-syntax <paths…>` | best-effort rewrite of pre-S3 syntax to S3 (`--dry-run`, `-v`) |
+
+Remote registry/package consumption is experimental. `AUD-PKG-1/2` now enforce
+digest, extraction containment, and lock-driven source identity; use HTTPS and
+review registry provenance. Hermetic HTTP-registry and cross-platform release
+stress coverage remain P2 QA work.
 
 Useful environment variables:
 
@@ -293,8 +307,10 @@ The full environment matrix lives in [AGENTS.md](AGENTS.md).
 Dependencies are isolated by package. Imports inside a package may use its
 local modules; imports from a dependency use the dependency's package-qualified
 name, for example `import math.format`, even when another dependency also has a
-`format` module. `ori lock` records the exact path, registry version, or Git
-revision used by the build.
+`format` module. `ori lock` records a path, registry version, or resolved Git
+revision snapshot. The current resolver still re-resolves sources before lock
+validation; exact lock-driven restoration and content digests are tracked by
+`AUD-PKG-2`.
 
 ## Project docs
 

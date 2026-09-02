@@ -1,6 +1,6 @@
 use ori_ast::expr::{BinaryOp, UnaryOp};
 use ori_hir::hir::*;
-use ori_types::{substitute_ty_params, DefId, OpaqueTy, Ty};
+use ori_types::{substitute_trait_self, substitute_ty_params, DefId, OpaqueTy, Ty};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 
@@ -154,6 +154,9 @@ static inline int64_t ori_mem_string_as_ptr(ori_string_t s) {
 }
 static inline int64_t ori_mem_string_len(ori_string_t s) {
     return (int64_t)s.len;
+}
+static inline bool ori_handle_is_null(void* handle) {
+    return handle == NULL;
 }
 
 typedef struct { uint8_t _; } ori_unit_t;
@@ -1556,11 +1559,8 @@ static inline void ori_arc_register_edge(void* owner, void* child) {
     if (!ori_arc_find(owner) || !ori_arc_find(child)) {
         return;
     }
-    for (ori_arc_edge_t* edge = ori_arc_edges; edge; edge = edge->next) {
-        if (edge->owner == owner && edge->child == child) {
-            return;
-        }
-    }
+    /* Edges represent owned slots, not only object reachability. Two fields
+       may point to the same child and must retain/release it twice. */
     ori_arc_edge_t* edge = (ori_arc_edge_t*)malloc(sizeof(ori_arc_edge_t));
     if (!edge) abort();
     edge->owner = owner;
@@ -2127,6 +2127,127 @@ impl CCodegen {
         (matches.len() == 1).then(|| matches.remove(0))
     }
 
+    fn any_vtable_name(trait_def_id: DefId, type_def_id: DefId) -> String {
+        format!("__ori_any_vtable_{}_{}", trait_def_id.0, type_def_id.0)
+    }
+
+    fn any_vtable_adapter_name(
+        trait_def_id: DefId,
+        type_def_id: DefId,
+        method_index: usize,
+    ) -> String {
+        format!(
+            "__ori_any_adapter_{}_{}_{}",
+            trait_def_id.0, type_def_id.0, method_index
+        )
+    }
+
+    /// Emit a typed trampoline for an instance method stored in an `any`
+    /// vtable. Concrete Ori methods receive `self` by value, while the
+    /// type-erased vtable ABI carries a pointer to the boxed value. Calling the
+    /// concrete function through a casted function pointer would therefore be
+    /// undefined behaviour (and is diagnosed by UBSan). The trampoline keeps
+    /// the erased ABI uniform and performs the single, explicit dereference.
+    fn emit_any_vtable_adapter(
+        &mut self,
+        trait_def_id: DefId,
+        type_def_id: DefId,
+        method_index: usize,
+        method: &HirTraitMethod,
+        function: &str,
+    ) {
+        let adapter_name = Self::any_vtable_adapter_name(trait_def_id, type_def_id, method_index);
+        let concrete_self = Ty::Named(type_def_id, Vec::new());
+        let return_ty = substitute_trait_self(&method.return_ty, trait_def_id, &concrete_self);
+        let return_c = ty_to_c(&return_ty);
+        let mut params = vec!["void* raw".to_owned()];
+        // Default trait methods are emitted with the trait's placeholder
+        // `self` type, not with the concrete implementation type.  Passing
+        // the boxed concrete value to that function would be an incompatible
+        // C call (and is undefined behaviour even when the method ignores
+        // `self`).  The trait representation is intentionally field-less in
+        // the debug backend, so use a zero-initialized value for this erased
+        // receiver.  Concrete implementations still receive the dereferenced
+        // boxed value through the normal path.
+        let is_default_method = method
+            .default_func_name
+            .as_ref()
+            .is_some_and(|name| Self::func_c_name(name) == function);
+        let self_arg = if is_default_method {
+            format!("(({}){{0}})", def_c_name(trait_def_id))
+        } else {
+            format!("*(({}*)raw)", def_c_name(type_def_id))
+        };
+        let mut args = vec![self_arg];
+        for (index, param) in method.params.iter().skip(1).enumerate() {
+            let concrete = substitute_trait_self(param, trait_def_id, &concrete_self);
+            params.push(format!("{} _arg{}", ty_to_c(&concrete), index));
+            args.push(format!("_arg{}", index));
+        }
+
+        self.line(&format!(
+            "static {} {}({}) {{",
+            return_c,
+            adapter_name,
+            params.join(", ")
+        ));
+        self.push();
+        // `function` is already the emitted C symbol (`ORI__...`) from the
+        // vtable entry; do not prepend the symbol prefix a second time.
+        let call = format!("{}({})", function, args.join(", "));
+        if return_c == "void" {
+            self.line(&format!("{};", call));
+        } else {
+            self.line(&format!("return {};", call));
+        }
+        self.pop();
+        self.line("}");
+    }
+
+    fn any_vtable_entries(
+        &self,
+        trait_def_id: DefId,
+        type_def_id: DefId,
+    ) -> Result<Vec<String>, String> {
+        let trait_layout = self.trait_layouts.get(&trait_def_id).ok_or_else(|| {
+            format!(
+                "C backend cannot emit any vtable: missing trait layout for def {}",
+                trait_def_id.0
+            )
+        })?;
+        let implementation = self
+            .trait_impls
+            .get(&(trait_def_id, type_def_id))
+            .ok_or_else(|| {
+                format!(
+                    "C backend cannot emit any vtable: missing implementation for trait def {} and type def {}",
+                    trait_def_id.0, type_def_id.0
+                )
+            })?;
+        let mut entries = vec![format!("(void*)(intptr_t){}", type_def_id.0)];
+        if self.type_supports_equality(&Ty::Named(type_def_id, Vec::new()), &mut Vec::new()) {
+            entries.push(format!("(void*)__eq_helper_struct_{}", type_def_id.0));
+        } else {
+            entries.push("NULL".to_owned());
+        }
+        for method in &trait_layout.methods {
+            let function = implementation
+                .methods
+                .iter()
+                .find(|candidate| candidate.name == method.name)
+                .map(|candidate| candidate.func_name.clone())
+                .or_else(|| method.default_func_name.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "C backend cannot emit any vtable: missing method `{}` for trait def {} and type def {}",
+                        method.name, trait_def_id.0, type_def_id.0
+                    )
+                })?;
+            entries.push(format!("(void*){}", Self::func_c_name(&function)));
+        }
+        Ok(entries)
+    }
+
     fn emit_indent(&mut self) {
         for _ in 0..self.indent {
             self.out.push_str("    ");
@@ -2346,6 +2467,67 @@ impl CCodegen {
             self.out.push_str(";\n");
         }
         if !module.funcs.is_empty() {
+            self.out.push('\n');
+        }
+
+        // `any<Trait>` values may escape the expression that constructs them.
+        // Their vtable therefore needs translation-unit lifetime, not the
+        // lifetime of a GNU statement-expression stack array.
+        let struct_ids = module
+            .structs
+            .iter()
+            .map(|structure| structure.def_id)
+            .collect::<HashSet<_>>();
+        let mut any_implementations = self
+            .trait_impls
+            .keys()
+            .copied()
+            .filter(|(_, type_def_id)| struct_ids.contains(type_def_id))
+            .collect::<Vec<_>>();
+        any_implementations
+            .sort_by_key(|(trait_def_id, type_def_id)| (trait_def_id.0, type_def_id.0));
+        for (trait_def_id, type_def_id) in any_implementations {
+            match self.any_vtable_entries(trait_def_id, type_def_id) {
+                Ok(mut entries) => {
+                    if let Some(trait_layout) = self.trait_layouts.get(&trait_def_id).cloned() {
+                        for (method_index, method) in trait_layout.methods.iter().enumerate() {
+                            if !method.has_self {
+                                continue;
+                            }
+                            // `any_vtable_entries` has already checked that
+                            // every method resolves to an implementation or a
+                            // default. Strip its C cast to recover the symbol
+                            // for the typed trampoline.
+                            let function = entries[method_index + 2]
+                                .strip_prefix("(void*)")
+                                .unwrap_or(&entries[method_index + 2]);
+                            self.emit_any_vtable_adapter(
+                                trait_def_id,
+                                type_def_id,
+                                method_index,
+                                method,
+                                function,
+                            );
+                            entries[method_index + 2] = format!(
+                                "(void*){}",
+                                Self::any_vtable_adapter_name(
+                                    trait_def_id,
+                                    type_def_id,
+                                    method_index,
+                                )
+                            );
+                        }
+                    }
+                    self.line(&format!(
+                        "static void* const {}[] = {{ {} }};",
+                        Self::any_vtable_name(trait_def_id, type_def_id),
+                        entries.join(", ")
+                    ));
+                }
+                Err(error) => self.push_codegen_error(error),
+            }
+        }
+        if !self.trait_impls.is_empty() {
             self.out.push('\n');
         }
 
@@ -2616,7 +2798,16 @@ impl CCodegen {
                 let val_s = self.expr_to_c_for_expected(value, ty);
                 self.line(&format!("{} {} = {};", ty_to_c(ty), mangle(name), val_s));
                 if let Some(access) = c_arc_access(&mangle(name), ty) {
-                    self.line(&format!("ori_arc_retain({});", access));
+                    // Boxing a concrete value into `any<Trait>` transfers the
+                    // freshly allocated object's initial ARC reference to the
+                    // local. Retaining it again would leave one reference
+                    // behind after scope cleanup. Existing managed values
+                    // still need a retain for the new local owner.
+                    let transfers_new_any =
+                        matches!(ty, Ty::Any(_)) && !matches!(value.ty, Ty::Any(_));
+                    if !transfers_new_any {
+                        self.line(&format!("ori_arc_retain({});", access));
+                    }
                     self.managed_stack.push((name.to_string(), ty.clone()));
                 }
             }
@@ -3211,7 +3402,10 @@ impl CCodegen {
             } => {
                 let cond_s = self.expr_to_c(condition);
                 let msg = message.as_deref().unwrap_or("check failed");
-                self.line(&format!("if (!({cond_s})) {{ fprintf(stderr, \"ori check failed: {msg}\\n\"); abort(); }}"));
+                let escaped_msg = escape_c_str(msg);
+                self.line(&format!(
+                    "if (!({cond_s})) {{ fprintf(stderr, \"%s\\n\", \"ori check failed: {escaped_msg}\"); abort(); }}"
+                ));
             }
         }
     }
@@ -3233,60 +3427,15 @@ impl CCodegen {
             }
         }
         if let (Ty::Any(trait_def_id), Ty::Named(type_def_id, _)) = (expected, &expr.ty) {
-            let Some(trait_layout) = self.trait_layouts.get(trait_def_id).cloned() else {
-                return self.unsupported_expr(format!(
-                    "C backend cannot box `{}` as any: missing trait layout for def {}",
-                    self.display_ty(&expr.ty),
-                    trait_def_id.0
-                ));
-            };
-            let Some(impl_sig) = self
-                .trait_impls
-                .get(&(*trait_def_id, *type_def_id))
-                .cloned()
-            else {
-                return self.unsupported_expr(format!(
-                    "C backend cannot box `{}` as any: missing implementation for trait def {}",
-                    self.display_ty(&expr.ty),
-                    trait_def_id.0
-                ));
-            };
-
-            let mut vtable_entries = vec![format!("(void*){}", type_def_id.0)];
-            if self.type_supports_equality(&Ty::Named(*type_def_id, Vec::new()), &mut Vec::new()) {
-                vtable_entries.push(format!("(void*)__eq_helper_struct_{}", type_def_id.0));
-            } else {
-                vtable_entries.push("NULL".to_string());
-            }
-            for method in &trait_layout.methods {
-                let Some(func_name) = impl_sig
-                    .methods
-                    .iter()
-                    .find(|m| m.name == method.name)
-                    .map(|m| m.func_name.clone())
-                    .or_else(|| method.default_func_name.clone())
-                else {
-                    return self.unsupported_expr(format!(
-                        "C backend cannot box `{}` as any: missing method `{}` for trait def {}",
-                        self.display_ty(&expr.ty),
-                        method.name,
-                        trait_def_id.0
-                    ));
-                };
-                vtable_entries.push(format!("(void*){}", Self::func_c_name(&func_name)));
+            if let Err(error) = self.any_vtable_entries(*trait_def_id, *type_def_id) {
+                return self.unsupported_expr(error);
             }
 
-            let vtable_tmp = self.fresh_tmp();
             let any_tmp = self.fresh_tmp();
             let obj_tmp = self.fresh_tmp();
             let type_name = def_c_name(*type_def_id);
             let mut parts = Vec::new();
 
-            parts.push(format!(
-                "void* {}[] = {{ {} }}",
-                vtable_tmp,
-                vtable_entries.join(", ")
-            ));
             // Box the value on the heap using ori_alloc (since any<Trait> is a managed type, its contents might need disposing but the actual ori_any_t holds the ptr)
             // But wait, any<Trait> in C needs a heap allocation for the `obj`.
             parts.push(format!(
@@ -3294,15 +3443,25 @@ impl CCodegen {
                 type_name, obj_tmp, type_name, type_name
             ));
             parts.push(format!("if ({}) *{} = {}", obj_tmp, obj_tmp, val_s));
+            if let Some(fields) = self.struct_fields.get(type_def_id) {
+                for (field_name, field_ty) in fields {
+                    let field = format!("{}->{}", obj_tmp, mangle(field_name));
+                    if let Some(access) = c_arc_access(&field, field_ty) {
+                        parts.push(format!(
+                            "if ({0}) ori_arc_register_edge((void*){0}, {1})",
+                            obj_tmp, access
+                        ));
+                    }
+                }
+            }
             parts.push(format!(
-                "ori_any_t {} = {{ .obj = (void*){}, .vtable = {} }}",
-                any_tmp, obj_tmp, vtable_tmp
+                "ori_any_t {} = {{ .obj = (void*){}, .vtable = (void*){} }}",
+                any_tmp,
+                obj_tmp,
+                Self::any_vtable_name(*trait_def_id, *type_def_id)
             ));
 
-            format!(
-                "({{ {}; {}; {}; {}; {}; }})",
-                parts[0], parts[1], parts[2], parts[3], any_tmp
-            )
+            format!("({{ {}; {}; }})", parts.join("; "), any_tmp)
         } else if let (Ty::Named(expected_id, _), Ty::Named(actual_id, _)) = (expected, &expr.ty) {
             if expected_id != actual_id && self.trait_layouts.contains_key(expected_id) {
                 // We are passing a concrete struct to a default trait method expecting the trait type by value.
@@ -3795,7 +3954,7 @@ impl CCodegen {
                         format!(".{} = {}", mangle(n), es)
                     })
                     .collect();
-                if def_id.0 != u32::MAX {
+                if *def_id != DefId::INVALID {
                     format!("(({}){{ {} }})", def_c_name(*def_id), fields_s.join(", "))
                 } else {
                     format!("({{ {} }})", fields_s.join(", "))
@@ -3899,12 +4058,7 @@ impl CCodegen {
                         method_index + 2
                     );
 
-                    format!(
-                        "({{ ori_arc_retain(({}).obj); {}({}); }})",
-                        r,
-                        fn_cast,
-                        call_args.join(", ")
-                    )
+                    format!("({{ {}({}); }})", fn_cast, call_args.join(", "))
                 } else {
                     format!("ori__{}({}, {})", mangle(method), r, as_.join(", "))
                 }
@@ -4118,6 +4272,7 @@ impl CCodegen {
             Ty::Set(inner) => self.set_equality_to_c(left, right, inner),
             Ty::Map(key, value) => self.map_equality_to_c(left, right, key, value),
             Ty::Named(def_id, args) => self.struct_equality_to_c(left, right, *def_id, args),
+            Ty::Handle(_) => format!("({} == {})", left, right),
             _ if ty.is_numeric() || matches!(ty, Ty::Bool) => format!("({} == {})", left, right),
             _ => format!("({} == {})", left, right),
         };
@@ -5419,10 +5574,27 @@ fn float_lit_to_c(value: f64) -> String {
 }
 
 fn escape_c_str(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
+    let mut escaped = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\0' => escaped.push_str("\\000"),
+            '\u{0008}' => escaped.push_str("\\b"),
+            '\u{000b}' => escaped.push_str("\\v"),
+            '\u{000c}' => escaped.push_str("\\f"),
+            ch if ch.is_control() => {
+                // Three octal digits prevent a following decimal/hex digit
+                // from being consumed as part of the escape sequence.
+                let _ = write!(&mut escaped, "\\{:03o}", ch as u32);
+            }
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn pattern_cond(pat: &HirPattern, scrutinee: &str) -> String {
@@ -5577,6 +5749,24 @@ mod tests {
     }
 
     #[test]
+    fn c_backend_escapes_check_messages_and_uses_constant_format_string() {
+        let module = module_with_main(vec![HirStmt::Check {
+            condition: expr(HirExprKind::BoolLit(false), Ty::Bool),
+            message: Some("quote \" slash \\ line\n %s %n nul\0".into()),
+            span: Span::DUMMY,
+        }]);
+
+        let source = CCodegen::new()
+            .generate(&module)
+            .expect("check message should generate valid C");
+
+        assert!(source.contains(
+            r#"fprintf(stderr, "%s\n", "ori check failed: quote \" slash \\ line\n %s %n nul\000")"#
+        ));
+        assert!(!source.contains("fprintf(stderr, \"ori check failed: quote"));
+    }
+
+    #[test]
     fn c_backend_reports_unsupported_lvalue_index_expression() {
         let module = module_with_main(vec![HirStmt::Assign {
             lvalue: HirLValue::Index {
@@ -5639,6 +5829,69 @@ mod tests {
             err.contains("C backend does not support `core.Destructor`"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn c_backend_any_uses_static_vtable_and_registers_managed_box_fields() {
+        let trait_id = DefId(2);
+        let holder_id = DefId(3);
+        let list_ty = Ty::List(Box::new(Ty::Int));
+        let mut module = module_with_main(vec![HirStmt::Let {
+            name: "boxed".into(),
+            ty: Ty::Any(trait_id),
+            mutable: false,
+            value: expr(
+                HirExprKind::StructLit {
+                    def_id: holder_id,
+                    fields: vec![(
+                        "values".into(),
+                        expr(
+                            HirExprKind::ListLit {
+                                elem_ty: Ty::Int,
+                                elements: vec![expr(HirExprKind::IntLit(7), Ty::Int)],
+                            },
+                            list_ty.clone(),
+                        ),
+                    )],
+                },
+                Ty::Named(holder_id, Vec::new()),
+            ),
+            span: Span::DUMMY,
+        }]);
+        module.structs.push(HirStruct {
+            def_id: holder_id,
+            name: "app.Holder".into(),
+            fields: vec![HirField {
+                name: "values".into(),
+                ty: list_ty,
+                contract: None,
+                span: Span::DUMMY,
+            }],
+            is_public: false,
+            repr_c: false,
+            span: Span::DUMMY,
+        });
+        module.traits.push(HirTrait {
+            def_id: trait_id,
+            name: "app.Marker".into(),
+            methods: Vec::new(),
+        });
+        module.trait_impls.push(HirTraitImpl {
+            trait_def_id: trait_id,
+            type_def_id: holder_id,
+            methods: Vec::new(),
+        });
+
+        let source = CCodegen::new()
+            .generate(&module)
+            .expect("C backend should emit a stable any vtable");
+
+        assert!(source.contains("static void* const __ori_any_vtable_2_3[]"));
+        assert!(source.contains(".vtable = (void*)__ori_any_vtable_2_3"));
+        assert!(source.contains("ori_arc_register_edge((void*)"));
+        assert!(source.contains("Edges represent owned slots"));
+        assert!(source.contains("->values.data"));
+        assert!(!source.contains("void* _ori_tmp1[]"));
     }
 
     #[test]

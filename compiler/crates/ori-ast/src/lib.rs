@@ -1,4 +1,4 @@
-// ori-ast real module structure, implementation pending
+//! Abstract syntax tree definitions for the Ori front-end.
 
 pub mod common;
 pub mod expr;

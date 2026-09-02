@@ -3,8 +3,9 @@
 > **This file is the only active “what remains to implement” list.**  
 > Surface baseline: **S3 `0.3.0`** + inference B **`0.3.1`** + released package
 > **`0.3.7`** + living workspace **`0.3.8-dev`**.
-> Last consolidated: **2026-08-10** — §2 contains the real remaining work
-> (every row verified against the compiler, not copied from a plan).
+> Last consolidated: **2026-09-01** — §2 contains the real remaining work.
+> Historical delivery rows are retained as dated evidence and are superseded by
+> any open `AUD-*` finding that narrows or invalidates their original claim.
 
 ---
 
@@ -15,7 +16,8 @@
 - Multi-OS packages / marketplace / registry marketing (DIST-*, TOOL marketplace, ECO demos)
 - Self-host (M4)
 
-**LANG-PERF-2 closed** (mid-end + list reserve; see
+**LANG-PERF-2 performance work landed, but optimizer correctness is reopened**
+(mid-end + list reserve; see
 [`perf-runtime-midend-plan.md`](historico/perf-runtime-midend-plan.md)). Ongoing work is
 **living maintenance**:
 
@@ -40,7 +42,7 @@ the active Ori language backlog. Do not re-vendor it into `ori-lang`.
 | Field | Meaning |
 |-------|---------|
 | **ID** | Stable handle |
-| **P** | Priority **1** = next · **2** = soon · **3** = later · **4** = after language freeze |
+| **P** | Priority **0** = release blocker · **1** = next · **2** = soon · **3** = later · **4** = after language freeze |
 | **D** | **S** small · **M** medium · **L** large · **XL** multi-month |
 | **Status** | `todo` · `partial` · `done` · `shelved` · `cancelled` |
 
@@ -51,12 +53,12 @@ the active Ori language backlog. Do not re-vendor it into `ori-lang`.
 | ID | What |
 |----|------|
 | DONE-S3 / INF / M1 / M2 / M3 | Surface, inference, install path, stdlib parents, ABI |
-| DONE-STDLIB-1…5 / 4b / 4k | Canonical stdlib + async I/O + poll reactor |
+| DONE-STDLIB-1…5 / 4b / 4k | Canonical stdlib + async I/O + Unix poll-readiness prototype; `AUD-NET-1` lifetime/close safety closed 2026-08-25, with reactor performance and scheduled sanitizer contention coverage retained as P1 follow-up |
 | DONE-LANG-1 / LANG-2 | Native async subset + C/debug sync matrix slice |
 | DONE-PKG-1…4 | Path/git/registry (code exists; not market push) |
 | DONE-FREEZE-1 / ABI-1 | Freeze window **closed 2026-07-19** (ran 2026-07-13→07-19, zero intentional surface breaks). Workspace remains `0.3.8-dev` until a `0.4.0` cut. **ABI-1 stays in force.** Rules: `freeze-and-abi-gates.md` |
 | DONE-DIST-LINUX-DEB | Linux `.tar.gz` + `.deb` via `package_native_release` / `package_deb`; CI release assets |
-| DONE-LANG-DOC | User docs + examples aligned to S3 / current stdlib / editors local |
+| DONE-LANG-DOC | Historical S3 documentation alignment; 2026-08-24 implementation-truth corrections are active under `AUD-QA-2`/`AUD-HYGIENE-1` |
 | DONE-LANG-PERF | AOT/JIT, stage release, mold/lld PATH, microbench + ARC bench; living JIT lower only |
 | DONE-LANG-RES | Native residual inventory Spec 14; product surface gate test; reopen only on concrete blocker |
 | CANC-GAME / CANC-IMGUI | **Cancelled as monorepo product** and removed from the active plan |
@@ -66,6 +68,124 @@ the active Ori language backlog. Do not re-vendor it into `ori-lang`.
 ---
 
 ## 2. Active work (language-first)
+
+### Current language-first closure wave (2026-09-01)
+
+The external audit was reconciled with the implementation rather than copied
+as a completion list. Closed findings remain closed when code and regressions
+prove them; the rows below are the unresolved language contracts, ordered for
+implementation before tooling and QA expansion.
+
+| Order | ID | Contract to finish | P | D | Status |
+|---:|---|---|:---:|:---:|---|
+| 1 | **CONC-THREADS-1** | Task boundaries must reject global mutable access and model transitive isolation | 0 | M | **partial** |
+| 2 | **LANG-COLL-EQHASH-1** | Native map/set/hash-table must use coherent user `Equatable` + `Hashable` semantics | 0 | L | **partial** |
+| 3 | **LANG-HANDLE-1** | Specify and enforce `handle[T]` nullability, lifetime, equality, FFI, and transfer | 0 | M | **partial** |
+| 4 | **LANG-FFI-1** | Prevent foreign strings from escaping through `@c_export` aggregates | 0 | M | **partial** |
+| 5 | **LANG-OWNERSHIP-VERIFY-1** | Verify async frame liveness/cleanup against HIR ownership facts | 0 | XL | **partial** |
+| 6 | **LANG-GRAPH-LIST-1** | Make graph key semantics generic and make linked-list names/complexity truthful | 1 | L | **partial** |
+| 7 | **LANG-STD-ERRORS-1** | Replace sentinel/string operational errors with stable typed stdlib errors | 1 | XL | **todo** |
+| 8 | **LANG-CHANNEL-1** | Define bounded-channel capacity/backpressure and closure behavior | 1 | M | **done** |
+| 9 | **LANG-IO-POOL-1** | Use a bounded shared worker pool for async filesystem operations | 1 | M | **done** |
+| 10 | **META-ATTR-1** | Define schemas/effects for custom attributes or reject unsupported names | 1 | M | **done** |
+
+Each row must add a normative rule, production implementation, focused
+regression, and a changelog entry before it moves to `done`. Performance and
+editor work remain below this wave even when their code already exists.
+
+**Handle boundary slice completed 2026-09-01:** borrowed `handle[T]` values
+remain unmanaged and non-transferable, and `@c_export` now rejects managed
+aggregates that contain a borrowed handle field (including nested structs and
+enum payloads). The standard `ori.handle.null()` constructor creates an
+explicit typed null sentinel, `ori.handle.is_null` checks it without
+dereferencing, and `==`/`!=` compare pointer identity without ownership side
+effects. Export wrappers also reject null/foreign,
+wrong-size, and same-size wrong-type managed-handle pointers before entering
+user code when the concrete payload is compiler-tagged. Safe
+dereference/accessors, host lifetime, and foreign-thread affinity still need a
+complete contract before this row can move to `done`.
+
+**Slice completed 2026-09-01:** `CONC-THREADS-1` now rejects direct mutable
+global reads/writes inside `task.spawn` and follows same-module plus imported
+named free-function and associated-function calls through conservative
+call-graph fixed points. Receiver calls, including concrete and dynamic
+`any[Trait]` dispatch, are conservatively matched by method name. An
+immutable-global positive regression and helper-call regressions protect the
+boundary. Local function values now carry a checker-side capture summary:
+closures with only transferable captures can cross `task.spawn`, while
+unknown or nested function environments remain rejected. The row remains
+`partial` because a complete type-level isolation model and richer transitive
+function-value effects are still open.
+Focused evidence: 76 concurrency tests,
+3 diagnostic-catalog tests, the native non-task global mutation regression, and
+strict Clippy for `ori-types`/`ori-driver` all pass. Pure named function values
+are accepted from their definition summaries, and local closures with an
+audited capture summary are accepted as well. Unknown function-value
+environments remain rejected until their captures can be represented and
+checked end to end.
+
+**Async ownership guard slice completed 2026-09-01:** native async frame
+emission now verifies slot bounds, range overlap, native layouts, and offset
+limits before Cranelift definitions are produced. Managed await-binding slots
+are initialized to null before scheduling, so fail/cancel/invalid-state cleanup
+cannot unregister an uninitialized pointer. The remaining work is a complete
+HIR data-flow proof that relates every retain/release to ownership facts and
+branch-sensitive liveness.
+
+**Collection slice completed 2026-09-01:** `Equatable.equals` now drives native
+`==`/`!=` and user-defined struct `map`/`set`/`hash_table` membership. Distinct
+struct values that compare equal are covered by native regressions. `graph`
+nodes now publish the same equality callback on first concrete node operation,
+so custom nodes work through add/find/edge/traversal and preserve the callback
+through clone/closure. Generated structural hash callbacks now drive
+non-recursive map/set/hash-table probes. A user-defined `hash(self) -> int`
+method on `Hashable` overrides the generated callback. Explicit non-structural
+`Equatable` without `hash` uses a constant-hash correctness fallback.
+Structural enum equality
+now works for direct `==`/`!=`; non-recursive enums with `Hashable` also work
+as graph nodes and collection keys. Recursive aggregate admission and the
+performance portion of this row remain open. Generated helpers use the
+`i64(payload) -> i64` callback ABI for scalar/string/bytes fields and nested
+aggregates; explicit non-structural equality without `hash` intentionally
+receives hash zero.
+Evidence: native collection regressions plus the runtime hash-callback/slot-
+repair unit test pass.
+
+**Graph key slice completed 2026-09-01 (partial):** generic graph operations
+now dispatch `Equatable.equals` for user-defined struct nodes, including
+equivalent-by-value lookup and undirected edge matching. The constructor is
+type-erased; the first concrete node operation attaches the callback, and
+subsequent operations retain the graph's established node kind. Non-recursive
+enums with `Hashable` now use structural equality, while an explicit
+`Equatable` implementation still overrides it; structural enum equality is
+also available outside collections. Recursive/generic edge cases and
+linked-list naming/complexity are still open. Native driver and
+runtime regressions cover callback lookup, edge matching, graph copies, and
+ARC cleanup.
+
+**Bounded-channel slice completed 2026-09-01:** `channel.create_bounded` is a
+typed native constructor returning `optional[channel.Channel[T]]`. Positive
+capacities create a FIFO with real backpressure; zero and negative capacities
+return `none`; `send` blocks while full and `close` wakes blocked senders, which
+receive `err(...)`. Runtime and native driver regressions cover invalid
+capacities, producer blocking, closure, managed ownership, and an end-to-end
+constructor call. Evidence: 100 runtime tests and 75 async/concurrency tests
+pass after the runtime was re-staged.
+
+**Shared I/O pool slice completed 2026-09-01:** blocking filesystem, connect,
+and TLS futures now use one lazily-created pool with at most four workers and a
+256-job FIFO queue. Queue admission applies backpressure, worker panics become
+terminal future failures, shutdown wakes waiters, and worker-creation errors
+complete the future with the documented host error instead of leaking a job.
+The runtime regression suite covers forced worker failure and all existing async
+I/O paths; the concurrency suite remains green after staging the static and
+dynamic runtime artifacts.
+
+**Attribute contract slice completed 2026-09-01:** unsupported namespaced
+attributes now fail closed with `attr.unknown`; only the seven built-in
+attributes have checker schemas. The inert name-based acceptance path was
+removed, and a driver regression protects the behavior. Third-party schemas
+remain a future design, but unsupported metadata is no longer silently ignored.
 
 ### Open — consolidated 2026-07-20
 
@@ -89,7 +209,7 @@ only then revisit self-hosting.
 | **COMP-FACADE-1** | Thin driver pipeline façade | 2 | M | **done** | 3 — all documentation/index validation and Markdown/HTML rendering moved to `pipeline/docs.rs`; `pipeline.rs` is now orchestration, policy, tests, and re-exports (392 lines) |
 | **QA-REG-1** | Regression matrix from audit findings | 1 | L | **done** | 4 — bytes equality now has checker, runtime, native AOT, and C-backend rejection coverage; CLI argument lifetime has a native regression; existing S3 tests cover `ok`/`err`, explicit trait receivers, async `using`, contracts, and formatter behavior |
 | **RUNTIME-ARC-1** | Native string/ARC lifetime aborts in the full multifile suite | 1 | M | **done** | **2026-07-26:** the managed `optional` wrapper both registered its payload as an ARC edge and released that payload manually in its destructor. The generic ARC cascade then released the same edge again. The wrapper now relies exclusively on the registered edge, matching the single-cascade-owner contract. Runtime, AOT, and JIT regressions cover `path.relative("a/b/c", "a/b")`; S4 passes all 364 `multifile_imports` tests. |
-| **RUST-QUALITY-1** | Restore a warning-free strict Clippy gate | 2 | L | **done** | **2026-07-26:** closed 510 surfaced strict warnings (470 runtime, 29 codegen, 11 driver) and removed the three pre-existing Clippy suppressions in these crates. Runtime C exports now have minimal Rust visibility while preserving `#[no_mangle]` symbols in both staticlib and cdylib; critical ARC functions retain local `# Safety` docs and Spec 16 owns the shared FFI contract. Domain inputs replaced long parameter lists for graph traversal, loop emission, linking, DAP requests, docs, and recursive source loading. `daily_fast.sh` now enforces the combined strict Clippy command. |
+| **RUST-QUALITY-1** | Restore a warning-free strict Clippy gate | 2 | L | **done** | **2026-09-01:** workspace check, strict Clippy (`--all-targets --all-features`), full `cargo fmt --all -- --check`, and the required `daily_fast.sh` stages are green. |
 | **PROJ-LINUX-1** | Medium real-world Linux project | 2 | L | **done** | 5 — `examples/linux_log_report` exercises multi-module loading, filesystem results, CLI arguments, native run, and a standalone test module on Linux |
 | **M4** | Self-hosting | 4 | XL | deferred | 6 — only after the previous rows and a stable stdlib/ABI window |
 
@@ -101,10 +221,12 @@ async `using` cleanup, contracts, and formatter defaults was corrected. Native
 byte equality is covered by checker, runtime, and AOT regressions; C/debug
 rejects it explicitly until that backend carries a logical byte length. The
 frontend/semantic matrix is green in `ori_spec` (238 tests), and the full
-`multifile_imports` S4 run passes all 364 tests after the **RUNTIME-ARC-1**
-single-cascade-owner fix. The complete Cargo workspace is green. Strict
-Clippy is also green for runtime, codegen, and driver and is enforced by
-`daily_fast.sh` under **RUST-QUALITY-1**.
+`multifile_imports` S4 run passed all 364 tests after the **RUNTIME-ARC-1**
+single-cascade-owner fix. The complete Cargo workspace and focused strict
+Clippy were green at that dated snapshot. The 2026-08-24 audit superseded the
+current-gate claim; as of 2026-08-25 the full strict Clippy command is green
+again, while format drift and `daily_fast.sh` suppression remain under
+**AUD-QA-1**.
 
 **Execution checkpoint (2026-07-26):** the native driver façade now delegates
 formatting, project creation, test execution, C emission, reports, and debug
@@ -125,14 +247,14 @@ that its proposed surface already exists.
 |----|------|---|---|--------|---------------|
 | **ATTR-REPR-1** | Enforce the real `@repr` contract | 1 | S | **done** | **2026-08-09:** checker accepts only exact `@repr("C")`; missing, named, and unsupported string forms emit `attr.invalid_arg` with the canonical action. Driver regression covers all rejected forms; Spec 02 and the metadata plan now match. |
 | **BUG-UTF8-LEN** | Unify `string` Unicode position semantics | 1 | S | **done** | **2026-08-09:** global/method length, slices, indexing, `index_of`, `chars`, and direct iteration now use Unicode scalar values in native and C/debug. Generated C links/runs accents and emoji, rejects malformed stdin, and Unix test hosts require `cc`; Spec 12/14 record parity. |
-| **EMBED-HOST-1** | Safe hosted runtime and Host ABI v1 | 1 | XL | **done for v1 scope** | **2026-08-17:** scalar + string/bytes hosted runtime boundary in `compiler/crates/ori-embed`: hosted config/diagnostics, stable module IDs, cached trusted host symbols, generation-preserving reload, explicit unload, runtime identity queries, structured scalar/string/bytes returns, typed pointer parameters, and registered host callbacks with `user_data`, protected unregister, cancellation, and bounded reentrancy; [implementation map](embedded-runtime-host-abi-v1.md). |
-| **VALUE-PERF-1** | Value-type performance program | 1 | L | **done for baseline suite** | **2026-08-17:** canonical benchmark kernels in `tools/bench/` (`vec3_add_loop.orl`, `mat3_multiply.orl`, `optional_scalar_loop.orl`, `run_value_perf.sh`) establishing baseline metrics for non-escaping scalar structs, matrices, and optionals; [implementation map](value-types-performance.md). |
-| **META-ATTR-1** | Static metadata and extensible attributes | 2 | L | **done** | **2026-08-17:** parser and checker support for extensible namespaced attributes (`@namespace.attr` with named/positional constants and contextual keyword segments), integration with type checking, and end-to-end regression tests; [implementation map](static-metadata-attributes.md). |
-| **COMP-SVC-1** | Persistent compiler service and modular JIT | 3 | XL | **done for v1 scope** | **2026-08-17:** `ori-embed` persistent scalar JIT, O(1) module-ID lookup, generation-checked handles, explicit module unload, structured trap results, and trusted integer callbacks with `user_data` and bounded synchronous reentrancy; [implementation map](interactive-compiler-service.md). |
+| **EMBED-HOST-1** | Hosted runtime and Host ABI v1 | 1 | XL | **done** | **2026-08-31:** C ABI now exposes versioned contexts, generation-bound function/value handles, nominal host-owned opaque handles, structured diagnostics, aggregate callbacks with `user_data`/capabilities/affinity dispatch, cancellation, and quiescent runtime leases. Rust tests: 38 embed cases; remaining sanitizer/foreign-host matrix is QA follow-up. [implementation map](embedded-runtime-host-abi-v1.md). |
+| **VALUE-PERF-1** | Value-type performance program | 1 | L | **done** | The approved P1 scope is a permanent, reproducible baseline: `vec3_add_loop.orl`, `mat3_multiply.orl`, `optional_scalar_loop.orl`, and `run_value_perf.sh`. Representation experiments without a measured bottleneck or product criterion are explicitly shelved as P2+ candidates; [implementation map](value-types-performance.md). |
+| **META-ATTR-1** | Static metadata and extensible attributes | 1 | M | **done** | **2026-09-01:** unsupported namespaced attributes fail closed with `attr.unknown`; only the seven built-in attributes have checker schemas. The inert name-based acceptance path was removed, and a driver regression protects the behavior. Third-party schemas remain a future design; unsupported metadata is no longer silently ignored. [implementation map](static-metadata-attributes.md). |
+| **COMP-SVC-1** | Persistent compiler service and modular JIT | 3 | XL | **partial** | Persistent scalar JIT, hosted values, module initialization, generation-checked lookup, and safe unload now exist. Daemon cache/session invalidation and broader incremental service behavior remain open; [implementation map](interactive-compiler-service.md). |
 | **LANG-CFG-1** | Structured conditional compilation | 1 | L | **done** | **2026-08-10:** typed `target_*`/`execution_profile`/manifest-feature predicates with `all`/`any`/`not`; filtering occurs after full parse and before resolution, shared by docs/HIR/AOT/JIT/C/LSP. CLI selection and incremental fingerprints are wired. Contract and evidence: [implementation record](conditional-compilation-cfg.md) and [ADR](adr-conditional-compilation-cfg.md). |
 | **DX-SCRIPT-1** | Scripts, formatter, lint, and process control | 1 | L | **done** | **2026-08-17:** CLI program-argument forwarding for `ori run` in both JIT and AOT; `ori fmt --write` (`-w`), `ori fmt --check` (`-c`), and recursive directory formatting; semantic `ori lint` pipeline and command (`lint.unused_variable`, `lint.redundant_bool_comparison`, `lint.double_negation`, `lint.redundant_if_boolean`, `lint.unnecessary_cfg`); [implementation map](developer-experience-scripting-automation.md). |
 | **RUNTIME-CTRL-1** | Runtime control and observability | 2 | XL | **done** | **2026-08-17:** value-based independent pseudo-random generator `ori.random.Rng` (`new_rng`, `next_int`, `next_range`), generational container `ori.slotmap.SlotMap` rejecting stale keys upon slot reuse, and end-to-end integration tests; [implementation map](runtime-control-observability.md). |
-| **TEXT-UNICODE-1** | Complete Unicode text toolkit | 2 | L | **done** | **2026-08-17:** added `ori.string.is_ascii` and `ori.string.case_fold` in stdlib and native runtime (`ori_string_is_ascii`, `ori_string_case_fold`), case-insensitive string equality with case-folding, and end-to-end integration tests; [implementation map](unicode-text-processing.md). |
+| **TEXT-UNICODE-1** | Complete Unicode text toolkit | 2 | L | **partial** | Native AOT/JIT now use Unicode full non-Turkic case folding (`unicode-casefold`); C/debug still has a byte-oriented lowercase fallback, and grapheme/normalization remain out of scope. [implementation map](unicode-text-processing.md). |
 | **WEB-FOUND-1** | Byte-safe streaming web foundation | 2 | XL | **done** | **2026-08-17:** added HTTP request/response builders and parsers in `ori.net.http` (`Request`, `parse_request`, `build_response`), structured status and header extraction, and end-to-end integration tests; [implementation map](web-runtime-foundation.md). |
 | **FFI-BINDGEN-1** | Native binding generation | 2 | L | **done** | **2026-08-17:** added `ori bindgen` CLI command generating deterministic `extern "c"` declarations, `@repr("C")` structs, aliases, and constants from C header files, and end-to-end integration tests; [implementation map](native-binding-generation.md). |
 | **EMBEDDED-1** | Embedded/freestanding execution profile | 3 | XL | **done for baseline profile** | **2026-08-17:** explicit target selection and freestanding/embedded profile `@cfg(execution_profile: "embedded")` and `--execution-profile embedded` separating OS-dependent operations from the standalone/embedded core; [implementation map](embedded-execution-profile.md). |
@@ -142,9 +264,9 @@ that its proposed surface already exists.
 These rows follow [ORI_GRAPHICS_LANGUAGE_EVOLUTION.md](ORI_GRAPHICS_LANGUAGE_EVOLUTION.md):
 make Ori a good *educational* software-rendering language (framebuffer →
 rasterizer → 3D pipeline) without adding GPU/engine abstractions to the core.
-The re-audit (2026-08-16) confirmed all gaps below are still open; `ori.buffer`
-exists only as a managed stub, so a dedicated contiguous buffer still needs a
-contract decision (evolve `Buffer[T]` vs. a new type name).
+The 2026-08-16 program opened these slices. `ori.buffer` subsequently gained a
+native contiguous backing on 2026-08-17; SIMD remains future and `ori.window`
+remains an unconnected stub.
 
 | ID | Item | P | D | Status | What it means |
 |----|------|---|---|--------|---------------|
@@ -180,43 +302,88 @@ contract decision (evolve `Buffer[T]` vs. a new type name).
 | **LANG-PERF-5** | Zero-copy slices | 2 | M | **done** | **2026-07-20**: added `slice[T]`, a read-only window, as a **distinct type** rather than changing `xs[1..2]`. `lists.window(xs, a, b)` is O(1); `lists.slice` still copies. 100k-element list: **2.4 ms → 12 µs (197×)**. It stores the *list object*, not its buffer, because `push` can move the buffer; an ARC edge keeps the owner alive. Read-only on purpose — writing through a window would make aliasing mutable. Both `slice` and `array` were made **contextual** keywords after reserving `slice` broke an existing test with `const slice: list[string]` |
 | **LANG-PERF-5b** | Windows over `string` / `bytes` | 3 | L | **blocked — measured 2026-07-20** | The same idea for text is blocked by representation, not effort: a `string` finds its length by scanning to the **NUL**, and `bytes` by looking the exact pointer up in the allocation registry. A window into the middle has neither. Fixing it means a (pointer, length) pair, which breaks `const char*` compatibility — normative for `@c_export` (spec 19 §8.3b) — and the 50 runtime functions taking `*const u8`. **Same blocker that stopped SSO.** A `slice[u8]` over the bytes is the available answer |
 | **LANG-PERF-6** | Scoped arenas | 3 | L | **shelved by language decision 2026-07-23** | A general arena would only remove ARC overhead if arena-owned values bypassed per-object registration and release. That requires escape/lifetime rules for returns, fields, async tasks, FFI, managed children, and custom destructors; an arena that merely batches ordinary ARC values would keep nearly all of the cost. Reopen only after a real short-lived-object workload proves a bottleneck and a runtime prototype shows a material win (target: at least 20%). Prefer a safe domain container such as `Pool[T]` with stable IDs before adding region semantics to the language. |
-| **LANG-FFI-1** | `@c_export` for aggregates | 2 | L | **done for ABI v1 scope** | **2026-07-23:** scalar-field structs cross through pointer/out wrappers; managed/nested structs use typed opaque ARC handles. Direct `optional[T]` expands to tag + payload and direct `result[T,E]` to `OriResultTag` + active payload, with out parameters on return and ownership preserved for strings/handles. Generated headers and real C-host regressions cover padding, borrow/alias ownership, `some`/`none`, `ok`/`error`, foreign strings and zero allocation growth. Direct `list`/`map`/`set` remain intentionally private behind opaque domain handles; exposing their mutable internal layout is not part of `ori-native-abi-1`. |
+| **LANG-FFI-1** | `@c_export` aggregate ownership | 0 | M | **partial** | Scalar/out wrappers and opaque handles exist. Direct/optional/result string and bytes ingress is copied; managed aggregate parameters are opaque handles and wrappers now reject null, foreign, wrong-size, or same-size wrong-type pointers before user code when a concrete non-generic payload is compiler-tagged. Generated code has no provenance-only fallback and generic aggregate exports remain rejected. The Linux C-host regression now runs under ASan/UBSan when available; a cross-platform hostile foreign-host matrix remains. Direct collections remain private behind handles. |
 | **LANG-FFI-2** | Generated `.h` header | 3 | M | **done** | **2026-07-23:** every successful `ori compile --lib` writes the sibling `.h` from HIR. It declares runtime lifecycle/release functions, scalar typedefs, scalar-struct pointer/out signatures, C++ guards, and string ownership. Custom export symbols are checked as portable C identifiers; both real C-host regressions compile against the generated header. |
 | **DX-DBG-1** | Debugger: `variables` + `stackTrace` | 3 | M | **done** | **2026-07-25:** instrumented Ori functions register entry/exit frames; stopped events include `stackTrace`, scalar variables, nested `struct`/`optional`/`result`/enum snapshots, bounded list length/capacity plus recursively indexed elements, map/set and supported opaque-collection views, async frames across suspension/resumption, closure captures, and bounded previews for managed/static/registered foreign strings and bytes. Unknown pointers remain summarized without dereferencing. |
 | **DX-DBG-2** | DAP adapter + `ori debug` | 3 | M | **done** | **2026-07-25:** `ori debug <file>` owns compilation/instrumentation, local TCP bridging, breakpoints, continue/step and terminal rendering. `ori debug --dap` exposes `initialize`, `launch`, `setBreakpoints`, `configurationDone`, `continue`, `next`, `threads`, `stackTrace`, `scopes`, `variables`, `evaluate` and `disconnect` over stdio. `evaluate` is a bounded, side-effect-free expression evaluator over the latest stopped snapshot; it never invokes target code. |
 | **DX-DBG-3** | Editor debugger integration | 3 | M | **done for VS Code; Zed blocked** | **2026-07-23:** `extensions/vscode-orl` registers the `ori` debug type, launches `ori debug --dap`, provides `Ori: Debug Current File`, and contributes a launch configuration. Zed's current extension API exposes language-server registration but no debugger descriptor; manual `ori debug --dap` remains documented there. |
 | **DX-DWARF** | DWARF debug symbols | 4 | L | **done for line metadata + portable variables** | **2026-07-26:** native Linux binaries receive a compact DWARF v4 line table built from final Ori symbols; every target also gets an `*.debug.json` source map containing parameters, locals, pattern bindings and closure captures with source lines. The cooperative DAP publishes live values on Linux, macOS and Windows. Windows linkers are invoked with `/DEBUG`/`-DEBUG` and an explicit `*.pdb` path. Rich CodeView/DWARF local-variable locations remain blocked on a Cranelift writer; native debuggers can use the line symbols while Ori DAP supplies values. Missing platform tooling degrades to the JSON map with a warning. |
-| **COMP-SCALE-1** | Large-module compiler scalability | 1 | M | **done** | **2026-07-23:** the reported 10k-function compile (~4 min) was reproduced and instrumented by pipeline stage. Root causes were repeated linear signature lookup plus every Cranelift body importing every user/runtime symbol and every function receiving an unused closure wrapper. Indexed signatures, per-function reference collection, direct symbol lookup and demand-created wrappers reduce the 10k synthetic AOT compile to **21.2 s** on the same development host (check/type pipeline **~5 s**); strict ignored guard budgets are 10 s for check and 60 s for compile. Complex managed/trait/async bodies conservatively retain the full symbol set. |
+| **COMP-SCALE-1** | Large-module compiler scalability | 1 | M | **done** | Function/codegen indexes reduced the 10k synthetic AOT compile from ~4 min to 21.2 s. The closure adds immutable value/type/trait/impl/method indexes built once in `ResolvedModule` and shared by every checked file. Guards cover 10k constants, 1k declaration families, and a large import graph without repeated index rebuilds. |
 | **DX-INCR** | Incremental compilation | 3 | L | **done for per-file native objects** | **2026-07-26:** `.ori/incremental.json` fingerprints the source graph, manifests, lockfile, compiler version and options, and reuses a matching native output/header. Rebuilds now emit deterministic content-addressed objects in `.ori/modules/` and link one object per source file; unchanged implementation files are reused while changed files are regenerated. A shared interface fingerprint invalidates consumers when declarations or layouts change. Shared libraries, dynamic global initializers and explicit debug instrumentation conservatively use the monolithic route. Path and materialised registry/Git dependencies participate in the fingerprint; dependency-bearing projects without `ori.lock` rebuild instead of guessing. `ORI_DISABLE_INCREMENTAL=1` disables it. |
-| **PKG-LOCK** | Dependency lockfile | 3 | M | **done** | **2026-07-25:** `ori lock` writes deterministic `ori.lock` snapshots for path, registry and Git dependencies (including resolved Git revisions); `ori lock --locked` validates without rewriting, and `ori get` refreshes the snapshot. Builds/checks reject a stale lockfile when one is present. |
-| **PKG-REG** | Production package ecosystem | 3 | XL | **done for v1 protocol, publishing, and locking** | **2026-08-17:** registry v1 protocol, package publishing (`ori publish`), dependency retrieval (`ori get`), package installation (`ori install`), local/HTTP registry caching, and lockfile validation (`ori lock --locked`); [implementation map](package-ecosystem-production.md). |
+| **PKG-LOCK** | Dependency lockfile snapshot | 3 | M | **done** | Lock format v2 records source identity, exact Git revision, and SHA-256 tree digest. Resolution restores the locked graph from verified cache in offline mode, rejects drift/tampering, and requires explicit migration from v1. |
+| **PKG-REG** | Package ecosystem protocol | 3 | XL | **done for registry v1** | Registry/publish/get/install/cache/lock now enforce HTTPS by default, authenticated archives, contained extraction, immutable versions, atomic cache publication, and lock-driven reproducibility. Broader ecosystem hosting remains outside this repository; [implementation map](package-ecosystem-production.md). |
 | **PKG-NS** | Cross-package namespace isolation | 3 | M | **done** | **2026-07-25:** local import lookup stops at the owning package boundary and dependency modules must use the package-qualified prefix (`package.module`). Two dependencies can therefore expose the same local module name without an ambiguous bare import. |
 | **BACK-C-1** | C backend parity | 3 | L | **shelved by backend decision 2026-07-23** | Cranelift AOT/JIT is the product and semantic reference; C emission remains under `ori emit c` as a partial synchronous debug/transpile route. It supports eager `ori.iter` and inline generators, but intentionally rejects async/concurrency and `core.Destructor`, while much of the managed stdlib requires the native runtime. Maintenance fixes invalid C, crashes, or wrong semantics inside the documented subset; new language features may report `backend.c_unsupported`. Reopen parity only if C becomes a product backend through a separate decision. |
 | **BUG-MAPSET** | `m["k"] = v` silently did nothing | 1 | S | **done** | **2026-07-20**: the index-assignment codegen chain handled only `list` and fell through with no store and no error, so map index assignment compiled and did nothing. Implemented for `map`, and the fallthrough is now a hard error so the class cannot recur. Regression: `compile_runs_map_index_assignment` |
 | **DIAG-DEFID** | `<def DefId(N)>` in backend errors | 3 | S | **done** | **2026-07-23**: both backends now render declared type names from their compact `DefId → name` tables, recursively through containers and function types. The native HIR validator builds the same compact table; backend diagnostics no longer need a full `DefMap`. |
 
-### Code audit, memory safety, and performance roadmap (2026-08-17)
+### Code audit, memory safety, and performance roadmap (2026-08-24)
 
 Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-performance-architecture.md).
 
 | ID | Item | P | D | Status | What it means |
 |----|------|---|---|--------|---------------|
-| **RUST-AUDIT-2** | Full-workspace clean Clippy gate | 1 | S | **done** | **2026-08-17:** strict clippy clean across `--all-targets` for all 10 workspace crates and test suites; map/slice/question-mark patterns simplified; zero warnings or errors. |
-| **OPT-TYPE-INTERN-1** | Type Arena Interning (`TyId`) | 2 | L | **done** | **2026-08-17:** arena-backed `TyInterner` and lightweight 32-bit `TyId` handles in `ori-types` with seeded primitives and O(1) deduplication. |
+| **AUD-OPT-1** | DCE preserves traps and observable failures | 0 | M | **done** | DCE removes only expressions classified `Pure`; traps, calls/control flow, indexing, allocation-backed values, contracts, destructors, and uses in associated calls or `match` guards are retained. Unit tests cover allocation retention; AOT/JIT differential regressions cover division, remainder, shifts, indexing, failed contracts, and custom destructors at every optimization level. Deterministic allocator-failure injection is a P1 test-infrastructure follow-up, not an open optimizer correctness path. |
+| **AUD-OPT-2** | Inlining preserves single, ordered argument evaluation | 0 | M | **done** | Until HIR has explicit temporaries, aggressive inlining accepts only stable scalar literal-derived arguments, used at most once. Calls, variable reads, managed/allocating values, parameter contracts, closures, binding scopes, propagation, and `await` stay behind the call boundary. AOT/JIT regressions cover ignored traps, argument snapshots/order, single evaluation, contracts, destructors, and managed values. Materialized temporaries and binding IDs remain a P1 optimization-capability follow-up. |
+| **AUD-ARC-1** | ARC edge multiplicity/slot ownership | 0 | L | **done** | `ArcEdges` preserves every `(owner, child)` occurrence and removes/releases exactly one slot. Runtime tests cover unregister, owner teardown and parallel-edge cycles; native AOT covers duplicate struct fields, while one AOT/JIT matrix covers duplicate list/map/channel slots with zero leaks. Native map lowering no longer registers the same physical entry a second time after the runtime already took ownership. Valgrind is an explicit optional/required gate (`ORI_REQUIRE_RUNTIME_VALGRIND=1`); sanitizer/TSan scheduling remains P2 QA under `AUD-QA-3`, not an open P0 invariant. |
+| **AUD-CHANNEL-1** | Managed channel value ownership | 0 | M | **done** | Typed lowering selects distinct scalar and managed send symbols. The scalar path never infers ownership from an `i64`; the managed path validates and registers one queue edge, receive transfers one edge, and destruction releases pending entries. Runtime tests cover pointer-shaped scalar values, invalid managed payloads, duplicate sends and a four-sender close race; native AOT/JIT collection-channel coverage finishes with zero leaks. External memory-checker/TSan execution remains P2 QA. |
+| **AUD-NET-1** | Async resource lifetime and close synchronization | 0 | L | **done** | Readiness jobs retain connection/listener/UDP handles; mutex-protected native state serializes I/O with close. Unix readiness polls an owned duplicate descriptor and reprobes every 50 ms, preventing close/reuse of a borrowed fd; pending jobs rotate and cancelled jobs release future/resource keepalives without running work. Close/cancel UDP runtime regressions and TCP/UDP native E2E pass. A lower-latency multi-OS reactor and sanitizer contention jobs remain P2 performance/QA. |
+| **AUD-EMBED-1** | Sound public hosted-value API | 0 | L | **done** | Raw managed constructors are gone. Hosted strings/bytes are Rust-owned and copied across the runtime boundary; slice tokens carry private `NonNull` ownership plus session/module/generation identity. Calls reject wrong-session/module, stale, and unload/reload tokens. Unit/leak regressions and a compile-fail doctest pass; Miri is unavailable on the pinned stable toolchain and is not reported as passed. |
+| **AUD-FFI-1** | Foreign string ownership at `@c_export` ingress | 0 | M | **partial** | Direct/optional/result strings and length-aware bytes are copied on ingress. Managed aggregates cross only as opaque runtime handles, and wrappers reject null, unregistered, wrong-size, or same-size wrong-type pointers before dereference when a concrete layout is compiler-tagged. Generated code has no provenance-only fallback and generic aggregate exports remain rejected. The Linux host fixture now runs under ASan/UBSan when available; the cross-platform hostile foreign-host matrix is the remaining evidence gap. |
+| **AUD-PARSE-1** | Total token diagnostics | 1 | S | **done** | `TokenKind::Uninhabited` (`-->`) now renders a stable token name. A complete lexer unit matrix covers every producible token variant, and the malformed-source corpus proves parser diagnostics do not panic on it. |
+| **AUD-PARSE-2** | Fixed-arity type recovery | 1 | S | **done** | `result`/`map` now return parser recovery after reporting wrong arity instead of indexing short vectors. The security suite iterates zero, one, exact, and extra arguments for single- and multi-argument constructors in bracket and legacy angle forms, asserting bounded diagnostics without panics. |
+| **AUD-PARSE-3** | Bounded parser nesting | 1 | M | **done** | Every recursive parser constructor shares the nesting budget. A generated 19-constructor corpus exercises CLI and LSP paths, while 512-deep unary/pattern/type/expression inputs terminate with bounded diagnostics instead of overflowing the process stack. |
+| **AUD-CT-1** | Iterative/bounded constant dependency evaluation | 1 | M | **done** | Constant dependencies use iterative DFS with cached terminal values. Regressions accept a 4,096-node chain, diagnose a 512-node cycle, and keep a 10,000-constant guard bounded without recursive stack growth. |
+| **AUD-PARSE-4** | Enforce the `check` message contract | 2 | S | **done** | Every non-string message now emits `parse.check_message_literal` and is consumed during recovery; string-literal escapes are decoded through the shared parser path before lowering. `CheckStmt` keeps its typed `Option<SmolStr>` contract, and scalar/dynamic regressions cover the rejection. |
+| **AUD-PKG-1** | Contained, integrity-checked package extraction | 1 | L | **done** | Registry fetches require HTTPS unless an explicit local-development opt-in is set, disable redirects, enforce time/byte/decompression/depth/count limits, require a SHA-256 sidecar, and publish verified trees atomically. The Rust tar preflight rejects traversal, absolute/non-UTF-8/backslash paths, duplicates/case collisions, truncation, symlinks, hardlinks, devices, and FIFOs before `unpack_in`. |
+| **AUD-PKG-2** | Lock-driven reproducible dependency resolution | 1 | L | **done** | `ori.lock` v2 records normalized source identity, exact Git revision, and SHA-256 tree digest for the transitive graph. Locked and offline restoration validate cache/source/content, reject tampering and source collisions, and require an explicit unlocked migration for v1 locks. |
+| **AUD-LSP-1** | Protocol-correct Unicode positions | 1 | M | **done** | The server negotiates UTF-8/UTF-16/UTF-32 once, defaults to UTF-16, and routes inbound/outbound locations through one checked codec. Unicode, CRLF, emoji, combining-character, surrogate-middle, out-of-range, reversed-edit, incremental-edit, and end-to-end navigation/rename regressions pass. |
+| **AUD-LSP-2** | Resolver-identity symbol index | 1 | L | **done** | Definition/navigation uses resolver `FileId`/`DefId`; locals carry lexical binding identity and selective import aliases carry declaration identity. Lexer occurrences exclude comments/strings and role filtering excludes field/named labels. Shadowing, Unicode, duplicate cross-file names, aliases, hover, goto, references, and rename are covered end to end. |
+| **AUD-LSP-3** | Generation-safe background validation | 2 | M | **done** | `validate_uri` and debounced `didChange` now capture `(uri, version)` snapshot, run `run_check*` via `spawn_blocking`, and atomically commit the semantic index under the project write lock only when the version is still current. Document edits invalidate cached semantic snapshots before publishing a new one. Unit + e2e LSP tests cover emoji, invalid position, reversed range, version tracking, edit invalidation, atomic stale-index rejection, and slow-first staleness discard; full LSP matrix 31 unit + 13 e2e verde. |
+| **AUD-LSP-4** | Canonical S3 completion/hover rendering | 2 | S | **done** | **2026-09-01:** removed pre-S3 keyword suggestions; corrected compact `apply` and statement-only `using` snippets; hover renders generic/optional types with canonical brackets. Unit tests cover the S3 surface and snippets. |
+| **AUD-LSP-5** | Semantic, scope-aware editor linting | 2 | M | **partial** | **2026-09-01:** LSP now uses the driver's in-memory AST linter (`run_lint_source`); comments/strings/Unicode/check conditions no longer create false uses, and nested shadowing is covered. **Structured bindings are now traversed for destructuring, `for`, `while some`, `match` patterns, `using`, `repeat`, and `loop`, with an E2E regression.** A 1 MiB editor-buffer budget prevents pathological reparse/check latency. Binding usage/mutation now resolves to stable linter-local identities, so nested shadowing cannot hide an outer unused warning; resolver `DefId` identities remain the final integration step. |
+| **AUD-FRONT-1** | Explicit residual feature matrix | 3 | M | **todo** | Cross-module/generic/variadic/method iterators, async/recursive iterators, symbolic const generics, and generic newtypes remain unsupported and need one phase/backend/test matrix. |
+| **AUD-FRONT-2** | Remove magic `DefId` sentinels/dummy fallback | 2 | M | **partial** | **2026-09-01:** `DefId::INVALID`/`SYNTHETIC_MAIN` centralize recovery IDs; `DefMap::try_get` returns `None`, `get` fails closed, and a 10,001-definition regression protects sequential IDs. Literal, applied-type-parameter, and closure IDs now use disjoint named synthetic ranges (the former first-closure/`INVALID` collision is gone); diagnostic type rendering recovers safely for unknown IDs. JSON placeholder normalization is now one shared fail-closed helper used by checker/HIR, with nested-type coverage. Eliminating `Option`-less recovery IDs from HIR remains. |
+| **AUD-CHECKER-1** | Immutable checker indexes and clone budget | 2 | L | **done** | `CheckerIndexes` indexes values, types, traits, impls, methods, and fields once in `ResolvedModule`, then every file checker borrows the same immutable snapshot. Synthetic declaration-family and import-graph guards protect construction count and wall-time scale; deeper parallelism remains evidence-gated rather than open work. |
+| **AUD-HYGIENE-1** | Remove stale syntax, dead helpers, and misleading comments | 3 | S | **partial** | **2026-09-01:** exhaustiveness and `ori explain` guidance now use canonical `ok`/`err`; AST/HIR crate docs describe their real responsibilities; unused LSP workspace-root state/accessors were removed; `ori.concurrent.utils` and `ori.process.utils` now forward to canonical parent modules; the inert SIMD/vectorizer scaffold was removed from the optimization pipeline because it never rewrote HIR. Legacy angle parsing remains intentionally bounded recovery for `parse.removed_angle_type`; window/error-trace stubs and other compatibility modules still need an explicit remove-or-implement decision. |
+| **AUD-QA-1** | Truthful required code-quality gates | 1 | M | **done** | Required QA stages fail closed with locked dependencies: workspace check, full strict Clippy, tests, and the scoped rustfmt ratchet. Observational full stages report `INCOMPLETE` instead of false success, and shell/workflow masking paths were removed. Release publication remains separately covered by **AUD-REL-1**. |
+| **AUD-QA-2** | Behavioral Atlas/example/diagnostic gates | 2 | M | **partial** | **2026-09-01:** `validate_atlas.py` now validates the Atlas schema, allowed statuses, unique IDs, and every referenced path; `examples_smoke.sh` covers root and nested examples (25 checks) and `daily_full.sh` adds an isolated native build tier with temporary outputs, selecting binary, C-export library, or test-harness validation from the entrypoint, plus curated L3 runs for `hello`, `language_features`, and `native_showcase`; `diagnostic_catalog` validates catalog row metadata plus a real `parse.module_missing` severity/message/span fixture. Full diagnostic snapshots and broader run coverage remain. |
+| **AUD-QA-3** | Fuzzing, properties, Miri, sanitizers, and coverage trend | 2 | L | **partial** | **2026-09-01:** dependency-free `tools/qa/fuzz_smoke.py` runs deterministic malformed-byte, truncation, and 512-level nesting cases with timeout/panic detection; `daily_full.sh` reports the stage as observational when no compiler binary is available. Coverage-guided fuzzing, package/ABI/ARC/LSP generators, Miri, sanitizer matrix, and trend reporting remain. |
+| **AUD-REL-1** | Complete, reproducible release matrix | 1 | L | **done** | Four required desktop targets package and smoke JIT+AOT before publication. Actions/toolchain are pinned, job permissions are least-privilege, the full artifact set is required, and release output includes `SHA256SUMS`, deterministic SPDX SBOM, GitHub build provenance, and byte-identical tar.gz archives. Native string/global data and function-reference/wrapper snapshots use key-stable order; `.ori` caches are pruned before archiving. Remote publication remains a release-time execution, not unfinished implementation. |
+| **AUD-RT-INIT-1** | Hosted/C module initialization lifecycle | 1 | M | **done** | **2026-08-31:** hosted JIT executes global init once per generation and pairs it with teardown; C headers export the required order; runtime leases call `ori_rt_init`/`ori_rt_shutdown_ex` safely. |
+| **AUD-LINK-1** | Correct executable/shared output for every linker strategy | 1 | L | **done** | **2026-08-31:** shared-link mode is honored across bundled/system/raw strategies; Windows `.lib` no longer passes GNU-only `-Wl` flags; native backend linker matrix passes. |
+| **AUD-JIT-ABI-1** | Runtime artifact identity validation | 1 | M | **done** | **2026-08-31:** JIT validates target/version/ABI/name and cdylib SHA-256 before loading, then queries identity symbols; AOT validates staged staticlib SHA-256 when metadata is present and fails closed in packaged mode. |
+| **AUD-BYTES-1** | NUL-safe synchronous and async bytes I/O | 1 | M | **done** | **2026-09-01:** managed bytes preserve exact lengths across list/TCP/UDP paths; `str.to_bytes` copies static literals into managed storage; foreign unregistered pointer-only calls now fail closed with host error `1002`; `@c_export` uses explicit `OriBytes { data, len }`. |
+| **AUD-C-1** | Escape C-backend user messages safely | 1 | S | **done** | `check` messages now use a constant `"%s\\n"` format and a complete C-literal escape path, including quotes, backslashes, controls, NUL, and percent sequences. Codegen and strict C compile/run regressions cover hostile text. The portable `c_backend_sanitizers` test probes `clang`/`cc`, runs the generated host under ASan+UBSan, reports unsupported environments explicitly, and is required in the Linux native CI matrix with `ORI_REQUIRE_C_SANITIZERS=1`. |
+| **AUD-C-2** | Stable C-backend `any` vtable/managed ownership | 1 | M | **done** | **2026-09-01:** vtables have translation-unit lifetime, managed fields register ARC edges, boxing transfers its initial owner without an extra retain, and dynamic dispatch no longer leaks an unmatched retain. Typed C trampolines adapt boxed pointer receivers to concrete by-value methods and pass a field-less trait value to default methods; ASan+UBSan plus C-compile regressions validate both stored-`any` paths. |
+| **AUD-SPAWN-1** | Typed thread-creation failure handling | 1 | M | **done** | **2026-08-31:** fallible spawn admission and shutdown now share a lifecycle mutex (`Ready → Stopping`), preventing late workers after shutdown; timer/reactor retries and future/task failure contracts remain covered by runtime regressions. |
+| **AUD-CANCEL-2** | Race-free cancel association ownership | 1 | M | **done** | Association rechecks cancellation while holding the token list lock, clears tentative links before cancelling, and bulk cancellation releases the future retain for every removed entry. Runtime regressions cover normal cancel and association-after-cancel paths. |
+| **AUD-UNLOAD-1** | Safe runtime shutdown and `dlclose` lifecycle | 1 | L | **done** | **2026-08-31:** runtime leases keep cdylib code alive through managed values, shutdown stops/joins workers with a deadline, restores signal handlers/alt stacks, rejects attached foreign threads, and context destroy drains callbacks/handles before unload. |
+| **AUD-RT-1** | Checked allocation sizes and failure contract | 2 | M | **partial** | `ori_alloc`, set/map backing arrays, graph storage, heap storage, C-facing argument/JSON/hex buffers, stream/file reads, string repeat/padding, and length-aware stdout/stderr writes now validate sizes and abort or return typed errors instead of wrapping or unwinding. The public allocation boundary matrix and injected-failure coverage remain. |
+| **AUD-RT-2** | Typed invalid-UTF-8 FFI handling | 2 | S | **partial** | Invalid NUL-terminated and length-aware string inputs now set host error `1003` before legacy APIs return an empty compatibility value; oversized explicit lengths are checked before slicing. A full typed `Result` for every pointer-returning ABI entry and pointer-provenance validation remain. |
+| **AUD-RT-3** | Measure and reduce ARC registry contention | 2 | L | **partial** | **2026-09-01:** all runtime ARC paths use one poison-safe `lock_arc_state` helper, and a cheap atomic counter records contended acquisitions without timing the uncontended fast path. Sharding/thread-local ownership still requires benchmark evidence and cycle-semantics proof. |
+| **AUD-RT-4** | Reactor panic and poison containment | 1 | M | **done** | **2026-08-31:** readiness/blocking workers catch panics and fail only their future, shutdown drains queued jobs, poisoned locks recover, and dead persistent workers are detected/reaped before restart. |
+| **AUD-RT-5** | Timer queue complexity | 3 | M | **done** | **2026-09-01:** replaced per-wake full-vector sorting with a min-heap and monotonic stable tie-breaking; periodic compaction now drops terminal futures and releases their timer-owned ARC references. Long-lived cancellation tokens shrink burst capacity after associations are removed. Runtime tests cover ordering, stale-owner extraction, and capacity recovery; `tools/bench/run_timer_heap_churn.sh` provides a reproducible 128-concurrent-sleep workload and completion canary. |
+| **AUD-EMBED-2** | Hosted callback panic/poison containment | 1 | M | **done** | **2026-08-31:** callback and dispatcher types use `C-unwind`; trampoline catches/ translates panics, registry locks recover poisoning, unregister waits for active calls, and affinity dispatch is synchronous by contract. |
+| **AUD-UNICODE-1** | Unicode case-folding conformance | 2 | M | **partial** | Native runtime uses Unicode full non-Turkic folding with versioned crate data and a `ß` regression; C/debug parity and generated conformance vectors remain. |
+| **AUD-ABI-QA-1** | Operational ABI export/schema validation | 2 | M | **partial** | Added cross-platform `tools/qa/abi_exports.sh` to build/check static and shared runtime exports in `daily_fast`; PowerShell now resolves `compiler/target` and checks cdylib lifecycle symbols. **2026-09-01:** `validate_runtime_link.py` consumes the declarative `runtime-link.schema.json` and fail-closes malformed target/profile/version fields, unsafe artifact paths, missing files, and mismatched SHA-256 metadata. Full ABI layout/ownership validation remains. |
+| **AUD-TEST-1** | One-build native test dispatcher | 2 | L | **done** | Native `ori test` now emits/links one suite binary and runs each selected test in a fresh process using `ORI_TEST_INDEX`; regressions cover multi-test, filtered, and failing cases. |
+| **AUD-TARGET-1** | Reject or implement non-host target codegen | 2 | M | **done** | Native AOT/JIT/test pipelines now fail before incremental reuse or code generation with `native.target_unsupported` when `ORI_TARGET_TRIPLE` differs from the compiler host triple; cfg-only front-end use remains available. |
+| **RUST-AUDIT-2** | Full-workspace clean Clippy gate | 1 | S | **done** | Full-workspace strict Clippy (`--workspace --all-targets --all-features -D warnings`) is a required daily/native-route gate. Existing formatting debt is controlled by a documented scoped rustfmt ratchet, and required QA paths no longer suppress failures. |
+| **OPT-TYPE-INTERN-1** | Type Arena Interning (`TyId`) | 2 | L | **done (removed)** | Removed the unconsumed `TyInterner`/`TyId` scaffold and public re-export. A future interner must be introduced only with validated handles, a session ownership model, and allocation/RSS/time evidence. |
 | **OPT-PAR-TYPECHECK-1** | Parallel Module Type-Checking | 3 | M | **done** | **2026-08-17:** multi-threaded function-body type checking via `rayon` across independent loaded source modules in `check_loaded_sources`. |
-| **DX-LINT-EXT-1** | Extended Semantic Linters | 3 | S | **done** | **2026-08-17:** added `lint.prefer_const` for unmutated `var` bindings, `lint.shadowed_variable` for scope shadowing, and complete AST expression traversal in `ori lint`. |
-| **OPT-RC-ELISION-1** | Static Retain/Release Elision in HIR | 2 | L | **done** | **2026-08-17:** intraprocedural escape and ownership analysis pass in `ori-hir/src/optimize/rc_elision.rs` eliding redundant copies and intermediate stores for non-escaping locals. |
-| **OPT-ACYCLIC-1** | Acyclic Type Inference | 2 | M | **done** | **2026-08-17:** compile-time `Ty::is_acyclic()` analysis identifying types that cannot form recursive reference cycles. |
-| **OPT-SSO-1** | Small String Optimization / Fast Paths | 2 | M | **done** | **2026-08-17:** short-string fast-paths and direct slice copies without intermediary malloc churn. |
+| **DX-LINT-EXT-1** | Extended Semantic Linters | 3 | S | **done for `ori lint`** | **2026-08-17:** added `lint.prefer_const`, `lint.shadowed_variable`, and complete AST expression traversal in the CLI linter. The separate textual LSP linter is reopened as **AUD-LSP-5**. |
+| **OPT-RC-ELISION-1** | Static Retain/Release Elision in HIR | 2 | L | **done (removed)** | Removed the inert name-based alias pass from the optimization pipeline. Real ARC elision is deferred until HIR carries ownership operations and has a measured benchmark target. |
+| **OPT-ACYCLIC-1** | Acyclic Type Inference | 2 | M | **done (removed)** | Removed the unused `Ty::is_acyclic()` helper instead of allowing an unsound named-type shortcut to influence collector behavior; SCC analysis can be reintroduced only with a DefMap-backed proof. |
+| **OPT-SSO-1** | Small String Optimization / Fast Paths | 2 | M | **partial** | One-allocation string construction fast paths exist; tagged inline small-string storage does not. Keep the accurate fast-path claim or design an ABI-versioned SSO. |
 | **STR-VIEW-1** | Zero-Copy String Views (`ori.string_view`) | 2 | M | **done** | **2026-08-17:** added `stdlib/string_view.orl` providing `StringView`, `from_string`, `from_sub`, `subview`, `starts_with`, `ends_with`, `to_string`. |
-| **ASYNC-REACTOR-1** | Native OS Event Reactor Polling & Non-blocking I/O | 2 | L | **done** | **2026-08-17:** `ori_reactor_poll` and `ori_reactor_wake` in `ori-runtime` supporting event loop integration and non-spinning task multiplexing. |
-| **ASYNC-STRUCT-1** | Structured Concurrency & Cancellation Scopes | 2 | M | **done** | **2026-08-17:** added `stdlib/cancel.orl` with `CancelScope`, `create_scope`, `cancel`, `is_cancelled`, and `defer_cancel`. |
-| **CONC-THREADS-1** | Safe Concurrency Transfers & Value Isolation | 2 | M | **done** | **2026-08-17:** safe cross-thread transfer helpers in `ori.concurrent` (`transfer_int`, `transfer_string`, `transfer_list_string`). |
-| **DX-DOCTEST-1** | Doctests (`ori test --doc`) | 3 | M | **done** | **2026-08-17:** automatic extraction and JIT execution of code examples in `.oridoc` and `///` doc comments. |
-| **ERR-TRACE-1** | Zero-Cost Error Return Traces | 3 | M | **done** | **2026-08-17:** `ori_err_trace_push` and `ori_err_trace_format` in `ori-runtime` capturing origin location without exception overhead. |
-| **CLI-DAEMON-1** | Persistent Compilation & Evaluation Daemon | 3 | M | **done** | **2026-08-17:** JSON-RPC 2.0 daemon service over stdio (`ori daemon --stdio`) serving check, eval, and fmt commands. |
-| **GFX-WINDOW-1** | Freestanding Window & Canvas Graphics | 2 | M | **done** | **2026-08-17:** added `stdlib/window.orl` and `OriWindow` runtime C ABI providing zero-dependency native window creation, event polling, and pixel buffer presentation. |
-| **GFX-SIMD-1** | Loop Vectorization & SIMD Unrolling | 2 | L | **done** | **2026-08-18:** loop vectorization and unrolling pass in `ori-hir/src/optimize/vectorize.rs` accelerating contiguous numeric buffer, list, and array elementwise loops. |
+| **ASYNC-REACTOR-1** | Native OS Event Reactor Polling & Non-blocking I/O | 2 | L | **partial** | `ori_reactor_poll/wake` are executor queue/Condvar operations; Unix readiness is a separate single `poll` worker and non-Unix falls back to blocking work. |
+| **ASYNC-STRUCT-1** | Structured Concurrency & Cancellation Scopes | 2 | M | **partial** | `defer_cancel` is now `async` and awaits its delay before cancelling (E2E covered). Token wrappers still lack a child-task lifetime/join tree and cancel-on-scope-exit semantics. |
+| **CONC-THREADS-1** | Safe Concurrency Transfers & Value Isolation | 0 | M | **partial** | **2026-09-01:** transferability checks inspect enum payload fields with cycle-safe recursion; direct reads/writes plus same-module and imported named-helper calls that reach top-level mutable `var` values inside `task.spawn` emit `concurrency.global_mutable_capture`. Pure named function values and local closures with checker-side summaries are accepted when their captures are transferable; unsafe or unknown environments are rejected. Receiver methods and `any[Trait]` dispatch are conservatively matched by method name. A complete type-level isolation model and richer transitive function-value effects remain open; managed channel ownership is closed separately by **AUD-CHANNEL-1**. |
+| **DX-DOCTEST-1** | Doctests (`ori test --doc`) | 3 | M | **partial** | **2026-09-01:** extraction is deterministic and propagates recursive read errors; missing paths, check/JIT/temp-file/cleanup failures become visible test results, temporary directories use a per-case identity, and the returned `SourceCache` retains checked snippet sources. Remaining: expected-output assertions and richer source-labelled diagnostics. |
+| **ERR-TRACE-1** | Zero-Cost Error Return Traces | 3 | M | **partial** | Runtime symbols exist, but no compiler/HIR/stdlib path calls them. |
+| **CLI-DAEMON-1** | Persistent Compilation & Evaluation Daemon | 3 | M | **partial** | **2026-09-01:** stdin requests now use typed `serde_json` DTOs and JSON builders; malformed JSON, escaped IDs/parameters, invalid protocol envelopes, exact shutdown detection, and bounded line buffering at the 1 MiB request/8 MiB source limits are covered by unit tests. The process still rebuilds fresh pipelines and has no cache/session invalidation model. |
+| **GFX-WINDOW-1** | Freestanding Window & Canvas Graphics | 2 | M | **partial** | Stdlib and runtime are disconnected stubs: ID/event state is hardcoded and pixel presentation is a no-op. Implement only after a product-scope ADR or remove the promise. |
 
 **Rejected by decision — do not reopen without a new ADR:**
 
@@ -229,12 +396,12 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 
 | ID | Item | P | D | Status | Notes |
 |----|------|---|---|--------|-------|
-| **LANG-PERF-2** | Runtime/mid-end performance (loops, not just compile/link) | 1 | L | **done** | Waves 0–6 + list scalar inline (wave 8). Residual vs Rust on list ~1.25×. |
+| **LANG-PERF-2** | Runtime/mid-end performance (loops, not just compile/link) | 1 | L | **done** | The approved waves 0–6, list scalar inline path, measurement harness, and Cranelift AOT/JIT optimizer contract are complete. DCE/inlining correctness is protected by conservative semantics and differential gates; broader inlining is a future measured capability, not unfinished P1 scope. |
 | **LANG-PERF-2-0** | Instrument: CLIF dump + polyglot smoke | 1 | S | **done** | `ORI_DUMP_CLIF`; `tools/qa/perf_polyglot_smoke.sh` |
-| **LANG-PERF-2-1** | Mid-end: const fold + DCE | 1 | M | **done** | `ori_hir::optimize`; `ORI_OPT` |
+| **LANG-PERF-2-1** | Mid-end: const fold + DCE | 1 | M | **done** | DCE removes only `Pure` expressions; **AUD-OPT-1** differential gates preserve traps, contracts, allocations, and destructors. |
 | **LANG-PERF-2-2** | Loop hygiene (no per-iter cycle collect) | 1 | L | **done** | Native: collect only outside loops at root cleanup |
 | **LANG-PERF-2-3** | Pure-loop strength reduction | 2 | M | **done** | Default mid-end; sum/nested closed form |
-| **LANG-PERF-2-4** | Monomorphic leaf inlining | 2 | M | **done** | `ORI_OPT=aggressive` only |
+| **LANG-PERF-2-4** | Monomorphic leaf inlining | 2 | M | **done for conservative pass** | `ORI_OPT=aggressive` only; **AUD-OPT-2** restricts substitution to stable scalar literal-derived arguments. Explicit temporaries may broaden safe coverage later. |
 | **LANG-PERF-2-5** | List reserve path (optional) | 3 | S | **done** | `with_capacity` / `capacity` / `reserve`; list_sum uses pre-size |
 | **LANG-PERF-2-6** | Docs/README polyglot snapshot refresh | 2 | S | **done** | README + performance guides + LATEST (2026-07-14) |
 | **LIVE-LINK** | Package smoke uses **SystemLinker only** (not RustcDriver) | 2 | S | **done** | RustcDriver double-links libstd vs `ori-runtime` staticlib (`rust_eh_personality`). |
@@ -243,7 +410,7 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 | **LANG-PERF-3** | FFI call cost scales with binary size (~1.5ms/call large vs 0.55µs small, ~3000×) | 1 | M | **done** | Registry HashMap + maybe_collect. Lab 2026-07-17: sintético 5µs/iter; **studio_shell ~58fps avg** (antes ~2fps); DIAG-FFI 100k×`app.fps` = **5ms**. Issue: [`issue-ffi-dispatch-large-binary-2026-07-16.md`](historico/issue-ffi-dispatch-large-binary-2026-07-16.md). Residual F3: suspect buffer. |
 | **LANG-MEM-0** | ARC header: fix stale layout comment/spec + ABI layout guard test | 1 | S | **done** | **Fixed 2026-07-17** (same commit as LANG-MEM-1): lib.rs header comment rewritten; `ori_heap_header_layout_is_stable` guard in ori-runtime tests; Spec 19 note updated |
 | **LANG-MEM-1** | Audit dtor × edges overlap + scenario tests S1–S4 | 1 | M | **done** | **Fixed 2026-07-17**: edges are the single cascade owner; `__dtor_*` hooks removed; uniform "store → edge → release owned temp" rule (also fixes real leaks in nested list literals / `lists.push` / index assign). ADR: [`adr-arc-single-cascade-owner.md`](adr-arc-single-cascade-owner.md) · Note: [`historico/nim-study-2026-07-17-c1.md`](historico/nim-study-2026-07-17-c1.md) · 5 regression tests in `memory_arc.rs` |
-| **LANG-MEM-2** | Edge completeness matrix for all managed types | 1 | M | **done** | **2026-07-17** (note [`historico/nim-study-2026-07-17-c2.md`](historico/nim-study-2026-07-17-c2.md)): matrix on real binary. Fixed print/f-string temp leaks; fixed map/set owned-arg leaks + `get`/`try_get` now truly own their managed result (paired-bug class). Clean: optional/result/tuple/cycles. Residual audit deferred: `from_entries`/`from_list`, hash_table/graph/heap calls (blocked on closure-capture backend residual) |
+| **LANG-MEM-2** | Edge completeness matrix for managed types | 1 | M | **done** | The 2026-08-25 closure adds exact parallel-edge runtime coverage, duplicate struct AOT coverage, and one list/map/channel ownership matrix under both AOT and JIT. `AUD-ARC-1` and `AUD-CHANNEL-1` now close the former gaps with a zero-live-allocation baseline. |
 | **LANG-MEM-3** | Cycle collector: suspect buffer + adaptive threshold | 2 | L | **done** | **2026-07-17** (note [`historico/nim-study-2026-07-17-c3.md`](historico/nim-study-2026-07-17-c3.md)): release records Bacon possible-roots (outgoing-edge filter, O(1) via `suspect_idx`); cooperative pass = trial deletion over suspect subgraph only; threshold adapts by efficacy (Nim rule, bounds 64–65536, env pins). Full scan kept for `ori.test.*`/ABI. Residual: real-app remeasure (lab) + `rcSum==edges` shortcut if data justifies |
 | **LANG-MEM-4** | RC elision in codegen | 3 | L | **done** | **2026-07-17**: action 1/3 done — return-transfer elision (returning a managed local hands the binding's +1 to the caller; retain+release pair removed, `make_list`-style builders drop to zero RC ops). **Closed 2026-07-18** (note §7): S6/S7 audited with ORI_DUMP_ARC — owned args transfer implicitly (0 caller ops), loop rebind is 1 release/iter (theoretical minimum); borrowed args use the canonical callee-owns contract. Only residual idea (consciously deferred): lent-style params via caller lifetime analysis. Note: [`historico/nim-study-2026-07-17-c4-c7.md`](historico/nim-study-2026-07-17-c4-c7.md) |
 | **LANG-MEM-5** | Spec 10: collector safe points + atomic-RC trade-off | 2 | S | **done** | **2026-07-18**: safe points landed with C3; added "Threads and RC atomicity" recorded trade-off (atomic + shared heap vs Nim move-subgraphs; revisit gated on ADR + freeze exit), cancellation cleanup contract, and corrected §Managed Types sharing semantics (collection mutators are in-place, aliasing observable) |
@@ -261,7 +428,7 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 |----|-------|
 | **LANG-DOC** | User docs EN/PT + root READMEs + examples catalog; living maintenance only after this |
 | **LANG-PERF** | Closed — waves 1–3 (compile/link/JIT flags); see `perf-baseline-2026-07-13.md` |
-| **LANG-PERF-2** | Closed (waves 0–6 + scalar list inline) — reopen only if apps regress |
+| **LANG-PERF-2** | Performance baseline landed; `AUD-OPT-1/2` semantic reopen closed conservatively |
 | **LANG-RES** | Closed — Spec 14 inventory + `compile_runs_lang_res_product_surface_native`; see `historico/lang-res-closure.md` |
 | **DX-VSCODE** | v0.3.5 local `.vsix` |
 | **DX-ZED** | `extensions/zed-ori` v0.3.5 dev install |

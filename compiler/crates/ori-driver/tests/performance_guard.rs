@@ -23,6 +23,59 @@ fn check_large_single_file_project_has_stable_performance_shape() {
 }
 
 #[test]
+#[ignore = "large CT-0 scaling probe; run explicitly with `ORI_PERF_STRICT=1`"]
+fn check_ten_thousand_const_dependencies_stays_within_linear_budget() {
+    let mut source = String::from("module app.main\n\n");
+    for index in 0..10_000 {
+        if index == 0 {
+            source.push_str("const c0: int = 0\n");
+        } else {
+            let _ = writeln!(source, "const c{index}: int = c{}", index - 1);
+        }
+    }
+    source.push_str("\nmain()\n    const values: array[int, size: c9999] = []\nend\n");
+
+    let dir = TestDir::new("perf_ct0_dependency_chain");
+    dir.write("main.orl", &source);
+    let started = Instant::now();
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let elapsed = started.elapsed();
+
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    assert_check_output_is_well_formed(&out);
+    assert_strict_budget("ORI_PERF_CHECK_CT0_CHAIN_BUDGET_MS", elapsed, 10_000);
+}
+
+#[test]
+#[ignore = "large checker-index scaling probe; run explicitly with `ORI_PERF_STRICT=1`"]
+fn check_large_signature_families_stay_within_indexed_budget() {
+    let family_count = std::env::var("ORI_PERF_CHECK_SIGNATURE_FAMILY_COUNT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(1_000);
+    assert!(family_count > 0);
+
+    let dir = TestDir::new("perf_checker_signature_families");
+    dir.write("main.orl", &checker_signature_family_source(family_count));
+
+    let started = Instant::now();
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let elapsed = started.elapsed();
+
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    assert_check_output_is_well_formed(&out);
+    eprintln!(
+        "ORI_PERF_CHECK_SIGNATURE_FAMILY_COUNT={family_count}: elapsed={}ms",
+        elapsed.as_millis()
+    );
+    assert_strict_budget(
+        "ORI_PERF_CHECK_SIGNATURE_FAMILIES_BUDGET_MS",
+        elapsed,
+        10_000,
+    );
+}
+
+#[test]
 #[ignore = "large-source scaling probe; set `ORI_PERF_LARGE_FUNCTION_COUNT` and run explicitly"]
 fn measure_check_large_single_file_scaling() {
     let function_count = std::env::var("ORI_PERF_LARGE_FUNCTION_COUNT")
@@ -323,7 +376,33 @@ end
             let _ = writeln!(source, "    total = step_{index}(total)");
         }
     }
-    source.push_str("    check total > 0, item.name()\nend\n");
+    source.push_str("    check total > 0, \"item name\"\nend\n");
+    source
+}
+
+fn checker_signature_family_source(family_count: usize) -> String {
+    let mut source =
+        String::from("module app.main\n\ntrait Indexed\n    index(self) -> int\nend\n\n");
+    for index in 0..family_count {
+        let _ = writeln!(source, "const global_{index}: int = {index}");
+        let _ = writeln!(
+            source,
+            "struct Record_{index}\n    value: int\nend\n\n\
+             enum Choice_{index}\n    Value(value: int)\nend\n\n\
+             apply Record_{index} use Indexed\n    index(self) -> int\n        return self.value\n    end\nend\n"
+        );
+    }
+    source.push_str("\nmain()\n");
+    for index in 0..family_count {
+        let _ = writeln!(
+            source,
+            "    const record_{index}: Record_{index} = Record_{index} {{ value: global_{index} }}\n\
+             const field_{index}: int = record_{index}.value\n\
+             const method_{index}: int = record_{index}.index()\n\
+             const choice_{index}: Choice_{index} = Choice_{index}.Value(value: method_{index})"
+        );
+    }
+    source.push_str("end\n");
     source
 }
 

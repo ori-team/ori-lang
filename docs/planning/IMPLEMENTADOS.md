@@ -75,7 +75,7 @@ Este documento registra o estado atual de implementação da linguagem Ori (conf
 
 - **Runtime de Referência**: `ori-runtime` implementado em Rust. Gerencia o modelo de memória de contagem de referências atômica (ARC) e bounds-checking para coleções, strings e bytes.
 - **Módulos Centrais da Stdlib**:
-  - `ori.core`: Declaração de traits essenciais (`Displayable`, `Equatable`, `Comparable`, `Hashable`, `Disposable`, `Default`, `Error`, `Cloneable`).
+  - `ori.core`: Declaração de traits essenciais (`Displayable`, `Equatable`, `Comparable`, `Hashable`, `Disposable`, `Default`, `Error`, `Cloneable`). `Hashable` aceita o método opcional `hash(self) -> int`; sem ele, o backend usa hash estrutural quando possível.
   - `ori.io`: Operações de entrada e saída, incluindo `print` e `read_line`.
   - `ori.fs`: Leitura e escrita de texto/bytes síncronas e assíncronas (`read_text_async`, `write_text_async`), além de utilitários como `exists`, `delete`, `list_dir`, `create_dir`, etc.
   - `ori.string`: Manipulação e conversão de strings (`trim_start`, `trim_end`, `index_of`, `join`, `repeat`, `pad_left`, `pad_right`, `parse_int`, `parse_float`).
@@ -92,12 +92,17 @@ Este documento registra o estado atual de implementação da linguagem Ori (conf
 Todas as coleções listadas abaixo estão integradas com o type-checker, possuem ABI estável no runtime nativo e tratamento seguro de valores vazios/nulos com `optional`:
 
 - `ori.list`: Operações de ordenação, fatiamento e manipulação direta.
-- `ori.map` / `ori.set`: Implementações de tabelas hash com chaves do tipo `int`, `string` ou customizados com `Hashable + Equatable`.
+- `ori.map` / `ori.set`: Implementações nativas com chaves `int`/`string` e
+  suporte semântico a tipos customizados com `Hashable` mais igualdade
+  estrutural ou `Equatable` explícito; um método `hash(self) -> int` definido
+  pelo usuário agora dirige o callback nativo, enquanto valores estruturais
+  não-recursivos sem esse método usam hash gerado e igualdade explícita não
+  estrutural usa hash constante.
 - `ori.deque` / `ori.queue` / `ori.stack`: Estruturas de dados lineares otimizadas e implementadas sobre buffers circulares no runtime nativo (via `VecDeque`).
 - `ori.linked_list` / `ori.doubly_linked_list`: Listas encadeadas expostas através de cursores por posição (`insert_after`, `insert_before`, `remove_at`), evitando vazamentos de ciclos ARC internos.
 - `ori.tree`: Árvores gerais baseadas em arenas com `NodeId` e suporte a travessias e reparenting de subárvores.
 - `ori.hash_table`: API de tabela hash explícita voltada a performance (capacidade e reservas de memória).
-- `ori.graph`: Implementação de grafos direcionados e não-direcionados, cobrindo caminhos sem peso (BFS/DFS), arestas ponderadas, caminhos de custo mínimo (Dijkstra) e ordenação topológica.
+- `ori.graph`: Implementação de grafos direcionados e não-direcionados, cobrindo caminhos sem peso (BFS/DFS), arestas ponderadas, caminhos de custo mínimo (Dijkstra) e ordenação topológica. Nós `struct` e enums não-recursivos com `Hashable` usam igualdade estrutural ou `Equatable.equals` explícito para deduplicação e arestas por valor, com preservação do callback em cópias. O hash estrutural de mapas/conjuntos/tabelas já é gerado no backend nativo; grafos continuam com busca linear por projeto.
 - `ori.heap`: Min-heap com ordenação dirigida por `Comparable`.
 
 ---
@@ -107,14 +112,28 @@ Todas as coleções listadas abaixo estão integradas com o type-checker, possue
 - **Concorrência**:
   - Trait marcador `Transferable` validado no checker para tipos que podem cruzar tasks/canais.
   - Spawning e joining de tarefas em threads nativas (`ori.task`).
+  - Valores de função locais carregam um resumo de capturas no checker;
+    closures com capturas transferíveis podem atravessar `task.spawn`, enquanto
+    ambientes desconhecidos continuam rejeitados de forma conservadora.
   - Canais de comunicação sincronizados e seguros para concorrência (`ori.channel`).
+  - `channel.create_bounded` com capacidade positiva, fila FIFO limitada,
+    backpressure em `send` e fechamento que acorda produtores bloqueados;
+    capacidades inválidas retornam `none`.
+  - Operações assíncronas bloqueantes de FS, conexão e TLS usam um pool
+    compartilhado com até quatro workers e fila de 256 jobs, com falha de
+    criação e shutdown convertidos em futures terminais.
   - Inteiros atômicos (`ori.atomic`).
 - **Async/Await**:
   - Tipo primitivo `future<T>` integrado.
   - Executor nativo em thread dedicada com timers não-bloqueantes (`task.sleep`).
   - Sintaxe de funções `async` e expressão `await` controladas no parser, HIR e type checker.
   - Entrada assíncrona principal: `async main()`.
-  - **State Machine Async (v1)**: Geração nativa de frame e state machine com despacho por estado para fluxos sequenciais. Preserva a contagem de referências ARC para locals vivos através de suspensões sequenciais simples.
+- **State Machine Async (v1)**: Geração nativa de frame e state machine com despacho por estado para fluxos sequenciais. Preserva a contagem de referências ARC para locals vivos através de suspensões sequenciais simples. A emissão valida limites/sobreposição/layout dos slots e zera bindings gerenciados antes do agendamento; a prova completa de ownership no HIR ainda é P0 parcial.
+
+- **Attributes extensíveis (contrato fail-closed)**: o checker aceita apenas
+  os sete attributes built-in (`test`, `deprecated`, `inline`, `no_inline`,
+  `cfg`, `repr`, `c_export`). Namespaces de terceiros sem schema emitem
+  `attr.unknown`, evitando metadata inerte silenciosamente aceita.
 
 ---
 
@@ -143,6 +162,15 @@ Todas as coleções listadas abaixo estão integradas com o type-checker, possue
 - **Higher-kinded types (HKT)**: tipos genéricos parametrizados por construtores de tipo, com constraints avançadas.
 - **Igualdade em coleções opacas**: `deque`, `queue`, `stack`, `linked_list`, etc. comparáveis quando elementos suportam `Equatable`.
 - **Propagação estática de traits**: `list<T> is Equatable` somente se `T is Equatable`.
+- **Fronteira de `handle[T]`**: handles continuam ponteiros emprestados, sem
+  ARC e sem transferência para tasks/canais; `@c_export` rejeita agregados
+  gerenciados que contenham handles emprestados, inclusive em tipos aninhados.
+  `ori.handle.null()` cria o sentinela nulo tipado e `ori.handle.is_null`
+  testa-o sem acessar o ponteiro.
+  Agregados gerenciados concretos/não genéricos recebem tag de tipo no ARC e
+  wrappers `@c_export` rejeitam handles de outro tipo ou tamanho.
+  Nullabilidade, lifetime e afinidade de thread ainda são contratos P0 em
+  aberto (`LANG-HANDLE-1`).
 - **Iteradores lazy**: interface lazy para estruturas opacas sem snapshot completo (`to_list()`).
 - **JSON estruturado**: `json.Value` como enum recursivo (`Null`, `Bool`, `Number`, `String`, `Array`, `Object`) com parse/stringify nativos.
 

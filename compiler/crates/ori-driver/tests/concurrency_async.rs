@@ -82,6 +82,74 @@ end
 }
 
 #[test]
+fn check_accepts_bounded_channel_constructor() {
+    let dir = TestDir::new("check_bounded_channel_type");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.channel = channel
+
+main()
+    const maybe: optional[channel.Channel[int]] = channel.create_bounded(2)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        !out.has_errors,
+        "bounded channel type should be inferred: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn compile_runs_bounded_channel_constructor_native() {
+    let dir = TestDir::new("compile_bounded_channel_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.channel = channel
+import ori.io = io
+
+main()
+    const maybe: optional[channel.Channel[int]] = channel.create_bounded(1)
+    match maybe
+        case some(ch):
+            const sent: result[void, channel.SendError] = channel.send(ch, 7)
+            match channel.receive(ch)
+                case ok(value):
+                    io.print(string(value))
+                case err(_):
+                    io.print("receive-error")
+            end
+            channel.close(ch)
+        case none:
+            io.print("invalid-capacity")
+    end
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "bounded_channel_native");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(
+        !out.has_errors,
+        "bounded channel should compile: {:?}",
+        out.diagnostics
+    );
+    let output = Command::new(&exe).output().unwrap();
+    assert!(
+        output.status.success(),
+        "bounded channel failed: {:?}",
+        output
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "7");
+}
+
+#[test]
 fn check_accepts_async_func_and_await_types() {
     let dir = TestDir::new("check_async_func_await_types");
     dir.write(
@@ -192,9 +260,11 @@ fn check_rejects_non_transferable_spawn_capture() {
         r#"module app.main
 
 import ori.task = task
+import ori.lazy = lz
 
 main()
-    const callback: func() -> int = () => 1
+    const delayed: lazy[int] = lz.once(() => 1)
+    const callback: func() -> int = () => lz.force(delayed)
     const job: task.Job[int] = task.spawn(() => callback())
 end
 "#,
@@ -205,6 +275,638 @@ end
     let codes = diagnostic_codes(&out);
     assert!(
         codes.contains(&"async.capture_not_transferable"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_spawn_capture_of_resource_handle() {
+    let dir = TestDir::new("spawn_resource_handle_capture");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.fs = fs
+import ori.task = task
+
+main()
+    using file: fs.File = try fs.open_write("resource-handle-capture.txt")
+    const job: task.Job[void] = task.spawn(() => fs.close(file))
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "resource handles must not cross task boundaries");
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"async.capture_not_transferable"),
+        "expected a transferability diagnostic, got {codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_spawn_access_to_mutable_global() {
+    let dir = TestDir::new("spawn_mutable_global_capture");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+var counter: int = 0
+
+main()
+    const job: task.Job[int] = task.spawn(() => counter)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "mutable global access must not cross task boundary"
+    );
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_spawn_call_to_local_helper_that_reads_mutable_global() {
+    let dir = TestDir::new("spawn_mutable_global_through_local_helper");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+var counter: int = 0
+
+read_counter() -> int
+    return counter
+end
+
+main()
+    const job: task.Job[int] = task.spawn(() => read_counter())
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "a helper that reads a mutable global must not cross a task boundary"
+    );
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_spawn_call_to_imported_helper_that_reads_mutable_global() {
+    let dir = TestDir::new("spawn_mutable_global_through_imported_helper");
+    dir.write(
+        "worker.orl",
+        r#"module app.worker
+
+var counter: int = 0
+
+public read_counter() -> int
+    return counter
+end
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import app.worker = worker
+import ori.task = task
+
+main()
+    const job: task.Job[int] = task.spawn(() => worker.read_counter())
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "an imported helper that reads a mutable global must not cross a task boundary"
+    );
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_spawn_call_to_imported_associated_helper_that_reads_mutable_global() {
+    let dir = TestDir::new("spawn_mutable_global_through_imported_associated_helper");
+    dir.write(
+        "worker.orl",
+        r#"module app.worker
+
+var counter: int = 0
+
+public struct Counter
+    value: int
+end
+
+apply Counter
+    public read() -> int
+        return counter
+    end
+end
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import app.worker = worker
+import ori.task = task
+
+main()
+    const job: task.Job[int] = task.spawn(() => worker.Counter.read())
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "an imported associated helper that reads a mutable global must not cross a task boundary"
+    );
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_spawn_call_to_receiver_method_that_reads_mutable_global() {
+    let dir = TestDir::new("spawn_mutable_global_through_receiver_method");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+var counter: int = 0
+
+struct Reader
+    read(self) -> int
+        return counter
+    end
+end
+
+main()
+    const reader: Reader = Reader {}
+    const job: task.Job[int] = task.spawn(() => reader.read())
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "a receiver method that reads a mutable global must not cross a task boundary: {:?}",
+        out.diagnostics
+    );
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_spawn_call_to_imported_receiver_method_that_reads_mutable_global() {
+    let dir = TestDir::new("spawn_mutable_global_through_imported_receiver_method");
+    dir.write(
+        "worker.orl",
+        r#"module app.worker
+
+var counter: int = 0
+
+public struct Reader
+    public read(self) -> int
+        return counter
+    end
+end
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import app.worker = worker
+import ori.task = task
+
+main()
+    const reader: worker.Reader = worker.Reader {}
+    const job: task.Job[int] = task.spawn(() => reader.read())
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "an imported receiver method that reads a mutable global must not cross a task boundary: {:?}",
+        out.diagnostics
+    );
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_spawn_call_to_dynamic_trait_method_that_reads_mutable_global() {
+    let dir = TestDir::new("spawn_mutable_global_through_dynamic_method");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+var counter: int = 0
+
+trait Reader
+    read(self) -> int
+end
+
+struct Box
+end
+
+apply Box use Reader
+    read(self) -> int
+        return counter
+    end
+end
+
+main()
+    const reader: any[Reader] = Box {}
+    const job: task.Job[int] = task.spawn(() => reader.read())
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "dynamic receiver dispatch must not hide mutable global effects: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_accepts_pure_named_function_value_at_task_boundary() {
+    let dir = TestDir::new("spawn_pure_named_function_value");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+read_value() -> int
+    return 41
+end
+
+main()
+    const job: task.Job[int] = task.spawn(read_value)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        !out.has_errors,
+        "pure named function values are transferable: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_named_function_value_that_reads_mutable_global() {
+    let dir = TestDir::new("spawn_unsafe_named_function_value");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+var counter: int = 0
+
+read_value() -> int
+    return counter
+end
+
+main()
+    const job: task.Job[int] = task.spawn(read_value)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "unsafe named function values must be rejected: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_accepts_local_closure_value_with_transferable_captures() {
+    let dir = TestDir::new("spawn_local_closure_value");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+main()
+    const answer: int = 41
+    const worker: func() -> int = () => answer
+    const job: task.Job[int] = task.spawn(worker)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        !out.has_errors,
+        "a closure with immutable transferable captures is safe: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_accepts_alias_of_local_closure_value_at_task_boundary() {
+    let dir = TestDir::new("spawn_local_closure_alias");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+main()
+    const answer: int = 41
+    const worker: func() -> int = () => answer
+    const worker_copy: func() -> int = worker
+    const job: task.Job[int] = task.spawn(worker_copy)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        !out.has_errors,
+        "an alias keeps the audited closure summary: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_accepts_nested_local_closure_with_transitive_transferable_captures() {
+    let dir = TestDir::new("spawn_nested_local_closure_value");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+main()
+    const answer: int = 41
+    const inner: func() -> int = () => answer
+    const outer: func() -> int = () => inner()
+    const job: task.Job[int] = task.spawn(outer)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        !out.has_errors,
+        "a nested closure should inherit the inner transferable summary: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_nested_local_closure_with_transitive_global_effect() {
+    let dir = TestDir::new("spawn_nested_local_closure_global");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+var counter: int = 0
+
+main()
+    const inner: func() -> int = () => counter
+    const outer: func() -> int = () => inner()
+    const job: task.Job[int] = task.spawn(outer)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "nested function effects must reach the task boundary: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_local_closure_value_that_captures_mutable_global() {
+    let dir = TestDir::new("spawn_local_closure_global");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+var counter: int = 0
+
+main()
+    const worker: func() -> int = () => counter
+    const job: task.Job[int] = task.spawn(worker)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "a local closure that captures a mutable global remains unsafe: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_local_closure_value_with_non_transferable_capture() {
+    let dir = TestDir::new("spawn_local_closure_non_transferable");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+import ori.lazy = lz
+
+main()
+    const delayed: lazy[int] = lz.once(() => 41)
+    const captured: func() -> int = () => lz.force(delayed)
+    const job: task.Job[int] = task.spawn(captured)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"async.capture_not_transferable"),
+        "nested function captures stay conservative until their environment is flattened: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_spawn_f_string_interpolation_of_mutable_global() {
+    let dir = TestDir::new("spawn_mutable_global_f_string_capture");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+var counter: int = 0
+
+main()
+    const job: task.Job[string] = task.spawn(() => f"{counter}")
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "f-string interpolation must not bypass mutable-global checks"
+    );
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_allows_spawn_access_to_immutable_global() {
+    let dir = TestDir::new("spawn_immutable_global");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+const answer: int = 41
+
+main()
+    const job: task.Job[int] = task.spawn(() => answer)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        !out.has_errors,
+        "immutable globals are safe to read: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn check_rejects_spawn_assignment_to_mutable_global() {
+    let dir = TestDir::new("spawn_mutable_global_assignment");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+var counter: int = 0
+
+main()
+    const job: task.Job[void] = task.spawn(() -> void
+        counter = 1
+    end)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "mutable global assignment must not cross task boundary"
+    );
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"concurrency.global_mutable_capture"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_enum_with_non_transferable_payload_at_spawn_boundary() {
+    let dir = TestDir::new("spawn_non_transferable_enum_payload");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.list = lists
+import ori.task = task
+
+enum Payload
+    Window(value: slice[int])
+end
+
+identity(value: Payload) -> Payload
+    return value
+end
+
+main()
+    const values: list[int] = [1, 2]
+    const payload: Payload = Payload.Window(value: lists.window(values, 0, 1))
+    const job: task.Job[Payload] = task.spawn(() => identity(payload))
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "enum with a slice payload must not cross a task boundary"
+    );
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"async.capture_not_transferable")
+            || codes.contains(&"concurrency.not_transferable"),
         "{codes:?}"
     );
 }
@@ -319,6 +1021,75 @@ end
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.trim(), "41");
+}
+
+#[test]
+fn compile_runs_pure_named_function_value_task_spawn_native() {
+    let dir = TestDir::new("compile_pure_named_function_task_spawn_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.task = task
+
+read_value() -> int
+    return 41
+end
+
+main()
+    const job: task.Job[int] = task.spawn(read_value)
+    match task.join(job)
+        case ok(value):
+            io.print(string(value))
+        case err(_):
+            io.print("join-error")
+    end
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "pure_named_function_task_spawn");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.trim(), "41");
+}
+
+#[test]
+fn compile_runs_local_closure_value_task_spawn_native() {
+    let dir = TestDir::new("compile_local_closure_task_spawn_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.task = task
+
+main()
+    const answer: int = 41
+    const worker: func() -> int = () => answer
+    const job: task.Job[int] = task.spawn(worker)
+    match task.join(job)
+        case ok(value):
+            io.print(string(value))
+        case err(_):
+            io.print("join-error")
+    end
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "local_closure_task_spawn");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "41");
 }
 
 #[test]

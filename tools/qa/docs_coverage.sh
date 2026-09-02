@@ -5,6 +5,7 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 registry="$repo/docs/atlas/features.yaml"
+backlog="$repo/docs/planning/BACKLOG.md"
 
 fail=0
 
@@ -22,35 +23,37 @@ require_file docs/spec/03-grammar.ebnf
 require_file docs/spec/19-abi.md
 require_file docs/guides/cli-reference.md
 require_file docs/guides/cli-reference.pt-BR.md
+require_file docs/planning/BACKLOG.md
 
-# The registry uses one-line YAML arrays for source paths. Keep this check
-# deliberately dependency-free so it works on release packages and CI hosts
-# without Python/Ruby YAML libraries.
-while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    require_file "$path"
-done <<EOF
-$(awk '
-    /^(    )(implementation|tests|user_docs|reference|examples):/ {
-        line = $0
-        sub(/^[^[]*\[/, "", line)
-        sub(/\].*$/, "", line)
-        count = split(line, values, ",")
-        for (i = 1; i <= count; i++) {
-            value = values[i]
-            gsub(/[[:space:]]/, "", value)
-            gsub(/"/, "", value)
-            if (value != "") print value
-        }
-    }
-' "$registry" | sort -u)
-EOF
+# The Atlas uses a deliberately small YAML subset. Validate its schema and
+# paths without requiring PyYAML or any other release-host dependency.
+python3 "$repo/tools/qa/validate_atlas.py" "$registry"
 
 if rg -n --glob '*.md' 'sidecar_first|docs/planning/PLANO-MATURIDADE-COMPLETO\.md|docs/planning/stdlib-gap-parity\.md|packages/FREEZE-WEB\.md' \
     "$repo/docs" "$repo/README.md" >/dev/null 2>&1; then
     echo "docs_coverage: stale canonical path or manifest spelling found" >&2
     rg -n --glob '*.md' 'sidecar_first|docs/planning/PLANO-MATURIDADE-COMPLETO\.md|docs/planning/stdlib-gap-parity\.md|packages/FREEZE-WEB\.md' \
-        "$repo/docs" "$repo/README.md" >&2 || true
+        "$repo/docs" "$repo/README.md" >&2
+    fail=1
+fi
+
+# P0 is the release-blocking priority. Keep its closure machine-enforced so a
+# newly discovered blocker cannot be left hidden behind a stale roadmap claim.
+open_p0=$(awk -F '|' '
+    function trim(value) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+        return value
+    }
+    /^\|/ {
+        priority = trim($4)
+        status = trim($6)
+        if (priority == "0" && status != "**done**") print NR ":" $0
+    }
+' "$backlog")
+
+if [ -n "$open_p0" ]; then
+    echo "docs_coverage: release-blocking P0 backlog entries remain open" >&2
+    echo "$open_p0" >&2
     fail=1
 fi
 
@@ -58,4 +61,4 @@ if [ "$fail" -ne 0 ]; then
     exit 1
 fi
 
-echo "docs_coverage: Atlas paths and canonical references are valid"
+echo "docs_coverage: Atlas paths, canonical references, and P0 closure are valid"

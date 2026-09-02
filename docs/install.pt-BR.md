@@ -54,15 +54,24 @@ do sistema.
 > [GitHub Releases](https://github.com/raillen/ori-lang/releases).
 
 1. Baixe em [GitHub Releases](https://github.com/raillen/ori-lang/releases)
-   (ex. **v0.3.7**):
+   (para a tag **`vX.Y.Z`**):
 
    | Plataforma | Arquivo |
    |------------|---------|
-   | Linux x86_64 | `ori-v0.3.7-x86_64-unknown-linux-gnu.tar.gz` |
-   | Linux deb | `ori_0.3.7_amd64.deb` |
-   | Windows MSVC x86_64 | `ori-v0.3.7-x86_64-pc-windows-msvc.zip` |
-   | macOS Apple Silicon | `ori-v0.3.7-aarch64-apple-darwin.tar.gz` |
-   | macOS Intel | `ori-v0.3.7-x86_64-apple-darwin.tar.gz` |
+   | Linux x86_64 | `ori-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+   | Linux deb | `ori_X.Y.Z_amd64.deb` |
+   | Windows MSVC x86_64 | `ori-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
+   | macOS Apple Silicon | `ori-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
+   | macOS Intel | `ori-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
+
+   Releases produzidas pelo workflow atual também trazem `SHA256SUMS`,
+   `ori-vX.Y.Z.spdx.json` e
+   atestações GitHub de proveniência do build. No diretório dos downloads:
+
+   ```bash
+   sha256sum --check SHA256SUMS
+   gh attestation verify ori-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz --repo raillen/ori-lang
+   ```
 
 **Windows (recomendado — estilo Scoop):**
 

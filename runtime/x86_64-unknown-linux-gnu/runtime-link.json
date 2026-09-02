@@ -2,6 +2,8 @@
   "target": "x86_64-unknown-linux-gnu",
   "runtime": "libori_runtime.a",
   "runtime_cdylib": "libori_runtime.so",
+  "runtime_sha256": "e7bf89e0b8ca7e4234e513a6f402713b3cd865909f30d7fff648c99e23cfbf03",
+  "runtime_cdylib_sha256": "599ea84cb41f5c6969bd1475dc66026ae17a08fc40894d7bafc34d58dd8d6d92",
   "ori_version": "0.3.8",
   "abi_version": "ori-native-abi-1",
   "profile": "debug",

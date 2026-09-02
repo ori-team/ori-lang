@@ -23,7 +23,10 @@ continuam em `bytes`.
 - native e C/debug contam, fatiam, indexam, buscam e iteram por scalar value;
 - boundaries de entrada usados por `io.read_line` rejeitam UTF-8 inválido;
 - `to_upper`, `to_lower` e helpers têm paridade limitada no C/debug;
-- não há grapheme segmentation, normalization ou case folding canônico;
+- native AOT/JIT usam case folding Unicode full, non-Turkic pelo crate
+  versionado `unicode-casefold`; C/debug ainda usa fallback lowercase orientado
+  a bytes até receber a mesma tabela;
+- não há grapheme segmentation ou normalization;
 - helpers como `is_digits` e `swap_case` são explicitamente ASCII;
 - não há regex na stdlib.
 

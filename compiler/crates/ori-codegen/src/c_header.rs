@@ -31,16 +31,51 @@ pub fn generate_c_header(module: &HirModule, header_file_name: &str) -> Result<S
     header.push_str("#include <stdbool.h>\n#include <stdint.h>\n\n");
     header.push_str("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n");
     header.push_str("/* Ori runtime lifecycle and managed-value ownership. */\n");
+    header
+        .push_str("/* Call ori_rt_init, then __ori_module_init exactly once before exports. */\n");
+    header.push_str(
+        "/* Before unload: __ori_module_shutdown, then ori_rt_shutdown_ex; dlclose only after 0. */\n",
+    );
     header.push_str("int32_t ori_rt_init(void);\n");
     header.push_str("const char *ori_rt_version(void);\n");
     header.push_str("const char *ori_rt_abi_version(void);\n");
+    header.push_str("const char *ori_rt_target(void);\n");
     header.push_str("void __ori_module_init(void);\n");
+    header.push_str("void __ori_module_shutdown(void);\n");
     header.push_str("void ori_rt_shutdown(void);\n");
+    header.push_str("int32_t ori_rt_shutdown_ex(int64_t timeout_ms);\n");
+    header.push_str("int32_t ori_rt_thread_attach(void);\n");
+    header.push_str("void ori_rt_thread_detach(void);\n");
     header.push_str("void ori_host_clear_error(void);\n");
     header.push_str("int32_t ori_host_error_code(void);\n");
     header.push_str("const char *ori_host_error_message(void);\n");
+    header.push_str("#define ORI_HOST_ERROR_INVALID_UTF8 1003\n");
+    header.push_str("#define ORI_HOST_ERROR_THREAD_SPAWN 1004\n");
+    header.push_str("#define ORI_HOST_ERROR_SHUTDOWN_BUSY 1006\n");
+    header.push_str("#define ORI_HOST_ERROR_INIT 1007\n");
     header.push_str("void ori_arc_retain(void *value);\n");
     header.push_str("void ori_arc_release(void *value);\n");
+    header
+        .push_str("/* Borrowed string inputs must be NULL or readable NUL-terminated UTF-8. */\n");
+    header.push_str(
+        "/* NULL strings mean empty; invalid UTF-8 sets ORI_HOST_ERROR_INVALID_UTF8. */\n",
+    );
+
+    if exports.iter().any(|function| {
+        function
+            .params
+            .iter()
+            .any(|parameter| c_export_contains_bytes(&parameter.ty))
+            || c_export_contains_bytes(&function.return_ty)
+    }) {
+        header.push_str(
+            "\ntypedef struct OriBytes {\n\
+             const uint8_t *data;\n\
+             int64_t len;\n\
+             } OriBytes;\n\
+             /* For borrowed input: len >= 0 and data != NULL when len > 0. */\n",
+        );
+    }
 
     if exports.iter().any(|function| {
         function
@@ -227,6 +262,7 @@ fn render_function_declaration(
 
     let struct_return = named_exported_struct(&function.return_ty, exported_structs);
     let return_type = match &function.return_ty {
+        Ty::Bytes => "void".to_owned(),
         Ty::Optional(_) => "bool".to_owned(),
         Ty::Result(_, _) => "OriResultTag".to_owned(),
         _ => match struct_return {
@@ -263,6 +299,10 @@ fn render_function_declaration(
     {
         let out_name = unique_c_identifier("out", &mut parameter_names);
         parameters.push(format!("{} *{out_name}", structure.c_name));
+    }
+    if matches!(&function.return_ty, Ty::Bytes) {
+        let out_name = unique_c_identifier("out", &mut parameter_names);
+        parameters.push(format!("OriBytes *{out_name}"));
     }
     match &function.return_ty {
         Ty::Optional(inner) => render_payload_out_declaration(
@@ -369,6 +409,8 @@ fn render_payload_parameter_declaration(
     let name = unique_c_identifier(source_name, parameter_names);
     let declaration = if let Some(structure) = named_exported_struct(ty, exported_structs) {
         format!("const {} *{name}", structure.c_name)
+    } else if matches!(ty, Ty::Bytes) {
+        format!("const OriBytes *{name}")
     } else {
         c_declaration(direct_c_type(ty)?, &name)
     };
@@ -389,6 +431,8 @@ fn render_payload_out_declaration(
             CExportStructKind::ScalarBridge => format!("{} *{name}", structure.c_name),
             CExportStructKind::OpaqueHandle => format!("{} **{name}", structure.c_name),
         }
+    } else if matches!(ty, Ty::Bytes) {
+        format!("OriBytes *{name}")
     } else {
         c_declaration(direct_c_type(ty)?, &format!("*{name}"))
     };
@@ -402,6 +446,7 @@ fn c_export_return_transfers_managed_value(
 ) -> bool {
     match ty {
         Ty::String => true,
+        Ty::Bytes => true,
         Ty::Named(_, _) => named_exported_struct(ty, exported_structs)
             .is_some_and(|structure| structure.kind == CExportStructKind::OpaqueHandle),
         Ty::Optional(inner) => c_export_return_transfers_managed_value(inner, exported_structs),
@@ -439,10 +484,20 @@ fn direct_c_type(ty: &Ty) -> Result<&'static str, String> {
         Ty::Float | Ty::Float64 => Ok("double"),
         Ty::Float32 => Ok("float"),
         Ty::String => Ok("const char *"),
+        Ty::Bytes => Ok("const OriBytes *"),
         Ty::Void => Ok("void"),
         unsupported => Err(format!(
             "cannot generate a C header for unsupported export type `{unsupported:?}`"
         )),
+    }
+}
+
+fn c_export_contains_bytes(ty: &Ty) -> bool {
+    match ty {
+        Ty::Bytes => true,
+        Ty::Optional(inner) => c_export_contains_bytes(inner),
+        Ty::Result(ok, err) => c_export_contains_bytes(ok) || c_export_contains_bytes(err),
+        _ => false,
     }
 }
 

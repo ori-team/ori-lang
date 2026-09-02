@@ -11,6 +11,55 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ori_driver::pipeline::run_compile;
 
 static NEXT_DIR_ID: AtomicU64 = AtomicU64::new(0);
+const REQUIRE_RUNTIME_VALGRIND_ENV: &str = "ORI_REQUIRE_RUNTIME_VALGRIND";
+const RUNTIME_VALGRIND_ENV: &str = "ORI_RUNTIME_VALGRIND";
+
+const PARALLEL_OWNERSHIP_SOURCE: &str = r#"module app.main
+
+import ori.channel = channel
+import ori.io = io
+import ori.list = lists
+import ori.map = maps
+import ori.test = test
+
+make_list(n: int) -> list[int]
+    const values: list[int] = lists.new()
+    var i: int = 0
+    while i < n
+        lists.push(values, i)
+        i = i + 1
+    end
+    return values
+end
+
+exercise() -> int
+    const shared: list[int] = make_list(3)
+
+    var slots: list[list[int]] = lists.new()
+    lists.push(slots, shared)
+    lists.push(slots, shared)
+    lists.remove(slots, 0)
+    lists.push(slots[0], 9)
+
+    var aliases: map[string, list[int]] = maps.new()
+    maps.set(aliases, "left", shared)
+    maps.set(aliases, "right", shared)
+    maps.remove(aliases, "left")
+
+    const work: channel.Channel[list[int]] = channel.create()
+    channel.send(work, shared)
+    channel.send(work, shared)
+    channel.close(work)
+    return lists.len(maps.get(aliases, "right"))
+end
+
+main()
+    const score: int = exercise()
+    const leaked: int = test.assert_no_leaks("parallel_ownership_matrix")
+    io.print("score:" + string(score))
+    io.print("leaks:" + string(leaked))
+end
+"#;
 
 struct TestDir {
     path: PathBuf,
@@ -88,6 +137,40 @@ fn compile_and_run_with_leak_check(
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let success = output.status.success();
     (stdout, stderr, success)
+}
+
+fn run_jit_with_leak_check(dir: &TestDir, source: &str) -> (String, String, bool) {
+    dir.write("main.orl", source);
+    let output = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .expect("failed to spawn `ori run` for JIT memory regression");
+    (
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+        output.status.success(),
+    )
+}
+
+fn find_valgrind() -> Result<std::ffi::OsString, String> {
+    let candidate = std::env::var_os(RUNTIME_VALGRIND_ENV)
+        .unwrap_or_else(|| std::ffi::OsString::from("valgrind"));
+    let probe = Command::new(&candidate)
+        .arg("--version")
+        .output()
+        .map_err(|error| format!("could not execute {candidate:?}: {error}"))?;
+    if probe.status.success() {
+        Ok(candidate)
+    } else {
+        Err(format!(
+            "{candidate:?} --version exited with {}: {}",
+            probe.status,
+            String::from_utf8_lossy(&probe.stderr).trim()
+        ))
+    }
 }
 
 // ── 5.1 — Destrutores tipo-específicos ─────────────────────────────────────
@@ -903,6 +986,136 @@ end
     );
     assert!(success, "{stdout}");
     assert_eq!(stdout.trim(), "r:6\nleaks:0");
+}
+
+/// Two fields in the same owner are separate ARC slots even when they store the
+/// same managed pointer. Replacing one field must not invalidate the other after
+/// the helper's original binding has left scope.
+#[test]
+fn compile_runs_native_parallel_field_edge_survives_one_replacement() {
+    let dir = TestDir::new("parallel_field_edge");
+    let (stdout, stderr, success) = compile_and_run_with_leak_check(
+        &dir,
+        r#"module app.main
+
+import ori.io = io
+import ori.list = lists
+import ori.test = test
+
+struct Pair
+    left: list[int]
+    right: list[int]
+end
+
+make_list(n: int) -> list[int]
+    const xs: list[int] = lists.new()
+    var i: int = 0
+    while i < n
+        lists.push(xs, i)
+        i = i + 1
+    end
+    return xs
+end
+
+make_pair() -> Pair
+    const shared: list[int] = make_list(3)
+    return Pair { left: shared, right: shared }
+end
+
+exercise() -> int
+    var pair: Pair = make_pair()
+    pair.left = make_list(1)
+    lists.push(pair.right, 9)
+    return lists.len(pair.left) * 10 + lists.len(pair.right)
+end
+
+main()
+    const score: int = exercise()
+    const leaked: int = test.assert_no_leaks("parallel_field_edge")
+    io.print("score:" + string(score))
+    io.print("leaks:" + string(leaked))
+end
+"#,
+        "parallel_field_edge",
+    );
+    assert!(success, "stdout={stdout:?} stderr={stderr:?}");
+    assert_eq!(stdout.trim(), "score:14\nleaks:0");
+}
+
+/// Parallel collection/channel slots must have identical ownership behavior in
+/// AOT and JIT. Removing one list/map slot and consuming one channel entry must
+/// leave every surviving alias valid and release the unreceived queue entry.
+#[test]
+fn aot_and_jit_preserve_parallel_collection_and_channel_slots() {
+    let aot_dir = TestDir::new("parallel_ownership_aot");
+    let (aot_stdout, aot_stderr, aot_success) = compile_and_run_with_leak_check(
+        &aot_dir,
+        PARALLEL_OWNERSHIP_SOURCE,
+        "parallel_ownership_aot",
+    );
+    assert!(
+        aot_success,
+        "AOT ownership matrix failed: stdout={aot_stdout:?} stderr={aot_stderr:?}"
+    );
+    assert_eq!(aot_stdout.trim(), "score:4\nleaks:0");
+
+    let jit_dir = TestDir::new("parallel_ownership_jit");
+    let (jit_stdout, jit_stderr, jit_success) =
+        run_jit_with_leak_check(&jit_dir, PARALLEL_OWNERSHIP_SOURCE);
+    assert!(
+        jit_success,
+        "JIT ownership matrix failed: stdout={jit_stdout:?} stderr={jit_stderr:?}"
+    );
+    assert_eq!(jit_stdout.trim(), "score:4\nleaks:0");
+}
+
+/// Optional local memory-checker gate for the native runtime path. Unsupported
+/// hosts skip explicitly; release/CI jobs can require it instead of silently
+/// passing by setting `ORI_REQUIRE_RUNTIME_VALGRIND=1`.
+#[test]
+fn native_parallel_ownership_runs_cleanly_under_valgrind_when_available() {
+    let valgrind = match find_valgrind() {
+        Ok(valgrind) => valgrind,
+        Err(reason)
+            if std::env::var_os(REQUIRE_RUNTIME_VALGRIND_ENV).is_some_and(|value| value == "1") =>
+        {
+            panic!("runtime Valgrind gate is required but unavailable: {reason}")
+        }
+        Err(reason) => {
+            eprintln!(
+                "SKIP native_parallel_ownership_runs_cleanly_under_valgrind_when_available: \
+                 {reason}; set {REQUIRE_RUNTIME_VALGRIND_ENV}=1 to require this gate"
+            );
+            return;
+        }
+    };
+
+    let dir = TestDir::new("parallel_ownership_valgrind");
+    dir.write("main.orl", PARALLEL_OWNERSHIP_SOURCE);
+    let exe = exe_path(&dir, "parallel_ownership_valgrind");
+    let compiled = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!compiled.has_errors, "{:?}", compiled.diagnostics);
+
+    let output = Command::new(&valgrind)
+        .arg("--error-exitcode=86")
+        .arg("--leak-check=full")
+        .arg("--show-leak-kinds=definite,indirect")
+        .arg("--errors-for-leak-kinds=definite,indirect")
+        .arg(&exe)
+        .env("ORI_TEST_LEAK_CHECK", "1")
+        .output()
+        .unwrap_or_else(|error| panic!("failed to spawn {valgrind:?}: {error}"));
+    assert!(
+        output.status.success(),
+        "Valgrind runtime gate failed: status={} stdout={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "score:4\nleaks:0"
+    );
 }
 
 /// S4b: assigning a fresh owned value into a struct field must consume the

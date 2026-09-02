@@ -1,11 +1,35 @@
 # Plano de implementação — performance de value types
 
-> **Status:** planejado, com gate obrigatório de medição antes de mudar
-> representação.  
+> **Status:** `VALUE-PERF-1` **done** para o escopo aprovado de baseline
+> (auditado em 2026-08-25); otimizações de representação ficam shelved como
+> candidatas P2+ até existir ganho mensurável e critério de produto.
 > **Baseline verificada:** arrays inline, monomorfização, operator traits e
 > mid-end básico já implementados em `0.3.8-dev`.  
 > **Objetivo:** tornar abstrações pequenas baratas sem criar tipos mágicos para
 > vetores, games ou gráficos.
+
+### Estado verificado em 2026-08-25
+
+O item P1 aprovado no backlog foi o baseline canônico de três kernels, não a
+execução automática de todas as fases propostas neste documento. Esse escopo
+está fechado por `vec3_add_loop`, `mat3_multiply`, `optional_scalar_loop` e
+`tools/bench/run_value_perf.sh`. A auditoria também verificou que não existe
+evidência suficiente para promover mudanças de representação a P1:
+
+| Proposta original | Estado após o fechamento | Evidência / condição de reabertura |
+|---|---|---|
+| `1.0` | **done no escopo aprovado** | os três kernels canônicos e o runner são permanentes; ampliar para os nove kernels, AOT/JIT release, contadores, CLIF e tamanho é P2+ e só volta com uma decisão de medição específica |
+| `1.1` | **não promovida; candidata P2** | `ori-types::is_inline_ty*` já cobre escalares/arrays/structs, mas HIR e native codegen repetem parte da classificação; centralizar só entra junto de uma otimização medida que consuma o contrato |
+| `1.2` | **não promovida; candidata P2** | arrays e structs aninhadas inline têm layout, mas `HirExprKind::StructLit` geral ainda usa `malloc_typed_bytes`; reabrir exige demonstrar allocations e wall time no kernel-alvo, mais ABI/AOT/JIT gates |
+| `1.3` | **não promovida; candidata P2** | unit/payload enum inline exige primeiro um gate de allocation e match que demonstre ganho |
+| `1.4` | **capacidade conservadora já existente** | leaf inlining monomórfico existe em `ORI_OPT=aggressive`; expansão para attributes/operators precisa de benchmark e orçamento de código antes de virar trabalho |
+| `1.5` | **shelved P2+** | escape analysis geral só reabre com workload onde aggregates heap dominem o perfil |
+| `1.6` | **fora deste ID** | operators heterogêneos são decisão de linguagem separada, não otimização implícita |
+| `1.7` | **shelved P2+** | especialização de `optional`/`result` só reabre após baseline mostrar custo material e preservar ABI-1 |
+
+Assim, não resta P1 aberto em `VALUE-PERF-1`. As limitações acima são
+documentadas para impedir claims de zero-allocation, mas não constituem um
+programa ativo sem medição, critério e prioridade aprovados.
 
 ## 1. Problema
 

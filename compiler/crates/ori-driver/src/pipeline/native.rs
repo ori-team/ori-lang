@@ -8,8 +8,8 @@ use super::frontend::{check_loaded_sources, CheckOptions};
 use super::lowering::lower_loaded_sources;
 use super::project::{load_and_resolve, namespace_of, LoadedSource};
 use super::runtime::{
-    find_native_runtime_cdylib, find_native_runtime_link, native_lib_cdylib_name,
-    native_target_triple,
+    ensure_native_codegen_target, find_native_runtime_cdylib, find_native_runtime_link,
+    native_lib_cdylib_name, native_target_triple,
 };
 
 pub struct TestOutput {
@@ -110,6 +110,8 @@ pub fn run_test_with_options(path: &Path, options: TestOptions) -> Result<TestOu
             filter,
         });
     }
+
+    ensure_native_codegen_target()?;
 
     let mut cache = SourceCache::default();
     let mut sink = DiagnosticSink::default();
@@ -229,6 +231,7 @@ pub fn run_jit(source_path: &Path) -> Result<JitRunOutput, String> {
 
 /// Run JIT with custom arguments forwarded to `ori.os.args` / `ori.args`.
 pub fn run_jit_with_args(source_path: &Path, args: &[String]) -> Result<JitRunOutput, String> {
+    ensure_native_codegen_target()?;
     let mut cache = ori_diagnostics::SourceCache::default();
     let mut sink = ori_diagnostics::DiagnosticSink::default();
     let sources = load_and_resolve(source_path, &mut cache, &mut sink)?;
@@ -285,6 +288,7 @@ pub fn compile_jit_source_with_options(
     source: String,
     options: CheckOptions,
 ) -> Result<JitCompileOutput, String> {
+    ensure_native_codegen_target()?;
     let lowered = lower_jit_source_with_options(path, source, options)?;
     let JitLowerOutput {
         cache,
@@ -374,54 +378,135 @@ pub(super) fn run_native_tests(
     hir: &HirModule,
     tests: &[TestCase],
 ) -> Result<Vec<TestResult>, String> {
+    ensure_native_codegen_target()?;
     let runtime_link = find_native_runtime_link()?;
     let mut results = Vec::new();
 
-    for test in tests {
-        let (obj_path, exe_path) = temp_test_paths();
-        let mut test_hir = hir.clone();
-        inject_test_harness(&mut test_hir, test);
+    if tests.is_empty() {
+        return Ok(results);
+    }
 
-        let run_result = (|| {
-            ori_codegen::emit_native(&test_hir, &obj_path)?;
-            let extra = runtime_link.link_args();
-            ori_codegen::link(&obj_path, &exe_path, &extra)?;
-            let output = std::process::Command::new(&exe_path)
-                .output()
-                .map_err(|e| format!("failed to run test `{}`: {e}", test.name))?;
-            Ok::<TestResult, String>(TestResult {
+    // Build and link the complete test suite exactly once. Each test still
+    // runs in a fresh process below, so an abort/exit from one case cannot
+    // corrupt the result of another case.
+    let (obj_path, exe_path) = temp_test_paths();
+    let mut suite_hir = hir.clone();
+    inject_test_harness(&mut suite_hir, tests);
+    let build_result = (|| {
+        ori_codegen::emit_native(&suite_hir, &obj_path)?;
+        let extra = runtime_link.link_args();
+        ori_codegen::link(&obj_path, &exe_path, &extra)
+    })();
+
+    if let Err(error) = build_result {
+        let _ = std::fs::remove_file(&obj_path);
+        let _ = std::fs::remove_file(&exe_path);
+        return Ok(tests
+            .iter()
+            .map(|test| TestResult {
+                name: test.name.clone(),
+                passed: false,
+                skipped: false,
+                stdout: String::new(),
+                stderr: error.to_string(),
+                status: Some(1),
+            })
+            .collect());
+    }
+
+    for (index, test) in tests.iter().enumerate() {
+        let run_result = std::process::Command::new(&exe_path)
+            .env("ORI_TEST_INDEX", index.to_string())
+            .output()
+            .map_err(|e| format!("failed to run test `{}`: {e}", test.name));
+        match run_result {
+            Ok(output) => results.push(TestResult {
                 name: test.name.clone(),
                 passed: output.status.success() || output.status.code() == Some(77),
                 skipped: output.status.code() == Some(77),
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
                 stderr: String::from_utf8_lossy(&output.stderr).to_string(),
                 status: output.status.code(),
-            })
-        })();
-
-        let _ = std::fs::remove_file(&obj_path);
-        let _ = std::fs::remove_file(&exe_path);
-
-        match run_result {
-            Ok(result) => results.push(result),
-            Err(error) => {
-                results.push(TestResult {
-                    name: test.name.clone(),
-                    passed: false,
-                    skipped: false,
-                    stdout: String::new(),
-                    stderr: error,
-                    status: Some(1),
-                });
-            }
+            }),
+            Err(error) => results.push(TestResult {
+                name: test.name.clone(),
+                passed: false,
+                skipped: false,
+                stdout: String::new(),
+                stderr: error,
+                status: Some(1),
+            }),
         }
     }
+
+    let _ = std::fs::remove_file(&obj_path);
+    let _ = std::fs::remove_file(&exe_path);
 
     Ok(results)
 }
 
-fn inject_test_harness(module: &mut HirModule, test: &TestCase) {
-    let span = test.span;
+fn inject_test_harness(module: &mut HirModule, tests: &[TestCase]) {
+    let span = tests
+        .first()
+        .map_or(ori_diagnostics::Span::DUMMY, |test| test.span);
+    let mut stmts = Vec::with_capacity(tests.len());
+    for (index, test) in tests.iter().enumerate() {
+        let selector = HirExpr {
+            kind: HirExprKind::Call {
+                callee: Box::new(HirExpr {
+                    kind: HirExprKind::Var("ori_test_selected".into()),
+                    ty: Ty::Func {
+                        params: vec![Ty::Int],
+                        ret: Box::new(Ty::Bool),
+                    },
+                    span,
+                }),
+                args: vec![HirArg {
+                    label: None,
+                    spread: false,
+                    value: HirExpr {
+                        kind: HirExprKind::IntLit(index as i64),
+                        ty: Ty::Int,
+                        span,
+                    },
+                }],
+            },
+            ty: Ty::Bool,
+            span,
+        };
+        stmts.push(HirStmt::If {
+            cond: selector,
+            then: HirBlock {
+                stmts: vec![HirStmt::Expr(test_call(test, span))],
+                span,
+            },
+            else_ifs: Vec::new(),
+            else_: None,
+            span,
+        });
+    }
+    let harness_name = if module.namespace.is_empty() {
+        "main".to_string()
+    } else {
+        format!("{}.main", module.namespace)
+    };
+    let harness = HirFunc {
+        def_id: DefId::SYNTHETIC_MAIN,
+        name: harness_name.into(),
+        params: Vec::new(),
+        return_ty: Ty::Void,
+        body: HirBlock { stmts, span },
+        closure_captures: Vec::new(),
+        is_public: false,
+        is_async: false,
+        is_mut: false,
+        c_export_name: None,
+        span,
+    };
+    module.funcs.insert(0, harness);
+}
+
+fn test_call(test: &TestCase, span: ori_diagnostics::Span) -> HirExpr {
     let test_ret_ty = if test.is_async {
         Ty::Future(Box::new(Ty::Void))
     } else {
@@ -443,7 +528,7 @@ fn inject_test_harness(module: &mut HirModule, test: &TestCase) {
         ty: test_ret_ty.clone(),
         span,
     };
-    let test_expr = if test.is_async {
+    if test.is_async {
         HirExpr {
             kind: HirExprKind::Call {
                 callee: Box::new(HirExpr {
@@ -465,29 +550,7 @@ fn inject_test_harness(module: &mut HirModule, test: &TestCase) {
         }
     } else {
         call
-    };
-    let harness_name = if module.namespace.is_empty() {
-        "main".to_string()
-    } else {
-        format!("{}.main", module.namespace)
-    };
-    let harness = HirFunc {
-        def_id: DefId(u32::MAX - 1),
-        name: harness_name.into(),
-        params: Vec::new(),
-        return_ty: Ty::Void,
-        body: HirBlock {
-            stmts: vec![HirStmt::Expr(test_expr)],
-            span,
-        },
-        closure_captures: Vec::new(),
-        is_public: false,
-        is_async: false,
-        is_mut: false,
-        c_export_name: None,
-        span,
-    };
-    module.funcs.insert(0, harness);
+    }
 }
 
 fn temp_test_paths() -> (PathBuf, PathBuf) {

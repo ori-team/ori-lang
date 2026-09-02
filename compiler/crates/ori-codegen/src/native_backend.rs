@@ -58,6 +58,9 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_host_error_code",
     "ori_host_error_message",
     "ori_host_report_error",
+    "ori_handle_null",
+    "ori_handle_is_null",
+    "ori_handle_validate_size_type",
     "ori_arc_collect_cycles",
     "ori_arc_maybe_collect_cycles",
     "ori_arc_register_edge",
@@ -66,7 +69,10 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_arc_unregister_edge",
     "ori_arc_update_edge",
     "ori_alloc",
+    "ori_alloc_typed",
+    "ori_test_selected",
     "ori_bool_to_string_parts",
+    "ori_bytes_copy_parts",
     "ori_bytes_eq",
     "ori_debug_init",
     "ori_debug_enter",
@@ -115,6 +121,8 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_graph_add_edge_string",
     "ori_graph_add_weighted_edge_string",
     "ori_graph_add_node_string",
+    "ori_graph_new_custom",
+    "ori_graph_set_eq",
     "ori_graph_bfs_string",
     "ori_graph_dfs_string",
     "ori_graph_edge_weight_string",
@@ -126,10 +134,22 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_graph_shortest_path_string",
     "ori_graph_shortest_weighted_path_string",
     "ori_hash_table_contains_string",
+    "ori_hash_table_contains_custom",
     "ori_hash_table_from_entries_string",
+    "ori_hash_table_get_custom",
     "ori_hash_table_get_string",
+    "ori_hash_table_new_custom",
+    "ori_hash_table_remove_custom",
     "ori_hash_table_remove_string",
+    "ori_hash_table_set_custom_with_eq",
+    "ori_hash_table_set_custom_with_hash_eq",
     "ori_hash_table_set_string",
+    "ori_hash_table_with_capacity_custom",
+    "ori_hash_table_new_custom_with_hash",
+    "ori_hash_table_with_capacity_custom_with_hash",
+    "ori_hash_i64",
+    "ori_hash_string",
+    "ori_hash_bytes",
     "ori_heap_from_list_custom",
     "ori_heap_from_list_string",
     "ori_heap_new_custom",
@@ -147,11 +167,15 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_map_get_string",
     "ori_map_key_at",
     "ori_map_new_custom",
+    "ori_map_set_custom_with_eq",
+    "ori_map_set_custom_with_hash_eq",
     "ori_map_remove_custom",
     "ori_map_remove_string",
     "ori_map_set_custom",
     "ori_map_set_string",
     "ori_map_from_entries_string",
+    "ori_map_from_entries_custom",
+    "ori_map_from_entries_custom_with_hash",
     "ori_map_try_get_custom",
     "ori_map_try_get_string",
     "ori_map_try_remove_custom",
@@ -163,11 +187,21 @@ const INTERNAL_NATIVE_RUNTIME_IMPORTS: &[&str] = &[
     "ori_new_result",
     "ori_os_set_args",
     "ori_set_add_string",
+    "ori_set_add_custom_with_eq",
+    "ori_set_contains_custom",
+    "ori_set_from_list_custom",
+    "ori_set_new_custom",
+    "ori_set_new_custom_with_hash",
+    "ori_set_add_custom_with_hash_eq",
+    "ori_set_from_list_custom_with_hash",
+    "ori_set_remove_custom",
+    "ori_set_try_remove_custom",
     "ori_set_contains_string",
     "ori_set_from_list_string",
     "ori_set_remove_string",
     "ori_set_try_remove_string",
     "ori_tree_find_string",
+    "ori_string_copy_host",
     "ori_string_concat_parts",
     "ori_to_string_parts",
     "ori_uint_to_cstr",
@@ -608,6 +642,7 @@ enum CExportParameterBridge {
 #[derive(Clone)]
 enum CExportReturnBridge {
     Direct,
+    Bytes,
     ScalarStruct {
         internal: StructLayout,
         external: StructLayout,
@@ -625,6 +660,18 @@ enum CExportReturnBridge {
 struct CExportPayloadBridge {
     ty: Ty,
     scalar_struct_layouts: Option<(StructLayout, StructLayout)>,
+    /// Payload size for opaque managed handles. Scalar-only structs use the
+    /// by-value bridge and therefore leave this unset.
+    managed_handle_size: Option<u32>,
+    /// Reserved non-zero source-type tag for opaque managed handles.
+    managed_handle_type_tag: Option<i64>,
+}
+
+#[derive(Clone, Copy)]
+struct CExportHandleValidation {
+    size_type: Option<ir::FuncRef>,
+    payload_size: Option<u32>,
+    payload_type_tag: Option<i64>,
 }
 
 /// Scalar list elements stored as raw `i64` slots (no ARC edge on push/get).
@@ -1386,6 +1433,96 @@ fn simple_async_frame_size(plan: &SimpleAsyncStateMachinePlan, ptr_ty: types::Ty
         }
     }
     align_u32(offset, max_align).max(ASYNC_FRAME_AWAITED_BASE_OFFSET + ptr_ty.bytes())
+}
+
+/// Verify the ownership-relevant shape of an async frame before emitting any
+/// state-machine code. Every slot that terminal cleanup can inspect must be
+/// inside the allocation, have a native layout, and occupy a disjoint range.
+/// This does not replace a full data-flow ownership proof, but it turns frame
+/// layout drift and uninitialized managed-slot cleanup into compile-time errors
+/// instead of latent native memory corruption.
+fn verify_async_frame_ownership(
+    plan: &SimpleAsyncStateMachinePlan,
+    ptr_ty: types::Type,
+) -> Result<(), String> {
+    let frame_size = simple_async_frame_size(plan, ptr_ty);
+    let mut ranges: Vec<(String, u32, u32)> = Vec::new();
+
+    let mut add_slot = |label: String, offset: u32, size: u32| -> Result<(), String> {
+        let end = offset
+            .checked_add(size)
+            .ok_or_else(|| format!("async frame slot `{label}` overflows its offset"))?;
+        if end > frame_size || offset > i32::MAX as u32 {
+            return Err(format!(
+                "async frame slot `{label}` [{offset}..{end}) exceeds frame size {frame_size}"
+            ));
+        }
+        let new_end = end;
+        if let Some((other, other_offset, other_end)) = ranges
+            .iter()
+            .find(|(_, start, existing_end)| offset < *existing_end && *start < new_end)
+        {
+            return Err(format!(
+                "async frame slots `{label}` and `{other}` overlap ({offset}..{end} vs {other_offset}..{other_end})"
+            ));
+        }
+        ranges.push((label, offset, end));
+        Ok(())
+    };
+
+    add_slot("state".to_string(), ASYNC_FRAME_STATE_OFFSET as u32, 8)?;
+    add_slot(
+        "result_future".to_string(),
+        ASYNC_FRAME_RESULT_OFFSET as u32,
+        ptr_ty.bytes(),
+    )?;
+    for index in 0..plan.awaits.len() {
+        add_slot(
+            format!("awaited[{index}]"),
+            simple_async_frame_awaited_offset(index, ptr_ty) as u32,
+            ptr_ty.bytes(),
+        )?;
+    }
+
+    for (index, param) in plan.params.iter().enumerate() {
+        let cl_ty = cl_type(&param.ty, ptr_ty)
+            .ok_or_else(|| format!("async param `{}` has no native value", param.name))?;
+        let (size, _) = field_size_align(&param.ty, ptr_ty);
+        if size != cl_ty.bytes() && is_managed_ty(&param.ty) {
+            return Err(format!(
+                "managed async param `{}` has inconsistent native size",
+                param.name
+            ));
+        }
+        let offset = simple_async_frame_param_offset(plan, index, ptr_ty)
+            .ok_or_else(|| format!("async param `{}` has no frame offset", param.name))?;
+        add_slot(format!("param `{}`", param.name), offset, size)?;
+    }
+    for (index, local) in plan.locals.iter().enumerate() {
+        cl_type(&local.ty, ptr_ty)
+            .ok_or_else(|| format!("async local `{}` has no native value", local.name))?;
+        let (size, _) = field_size_align(&local.ty, ptr_ty);
+        let offset = simple_async_frame_local_offset(plan, index, ptr_ty)
+            .ok_or_else(|| format!("async local `{}` has no frame offset", local.name))?;
+        add_slot(format!("local `{}`", local.name), offset, size)?;
+    }
+    for (index, step) in plan.awaits.iter().enumerate() {
+        let Ty::Future(_) = step.await_future.ty else {
+            return Err(format!(
+                "async await step {index} does not produce a future value"
+            ));
+        };
+        let Some(binding) = &step.binding else {
+            continue;
+        };
+        cl_type(&binding.ty, ptr_ty)
+            .ok_or_else(|| format!("async binding `{}` has no native value", binding.name))?;
+        let (size, _) = field_size_align(&binding.ty, ptr_ty);
+        let offset = simple_async_frame_binding_offset(plan, index, ptr_ty)
+            .ok_or_else(|| format!("async binding `{}` has no frame offset", binding.name))?;
+        add_slot(format!("binding `{}`", binding.name), offset, size)?;
+    }
+    Ok(())
 }
 
 fn simple_async_frame_awaited_offset(step_index: usize, ptr_ty: types::Type) -> i32 {
@@ -3242,11 +3379,7 @@ fn collect_named_def_ids(
     seen: &mut HashSet<ori_types::DefId>,
 ) {
     match ty {
-        Ty::Named(def_id, _) => {
-            if seen.insert(*def_id) {
-                out.push(*def_id);
-            }
-        }
+        Ty::Named(def_id, _) if seen.insert(*def_id) => out.push(*def_id),
         Ty::Array(elem, _) => collect_named_def_ids(elem, out, seen),
         _ => {}
     }
@@ -3330,8 +3463,40 @@ fn emit_c_export_payload_from_external(
     external_value: ir::Value,
     alloc_ref: ir::FuncRef,
     ptr_ty: types::Type,
+    copy_ref: Option<ir::FuncRef>,
+    handle_validation: CExportHandleValidation,
 ) -> Result<(ir::Value, bool), String> {
     let Some((internal_layout, external_layout)) = &bridge.scalar_struct_layouts else {
+        if matches!(bridge.ty, Ty::Named(_, _)) {
+            let validate_handle_size_type_ref = handle_validation.size_type.ok_or_else(|| {
+                "missing typed handle validator for managed C export payload".to_string()
+            })?;
+            let expected_size = handle_validation.payload_size.ok_or_else(|| {
+                "managed C export payload has no concrete layout size".to_string()
+            })?;
+            let expected_tag = handle_validation.payload_type_tag.ok_or_else(|| {
+                "managed C export payload has no concrete source-type tag".to_string()
+            })?;
+            // Opaque managed structs are valid only when the pointer came from
+            // Ori's allocator and carries the exact source type. Validation
+            // happens before retaining or entering user code; there is no
+            // provenance-only fallback for generic or legacy handles.
+            let expected_size = builder.ins().iconst(types::I64, i64::from(expected_size));
+            let expected_tag = builder.ins().iconst(types::I64, expected_tag);
+            builder.ins().call(
+                validate_handle_size_type_ref,
+                &[external_value, expected_size, expected_tag],
+            );
+        }
+        if let Some(copy_ref) = copy_ref {
+            // C callers borrow foreign storage. Copy before registering an ARC
+            // edge; retaining an unregistered pointer is a no-op and would let
+            // the host free storage still referenced by Ori. Bytes use the
+            // explicit `(data, len)` view emitted by the C header, while the
+            // legacy string path remains NUL-terminated for ABI compatibility.
+            let copy = builder.ins().call(copy_ref, &[external_value]);
+            return Ok((builder.inst_results(copy)[0], true));
+        }
         return Ok((external_value, false));
     };
     let internal_value = emit_c_export_allocation(builder, internal_layout.size, alloc_ref, ptr_ty);
@@ -3353,6 +3518,7 @@ fn emit_c_export_payload_to_external(
     output: ir::Value,
     retain_ref: Option<ir::FuncRef>,
     ptr_ty: types::Type,
+    bytes_len_ref: Option<ir::FuncRef>,
 ) -> Result<(), String> {
     if let Some((internal_layout, external_layout)) = &bridge.scalar_struct_layouts {
         return emit_copy_struct_fields(
@@ -3363,6 +3529,29 @@ fn emit_c_export_payload_to_external(
             external_layout,
             ptr_ty,
         );
+    }
+    if matches!(&bridge.ty, Ty::Bytes) {
+        let len_ref = bytes_len_ref
+            .ok_or_else(|| "missing `ori_bytes_len` for C export bytes payload".to_string())?;
+        builder.ins().call(
+            retain_ref.ok_or_else(|| {
+                "missing `ori_arc_retain` for managed C export result payload".to_string()
+            })?,
+            &[internal_value],
+        );
+        builder
+            .ins()
+            .store(MemFlags::new(), internal_value, output, 0);
+        let length = builder.ins().call(len_ref, &[internal_value]);
+        let length = builder.inst_results(length)[0];
+        builder.ins().store(
+            MemFlags::new(),
+            length,
+            output,
+            i32::try_from(std::mem::size_of::<*const u8>())
+                .map_err(|_| "C export bytes length offset does not fit i32".to_string())?,
+        );
+        return Ok(());
     }
     if is_managed_ty(&bridge.ty) {
         builder.ins().call(
@@ -3393,6 +3582,9 @@ struct CExportArcFunctions {
     allocate: ir::FuncRef,
     register_edge: ir::FuncRef,
     release: ir::FuncRef,
+    copy_string_input: Option<ir::FuncRef>,
+    copy_bytes_parts_input: Option<ir::FuncRef>,
+    validate_handle_size_type: Option<ir::FuncRef>,
 }
 
 fn emit_c_export_input_payload_if(
@@ -3424,8 +3616,24 @@ fn emit_c_export_input_payload_if(
 
     builder.seal_block(active_block);
     builder.switch_to_block(active_block);
-    let (internal_value, owns_temporary) =
-        emit_c_export_payload_from_external(builder, bridge, external_value, arc.allocate, ptr_ty)?;
+    let copy_ref = match &bridge.ty {
+        Ty::String => arc.copy_string_input,
+        Ty::Bytes => arc.copy_bytes_parts_input,
+        _ => None,
+    };
+    let (internal_value, owns_temporary) = emit_c_export_payload_from_external(
+        builder,
+        bridge,
+        external_value,
+        arc.allocate,
+        ptr_ty,
+        copy_ref,
+        CExportHandleValidation {
+            size_type: arc.validate_handle_size_type,
+            payload_size: bridge.managed_handle_size,
+            payload_type_tag: bridge.managed_handle_type_tag,
+        },
+    )?;
     builder.ins().store(
         MemFlags::new(),
         internal_value,
@@ -3466,6 +3674,7 @@ fn emit_c_export_output_payload_if(
     payload: CExportOutputPayload<'_>,
     retain_ref: ir::FuncRef,
     ptr_ty: types::Type,
+    bytes_len_ref: Option<ir::FuncRef>,
 ) -> Result<(), String> {
     let CExportOutputPayload {
         tag,
@@ -3498,7 +3707,15 @@ fn emit_c_export_output_payload_if(
         wrapper,
         payload_offset as i32,
     );
-    emit_c_export_payload_to_external(builder, bridge, payload, output, Some(retain_ref), ptr_ty)?;
+    emit_c_export_payload_to_external(
+        builder,
+        bridge,
+        payload,
+        output,
+        Some(retain_ref),
+        ptr_ty,
+        bytes_len_ref,
+    )?;
     builder.ins().jump(merge_block, &[]);
 
     builder.seal_block(inactive_block);
@@ -3585,6 +3802,19 @@ struct GlobalDataInfo {
     mutable: bool,
 }
 
+/// Return string-keyed map entries in a stable order.
+///
+/// Native object emission must not depend on `HashMap`'s per-process hash
+/// seed. Apart from making release archives noisy, an unstable declaration
+/// order changes Cranelift's register allocation and can produce different
+/// machine code for the same source. Lookups remain O(1) on the maps; only
+/// the small emission snapshots pay the sorting cost.
+fn sorted_smol_entries<V>(map: &HashMap<SmolStr, V>) -> Vec<(&SmolStr, &V)> {
+    let mut entries = map.iter().collect::<Vec<_>>();
+    entries.sort_unstable_by_key(|(key, _)| key.as_str());
+    entries
+}
+
 #[derive(Debug, Clone)]
 struct UsingCleanup {
     var: Variable,
@@ -3603,6 +3833,18 @@ struct LoopContext {
     break_target: ir::Block,
     cleanup_start: usize,
     managed_cleanup_start: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum EqualityHelperTarget {
+    Struct,
+    Enum,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum HashHelperTarget {
+    Struct,
+    Enum,
 }
 
 pub struct NativeBackend<M: Module> {
@@ -3631,6 +3873,12 @@ pub struct NativeBackend<M: Module> {
     /// HIR has an entry `main`. Used by the JIT backend to locate the entry
     /// function pointer after `finalize_definitions`.
     main_func_id: Option<FuncId>,
+    /// Runtime initializer for non-static globals. Hosted JIT has no generated
+    /// C `main` wrapper, so its owner must invoke this once after finalization
+    /// and before publishing the generation.
+    global_init_func_id: Option<FuncId>,
+    /// Releases managed runtime globals before a hosted generation is dropped.
+    global_drop_func_id: Option<FuncId>,
     /// When true (`ori compile --lib`), emit C ABI `@c_export` wrappers and
     /// `__ori_module_init` instead of requiring a process `main`.
     lib_mode: bool,
@@ -3679,6 +3927,8 @@ impl<M: Module> NativeBackend<M> {
             func_param_tys: HashMap::new(),
             user_func_names: HashSet::new(),
             main_func_id: None,
+            global_init_func_id: None,
+            global_drop_func_id: None,
             lib_mode: false,
             c_export_ids: HashMap::new(),
             hosted_traps: false,
@@ -3793,6 +4043,19 @@ impl<M: Module> NativeBackend<M> {
         self.main_func_id
     }
 
+    /// Returns the initializer for globals that require runtime construction.
+    ///
+    /// JIT owners must invoke this exactly once after definitions are
+    /// finalized and before exposing any function from the generation.
+    pub fn global_init_func_id(&self) -> Option<FuncId> {
+        self.global_init_func_id
+    }
+
+    /// Returns the teardown function paired with `global_init_func_id`.
+    pub fn global_drop_func_id(&self) -> Option<FuncId> {
+        self.global_drop_func_id
+    }
+
     /// Returns the native function identifier for a lowered Ori function.
     ///
     /// The identifier is only valid while the owning Cranelift module remains
@@ -3872,7 +4135,9 @@ impl<M: Module> NativeBackend<M> {
         if self.debug_path_data.is_none() {
             return Ok(());
         }
-        for name in collect_debug_names(hir) {
+        let mut names = collect_debug_names(hir).into_iter().collect::<Vec<_>>();
+        names.sort_unstable_by_key(|name| name.clone());
+        for name in names {
             let mut bytes = name.as_bytes().to_vec();
             bytes.push(0);
             let mut description = DataDescription::new();
@@ -4122,11 +4387,20 @@ impl<M: Module> NativeBackend<M> {
         self.stdlib_ids.insert(SmolStr::new("strlen"), id);
         let id = decl("strcmp", &[pt, pt], vec![], Some(types::I32))?;
         self.stdlib_ids.insert(SmolStr::new("strcmp"), id);
+        let id = decl("ori_hash_i64", &[types::I64], vec![], Some(types::I64))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_hash_i64"), id);
+        let id = decl("ori_hash_string", &[pt], vec![], Some(types::I64))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_hash_string"), id);
+        let id = decl("ori_hash_bytes", &[pt], vec![], Some(types::I64))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_hash_bytes"), id);
         let id = decl("ori_string_len", &[pt], vec![], Some(types::I64))?;
         self.stdlib_ids.insert(SmolStr::new("ori_string_len"), id);
         let id = decl("ori_string_concat", &[pt, pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_string_concat"), id);
+        let id = decl("ori_string_copy_host", &[pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_string_copy_host"), id);
         let id = decl(
             "ori_string_concat_parts",
             &[pt, types::I64, pt, types::I64],
@@ -4376,6 +4650,9 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_test_live_allocations", &[], vec![], Some(types::I64))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_test_live_allocations"), id);
+        let id = decl("ori_test_selected", &[types::I64], vec![], Some(types::I8))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_test_selected"), id);
         let id = decl("ori_test_collect_cycles", &[], vec![], Some(types::I64))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_test_collect_cycles"), id);
@@ -4438,6 +4715,14 @@ impl<M: Module> NativeBackend<M> {
             Some(self.ptr_ty),
         )?;
         self.stdlib_ids.insert(SmolStr::new("ori_bytes_concat"), id);
+        let id = decl(
+            "ori_bytes_copy_parts",
+            &[self.ptr_ty],
+            vec![],
+            Some(self.ptr_ty),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_bytes_copy_parts"), id);
         let id = decl(
             "ori_bytes_slice",
             &[self.ptr_ty, types::I64, types::I64],
@@ -4588,10 +4873,21 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_buffer_len", &[pt], vec![], Some(types::I64))?;
         self.stdlib_ids.insert(SmolStr::new("ori_buffer_len"), id);
         let id = decl("ori_buffer_is_empty", &[pt], vec![], Some(types::I8))?;
-        self.stdlib_ids.insert(SmolStr::new("ori_buffer_is_empty"), id);
-        let id = decl("ori_buffer_get", &[pt, types::I64], vec![], Some(types::I64))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_buffer_is_empty"), id);
+        let id = decl(
+            "ori_buffer_get",
+            &[pt, types::I64],
+            vec![],
+            Some(types::I64),
+        )?;
         self.stdlib_ids.insert(SmolStr::new("ori_buffer_get"), id);
-        let id = decl("ori_buffer_set", &[pt, types::I64, types::I64], vec![], None)?;
+        let id = decl(
+            "ori_buffer_set",
+            &[pt, types::I64, types::I64],
+            vec![],
+            None,
+        )?;
         self.stdlib_ids.insert(SmolStr::new("ori_buffer_set"), id);
         let id = decl("ori_buffer_fill", &[pt, types::I64], vec![], None)?;
         self.stdlib_ids.insert(SmolStr::new("ori_buffer_fill"), id);
@@ -4638,8 +4934,30 @@ impl<M: Module> NativeBackend<M> {
         self.stdlib_ids.insert(SmolStr::new("ori_list_slice"), id);
         let id = decl("ori_set_new", &[], vec![], Some(pt))?;
         self.stdlib_ids.insert(SmolStr::new("ori_set_new"), id);
+        let id = decl("ori_set_new_custom", &[pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_set_new_custom"), id);
+        let id = decl("ori_set_new_custom_with_hash", &[pt, pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_set_new_custom_with_hash"), id);
         let id = decl("ori_set_add", &[pt, types::I64], vec![], None)?;
         self.stdlib_ids.insert(SmolStr::new("ori_set_add"), id);
+        let id = decl(
+            "ori_set_add_custom_with_eq",
+            &[pt, types::I64, pt],
+            vec![],
+            None,
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_set_add_custom_with_eq"), id);
+        let id = decl(
+            "ori_set_add_custom_with_hash_eq",
+            &[pt, types::I64, pt, pt],
+            vec![],
+            None,
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_set_add_custom_with_hash_eq"), id);
         let id = decl("ori_set_add_string", &[pt, pt], vec![], None)?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_set_add_string"), id);
@@ -4658,6 +4976,14 @@ impl<M: Module> NativeBackend<M> {
         )?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_set_contains_string"), id);
+        let id = decl(
+            "ori_set_contains_custom",
+            &[pt, types::I64],
+            vec![],
+            Some(types::I8),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_set_contains_custom"), id);
         let id = decl("ori_set_len", &[pt], vec![], Some(types::I64))?;
         self.stdlib_ids.insert(SmolStr::new("ori_set_len"), id);
         let id = decl("ori_set_capacity", &[pt], vec![], Some(types::I64))?;
@@ -4673,6 +4999,17 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_set_remove_string", &[pt, pt], vec![], None)?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_set_remove_string"), id);
+        let id = decl("ori_set_remove_custom", &[pt, types::I64], vec![], None)?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_set_remove_custom"), id);
+        let id = decl(
+            "ori_set_try_remove_custom",
+            &[pt, types::I64],
+            vec![],
+            Some(types::I8),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_set_try_remove_custom"), id);
         let id = decl(
             "ori_set_try_remove_string",
             &[pt, pt],
@@ -4684,6 +5021,17 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_set_from_list_string", &[pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_set_from_list_string"), id);
+        let id = decl("ori_set_from_list_custom", &[pt, pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_set_from_list_custom"), id);
+        let id = decl(
+            "ori_set_from_list_custom_with_hash",
+            &[pt, pt, pt],
+            vec![],
+            Some(pt),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_set_from_list_custom_with_hash"), id);
         let id = decl("ori_set_union", &[pt, pt], vec![], Some(pt))?;
         self.stdlib_ids.insert(SmolStr::new("ori_set_union"), id);
         let id = decl("ori_set_intersection", &[pt, pt], vec![], Some(pt))?;
@@ -4701,6 +5049,22 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_map_new_custom", &[pt, pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_map_new_custom"), id);
+        let id = decl(
+            "ori_map_set_custom_with_eq",
+            &[pt, pt, types::I64, pt],
+            vec![],
+            None,
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_map_set_custom_with_eq"), id);
+        let id = decl(
+            "ori_map_set_custom_with_hash_eq",
+            &[pt, pt, types::I64, pt, pt],
+            vec![],
+            None,
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_map_set_custom_with_hash_eq"), id);
         let id = decl("ori_map_set", &[pt, types::I64, types::I64], vec![], None)?;
         self.stdlib_ids.insert(SmolStr::new("ori_map_set"), id);
         let id = decl("ori_map_set_string", &[pt, pt, types::I64], vec![], None)?;
@@ -4787,6 +5151,17 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_map_from_entries_string", &[pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_map_from_entries_string"), id);
+        let id = decl("ori_map_from_entries_custom", &[pt, pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_map_from_entries_custom"), id);
+        let id = decl(
+            "ori_map_from_entries_custom_with_hash",
+            &[pt, pt, pt],
+            vec![],
+            Some(pt),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_map_from_entries_custom_with_hash"), id);
         let id = decl("ori_map_keys", &[pt], vec![], Some(pt))?;
         self.stdlib_ids.insert(SmolStr::new("ori_map_keys"), id);
         let id = decl("ori_map_values", &[pt], vec![], Some(pt))?;
@@ -4801,12 +5176,44 @@ impl<M: Module> NativeBackend<M> {
         )?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_hash_table_set_string"), id);
+        let id = decl(
+            "ori_hash_table_set_custom_with_eq",
+            &[pt, types::I64, types::I64, pt],
+            vec![],
+            None,
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_hash_table_set_custom_with_eq"), id);
+        let id = decl(
+            "ori_hash_table_set_custom_with_hash_eq",
+            &[pt, types::I64, types::I64, pt, pt],
+            vec![],
+            None,
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_hash_table_set_custom_with_hash_eq"), id);
         let id = decl("ori_hash_table_get_string", &[pt, pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_hash_table_get_string"), id);
+        let id = decl(
+            "ori_hash_table_get_custom",
+            &[pt, types::I64],
+            vec![],
+            Some(pt),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_hash_table_get_custom"), id);
         let id = decl("ori_hash_table_remove_string", &[pt, pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_hash_table_remove_string"), id);
+        let id = decl(
+            "ori_hash_table_remove_custom",
+            &[pt, types::I64],
+            vec![],
+            Some(pt),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_hash_table_remove_custom"), id);
         let id = decl(
             "ori_hash_table_contains_string",
             &[pt, pt],
@@ -4815,6 +5222,43 @@ impl<M: Module> NativeBackend<M> {
         )?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_hash_table_contains_string"), id);
+        let id = decl(
+            "ori_hash_table_contains_custom",
+            &[pt, types::I64],
+            vec![],
+            Some(types::I8),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_hash_table_contains_custom"), id);
+        let id = decl("ori_hash_table_new_custom", &[pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_hash_table_new_custom"), id);
+        let id = decl(
+            "ori_hash_table_new_custom_with_hash",
+            &[pt, pt],
+            vec![],
+            Some(pt),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_hash_table_new_custom_with_hash"), id);
+        let id = decl(
+            "ori_hash_table_with_capacity_custom",
+            &[types::I64, pt],
+            vec![],
+            Some(pt),
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_hash_table_with_capacity_custom"), id);
+        let id = decl(
+            "ori_hash_table_with_capacity_custom_with_hash",
+            &[types::I64, pt, pt],
+            vec![],
+            Some(pt),
+        )?;
+        self.stdlib_ids.insert(
+            SmolStr::new("ori_hash_table_with_capacity_custom_with_hash"),
+            id,
+        );
         let id = decl(
             "ori_hash_table_from_entries_string",
             &[pt],
@@ -4954,6 +5398,14 @@ impl<M: Module> NativeBackend<M> {
         self.stdlib_ids.insert(SmolStr::new("ori_files_rename"), id);
         let id = decl("ori_arc_retain", &[pt], vec![], None)?;
         self.stdlib_ids.insert(SmolStr::new("ori_arc_retain"), id);
+        let id = decl(
+            "ori_handle_validate_size_type",
+            &[pt, types::I64, types::I64],
+            vec![],
+            None,
+        )?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_handle_validate_size_type"), id);
         let id = decl("ori_arc_release", &[pt], vec![], None)?;
         self.stdlib_ids.insert(SmolStr::new("ori_arc_release"), id);
         let id = decl("ori_arc_register_edge", &[pt, pt], vec![], None)?;
@@ -4980,6 +5432,13 @@ impl<M: Module> NativeBackend<M> {
         self.stdlib_ids.insert(SmolStr::new("free"), id);
         let id = decl("ori_alloc", &[types::I64, pt], vec![], Some(pt))?;
         self.stdlib_ids.insert(SmolStr::new("ori_alloc"), id);
+        let id = decl(
+            "ori_alloc_typed",
+            &[types::I64, pt, types::I64],
+            vec![],
+            Some(pt),
+        )?;
+        self.stdlib_ids.insert(SmolStr::new("ori_alloc_typed"), id);
 
         let id = decl("ori_abort_concurrent_modification", &[], vec![], None)?;
         self.stdlib_ids
@@ -5060,6 +5519,11 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_graph_iterator_next", &[pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_graph_iterator_next"), id);
+        let id = decl("ori_graph_new_custom", &[types::I8, pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_graph_new_custom"), id);
+        let id = decl("ori_graph_set_eq", &[pt, pt], vec![], None)?;
+        self.stdlib_ids.insert(SmolStr::new("ori_graph_set_eq"), id);
 
         // Cooperative DAP line probes (no-op in runtime unless ORI_DEBUG_PORT is set).
         let id = decl(
@@ -5158,6 +5622,7 @@ impl<M: Module> NativeBackend<M> {
 
     fn c_export_return_bridge(&self, ty: &Ty) -> CExportReturnBridge {
         match ty {
+            Ty::Bytes => CExportReturnBridge::Bytes,
             Ty::Optional(inner) => CExportReturnBridge::Optional {
                 inner: self.c_export_payload_bridge(inner),
             },
@@ -5178,7 +5643,41 @@ impl<M: Module> NativeBackend<M> {
         CExportPayloadBridge {
             ty: ty.clone(),
             scalar_struct_layouts: self.c_export_scalar_struct_layouts(ty),
+            managed_handle_size: self.c_export_managed_handle_size(ty),
+            managed_handle_type_tag: self.c_export_managed_handle_type_tag(ty),
         }
+    }
+
+    /// Return the runtime payload size for an opaque, non-generic managed
+    /// handle. The generated C wrapper uses this as a provenance/layout guard
+    /// before retaining or dereferencing a host-provided pointer. Generic
+    /// handles intentionally fall back to the legacy provenance-only check
+    /// because their monomorphized layout is not represented in this table.
+    fn c_export_managed_handle_size(&self, ty: &Ty) -> Option<u32> {
+        let Ty::Named(def_id, args) = ty else {
+            return None;
+        };
+        if !args.is_empty() {
+            return None;
+        }
+        self.struct_layouts
+            .get(def_id)
+            .map(|layout| layout.size)
+            .or_else(|| self.enum_layouts.get(def_id).map(|layout| layout.size))
+    }
+
+    fn c_export_managed_handle_type_tag(&self, ty: &Ty) -> Option<i64> {
+        let Ty::Named(def_id, args) = ty else {
+            return None;
+        };
+        if !args.is_empty()
+            || (!self.struct_layouts.contains_key(def_id)
+                && !self.enum_layouts.contains_key(def_id))
+        {
+            return None;
+        }
+        // Zero is reserved for legacy/runtime allocations in the registry.
+        Some(i64::from(def_id.0) + 1)
     }
 
     fn make_c_export_sig(&self, f: &HirFunc) -> ir::Signature {
@@ -5208,6 +5707,9 @@ impl<M: Module> NativeBackend<M> {
             }
         }
         match &f.return_ty {
+            Ty::Bytes => {
+                sig.params.push(AbiParam::new(self.ptr_ty));
+            }
             Ty::Optional(inner) => {
                 if self.c_export_payload_type(inner).is_some() {
                     sig.params.push(AbiParam::new(self.ptr_ty));
@@ -5266,8 +5768,18 @@ impl<M: Module> NativeBackend<M> {
         sig
     }
 
+    fn make_hash_sig(&self) -> ir::Signature {
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(self.ptr_ty));
+        sig.returns.push(AbiParam::new(types::I64));
+        sig
+    }
+
     fn declare_all(&mut self, hir: &HirModule) -> Result<(), String> {
-        // Declare equality helper functions for all structs
+        // Declare equality helper functions for all structs and enums.  The
+        // helpers share the same pointer/pointer -> bool ABI so collections
+        // can compare user-defined values without knowing their concrete
+        // representation.
         let mut declared_structs = std::collections::HashSet::new();
         for s in &hir.structs {
             if !declared_structs.insert(s.def_id) {
@@ -5279,6 +5791,45 @@ impl<M: Module> NativeBackend<M> {
                 .module
                 .declare_function(&name, Linkage::Local, &sig)
                 .map_err(|e| format!("declare struct eq helper '{name}': {e}"))?;
+            self.func_ids.insert(SmolStr::new(name), id);
+        }
+        let mut declared_enums = std::collections::HashSet::new();
+        for e in &hir.enums {
+            if !declared_enums.insert(e.def_id) {
+                continue;
+            }
+            let sig = self.make_struct_eq_sig();
+            let name = format!("__eq_helper_enum_{}", e.def_id.0);
+            let id = self
+                .module
+                .declare_function(&name, Linkage::Local, &sig)
+                .map_err(|e| format!("declare enum eq helper '{name}': {e}"))?;
+            self.func_ids.insert(SmolStr::new(name), id);
+        }
+        let mut declared_hash_structs = std::collections::HashSet::new();
+        for s in &hir.structs {
+            if !declared_hash_structs.insert(s.def_id) {
+                continue;
+            }
+            let sig = self.make_hash_sig();
+            let name = format!("__hash_helper_struct_{}", s.def_id.0);
+            let id = self
+                .module
+                .declare_function(&name, Linkage::Local, &sig)
+                .map_err(|e| format!("declare struct hash helper '{name}': {e}"))?;
+            self.func_ids.insert(SmolStr::new(name), id);
+        }
+        let mut declared_hash_enums = std::collections::HashSet::new();
+        for e in &hir.enums {
+            if !declared_hash_enums.insert(e.def_id) {
+                continue;
+            }
+            let sig = self.make_hash_sig();
+            let name = format!("__hash_helper_enum_{}", e.def_id.0);
+            let id = self
+                .module
+                .declare_function(&name, Linkage::Local, &sig)
+                .map_err(|e| format!("declare enum hash helper '{name}': {e}"))?;
             self.func_ids.insert(SmolStr::new(name), id);
         }
         for (type_def_id, _) in custom_destructor_impls(hir) {
@@ -5410,12 +5961,15 @@ impl<M: Module> NativeBackend<M> {
                 self.c_export_ids.insert(f.name.clone(), id);
             }
         }
-        // Module global init for shared libraries (weakly called from ori_rt_init).
+        // Module lifecycle exports for shared-library hosts.
         if self.lib_mode {
             let sig = self.module.make_signature();
             self.module
                 .declare_function("__ori_module_init", Linkage::Export, &sig)
                 .map_err(|e| format!("declare __ori_module_init: {e}"))?;
+            self.module
+                .declare_function("__ori_module_shutdown", Linkage::Export, &sig)
+                .map_err(|e| format!("declare __ori_module_shutdown: {e}"))?;
         }
         Ok(())
     }
@@ -5542,6 +6096,8 @@ impl<M: Module> NativeBackend<M> {
             selected.insert(external_wrapper_name, *function_id);
         }
 
+        let mut selected = selected.into_iter().collect::<Vec<_>>();
+        selected.sort_unstable_by_key(|(name, _)| name.clone());
         selected
             .into_iter()
             .map(|(name, function_id)| {
@@ -5559,6 +6115,20 @@ impl<M: Module> NativeBackend<M> {
             .iter()
             .map(|c| (c.name.clone(), c.value.clone()))
             .collect();
+        let module_init_guard_id = if self.lib_mode {
+            let id = self
+                .module
+                .declare_anonymous_data(true, false)
+                .map_err(|error| format!("declare module init guard: {error}"))?;
+            let mut description = DataDescription::new();
+            description.define(vec![0_u8].into_boxed_slice());
+            self.module
+                .define_data(id, &description)
+                .map_err(|error| format!("define module init guard: {error}"))?;
+            Some(id)
+        } else {
+            None
+        };
         let global_init_id = if hir.consts.iter().any(|c| {
             cl_type(&c.ty, self.ptr_ty).is_some() && needs_runtime_global_init(&c.value, &c.ty)
         }) {
@@ -5571,6 +6141,18 @@ impl<M: Module> NativeBackend<M> {
         } else {
             None
         };
+        self.global_init_func_id = global_init_id;
+        let global_drop_id = if global_init_id.is_some() {
+            let sig = self.module.make_signature();
+            Some(
+                self.module
+                    .declare_function("__ori_drop_globals", Linkage::Local, &sig)
+                    .map_err(|error| format!("declare global teardown: {error}"))?,
+            )
+        } else {
+            None
+        };
+        self.global_drop_func_id = global_drop_id;
         for f in &hir.funcs {
             let sig = self.make_sig(f);
             let func_id = self.func_ids[&f.name];
@@ -5581,13 +6163,13 @@ impl<M: Module> NativeBackend<M> {
 
             // Pre-declare all string global values
             let mut string_gvs: HashMap<SmolStr, ir::GlobalValue> = HashMap::new();
-            for (s, &data_id) in &self.string_data {
+            for (s, &data_id) in sorted_smol_entries(&self.string_data) {
                 let gv = self.module.declare_data_in_func(data_id, &mut ctx.func);
                 string_gvs.insert(s.clone(), gv);
             }
 
             let mut global_gvs: HashMap<SmolStr, ir::GlobalValue> = HashMap::new();
-            for (name, info) in &self.global_data {
+            for (name, info) in sorted_smol_entries(&self.global_data) {
                 let gv = self
                     .module
                     .declare_data_in_func(info.data_id, &mut ctx.func);
@@ -5625,7 +6207,7 @@ impl<M: Module> NativeBackend<M> {
             };
             let mut debug_variable_gvs = HashMap::new();
             if instrument_debug {
-                for (name, data_id) in &self.debug_name_data {
+                for (name, data_id) in sorted_smol_entries(&self.debug_name_data) {
                     let gv = self.module.declare_data_in_func(*data_id, &mut ctx.func);
                     debug_variable_gvs.insert(name.clone(), gv);
                 }
@@ -5725,6 +6307,7 @@ impl<M: Module> NativeBackend<M> {
             let Some(plan) = plan_opt else {
                 continue;
             };
+            verify_async_frame_ownership(&plan, self.ptr_ty)?;
             self.define_simple_async_step(f, &plan, &const_exprs)?;
         }
 
@@ -5766,6 +6349,9 @@ impl<M: Module> NativeBackend<M> {
         if let Some(global_init_id) = global_init_id {
             self.define_global_initializer(hir, global_init_id)?;
         }
+        if let Some(global_drop_id) = global_drop_id {
+            self.define_global_teardown(hir, global_drop_id)?;
+        }
 
         // C ABI export wrappers (`@c_export`) — unmangled symbols for dlopen hosts.
         for f in &hir.funcs {
@@ -5802,6 +6388,26 @@ impl<M: Module> NativeBackend<M> {
                     "missing runtime function `ori_arc_release` for C export wrapper".to_string()
                 })?;
             let release_ref = self.module.declare_func_in_func(release_id, &mut ctx.func);
+            let copy_string_ref = self
+                .stdlib_ids
+                .get("ori_string_copy_host")
+                .copied()
+                .map(|id| self.module.declare_func_in_func(id, &mut ctx.func));
+            let copy_bytes_ref = self
+                .stdlib_ids
+                .get("ori_bytes_copy_parts")
+                .copied()
+                .map(|id| self.module.declare_func_in_func(id, &mut ctx.func));
+            let validate_handle_size_type_ref = self
+                .stdlib_ids
+                .get("ori_handle_validate_size_type")
+                .copied()
+                .map(|id| self.module.declare_func_in_func(id, &mut ctx.func));
+            let bytes_len_ref = self
+                .stdlib_ids
+                .get("ori_bytes_len")
+                .copied()
+                .map(|id| self.module.declare_func_in_func(id, &mut ctx.func));
             let register_edge_id = self
                 .stdlib_ids
                 .get("ori_arc_register_edge")
@@ -5828,10 +6434,30 @@ impl<M: Module> NativeBackend<M> {
                         CExportParameterBridge::Direct => {
                             let external_value = external_params[external_index];
                             external_index += 1;
-                            if is_managed_ty(&parameter.ty) {
-                                b.ins().call(retain_ref, &[external_value]);
+                            let bridge = self.c_export_payload_bridge(&parameter.ty);
+                            let copy_ref = match &parameter.ty {
+                                Ty::String => copy_string_ref,
+                                Ty::Bytes => copy_bytes_ref,
+                                _ => None,
+                            };
+                            let (internal_value, owns_temporary) =
+                                emit_c_export_payload_from_external(
+                                    &mut b,
+                                    &bridge,
+                                    external_value,
+                                    alloc_ref,
+                                    self.ptr_ty,
+                                    copy_ref,
+                                    CExportHandleValidation {
+                                        size_type: validate_handle_size_type_ref,
+                                        payload_size: bridge.managed_handle_size,
+                                        payload_type_tag: bridge.managed_handle_type_tag,
+                                    },
+                                )?;
+                            if !owns_temporary && is_managed_ty(&parameter.ty) {
+                                b.ins().call(retain_ref, &[internal_value]);
                             }
-                            ori_params.push(external_value);
+                            ori_params.push(internal_value);
                         }
                         CExportParameterBridge::ScalarStruct { internal, external } => {
                             let external_value = external_params[external_index];
@@ -5880,6 +6506,9 @@ impl<M: Module> NativeBackend<M> {
                                     allocate: alloc_ref,
                                     register_edge: register_edge_ref,
                                     release: release_ref,
+                                    copy_string_input: copy_string_ref,
+                                    copy_bytes_parts_input: copy_bytes_ref,
+                                    validate_handle_size_type: validate_handle_size_type_ref,
                                 },
                                 self.ptr_ty,
                             )?;
@@ -5916,6 +6545,9 @@ impl<M: Module> NativeBackend<M> {
                                         allocate: alloc_ref,
                                         register_edge: register_edge_ref,
                                         release: release_ref,
+                                        copy_string_input: copy_string_ref,
+                                        copy_bytes_parts_input: copy_bytes_ref,
+                                        validate_handle_size_type: validate_handle_size_type_ref,
                                     },
                                     self.ptr_ty,
                                 )?;
@@ -5937,6 +6569,9 @@ impl<M: Module> NativeBackend<M> {
                                         allocate: alloc_ref,
                                         register_edge: register_edge_ref,
                                         release: release_ref,
+                                        copy_string_input: copy_string_ref,
+                                        copy_bytes_parts_input: copy_bytes_ref,
+                                        validate_handle_size_type: validate_handle_size_type_ref,
                                     },
                                     self.ptr_ty,
                                 )?;
@@ -5954,6 +6589,28 @@ impl<M: Module> NativeBackend<M> {
                         } else {
                             b.ins().return_(&results);
                         }
+                    }
+                    CExportReturnBridge::Bytes => {
+                        let result = results.first().copied().ok_or_else(|| {
+                            format!("C export `{}` did not return its bytes value", f.name)
+                        })?;
+                        let output = external_params[external_index];
+                        emit_c_export_payload_to_external(
+                            &mut b,
+                            &CExportPayloadBridge {
+                                ty: Ty::Bytes,
+                                scalar_struct_layouts: None,
+                                managed_handle_size: None,
+                                managed_handle_type_tag: None,
+                            },
+                            result,
+                            output,
+                            Some(retain_ref),
+                            self.ptr_ty,
+                            bytes_len_ref,
+                        )?;
+                        b.ins().call(release_ref, &[result]);
+                        b.ins().return_(&[]);
                     }
                     CExportReturnBridge::ScalarStruct { internal, external } => {
                         let result = results.first().copied().ok_or_else(|| {
@@ -5990,6 +6647,7 @@ impl<M: Module> NativeBackend<M> {
                             },
                             retain_ref,
                             self.ptr_ty,
+                            bytes_len_ref,
                         )?;
                         b.ins().call(release_ref, &[result]);
                         b.ins().return_(&[tag]);
@@ -6017,6 +6675,7 @@ impl<M: Module> NativeBackend<M> {
                                 },
                                 retain_ref,
                                 self.ptr_ty,
+                                bytes_len_ref,
                             )?;
                         }
                         if let Some(err) = err {
@@ -6033,6 +6692,7 @@ impl<M: Module> NativeBackend<M> {
                                 },
                                 retain_ref,
                                 self.ptr_ty,
+                                bytes_len_ref,
                             )?;
                         }
                         b.ins().call(release_ref, &[result]);
@@ -6052,8 +6712,8 @@ impl<M: Module> NativeBackend<M> {
                 })?;
         }
 
-        // Shared-library module init (globals). Hosts call `ori_rt_init`, which
-        // weakly invokes `__ori_module_init` when present.
+        // Shared-library module lifecycle. Hosts call this explicitly after
+        // `ori_rt_init`; keeping it separate supports multiple generations.
         if self.lib_mode {
             let sig = self.module.make_signature();
             let init_id = self
@@ -6064,13 +6724,32 @@ impl<M: Module> NativeBackend<M> {
             ctx.func.signature = sig;
             let global_ref =
                 global_init_id.map(|id| self.module.declare_func_in_func(id, &mut ctx.func));
+            let guard_value =
+                module_init_guard_id.map(|id| self.module.declare_data_in_func(id, &mut ctx.func));
             let mut bctx = FunctionBuilderContext::new();
             {
                 let mut b = FunctionBuilder::new(&mut ctx.func, &mut bctx);
                 let blk = b.create_block();
+                let initialize_block = b.create_block();
+                let return_block = b.create_block();
                 b.switch_to_block(blk);
                 b.seal_block(blk);
-                if let Some(init_ref) = global_ref {
+                if let Some(guard_value) = guard_value {
+                    let guard_address = b.ins().global_value(self.ptr_ty, guard_value);
+                    let initialized = b.ins().load(types::I8, MemFlags::new(), guard_address, 0);
+                    b.ins()
+                        .brif(initialized, return_block, &[], initialize_block, &[]);
+                    b.seal_block(initialize_block);
+                    b.switch_to_block(initialize_block);
+                    let one = b.ins().iconst(types::I8, 1);
+                    b.ins().store(MemFlags::new(), one, guard_address, 0);
+                    if let Some(init_ref) = global_ref {
+                        b.ins().call(init_ref, &[]);
+                    }
+                    b.ins().jump(return_block, &[]);
+                    b.seal_block(return_block);
+                    b.switch_to_block(return_block);
+                } else if let Some(init_ref) = global_ref {
                     b.ins().call(init_ref, &[]);
                 }
                 b.ins().return_(&[]);
@@ -6080,6 +6759,55 @@ impl<M: Module> NativeBackend<M> {
             self.module
                 .define_function(init_id, &mut ctx)
                 .map_err(|e| format!("define __ori_module_init: {e}"))?;
+
+            let sig = self.module.make_signature();
+            let shutdown_id = self
+                .module
+                .declare_function("__ori_module_shutdown", Linkage::Export, &sig)
+                .map_err(|e| format!("re-declare __ori_module_shutdown: {e}"))?;
+            let mut ctx = self.module.make_context();
+            ctx.func.signature = sig;
+            let drop_ref =
+                global_drop_id.map(|id| self.module.declare_func_in_func(id, &mut ctx.func));
+            let guard_value =
+                module_init_guard_id.map(|id| self.module.declare_data_in_func(id, &mut ctx.func));
+            let mut builder_context = FunctionBuilderContext::new();
+            {
+                let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_context);
+                let block = builder.create_block();
+                let drop_block = builder.create_block();
+                let return_block = builder.create_block();
+                builder.switch_to_block(block);
+                builder.seal_block(block);
+                if let Some(guard_value) = guard_value {
+                    let guard_address = builder.ins().global_value(self.ptr_ty, guard_value);
+                    let initialized =
+                        builder
+                            .ins()
+                            .load(types::I8, MemFlags::new(), guard_address, 0);
+                    builder
+                        .ins()
+                        .brif(initialized, drop_block, &[], return_block, &[]);
+                    builder.seal_block(drop_block);
+                    builder.switch_to_block(drop_block);
+                    let zero = builder.ins().iconst(types::I8, 0);
+                    builder.ins().store(MemFlags::new(), zero, guard_address, 0);
+                    if let Some(drop_ref) = drop_ref {
+                        builder.ins().call(drop_ref, &[]);
+                    }
+                    builder.ins().jump(return_block, &[]);
+                    builder.seal_block(return_block);
+                    builder.switch_to_block(return_block);
+                } else if let Some(drop_ref) = drop_ref {
+                    builder.ins().call(drop_ref, &[]);
+                }
+                builder.ins().return_(&[]);
+                builder.seal_all_blocks();
+                builder.finalize();
+            }
+            self.module
+                .define_function(shutdown_id, &mut ctx)
+                .map_err(|e| format!("define __ori_module_shutdown: {e}"))?;
         }
 
         // Define C main wrapper (executables only)
@@ -6115,9 +6843,8 @@ impl<M: Module> NativeBackend<M> {
                     .get("ori_debug_register_static")
                     .copied()
                     .map(|id| self.module.declare_func_in_func(id, &mut ctx.func));
-                let static_string_gvs = self
-                    .string_data
-                    .iter()
+                let static_string_gvs = sorted_smol_entries(&self.string_data)
+                    .into_iter()
                     .map(|(literal, data_id)| {
                         (
                             literal.len() as u32,
@@ -6182,11 +6909,12 @@ impl<M: Module> NativeBackend<M> {
                     .map_err(|e| format!("define main wrapper: {e}"))?;
             }
         } // !lib_mode
-        self.define_struct_eq_helpers(hir)?;
+        self.define_equality_helpers(hir)?;
+        self.define_hash_helpers(hir)?;
         Ok(())
     }
 
-    fn define_struct_eq_helpers(&mut self, hir: &HirModule) -> Result<(), String> {
+    fn define_equality_helpers(&mut self, hir: &HirModule) -> Result<(), String> {
         let const_exprs: HashMap<SmolStr, HirExpr> = hir
             .consts
             .iter()
@@ -6197,86 +6925,255 @@ impl<M: Module> NativeBackend<M> {
             if !defined_structs.insert(s.def_id) {
                 continue;
             }
-            let name = format!("__eq_helper_struct_{}", s.def_id.0);
-            let func_id = self.func_ids[name.as_str()];
-            let mut ctx = self.module.make_context();
-            ctx.func.signature = self.make_struct_eq_sig();
-
-            let mut func_refs: HashMap<SmolStr, ir::FuncRef> = HashMap::new();
-            for (name, &id) in self.func_ids.iter().chain(self.stdlib_ids.iter()) {
-                let fref = self.module.declare_func_in_func(id, &mut ctx.func);
-                func_refs.insert(name.clone(), fref);
-            }
-            for (name, &id) in &self.func_wrapper_ids {
-                let fref = self.module.declare_func_in_func(id, &mut ctx.func);
-                func_refs.insert(SmolStr::new(format!("{name}.__fnptr_wrapper")), fref);
-            }
-
-            let mut bctx = FunctionBuilderContext::new();
-            {
-                let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
-                let block = builder.create_block();
-                builder.append_block_params_for_function_params(block);
-                builder.switch_to_block(block);
-                builder.seal_block(block);
-
-                let params = builder.block_params(block);
-                let left_ptr = params[0];
-                let right_ptr = params[1];
-
-                let mut codegen = FuncCodegen {
-                    builder,
-                    func_refs: &func_refs,
-                    string_gvs: &HashMap::new(),
-                    global_gvs: &HashMap::new(),
-                    global_data: &self.global_data,
-                    const_exprs: &const_exprs,
-                    struct_layouts: &self.struct_layouts,
-                    inline_struct_ids: &self.inline_struct_ids,
-                    enum_layouts: &self.enum_layouts,
-                    type_names: &self.type_names,
-                    trait_layouts: &self.trait_layouts,
-                    trait_impls: &self.trait_impls,
-                    func_param_tys: &self.func_param_tys,
-                    user_func_names: &self.user_func_names,
-                    vars: vec![HashMap::new()],
-                    ptr_ty: self.ptr_ty,
-                    loop_stack: Vec::new(),
-                    using_stack: Vec::new(),
-                    managed_stack: Vec::new(),
-                    current_return_ty: Ty::Bool,
-                    terminated: false,
-                    broke_loop_target: None,
-                    async_frame: None,
-                    async_plan: None,
-                    async_await_index: 0,
-                    async_loop_index: 0,
-                    async_poll_blocks: Vec::new(),
-                    func_name: SmolStr::new(name.as_str()),
-                    debug_file_gv: None,
-                    debug_file_len: 0,
-                    debug_line_starts: &[],
-                    debug_function_gv: None,
-                    debug_variable_gvs: &HashMap::new(),
-                    hosted_traps: false,
-                    host_callback_ids: &self.host_callback_ids,
-                };
-
-                let res = if codegen.struct_supports_equality(s.def_id) {
-                    codegen.emit_struct_equality(left_ptr, right_ptr, s.def_id, &[], true)?
-                } else {
-                    codegen.builder.ins().iconst(types::I8, 0)
-                };
-
-                codegen.builder.ins().return_(&[res]);
-                codegen.builder.seal_all_blocks();
-                codegen.builder.finalize();
-            }
-
-            self.module
-                .define_function(func_id, &mut ctx)
-                .map_err(|e| format!("define struct eq helper '{}': {e}", name))?;
+            self.define_equality_helper(s.def_id, EqualityHelperTarget::Struct, &const_exprs)?;
         }
+        let mut defined_enums = std::collections::HashSet::new();
+        for e in &hir.enums {
+            if !defined_enums.insert(e.def_id) {
+                continue;
+            }
+            self.define_equality_helper(e.def_id, EqualityHelperTarget::Enum, &const_exprs)?;
+        }
+        Ok(())
+    }
+
+    fn define_equality_helper(
+        &mut self,
+        def_id: ori_types::DefId,
+        target: EqualityHelperTarget,
+        const_exprs: &HashMap<SmolStr, HirExpr>,
+    ) -> Result<(), String> {
+        let name = match target {
+            EqualityHelperTarget::Struct => format!("__eq_helper_struct_{}", def_id.0),
+            EqualityHelperTarget::Enum => format!("__eq_helper_enum_{}", def_id.0),
+        };
+        let func_id = self.func_ids[name.as_str()];
+        let mut ctx = self.module.make_context();
+        ctx.func.signature = self.make_struct_eq_sig();
+
+        let mut func_refs: HashMap<SmolStr, ir::FuncRef> = HashMap::new();
+        for (name, &id) in sorted_smol_entries(&self.func_ids)
+            .into_iter()
+            .chain(sorted_smol_entries(&self.stdlib_ids))
+        {
+            let fref = self.module.declare_func_in_func(id, &mut ctx.func);
+            func_refs.insert(name.clone(), fref);
+        }
+        for (name, &id) in sorted_smol_entries(&self.func_wrapper_ids) {
+            let fref = self.module.declare_func_in_func(id, &mut ctx.func);
+            func_refs.insert(SmolStr::new(format!("{name}.__fnptr_wrapper")), fref);
+        }
+
+        let mut bctx = FunctionBuilderContext::new();
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
+            let block = builder.create_block();
+            builder.append_block_params_for_function_params(block);
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+
+            let params = builder.block_params(block);
+            let left_ptr = params[0];
+            let right_ptr = params[1];
+
+            let mut codegen = FuncCodegen {
+                builder,
+                func_refs: &func_refs,
+                string_gvs: &HashMap::new(),
+                global_gvs: &HashMap::new(),
+                global_data: &self.global_data,
+                const_exprs,
+                struct_layouts: &self.struct_layouts,
+                inline_struct_ids: &self.inline_struct_ids,
+                enum_layouts: &self.enum_layouts,
+                type_names: &self.type_names,
+                trait_layouts: &self.trait_layouts,
+                trait_impls: &self.trait_impls,
+                func_param_tys: &self.func_param_tys,
+                user_func_names: &self.user_func_names,
+                vars: vec![HashMap::new()],
+                ptr_ty: self.ptr_ty,
+                loop_stack: Vec::new(),
+                using_stack: Vec::new(),
+                managed_stack: Vec::new(),
+                current_return_ty: Ty::Bool,
+                terminated: false,
+                broke_loop_target: None,
+                async_frame: None,
+                async_plan: None,
+                async_await_index: 0,
+                async_loop_index: 0,
+                async_poll_blocks: Vec::new(),
+                func_name: SmolStr::new(name.as_str()),
+                debug_file_gv: None,
+                debug_file_len: 0,
+                debug_line_starts: &[],
+                debug_function_gv: None,
+                debug_variable_gvs: &HashMap::new(),
+                hosted_traps: false,
+                host_callback_ids: &self.host_callback_ids,
+            };
+
+            let res = if let Some(method_name) =
+                codegen.trait_method_func_name_for_trait(def_id, ".Equatable", "equals")
+            {
+                let fref = *func_refs
+                    .get(method_name.as_str())
+                    .ok_or_else(|| format!("missing Equatable implementation `{method_name}`"))?;
+                let call = codegen.builder.ins().call(fref, &[left_ptr, right_ptr]);
+                codegen.builder.inst_results(call)[0]
+            } else if matches!(target, EqualityHelperTarget::Struct)
+                && codegen.struct_supports_equality(def_id)
+            {
+                codegen.emit_struct_equality(left_ptr, right_ptr, def_id, &[], true)?
+            } else if matches!(target, EqualityHelperTarget::Enum)
+                && codegen.enum_supports_equality(def_id)
+            {
+                codegen.emit_enum_equality(left_ptr, right_ptr, def_id, &[], true)?
+            } else {
+                codegen.builder.ins().iconst(types::I8, 0)
+            };
+
+            codegen.builder.ins().return_(&[res]);
+            codegen.builder.seal_all_blocks();
+            codegen.builder.finalize();
+        }
+
+        self.module
+            .define_function(func_id, &mut ctx)
+            .map_err(|e| format!("define equality helper '{}': {e}", name))?;
+        Ok(())
+    }
+
+    fn define_hash_helpers(&mut self, hir: &HirModule) -> Result<(), String> {
+        let const_exprs: HashMap<SmolStr, HirExpr> = hir
+            .consts
+            .iter()
+            .map(|c| (c.name.clone(), c.value.clone()))
+            .collect();
+        let mut defined_structs = std::collections::HashSet::new();
+        for s in &hir.structs {
+            if defined_structs.insert(s.def_id) {
+                self.define_hash_helper(s.def_id, HashHelperTarget::Struct, &const_exprs)?;
+            }
+        }
+        let mut defined_enums = std::collections::HashSet::new();
+        for e in &hir.enums {
+            if defined_enums.insert(e.def_id) {
+                self.define_hash_helper(e.def_id, HashHelperTarget::Enum, &const_exprs)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn define_hash_helper(
+        &mut self,
+        def_id: ori_types::DefId,
+        target: HashHelperTarget,
+        const_exprs: &HashMap<SmolStr, HirExpr>,
+    ) -> Result<(), String> {
+        let name = match target {
+            HashHelperTarget::Struct => format!("__hash_helper_struct_{}", def_id.0),
+            HashHelperTarget::Enum => format!("__hash_helper_enum_{}", def_id.0),
+        };
+        let func_id = self.func_ids[name.as_str()];
+        let mut ctx = self.module.make_context();
+        ctx.func.signature = self.make_hash_sig();
+
+        let mut func_refs: HashMap<SmolStr, ir::FuncRef> = HashMap::new();
+        for (symbol, &id) in sorted_smol_entries(&self.func_ids)
+            .into_iter()
+            .chain(sorted_smol_entries(&self.stdlib_ids))
+        {
+            let fref = self.module.declare_func_in_func(id, &mut ctx.func);
+            func_refs.insert(symbol.clone(), fref);
+        }
+        for (symbol, &id) in sorted_smol_entries(&self.func_wrapper_ids) {
+            let fref = self.module.declare_func_in_func(id, &mut ctx.func);
+            func_refs.insert(SmolStr::new(format!("{symbol}.__fnptr_wrapper")), fref);
+        }
+
+        let mut bctx = FunctionBuilderContext::new();
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bctx);
+            let block = builder.create_block();
+            builder.append_block_params_for_function_params(block);
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+            let value_ptr = builder.block_params(block)[0];
+            let mut codegen = FuncCodegen {
+                builder,
+                func_refs: &func_refs,
+                string_gvs: &HashMap::new(),
+                global_gvs: &HashMap::new(),
+                global_data: &self.global_data,
+                const_exprs,
+                struct_layouts: &self.struct_layouts,
+                inline_struct_ids: &self.inline_struct_ids,
+                enum_layouts: &self.enum_layouts,
+                type_names: &self.type_names,
+                trait_layouts: &self.trait_layouts,
+                trait_impls: &self.trait_impls,
+                func_param_tys: &self.func_param_tys,
+                user_func_names: &self.user_func_names,
+                vars: vec![HashMap::new()],
+                ptr_ty: self.ptr_ty,
+                loop_stack: Vec::new(),
+                using_stack: Vec::new(),
+                managed_stack: Vec::new(),
+                current_return_ty: Ty::Int64,
+                terminated: false,
+                broke_loop_target: None,
+                async_frame: None,
+                async_plan: None,
+                async_await_index: 0,
+                async_loop_index: 0,
+                async_poll_blocks: Vec::new(),
+                func_name: SmolStr::new(name.as_str()),
+                debug_file_gv: None,
+                debug_file_len: 0,
+                debug_line_starts: &[],
+                debug_function_gv: None,
+                debug_variable_gvs: &HashMap::new(),
+                hosted_traps: false,
+                host_callback_ids: &self.host_callback_ids,
+            };
+            // A user Hashable method is authoritative and must be used with a
+            // custom Equatable implementation. Marker-only Hashable keeps the
+            // generated structural hash path; a non-structural Equatable
+            // without `hash` falls back to a constant so equal values remain
+            // safe to probe.
+            let result = if let Some(method_name) =
+                codegen.trait_method_func_name_for_trait(def_id, ".Hashable", "hash")
+            {
+                let fref = *func_refs
+                    .get(method_name.as_str())
+                    .ok_or_else(|| format!("missing Hashable implementation `{method_name}`"))?;
+                let call = codegen.builder.ins().call(fref, &[value_ptr]);
+                codegen.builder.inst_results(call)[0]
+            } else if codegen
+                .trait_method_func_name_for_trait(def_id, ".Equatable", "equals")
+                .is_some()
+            {
+                codegen.builder.ins().iconst(types::I64, 0)
+            } else if matches!(target, HashHelperTarget::Struct)
+                && codegen.struct_supports_equality(def_id)
+            {
+                codegen.emit_struct_hash(value_ptr, def_id, &[], true)?
+            } else if matches!(target, HashHelperTarget::Enum)
+                && codegen.enum_supports_equality(def_id)
+            {
+                codegen.emit_enum_hash(value_ptr, def_id, &[], true)?
+            } else {
+                codegen.builder.ins().iconst(types::I64, 0)
+            };
+            codegen.builder.ins().return_(&[result]);
+            codegen.builder.seal_all_blocks();
+            codegen.builder.finalize();
+        }
+        self.module
+            .define_function(func_id, &mut ctx)
+            .map_err(|e| format!("define hash helper '{name}': {e}"))?;
         Ok(())
     }
 
@@ -6293,23 +7190,26 @@ impl<M: Module> NativeBackend<M> {
         ctx.func.signature = sig;
 
         let mut func_refs: HashMap<SmolStr, ir::FuncRef> = HashMap::new();
-        for (name, &id) in self.func_ids.iter().chain(self.stdlib_ids.iter()) {
+        for (name, &id) in sorted_smol_entries(&self.func_ids)
+            .into_iter()
+            .chain(sorted_smol_entries(&self.stdlib_ids))
+        {
             let fref = self.module.declare_func_in_func(id, &mut ctx.func);
             func_refs.insert(name.clone(), fref);
         }
-        for (name, &id) in &self.func_wrapper_ids {
+        for (name, &id) in sorted_smol_entries(&self.func_wrapper_ids) {
             let fref = self.module.declare_func_in_func(id, &mut ctx.func);
             func_refs.insert(SmolStr::new(format!("{name}.__fnptr_wrapper")), fref);
         }
 
         let mut string_gvs: HashMap<SmolStr, ir::GlobalValue> = HashMap::new();
-        for (s, &data_id) in &self.string_data {
+        for (s, &data_id) in sorted_smol_entries(&self.string_data) {
             let gv = self.module.declare_data_in_func(data_id, &mut ctx.func);
             string_gvs.insert(s.clone(), gv);
         }
 
         let mut global_gvs: HashMap<SmolStr, ir::GlobalValue> = HashMap::new();
-        for (name, info) in &self.global_data {
+        for (name, info) in sorted_smol_entries(&self.global_data) {
             let gv = self
                 .module
                 .declare_data_in_func(info.data_id, &mut ctx.func);
@@ -6346,7 +7246,7 @@ impl<M: Module> NativeBackend<M> {
         };
         let mut debug_variable_gvs = HashMap::new();
         if instrument_debug {
-            for (name, data_id) in &self.debug_name_data {
+            for (name, data_id) in sorted_smol_entries(&self.debug_name_data) {
                 let gv = self.module.declare_data_in_func(*data_id, &mut ctx.func);
                 debug_variable_gvs.insert(name.clone(), gv);
             }
@@ -6426,23 +7326,26 @@ impl<M: Module> NativeBackend<M> {
         ctx.func.signature = self.module.make_signature();
 
         let mut func_refs: HashMap<SmolStr, ir::FuncRef> = HashMap::new();
-        for (name, &id) in self.func_ids.iter().chain(self.stdlib_ids.iter()) {
+        for (name, &id) in sorted_smol_entries(&self.func_ids)
+            .into_iter()
+            .chain(sorted_smol_entries(&self.stdlib_ids))
+        {
             let fref = self.module.declare_func_in_func(id, &mut ctx.func);
             func_refs.insert(name.clone(), fref);
         }
-        for (name, &id) in &self.func_wrapper_ids {
+        for (name, &id) in sorted_smol_entries(&self.func_wrapper_ids) {
             let fref = self.module.declare_func_in_func(id, &mut ctx.func);
             func_refs.insert(SmolStr::new(format!("{name}.__fnptr_wrapper")), fref);
         }
 
         let mut string_gvs: HashMap<SmolStr, ir::GlobalValue> = HashMap::new();
-        for (s, &data_id) in &self.string_data {
+        for (s, &data_id) in sorted_smol_entries(&self.string_data) {
             let gv = self.module.declare_data_in_func(data_id, &mut ctx.func);
             string_gvs.insert(s.clone(), gv);
         }
 
         let mut global_gvs: HashMap<SmolStr, ir::GlobalValue> = HashMap::new();
-        for (name, info) in &self.global_data {
+        for (name, info) in sorted_smol_entries(&self.global_data) {
             let gv = self
                 .module
                 .declare_data_in_func(info.data_id, &mut ctx.func);
@@ -6502,8 +7405,11 @@ impl<M: Module> NativeBackend<M> {
                 {
                     continue;
                 }
+                let value_is_owned = FuncCodegen::expr_produces_owned_ref(&global.value);
                 let value = codegen.emit_expr_for_expected(&global.value, &global.ty)?;
-                codegen.emit_arc_retain_if_managed(&global.ty, value)?;
+                if !value_is_owned {
+                    codegen.emit_arc_retain_if_managed(&global.ty, value)?;
+                }
                 if !codegen.initialize_global(&global.name, value) {
                     return Err(format!(
                         "global `{}` is not available during native initialization",
@@ -6520,6 +7426,63 @@ impl<M: Module> NativeBackend<M> {
             .define_function(init_id, &mut ctx)
             .map_err(|e| format!("define global initializer: {e}"))?;
         Ok(())
+    }
+
+    fn define_global_teardown(
+        &mut self,
+        hir: &HirModule,
+        teardown_id: FuncId,
+    ) -> Result<(), String> {
+        let release_id = self
+            .stdlib_ids
+            .get("ori_arc_release")
+            .copied()
+            .ok_or_else(|| "missing `ori_arc_release` for global teardown".to_owned())?;
+        let mut context = self.module.make_context();
+        context.func.signature = self.module.make_signature();
+        let release = self
+            .module
+            .declare_func_in_func(release_id, &mut context.func);
+        let globals = hir
+            .consts
+            .iter()
+            .filter(|global| {
+                is_managed_ty(&global.ty)
+                    && needs_runtime_global_init(&global.value, &global.ty)
+                    && self.global_data.contains_key(&global.name)
+            })
+            .filter_map(|global| {
+                let info = self.global_data.get(&global.name)?;
+                let value_type = cl_type(&info.ty, self.ptr_ty)?;
+                let global_value = self
+                    .module
+                    .declare_data_in_func(info.data_id, &mut context.func);
+                Some((global_value, value_type))
+            })
+            .collect::<Vec<_>>();
+        let mut builder_context = FunctionBuilderContext::new();
+        {
+            let mut builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
+            let block = builder.create_block();
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+            for (global, value_type) in globals {
+                let address = builder.ins().global_value(self.ptr_ty, global);
+                let value = builder.ins().load(value_type, MemFlags::new(), address, 0);
+                let zero = builder.ins().iconst(value_type, 0);
+                builder.ins().store(MemFlags::new(), zero, address, 0);
+                // Clear the published slot before release so a custom
+                // destructor that re-enters generated code cannot observe or
+                // release the object currently being finalized.
+                builder.ins().call(release, &[value]);
+            }
+            builder.ins().return_(&[]);
+            builder.seal_all_blocks();
+            builder.finalize();
+        }
+        self.module
+            .define_function(teardown_id, &mut context)
+            .map_err(|error| format!("define global teardown: {error}"))
     }
 }
 
@@ -6738,6 +7701,10 @@ impl<'a> FuncCodegen<'a> {
         self.type_supports_equality(&Ty::Named(def_id, Vec::new()), &mut Vec::new())
     }
 
+    fn enum_supports_equality(&self, def_id: ori_types::DefId) -> bool {
+        self.type_supports_equality(&Ty::Named(def_id, Vec::new()), &mut Vec::new())
+    }
+
     fn type_supports_equality(&self, ty: &Ty, visiting: &mut Vec<ori_types::DefId>) -> bool {
         match ty {
             Ty::Void
@@ -6772,7 +7739,13 @@ impl<'a> FuncCodegen<'a> {
             }
             Ty::Named(def_id, args) => {
                 if visiting.contains(def_id) {
-                    return true;
+                    // Recursive aggregates cannot be expanded into an
+                    // inline equality helper: doing so would recurse during
+                    // code generation (for example `json.Value` contains
+                    // `list[json.Value]`). A future cycle-aware helper can
+                    // handle these by calling through an existing callback;
+                    // for now the generated helper reports unsupported.
+                    return false;
                 }
                 visiting.push(*def_id);
                 let ok = if let Some(layout) = self.struct_layouts.get(def_id) {
@@ -7050,6 +8023,24 @@ impl<'a> FuncCodegen<'a> {
             self.builder
                 .ins()
                 .store(MemFlags::new(), value, frame, offset as i32);
+        }
+        // Await bindings are written only after their future becomes ready.
+        // Initialize managed slots before scheduling so failure, cancellation,
+        // or an invalid state cannot unregister an uninitialized pointer when
+        // terminal cleanup walks the full plan.
+        for (index, step) in plan.awaits.iter().enumerate() {
+            let Some(binding) = &step.binding else {
+                continue;
+            };
+            if !is_managed_ty(&binding.ty) {
+                continue;
+            }
+            let offset = simple_async_frame_binding_offset(plan, index, self.ptr_ty)
+                .expect("async frame binding offset");
+            let zero_ptr = self.builder.ins().iconst(self.ptr_ty, 0);
+            self.builder
+                .ins()
+                .store(MemFlags::new(), zero_ptr, frame, offset as i32);
         }
 
         let step_name = async_step_name(f);
@@ -7443,8 +8434,13 @@ impl<'a> FuncCodegen<'a> {
             .ins()
             .store(MemFlags::new(), type_id_val, vtable, 0);
 
-        let eq_helper_name = format!("__eq_helper_struct_{}", type_def_id.0);
-        let eq_fn_val = if let Some(&fref) = self.func_refs.get(eq_helper_name.as_str()) {
+        let struct_eq_helper_name = format!("__eq_helper_struct_{}", type_def_id.0);
+        let enum_eq_helper_name = format!("__eq_helper_enum_{}", type_def_id.0);
+        let eq_fn_val = if let Some(&fref) = self
+            .func_refs
+            .get(struct_eq_helper_name.as_str())
+            .or_else(|| self.func_refs.get(enum_eq_helper_name.as_str()))
+        {
             self.builder.ins().func_addr(self.ptr_ty, fref)
         } else {
             self.builder.ins().iconst(self.ptr_ty, 0)
@@ -8243,7 +9239,26 @@ impl<'a> FuncCodegen<'a> {
     ) -> Result<ir::Value, String> {
         let callback_name = custom_destructor_callback_name(type_def_id);
         let destructor = self.func_refs.get(&callback_name).copied();
-        self.malloc_bytes_with_destructor(size, destructor)
+        let alloc_ref = *self
+            .func_refs
+            .get("ori_alloc_typed")
+            .ok_or_else(|| "missing runtime function `ori_alloc_typed`".to_string())?;
+        let size_v = self.builder.ins().iconst(types::I64, size as i64);
+        let dtor_v = match destructor {
+            Some(destructor) => self.builder.ins().func_addr(self.ptr_ty, destructor),
+            None => self.builder.ins().iconst(self.ptr_ty, 0),
+        };
+        // DefId zero is a valid compiler ID; reserve runtime tag zero for
+        // untyped/legacy allocations so nominal validation cannot accept one.
+        let type_tag = self
+            .builder
+            .ins()
+            .iconst(types::I64, i64::from(type_def_id.0) + 1);
+        let call = self
+            .builder
+            .ins()
+            .call(alloc_ref, &[size_v, dtor_v, type_tag]);
+        Ok(self.builder.inst_results(call)[0])
     }
 
     fn malloc_bytes_with_destructor(
@@ -8730,6 +9745,62 @@ impl<'a> FuncCodegen<'a> {
             }
         }
         (matches.len() == 1).then(|| matches.remove(0))
+    }
+
+    fn trait_method_func_name_for_trait(
+        &self,
+        type_def_id: ori_types::DefId,
+        trait_suffix: &str,
+        method_name: &str,
+    ) -> Option<SmolStr> {
+        let mut matches = Vec::new();
+        for ((trait_def_id, impl_type_def_id), impl_sig) in self.trait_impls {
+            if *impl_type_def_id != type_def_id {
+                continue;
+            }
+            let Some(trait_layout) = self.trait_layouts.get(trait_def_id) else {
+                continue;
+            };
+            if !trait_layout.name.ends_with(trait_suffix) {
+                continue;
+            }
+            if let Some(method) = impl_sig
+                .methods
+                .iter()
+                .find(|method| method.name == method_name)
+            {
+                matches.push(method.func_name.clone());
+            }
+        }
+        (matches.len() == 1).then(|| matches.remove(0))
+    }
+
+    fn equality_callback_for_type(&mut self, ty: &Ty) -> Option<ir::Value> {
+        let Ty::Named(def_id, _) = ty else {
+            return None;
+        };
+        let struct_name = format!("__eq_helper_struct_{}", def_id.0);
+        let enum_name = format!("__eq_helper_enum_{}", def_id.0);
+        let fref = self
+            .func_refs
+            .get(struct_name.as_str())
+            .or_else(|| self.func_refs.get(enum_name.as_str()))
+            .copied()?;
+        Some(self.builder.ins().func_addr(self.ptr_ty, fref))
+    }
+
+    fn hash_callback_for_type(&mut self, ty: &Ty) -> Option<ir::Value> {
+        let Ty::Named(def_id, _) = ty else {
+            return None;
+        };
+        let struct_name = format!("__hash_helper_struct_{}", def_id.0);
+        let enum_name = format!("__hash_helper_enum_{}", def_id.0);
+        let fref = self
+            .func_refs
+            .get(struct_name.as_str())
+            .or_else(|| self.func_refs.get(enum_name.as_str()))
+            .copied()?;
+        Some(self.builder.ins().func_addr(self.ptr_ty, fref))
     }
 
     fn associated_func_name_for_type(
@@ -10169,7 +11240,7 @@ impl<'a> FuncCodegen<'a> {
     }
 
     fn is_debug_managed_ty(&self, ty: &Ty) -> bool {
-        !debug_scalar_type_tag(ty).is_some() && cl_type(ty, self.ptr_ty) == Some(self.ptr_ty)
+        debug_scalar_type_tag(ty).is_none() && cl_type(ty, self.ptr_ty) == Some(self.ptr_ty)
     }
 
     fn debug_managed_kind(ty: &Ty) -> Option<i64> {
@@ -13850,6 +14921,131 @@ impl<'a> FuncCodegen<'a> {
                     if name.as_str() == "ori_lazy_is_consumed" && args.len() == 1 {
                         return self.emit_lazy_is_consumed(&args[0].value);
                     }
+                    if name.as_str() == "ori_map_new" && args.is_empty() {
+                        if let Ty::Map(key_ty, _) = &expr.ty {
+                            if let Some(eq_fn) = self.equality_callback_for_type(key_ty) {
+                                let hash_fn =
+                                    self.hash_callback_for_type(key_ty).ok_or_else(|| {
+                                        format!(
+                                            "missing hash callback for `{}`",
+                                            self.display_ty(key_ty)
+                                        )
+                                    })?;
+                                let new_ref =
+                                    *self.func_refs.get("ori_map_new_custom").ok_or_else(|| {
+                                        "missing runtime function `ori_map_new_custom`".to_string()
+                                    })?;
+                                let call = self.builder.ins().call(new_ref, &[hash_fn, eq_fn]);
+                                return Ok(self.builder.inst_results(call)[0]);
+                            }
+                        }
+                    }
+                    if name.as_str() == "ori_set_new" && args.is_empty() {
+                        if let Ty::Set(elem_ty) = &expr.ty {
+                            if let Some(eq_fn) = self.equality_callback_for_type(elem_ty) {
+                                let hash_fn =
+                                    self.hash_callback_for_type(elem_ty).ok_or_else(|| {
+                                        format!(
+                                            "missing hash callback for `{}`",
+                                            self.display_ty(elem_ty)
+                                        )
+                                    })?;
+                                let new_ref = *self
+                                    .func_refs
+                                    .get("ori_set_new_custom_with_hash")
+                                    .ok_or_else(|| {
+                                    "missing runtime function `ori_set_new_custom_with_hash`"
+                                        .to_string()
+                                })?;
+                                let call = self.builder.ins().call(new_ref, &[hash_fn, eq_fn]);
+                                return Ok(self.builder.inst_results(call)[0]);
+                            }
+                        }
+                    }
+                    if name.as_str() == "ori_hash_table_new" && args.is_empty() {
+                        if let Ty::Opaque {
+                            kind: OpaqueTy::HashTable,
+                            args: table_args,
+                        } = &expr.ty
+                        {
+                            if let Some(key_ty) = table_args.first() {
+                                if let Some(eq_fn) = self.equality_callback_for_type(key_ty) {
+                                    let hash_fn =
+                                        self.hash_callback_for_type(key_ty).ok_or_else(|| {
+                                            format!(
+                                                "missing hash callback for `{}`",
+                                                self.display_ty(key_ty)
+                                            )
+                                        })?;
+                                    let new_ref = *self
+                                        .func_refs
+                                        .get("ori_hash_table_new_custom_with_hash")
+                                        .ok_or_else(|| {
+                                            "missing runtime function `ori_hash_table_new_custom_with_hash`"
+                                                .to_string()
+                                        })?;
+                                    let call = self.builder.ins().call(new_ref, &[hash_fn, eq_fn]);
+                                    return Ok(self.builder.inst_results(call)[0]);
+                                }
+                            }
+                        }
+                    }
+                    if name.as_str() == "ori_hash_table_with_capacity" && args.len() == 1 {
+                        if let Ty::Opaque {
+                            kind: OpaqueTy::HashTable,
+                            args: table_args,
+                        } = &expr.ty
+                        {
+                            if let Some(key_ty) = table_args.first() {
+                                if let Some(eq_fn) = self.equality_callback_for_type(key_ty) {
+                                    let hash_fn =
+                                        self.hash_callback_for_type(key_ty).ok_or_else(|| {
+                                            format!(
+                                                "missing hash callback for `{}`",
+                                                self.display_ty(key_ty)
+                                            )
+                                        })?;
+                                    let new_ref = *self
+                                        .func_refs
+                                        .get("ori_hash_table_with_capacity_custom_with_hash")
+                                        .ok_or_else(|| {
+                                            "missing runtime function `ori_hash_table_with_capacity_custom_with_hash`"
+                                                .to_string()
+                                        })?;
+                                    let capacity = self.emit_expr(&args[0].value)?;
+                                    let call = self
+                                        .builder
+                                        .ins()
+                                        .call(new_ref, &[capacity, hash_fn, eq_fn]);
+                                    return Ok(self.builder.inst_results(call)[0]);
+                                }
+                            }
+                        }
+                    }
+                    if name.as_str() == "ori_graph_new" && args.len() == 1 {
+                        if let Ty::Opaque {
+                            kind: OpaqueTy::Graph,
+                            args: graph_args,
+                        } = &expr.ty
+                        {
+                            if let Some(node_ty) =
+                                graph_args.first().filter(|ty| !ty.contains_infer())
+                            {
+                                if let Some(eq_fn) = self.equality_callback_for_type(node_ty) {
+                                    let new_ref = *self
+                                        .func_refs
+                                        .get("ori_graph_new_custom")
+                                        .ok_or_else(|| {
+                                            "missing runtime function `ori_graph_new_custom`"
+                                                .to_string()
+                                        })?;
+                                    let directed = self.emit_expr(&args[0].value)?;
+                                    let call = self.builder.ins().call(new_ref, &[directed, eq_fn]);
+                                    return Ok(self.builder.inst_results(call)[0]);
+                                }
+                            }
+                        }
+                    }
                     // ori_io_print takes (ptr: *u8, len: i64) — build args accordingly
                     if matches!(name.as_str(), "ori_test_assert_eq" | "ori_test_assert_ne") {
                         return self.emit_test_assert_equality_call(name.as_str(), args);
@@ -14852,13 +16048,26 @@ impl<'a> FuncCodegen<'a> {
                     Ty::Map(key, value) => (*key.clone(), *value.clone()),
                     _ => (Ty::Infer(0), Ty::Infer(0)),
                 };
-                let map_ptr = if let Some(&new_ref) = self.func_refs.get("ori_map_new") {
+                let (map_ptr, custom_key) = if let Some(eq_fn) =
+                    self.equality_callback_for_type(&key_ty)
+                {
+                    let hash_fn = self.hash_callback_for_type(&key_ty).ok_or_else(|| {
+                        format!("missing hash callback for `{}`", self.display_ty(&key_ty))
+                    })?;
+                    let new_ref = *self.func_refs.get("ori_map_new_custom").ok_or_else(|| {
+                        "missing runtime function `ori_map_new_custom`".to_string()
+                    })?;
+                    let call = self.builder.ins().call(new_ref, &[hash_fn, eq_fn]);
+                    (self.builder.inst_results(call)[0], true)
+                } else if let Some(&new_ref) = self.func_refs.get("ori_map_new") {
                     let call = self.builder.ins().call(new_ref, &[]);
-                    self.builder.inst_results(call)[0]
+                    (self.builder.inst_results(call)[0], false)
                 } else {
                     return Err("missing runtime function `ori_map_new`".to_string());
                 };
-                let set_symbol = if matches!(&key_ty, Ty::String) {
+                let set_symbol = if custom_key {
+                    "ori_map_set_custom"
+                } else if matches!(&key_ty, Ty::String) {
                     "ori_map_set_string"
                 } else {
                     "ori_map_set"
@@ -14879,19 +16088,35 @@ impl<'a> FuncCodegen<'a> {
                 map_ptr
             }
             HirExprKind::SetLit { elements, .. } => {
-                let set_ptr = if let Some(&new_ref) = self.func_refs.get("ori_set_new") {
-                    let call = self.builder.ins().call(new_ref, &[]);
-                    self.builder.inst_results(call)[0]
-                } else {
-                    return Err("missing runtime function `ori_set_new`".to_string());
-                };
                 let elem_ty = if let Ty::Set(elem_ty) = &expr.ty {
                     elem_ty.as_ref()
                 } else {
                     &Ty::Int
                 };
+                let (set_ptr, custom_element) = if let Some(eq_fn) =
+                    self.equality_callback_for_type(elem_ty)
+                {
+                    let hash_fn = self.hash_callback_for_type(elem_ty).ok_or_else(|| {
+                        format!("missing hash callback for `{}`", self.display_ty(elem_ty))
+                    })?;
+                    let new_ref = *self
+                        .func_refs
+                        .get("ori_set_new_custom_with_hash")
+                        .ok_or_else(|| {
+                            "missing runtime function `ori_set_new_custom_with_hash`".to_string()
+                        })?;
+                    let call = self.builder.ins().call(new_ref, &[hash_fn, eq_fn]);
+                    (self.builder.inst_results(call)[0], true)
+                } else if let Some(&new_ref) = self.func_refs.get("ori_set_new") {
+                    let call = self.builder.ins().call(new_ref, &[]);
+                    (self.builder.inst_results(call)[0], false)
+                } else {
+                    return Err("missing runtime function `ori_set_new`".to_string());
+                };
                 let add_symbol = if matches!(elem_ty, Ty::String) {
                     "ori_set_add_string"
+                } else if custom_element {
+                    "ori_set_add_custom_with_hash_eq"
                 } else {
                     "ori_set_add"
                 };
@@ -14899,7 +16124,27 @@ impl<'a> FuncCodegen<'a> {
                     for elem in elements {
                         let v = self.emit_expr_for_expected(elem, elem_ty)?;
                         let stored = self.encode_list_storage_value(v, elem_ty);
-                        self.builder.ins().call(add_ref, &[set_ptr, stored]);
+                        if custom_element {
+                            let hash_fn =
+                                self.hash_callback_for_type(elem_ty).ok_or_else(|| {
+                                    format!(
+                                        "missing hash callback for `{}`",
+                                        self.display_ty(elem_ty)
+                                    )
+                                })?;
+                            let eq_fn =
+                                self.equality_callback_for_type(elem_ty).ok_or_else(|| {
+                                    format!(
+                                        "missing equality callback for `{}`",
+                                        self.display_ty(elem_ty)
+                                    )
+                                })?;
+                            self.builder
+                                .ins()
+                                .call(add_ref, &[set_ptr, stored, hash_fn, eq_fn]);
+                        } else {
+                            self.builder.ins().call(add_ref, &[set_ptr, stored]);
+                        }
                         self.emit_arc_register_edge_if_managed(&elem.ty, set_ptr, v)?;
                     }
                 } else {
@@ -15191,7 +16436,10 @@ impl<'a> FuncCodegen<'a> {
                 },
                 _ => Ty::Infer(0),
             };
-            let runtime_name = if matches!(key_ty, Ty::String) {
+            let custom_key = matches!(key_ty, Ty::Named(_, _));
+            let runtime_name = if custom_key {
+                "ori_map_from_entries_custom"
+            } else if matches!(key_ty, Ty::String) {
                 "ori_map_from_entries_string"
             } else {
                 name
@@ -15202,7 +16450,20 @@ impl<'a> FuncCodegen<'a> {
                 .ok_or_else(|| format!("missing runtime function `{runtime_name}`"))?;
             let entries_is_owned = Self::expr_produces_owned_ref(&args[0].value);
             let entries = self.emit_expr(&args[0].value)?;
-            let call = self.builder.ins().call(fref, &[entries]);
+            let call = if custom_key {
+                let eq_fn = self.equality_callback_for_type(&key_ty).ok_or_else(|| {
+                    format!(
+                        "missing equality callback for `{}`",
+                        self.display_ty(&key_ty)
+                    )
+                })?;
+                let hash_fn = self.hash_callback_for_type(&key_ty).ok_or_else(|| {
+                    format!("missing hash callback for `{}`", self.display_ty(&key_ty))
+                })?;
+                self.builder.ins().call(fref, &[entries, hash_fn, eq_fn])
+            } else {
+                self.builder.ins().call(fref, &[entries])
+            };
             // The new map copies/retains the entries itself; an owned
             // entries-list temporary must be released after the call.
             if entries_is_owned {
@@ -15222,6 +16483,7 @@ impl<'a> FuncCodegen<'a> {
         let key_ty = key_ty.as_ref();
         let value_ty = value_ty.as_ref();
         let map_v = self.emit_expr(&first_arg.value)?;
+        let custom_key = matches!(key_ty, Ty::Named(_, _));
         let runtime_name = match (name, key_ty) {
             ("ori_map_set", Ty::String) => "ori_map_set_string",
             ("ori_map_get", Ty::String) => "ori_map_get_string",
@@ -15230,6 +16492,12 @@ impl<'a> FuncCodegen<'a> {
             ("ori_map_remove", Ty::String) => "ori_map_remove_string",
             ("ori_map_try_remove", Ty::String) => "ori_map_try_remove_string",
             ("ori_map_from_entries", Ty::String) => "ori_map_from_entries_string",
+            ("ori_map_set", Ty::Named(_, _)) => "ori_map_set_custom_with_hash_eq",
+            ("ori_map_get", Ty::Named(_, _)) => "ori_map_get_custom",
+            ("ori_map_try_get", Ty::Named(_, _)) => "ori_map_try_get_custom",
+            ("ori_map_contains", Ty::Named(_, _)) => "ori_map_contains_custom",
+            ("ori_map_remove", Ty::Named(_, _)) => "ori_map_remove_custom",
+            ("ori_map_try_remove", Ty::Named(_, _)) => "ori_map_try_remove_custom",
             _ => name,
         };
         let fref = *self
@@ -15247,13 +16515,29 @@ impl<'a> FuncCodegen<'a> {
                 let map_value = self.emit_expr_for_expected(&args[2].value, value_ty)?;
                 let stored_key = self.encode_list_storage_value(key_value, key_ty);
                 let stored_value = self.encode_list_storage_value(map_value, value_ty);
-                self.builder
-                    .ins()
-                    .call(fref, &[map_v, stored_key, stored_value]);
-                self.emit_arc_register_edge_if_managed(key_ty, map_v, key_value)?;
-                self.emit_arc_register_edge_if_managed(value_ty, map_v, map_value)?;
-                // The map edges own the stored key/value +1; drop the owned
-                // temporaries' own +1 (borrowed refs stay untouched).
+                if custom_key {
+                    let eq_fn = self.equality_callback_for_type(key_ty).ok_or_else(|| {
+                        format!(
+                            "missing equality callback for `{}`",
+                            self.display_ty(key_ty)
+                        )
+                    })?;
+                    let hash_fn = self.hash_callback_for_type(key_ty).ok_or_else(|| {
+                        format!("missing hash callback for `{}`", self.display_ty(key_ty))
+                    })?;
+                    self.builder
+                        .ins()
+                        .call(fref, &[map_v, stored_key, stored_value, hash_fn, eq_fn]);
+                } else {
+                    self.builder
+                        .ins()
+                        .call(fref, &[map_v, stored_key, stored_value]);
+                }
+                // `ori_map_set*` owns edge registration for both key and value.
+                // Registering again here would create two logical slots for one
+                // physical map entry and leak one retain on remove/destruction.
+                // Drop only the caller's fresh temporaries (borrowed refs stay
+                // untouched).
                 if key_is_owned && is_managed_ty(key_ty) {
                     self.emit_arc_release_if_managed(key_ty, key_value)?;
                 }
@@ -15353,11 +16637,16 @@ impl<'a> FuncCodegen<'a> {
         let key_ty = &table_args[0];
         let value_ty = &table_args[1];
         let table_v = self.emit_expr(&first_arg.value)?;
+        let custom_key = matches!(key_ty, Ty::Named(_, _));
         let runtime_name = match (name, key_ty) {
             ("ori_hash_table_set", Ty::String) => "ori_hash_table_set_string",
             ("ori_hash_table_get", Ty::String) => "ori_hash_table_get_string",
             ("ori_hash_table_remove", Ty::String) => "ori_hash_table_remove_string",
             ("ori_hash_table_contains", Ty::String) => "ori_hash_table_contains_string",
+            ("ori_hash_table_set", Ty::Named(_, _)) => "ori_hash_table_set_custom_with_hash_eq",
+            ("ori_hash_table_get", Ty::Named(_, _)) => "ori_hash_table_get_custom",
+            ("ori_hash_table_remove", Ty::Named(_, _)) => "ori_hash_table_remove_custom",
+            ("ori_hash_table_contains", Ty::Named(_, _)) => "ori_hash_table_contains_custom",
             _ => name,
         };
         let fref = *self
@@ -15375,9 +16664,24 @@ impl<'a> FuncCodegen<'a> {
                 let table_value = self.emit_expr_for_expected(&args[2].value, value_ty)?;
                 let stored_key = self.encode_list_storage_value(key_value, key_ty);
                 let stored_value = self.encode_list_storage_value(table_value, value_ty);
-                self.builder
-                    .ins()
-                    .call(fref, &[table_v, stored_key, stored_value]);
+                if custom_key {
+                    let eq_fn = self.equality_callback_for_type(key_ty).ok_or_else(|| {
+                        format!(
+                            "missing equality callback for `{}`",
+                            self.display_ty(key_ty)
+                        )
+                    })?;
+                    let hash_fn = self.hash_callback_for_type(key_ty).ok_or_else(|| {
+                        format!("missing hash callback for `{}`", self.display_ty(key_ty))
+                    })?;
+                    self.builder
+                        .ins()
+                        .call(fref, &[table_v, stored_key, stored_value, hash_fn, eq_fn]);
+                } else {
+                    self.builder
+                        .ins()
+                        .call(fref, &[table_v, stored_key, stored_value]);
+                }
                 self.emit_arc_register_edge_if_managed(key_ty, table_v, key_value)?;
                 self.emit_arc_register_edge_if_managed(value_ty, table_v, table_value)?;
                 // The container owns stored/lookup managed values via its
@@ -15483,7 +16787,12 @@ impl<'a> FuncCodegen<'a> {
                 self.display_ty(&first_arg.value.ty)
             ));
         };
-        let node_ty = graph_args.first().cloned().unwrap_or(Ty::Infer(0));
+        let node_ty = graph_args
+            .first()
+            .filter(|ty| !ty.contains_infer())
+            .cloned()
+            .or_else(|| args.get(1).map(|arg| arg.value.ty.clone()))
+            .unwrap_or(Ty::Infer(0));
         let runtime_name = match (name, &node_ty) {
             ("ori_graph_add_node", Ty::String) => "ori_graph_add_node_string",
             ("ori_graph_remove_node", Ty::String) => "ori_graph_remove_node_string",
@@ -15507,6 +16816,13 @@ impl<'a> FuncCodegen<'a> {
             .get(runtime_name)
             .ok_or_else(|| format!("missing runtime function `{runtime_name}`"))?;
         let graph = self.emit_expr(&first_arg.value)?;
+        if let Some(eq_fn) = self.equality_callback_for_type(&node_ty) {
+            let set_eq_ref = *self
+                .func_refs
+                .get("ori_graph_set_eq")
+                .ok_or_else(|| "missing runtime function `ori_graph_set_eq`".to_string())?;
+            self.builder.ins().call(set_eq_ref, &[graph, eq_fn]);
+        }
         match name {
             "ori_graph_add_node" => {
                 if args.len() != 2 {
@@ -15640,7 +16956,10 @@ impl<'a> FuncCodegen<'a> {
                     ))
                 }
             };
-            let runtime_name = if matches!(elem_ty, Ty::String) {
+            let custom_element = matches!(elem_ty, Ty::Named(_, _));
+            let runtime_name = if custom_element {
+                "ori_set_from_list_custom_with_hash"
+            } else if matches!(elem_ty, Ty::String) {
                 "ori_set_from_list_string"
             } else {
                 name
@@ -15651,7 +16970,20 @@ impl<'a> FuncCodegen<'a> {
                 .ok_or_else(|| format!("missing runtime function `{runtime_name}`"))?;
             let source_is_owned = Self::expr_produces_owned_ref(&args[0].value);
             let source = self.emit_expr(&args[0].value)?;
-            let call = self.builder.ins().call(fref, &[source]);
+            let call = if custom_element {
+                let eq_fn = self.equality_callback_for_type(elem_ty).ok_or_else(|| {
+                    format!(
+                        "missing equality callback for `{}`",
+                        self.display_ty(elem_ty)
+                    )
+                })?;
+                let hash_fn = self.hash_callback_for_type(elem_ty).ok_or_else(|| {
+                    format!("missing hash callback for `{}`", self.display_ty(elem_ty))
+                })?;
+                self.builder.ins().call(fref, &[source, hash_fn, eq_fn])
+            } else {
+                self.builder.ins().call(fref, &[source])
+            };
             // The new set copies/retains the elements itself; an owned
             // source-list temporary must be released after the call.
             if source_is_owned {
@@ -15670,12 +17002,17 @@ impl<'a> FuncCodegen<'a> {
         };
         let elem_ty = elem_ty.as_ref();
         let set_v = self.emit_expr(&first_arg.value)?;
+        let custom_element = matches!(elem_ty, Ty::Named(_, _));
         let runtime_name = match (name, elem_ty) {
             ("ori_set_add", Ty::String) => "ori_set_add_string",
             ("ori_set_contains", Ty::String) => "ori_set_contains_string",
             ("ori_set_remove", Ty::String) => "ori_set_remove_string",
             ("ori_set_try_remove", Ty::String) => "ori_set_try_remove_string",
             ("ori_set_from_list", Ty::String) => "ori_set_from_list_string",
+            ("ori_set_add", Ty::Named(_, _)) => "ori_set_add_custom_with_hash_eq",
+            ("ori_set_contains", Ty::Named(_, _)) => "ori_set_contains_custom",
+            ("ori_set_remove", Ty::Named(_, _)) => "ori_set_remove_custom",
+            ("ori_set_try_remove", Ty::Named(_, _)) => "ori_set_try_remove_custom",
             _ => name,
         };
         let fref = *self
@@ -15690,7 +17027,22 @@ impl<'a> FuncCodegen<'a> {
                 let value_is_owned = Self::expr_produces_owned_ref(&args[1].value);
                 let value = self.emit_expr_for_expected(&args[1].value, elem_ty)?;
                 let stored = self.encode_list_storage_value(value, elem_ty);
-                self.builder.ins().call(fref, &[set_v, stored]);
+                if custom_element {
+                    let eq_fn = self.equality_callback_for_type(elem_ty).ok_or_else(|| {
+                        format!(
+                            "missing equality callback for `{}`",
+                            self.display_ty(elem_ty)
+                        )
+                    })?;
+                    let hash_fn = self.hash_callback_for_type(elem_ty).ok_or_else(|| {
+                        format!("missing hash callback for `{}`", self.display_ty(elem_ty))
+                    })?;
+                    self.builder
+                        .ins()
+                        .call(fref, &[set_v, stored, hash_fn, eq_fn]);
+                } else {
+                    self.builder.ins().call(fref, &[set_v, stored]);
+                }
                 self.emit_arc_register_edge_if_managed(elem_ty, set_v, value)?;
                 // The set edge owns the stored element's +1; drop an owned
                 // temporary's own +1 (borrowed refs stay untouched).
@@ -16404,7 +17756,26 @@ impl<'a> FuncCodegen<'a> {
                     return self.emit_map_equality(lv, rv, key, value, true);
                 } else if let Ty::Bytes = ty {
                     return self.emit_bytes_equality(lv, rv, true);
+                } else if matches!(ty, Ty::Handle(_)) {
+                    // Handles are borrowed opaque pointers. Identity compares
+                    // the sentinel/address only; never retain or dereference
+                    // the pointee while evaluating equality.
+                    self.builder.ins().icmp(IntCC::Equal, lv, rv)
                 } else if let Ty::Named(def_id, args) = ty {
+                    if let Some(method_name) =
+                        self.trait_method_func_name_for_trait(*def_id, ".Equatable", "equals")
+                    {
+                        let fref = *self.func_refs.get(method_name.as_str()).ok_or_else(|| {
+                            format!("missing Equatable implementation `{method_name}`")
+                        })?;
+                        self.emit_arc_retain_if_managed(ty, lv)?;
+                        self.emit_arc_retain_if_managed(ty, rv)?;
+                        let call = self.builder.ins().call(fref, &[lv, rv]);
+                        return Ok(self.builder.inst_results(call)[0]);
+                    }
+                    if self.enum_layouts.contains_key(def_id) {
+                        return self.emit_enum_equality(lv, rv, *def_id, args, true);
+                    }
                     return self.emit_struct_equality(lv, rv, *def_id, args, true);
                 } else if float {
                     self.builder.ins().fcmp(FloatCC::Equal, lv, rv)
@@ -16444,7 +17815,27 @@ impl<'a> FuncCodegen<'a> {
                     return self.emit_map_equality(lv, rv, key, value, false);
                 } else if let Ty::Bytes = ty {
                     return self.emit_bytes_equality(lv, rv, false);
+                } else if matches!(ty, Ty::Handle(_)) {
+                    // Handle inequality is the inverse of pointer identity;
+                    // it has no ownership or lifetime side effects.
+                    self.builder.ins().icmp(IntCC::NotEqual, lv, rv)
                 } else if let Ty::Named(def_id, args) = ty {
+                    if let Some(method_name) =
+                        self.trait_method_func_name_for_trait(*def_id, ".Equatable", "equals")
+                    {
+                        let fref = *self.func_refs.get(method_name.as_str()).ok_or_else(|| {
+                            format!("missing Equatable implementation `{method_name}`")
+                        })?;
+                        self.emit_arc_retain_if_managed(ty, lv)?;
+                        self.emit_arc_retain_if_managed(ty, rv)?;
+                        let call = self.builder.ins().call(fref, &[lv, rv]);
+                        let result = self.builder.inst_results(call)[0];
+                        let zero = self.builder.ins().iconst(types::I8, 0);
+                        return Ok(self.builder.ins().icmp(IntCC::Equal, result, zero));
+                    }
+                    if self.enum_layouts.contains_key(def_id) {
+                        return self.emit_enum_equality(lv, rv, *def_id, args, false);
+                    }
                     return self.emit_struct_equality(lv, rv, *def_id, args, false);
                 } else if float {
                     self.builder.ins().fcmp(FloatCC::NotEqual, lv, rv)
@@ -16870,6 +18261,307 @@ impl<'a> FuncCodegen<'a> {
         self.builder.seal_block(merge_block);
         let result = self.builder.block_params(merge_block)[0];
         Ok(result)
+    }
+
+    /// Compare two enum values by discriminant and active payload fields.
+    ///
+    /// Enum values are heap-backed pointers with a four-byte tag followed by
+    /// the largest variant payload.  Only fields belonging to the active
+    /// variant are read; this is important for managed fields because reading
+    /// an inactive payload would interpret unrelated bytes as a pointer.
+    fn emit_enum_equality(
+        &mut self,
+        lv: ir::Value,
+        rv: ir::Value,
+        def_id: ori_types::DefId,
+        args: &[Ty],
+        eq: bool,
+    ) -> Result<ir::Value, String> {
+        use ir::condcodes::IntCC;
+
+        let layout = self
+            .enum_layouts
+            .get(&def_id)
+            .cloned()
+            .ok_or_else(|| format!("missing native enum layout for def {}", def_id.0))?;
+
+        let left_tag = self.builder.ins().load(types::I32, MemFlags::new(), lv, 0);
+        let right_tag = self.builder.ins().load(types::I32, MemFlags::new(), rv, 0);
+        let same_tag = self.builder.ins().icmp(IntCC::Equal, left_tag, right_tag);
+
+        let first_variant = self.builder.create_block();
+        let false_block = self.builder.create_block();
+        let merge_block = self.builder.create_block();
+        self.builder.append_block_param(merge_block, types::I8);
+
+        self.builder
+            .ins()
+            .brif(same_tag, first_variant, &[], false_block, &[]);
+
+        self.builder.seal_block(false_block);
+        self.builder.switch_to_block(false_block);
+        let false_value = self.builder.ins().iconst(types::I8, 0);
+        self.builder
+            .ins()
+            .jump(merge_block, &[BlockArg::Value(false_value)]);
+
+        let mut test_block = first_variant;
+        let mut variants = layout.variants.iter().collect::<Vec<_>>();
+        variants.sort_unstable_by_key(|(_, variant)| variant.tag);
+
+        for (_, variant) in variants {
+            let body_block = self.builder.create_block();
+            let next_block = self.builder.create_block();
+
+            self.builder.switch_to_block(test_block);
+            let expected = self
+                .builder
+                .ins()
+                .iconst(types::I32, i64::from(variant.tag));
+            let matches = self.builder.ins().icmp(IntCC::Equal, left_tag, expected);
+            self.builder
+                .ins()
+                .brif(matches, body_block, &[], next_block, &[]);
+            self.builder.seal_block(test_block);
+
+            self.builder.switch_to_block(body_block);
+            self.terminated = false;
+            let mut variant_equal = self.builder.ins().iconst(types::I8, 1);
+            for (_, field) in &variant.fields.fields {
+                let field_ty = substitute_ty_params(&field.ty, args);
+                let field_cl_ty = cl_type(&field_ty, self.ptr_ty)
+                    .ok_or_else(|| "enum field has no native layout".to_string())?;
+                let offset = layout.payload_offset + field.offset;
+                let left_field =
+                    self.builder
+                        .ins()
+                        .load(field_cl_ty, MemFlags::new(), lv, offset as i32);
+                let right_field =
+                    self.builder
+                        .ins()
+                        .load(field_cl_ty, MemFlags::new(), rv, offset as i32);
+                let field_equal =
+                    self.emit_binary(BinaryOp::Eq, left_field, right_field, &field_ty)?;
+                variant_equal = self.builder.ins().band(variant_equal, field_equal);
+            }
+            self.builder
+                .ins()
+                .jump(merge_block, &[BlockArg::Value(variant_equal)]);
+            self.builder.seal_block(body_block);
+            test_block = next_block;
+        }
+
+        // A well-formed enum cannot carry an unknown tag, but keeping this
+        // defensive branch makes malformed foreign memory compare unequal
+        // instead of reading an arbitrary payload.
+        self.builder.switch_to_block(test_block);
+        let false_value = self.builder.ins().iconst(types::I8, 0);
+        self.builder
+            .ins()
+            .jump(merge_block, &[BlockArg::Value(false_value)]);
+        self.builder.seal_block(test_block);
+
+        self.builder.seal_block(merge_block);
+        self.builder.switch_to_block(merge_block);
+        self.terminated = false;
+        let result = self.builder.block_params(merge_block)[0];
+        Ok(self.maybe_invert_equality(result, eq))
+    }
+
+    /// Hash one value using the stable runtime scalar ABI.  Aggregate values
+    /// that do not yet have a public Hashable contract intentionally contribute
+    /// zero; this preserves the required `a == b => hash(a) == hash(b)` rule
+    /// while the equality-only compatibility path remains available.
+    fn emit_hash_value(&mut self, value: ir::Value, ty: &Ty) -> Result<ir::Value, String> {
+        let hash_i64 = *self
+            .func_refs
+            .get("ori_hash_i64")
+            .ok_or_else(|| "missing runtime function `ori_hash_i64`".to_string())?;
+        let hash_ptr =
+            |this: &mut Self, name: &str, value: ir::Value| -> Result<ir::Value, String> {
+                let fref = *this
+                    .func_refs
+                    .get(name)
+                    .ok_or_else(|| format!("missing runtime function `{name}`"))?;
+                let call = this.builder.ins().call(fref, &[value]);
+                Ok(this.builder.inst_results(call)[0])
+            };
+        match ty {
+            Ty::Int | Ty::Int64 | Ty::U64 => {
+                let call = self.builder.ins().call(hash_i64, &[value]);
+                Ok(self.builder.inst_results(call)[0])
+            }
+            Ty::Int8 | Ty::Int16 | Ty::Int32 => {
+                let widened = self.builder.ins().sextend(types::I64, value);
+                let call = self.builder.ins().call(hash_i64, &[widened]);
+                Ok(self.builder.inst_results(call)[0])
+            }
+            Ty::U8 | Ty::U16 | Ty::U32 | Ty::Bool => {
+                let widened = self.builder.ins().uextend(types::I64, value);
+                let call = self.builder.ins().call(hash_i64, &[widened]);
+                Ok(self.builder.inst_results(call)[0])
+            }
+            Ty::Float | Ty::Float64 => {
+                let bits = self
+                    .builder
+                    .ins()
+                    .bitcast(types::I64, MemFlags::new(), value);
+                let call = self.builder.ins().call(hash_i64, &[bits]);
+                Ok(self.builder.inst_results(call)[0])
+            }
+            Ty::Float32 => {
+                let bits = self
+                    .builder
+                    .ins()
+                    .bitcast(types::I32, MemFlags::new(), value);
+                let widened = self.builder.ins().uextend(types::I64, bits);
+                let call = self.builder.ins().call(hash_i64, &[widened]);
+                Ok(self.builder.inst_results(call)[0])
+            }
+            Ty::String => hash_ptr(self, "ori_hash_string", value),
+            Ty::Bytes => hash_ptr(self, "ori_hash_bytes", value),
+            Ty::Named(def_id, _) => {
+                let struct_name = format!("__hash_helper_struct_{}", def_id.0);
+                let enum_name = format!("__hash_helper_enum_{}", def_id.0);
+                let fref = self
+                    .func_refs
+                    .get(struct_name.as_str())
+                    .or_else(|| self.func_refs.get(enum_name.as_str()))
+                    .copied();
+                let Some(fref) = fref else {
+                    return Ok(self.builder.ins().iconst(types::I64, 0));
+                };
+                let call = self.builder.ins().call(fref, &[value]);
+                Ok(self.builder.inst_results(call)[0])
+            }
+            _ => Ok(self.builder.ins().iconst(types::I64, 0)),
+        }
+    }
+
+    fn hash_combine(&mut self, accumulator: ir::Value, value: ir::Value) -> ir::Value {
+        // FNV-style mixing with a fixed odd multiplier.  The operation is
+        // deliberately target-independent and uses wrapping integer arithmetic.
+        let multiplier = self.builder.ins().iconst(types::I64, 0x100000001b3_i64);
+        let mixed = self.builder.ins().imul(accumulator, multiplier);
+        self.builder.ins().bxor(mixed, value)
+    }
+
+    /// Hash a struct by the same ordered fields used by structural equality.
+    fn emit_struct_hash(
+        &mut self,
+        ptr: ir::Value,
+        def_id: ori_types::DefId,
+        args: &[Ty],
+        include_seed: bool,
+    ) -> Result<ir::Value, String> {
+        let layout = self
+            .struct_layouts
+            .get(&def_id)
+            .cloned()
+            .ok_or_else(|| format!("missing native struct layout for def {}", def_id.0))?;
+        let mut result = self.builder.ins().iconst(
+            types::I64,
+            if include_seed {
+                0xcbf29ce484222325_u64 as i64
+            } else {
+                0
+            },
+        );
+        for (_, field) in layout.fields {
+            let field_ty = substitute_ty_params(&field.ty, args);
+            let cl_ty = cl_type(&field_ty, self.ptr_ty)
+                .ok_or_else(|| "struct field has no native layout".to_string())?;
+            let value = self
+                .builder
+                .ins()
+                .load(cl_ty, MemFlags::new(), ptr, field.offset as i32);
+            let value_hash = self.emit_hash_value(value, &field_ty)?;
+            result = self.hash_combine(result, value_hash);
+        }
+        Ok(result)
+    }
+
+    /// Hash an enum by discriminant and only the active variant payload.
+    /// Reading inactive bytes would interpret unrelated managed pointers and
+    /// would make equal values depend on allocator addresses.
+    fn emit_enum_hash(
+        &mut self,
+        ptr: ir::Value,
+        def_id: ori_types::DefId,
+        args: &[Ty],
+        _include_seed: bool,
+    ) -> Result<ir::Value, String> {
+        let layout = self
+            .enum_layouts
+            .get(&def_id)
+            .cloned()
+            .ok_or_else(|| format!("missing native enum layout for def {}", def_id.0))?;
+        let tag = self.builder.ins().load(types::I32, MemFlags::new(), ptr, 0);
+        let first_variant = self.builder.create_block();
+        let unknown_block = self.builder.create_block();
+        let merge_block = self.builder.create_block();
+        self.builder.append_block_param(merge_block, types::I64);
+        self.builder.ins().jump(first_variant, &[]);
+
+        let mut test_block = first_variant;
+        let mut variants = layout.variants.iter().collect::<Vec<_>>();
+        variants.sort_unstable_by_key(|(_, variant)| variant.tag);
+        for (_, variant) in variants {
+            let body_block = self.builder.create_block();
+            let next_block = self.builder.create_block();
+            self.builder.switch_to_block(test_block);
+            let expected = self
+                .builder
+                .ins()
+                .iconst(types::I32, i64::from(variant.tag));
+            let matches = self
+                .builder
+                .ins()
+                .icmp(ir::condcodes::IntCC::Equal, tag, expected);
+            self.builder
+                .ins()
+                .brif(matches, body_block, &[], next_block, &[]);
+            self.builder.seal_block(test_block);
+
+            self.builder.switch_to_block(body_block);
+            self.terminated = false;
+            let seed = self
+                .builder
+                .ins()
+                .iconst(types::I64, 0xcbf29ce484222325_u64 as i64);
+            let tag_hash = self.builder.ins().sextend(types::I64, tag);
+            let mut result = self.hash_combine(seed, tag_hash);
+            for (_, field) in &variant.fields.fields {
+                let field_ty = substitute_ty_params(&field.ty, args);
+                let field_cl_ty = cl_type(&field_ty, self.ptr_ty)
+                    .ok_or_else(|| "enum field has no native layout".to_string())?;
+                let offset = layout.payload_offset + field.offset;
+                let value =
+                    self.builder
+                        .ins()
+                        .load(field_cl_ty, MemFlags::new(), ptr, offset as i32);
+                let value_hash = self.emit_hash_value(value, &field_ty)?;
+                result = self.hash_combine(result, value_hash);
+            }
+            self.builder
+                .ins()
+                .jump(merge_block, &[BlockArg::Value(result)]);
+            self.builder.seal_block(body_block);
+            test_block = next_block;
+        }
+        self.builder.switch_to_block(test_block);
+        self.builder.ins().jump(unknown_block, &[]);
+        self.builder.seal_block(test_block);
+        self.builder.switch_to_block(unknown_block);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder
+            .ins()
+            .jump(merge_block, &[BlockArg::Value(zero)]);
+        self.builder.seal_block(unknown_block);
+        self.builder.seal_block(merge_block);
+        self.builder.switch_to_block(merge_block);
+        self.terminated = false;
+        Ok(self.builder.block_params(merge_block)[0])
     }
 
     /// Compare two non-generic struct values field-by-field.
@@ -17723,9 +19415,11 @@ fn link_with_rustc_driver(
     cmd.arg("--edition=2021")
         .arg("--crate-name")
         .arg(format!("ori_link_shim_{id}"))
-        .arg(&shim)
-        .arg("-o")
-        .arg(exe_path);
+        .arg(&shim);
+    if options.shared {
+        cmd.args(["--crate-type", "cdylib"]);
+    }
+    cmd.arg("-o").arg(exe_path);
     for obj_path in obj_paths {
         cmd.arg("-C")
             .arg(format!("link-arg={}", obj_path.display()));
@@ -17743,6 +19437,15 @@ fn link_with_rustc_driver(
 
     for lib in extra_libs {
         let s = lib.to_string_lossy();
+        if options.shared && is_executable_only_link_argument(&s) {
+            continue;
+        }
+        if options.shared && !cfg!(windows) && is_dynamic_library_path(lib) {
+            if let Some(parent) = lib.parent() {
+                cmd.arg("-C")
+                    .arg(format!("link-arg=-Wl,-rpath,{}", parent.display()));
+            }
+        }
         // Flag-like entries from runtime-link.json (`-lpthread`, `-lc`, …).
         cmd.arg("-C").arg(format!("link-arg={s}"));
     }
@@ -18141,6 +19844,14 @@ fn discover_bundled_rust_lld_from_exe_dir(dir: &Path) -> Option<PathBuf> {
 /// Prefer SystemLinker in that case rather than a non-runnable BundledRustLld.
 fn validate_rust_lld_runs(lld: &Path) -> Result<(), String> {
     let output = std::process::Command::new(lld)
+        .arg("-flavor")
+        .arg(if cfg!(windows) {
+            "link"
+        } else if cfg!(target_os = "macos") {
+            "darwin"
+        } else {
+            "gnu"
+        })
         .arg("--version")
         .output()
         .map_err(|e| format!("could not execute `{}`: {e}", lld.display()))?;
@@ -18150,7 +19861,7 @@ fn validate_rust_lld_runs(lld: &Path) -> Result<(), String> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     Err(format!(
-        "`{} --version` failed (status {:?}): {}{}",
+        "`{} -flavor <target> --version` failed (status {:?}): {}{}",
         lld.display(),
         output.status.code(),
         stdout.trim(),
@@ -18749,6 +20460,9 @@ fn link_with_bundled_rust_lld(
     let mut cmd = std::process::Command::new(lld);
     cmd.arg("-flavor").arg(flavor);
     if cfg!(windows) {
+        if options.shared {
+            cmd.arg("-DLL");
+        }
         cmd.arg(format!("-OUT:{}", output_path.display()))
             .arg("-DEBUG")
             .arg(format!(
@@ -18756,12 +20470,31 @@ fn link_with_bundled_rust_lld(
                 output_path.with_extension("pdb").display()
             ));
     } else {
+        if options.shared {
+            cmd.arg(if flavor == "darwin" {
+                "-dylib"
+            } else {
+                "-shared"
+            });
+        }
         cmd.arg("-o").arg(output_path);
     }
-    if let Some(linker) = dynamic_linker {
-        cmd.arg("-dynamic-linker").arg(linker);
+    if !options.shared {
+        if let Some(linker) = dynamic_linker {
+            cmd.arg("-dynamic-linker").arg(linker);
+        }
+    }
+    // GNU linkers otherwise inject a content-independent build-id note. The
+    // note changes on every link and makes identical Ori sources produce
+    // different release archives; package reproducibility requires a stable
+    // link image. Darwin and MSVC use their own deterministic identity paths.
+    if cfg!(target_os = "linux") {
+        cmd.arg("--build-id=none");
     }
     for arg in extra_arguments {
+        if options.shared && is_executable_only_link_argument(arg) {
+            continue;
+        }
         cmd.arg(arg);
     }
     for dir in library_directories {
@@ -18773,12 +20506,23 @@ fn link_with_bundled_rust_lld(
     }
     // CRT objects that must precede the user object (Linux GNU: crt1.o, crti.o)
     for crt in crt_prefix_objects {
+        if options.shared && is_executable_crt_start(crt) {
+            continue;
+        }
         cmd.arg(crt);
     }
     for obj_path in object_paths {
         cmd.arg(obj_path);
     }
     for lib in extra_libraries {
+        if options.shared && is_executable_only_link_argument(&lib.to_string_lossy()) {
+            continue;
+        }
+        if options.shared && !cfg!(windows) && is_dynamic_library_path(lib) {
+            if let Some(parent) = lib.parent() {
+                cmd.arg("-rpath").arg(parent);
+            }
+        }
         cmd.arg(lib);
     }
     // Ensure libc is linked on Linux (Windows pulls it via /defaultlib:msvcrt)
@@ -18808,6 +20552,28 @@ fn link_with_bundled_rust_lld(
             options,
         ))
     }
+}
+
+fn is_executable_crt_start(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("crt1.o" | "Scrt1.o" | "rcrt1.o")
+    )
+}
+
+fn is_executable_only_link_argument(argument: &str) -> bool {
+    let normalized = argument.to_ascii_lowercase();
+    normalized == "-no-pie"
+        || normalized == "-pie"
+        || normalized.starts_with("-subsystem:")
+        || normalized.starts_with("/subsystem:")
+}
+
+fn is_dynamic_library_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("so" | "dylib" | "dll")
+    )
 }
 
 /// Invoke the platform system linker directly with discovered CRT paths.
@@ -18857,7 +20623,9 @@ fn link_with_system_linker(
     } else {
         if shared {
             // Prefer the C driver for shared libraries (handles PIC + crt).
-            if cc_driver {
+            if cfg!(target_os = "macos") {
+                cmd.arg(if cc_driver { "-dynamiclib" } else { "-dylib" });
+            } else if cc_driver {
                 cmd.arg("-shared");
                 cmd.arg("-fPIC");
             } else {
@@ -18865,6 +20633,14 @@ fn link_with_system_linker(
             }
         }
         cmd.arg("-o").arg(output_path);
+    }
+
+    if cfg!(target_os = "linux") {
+        if cc_driver {
+            cmd.arg("-Wl,--build-id=none");
+        } else {
+            cmd.arg("--build-id=none");
+        }
     }
 
     // `cc`/`gcc` as link driver: supply multiarch `-L` explicitly (GHA runners
@@ -18879,7 +20655,7 @@ fn link_with_system_linker(
     }
     for arg in extra_arguments {
         // PIE flags are wrong for shared objects.
-        if shared && (arg == "-no-pie" || arg == "-pie") {
+        if shared && is_executable_only_link_argument(arg) {
             continue;
         }
         cmd.arg(arg);
@@ -18914,11 +20690,11 @@ fn link_with_system_linker(
     // Shared mode typically links the runtime **cdylib** (see pipeline).
     for lib in extra_libraries {
         let s = lib.to_string_lossy();
+        if shared && is_executable_only_link_argument(&s) {
+            continue;
+        }
         if s.starts_with('-') {
             if cc_driver && (s == "-lc" || s == "-no-pie") {
-                continue;
-            }
-            if shared && (s == "-no-pie" || s == "-pie") {
                 continue;
             }
             cmd.arg(s.as_ref());
@@ -18929,7 +20705,11 @@ fn link_with_system_linker(
             if shared && !cfg!(windows) {
                 if let Some(parent) = lib.parent() {
                     cmd.arg(format!("-L{}", parent.display()));
-                    cmd.arg(format!("-Wl,-rpath,{}", parent.display()));
+                    if cc_driver {
+                        cmd.arg(format!("-Wl,-rpath,{}", parent.display()));
+                    } else {
+                        cmd.arg("-rpath").arg(parent);
+                    }
                 }
                 if let Some(name) = lib.file_name().and_then(|n| n.to_str()) {
                     if let Some(stem) = name
@@ -19050,17 +20830,43 @@ fn link_with_raw_native_command(
 ) -> Result<(), String> {
     let mut cmd = std::process::Command::new(command);
     if cfg!(windows) {
-        cmd.arg("/NOLOGO")
-            .arg("/DEBUG")
+        cmd.arg("/NOLOGO");
+        if options.shared {
+            cmd.arg("/DLL");
+        }
+        cmd.arg("/DEBUG")
             .arg(format!("/PDB:{}", exe_path.with_extension("pdb").display()))
             .arg(format!("/OUT:{}", exe_path.display()));
     } else {
+        if options.shared {
+            cmd.arg(if cfg!(target_os = "macos") {
+                if is_unix_cc_link_driver(command) {
+                    "-dynamiclib"
+                } else {
+                    "-dylib"
+                }
+            } else {
+                "-shared"
+            });
+        }
         cmd.arg("-o").arg(exe_path);
     }
     for obj_path in obj_paths {
         cmd.arg(obj_path);
     }
     for lib in extra_libs {
+        if options.shared && is_executable_only_link_argument(&lib.to_string_lossy()) {
+            continue;
+        }
+        if options.shared && !cfg!(windows) && is_dynamic_library_path(lib) {
+            if let Some(parent) = lib.parent() {
+                if is_unix_cc_link_driver(command) {
+                    cmd.arg(format!("-Wl,-rpath,{}", parent.display()));
+                } else {
+                    cmd.arg("-rpath").arg(parent);
+                }
+            }
+        }
         cmd.arg(lib);
     }
 

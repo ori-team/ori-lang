@@ -23,7 +23,7 @@ public is_cancelled(scope: CancelScope) -> bool
     return task.is_cancelled(scope.token)
 end
 
-public defer_cancel(scope: CancelScope, millis: int) -> void
-    task.sleep(millis)
+public async defer_cancel(scope: CancelScope, millis: int) -> void
+    await task.sleep(millis)
     task.cancel(scope.token)
 end

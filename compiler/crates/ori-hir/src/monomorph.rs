@@ -781,9 +781,7 @@ fn substitute_ty(ty: &Ty, subst: &HashMap<u32, Ty>) -> Ty {
 }
 
 fn func_has_generic_param(func: &HirFunc) -> bool {
-    func.params
-        .iter()
-        .any(param_has_generic_param)
+    func.params.iter().any(param_has_generic_param)
         || ty_has_generic_param(&func.return_ty)
         || block_has_generic_param(&func.body)
 }

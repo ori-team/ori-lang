@@ -1,7 +1,7 @@
 # Plano de implementação — metadata estática e attributes extensíveis
 
-> **Status:** planejado; sintaxe extensível ainda não faz parte da superfície
-> estável.  
+> **Status:** baseline implemented; extensible third-party schemas remain
+> planned and are not part of the stable surface.
 > **Baseline verificada:** attributes built-in de nível superior, workspace
 > `0.3.8-dev`.  
 > **Princípio:** metadata descreve declarações; não é um segundo sistema de
@@ -36,7 +36,8 @@ Limitações atuais:
 - módulos, campos, variantes, parâmetros e métodos não têm coleção própria;
 - argumentos genéricos aceitam string ou `nome: nome`; `@cfg` possui sua árvore
   estruturada própria;
-- attributes desconhecidos emitem `attr.unknown`;
+- attributes desconhecidos, incluindo nomes com namespace sem schema, emitem
+  `attr.unknown`;
 - `@cfg` filtra declarações antes do resolver; `@inline` e `@no_inline`
   continuam sem efeito no otimizador;
 - HIR preserva apenas efeitos específicos como `repr_c` e `c_export_name`;
@@ -46,6 +47,12 @@ Limitações atuais:
 
 `ATTR-REPR-1` foi fechado em 2026-08-09: somente `@repr("C")` é aceito; outras
 formas emitem `attr.invalid_arg`.
+
+`META-ATTR-1` foi fechado em 2026-09-01 pelo contrato fail-closed: a sintaxe
+continua reservada para futura metadata versionada, mas nenhum nome
+desconhecido é aceito silenciosamente. Os sete attributes built-in possuem
+validação própria; schemas de terceiros continuam uma decisão futura e não
+podem ser simulados por um bypass baseado apenas no nome.
 
 `LANG-CFG-1` foi fechado em 2026-08-10 com predicados tipados, manifests,
 CLI, cache e tooling. Este plano não deve recriar sua semântica; metadata de

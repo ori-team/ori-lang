@@ -64,6 +64,7 @@ when the compiler starts producing it.
 | `parse.expected_extern_member` | error | Parser expected a member inside an `extern` block |
 | `parse.expected_identifier` | error | Parser expected an identifier |
 | `parse.expected_pattern` | error | Parser expected a pattern |
+| `parse.check_message_literal` | error | A `check` statement has a message that is not a string literal |
 | `parse.expected_type` | error | Parser expected a type |
 | `parse.fstring_empty_expr` | error | Interpolated string contains an empty expression |
 | `parse.fstring_expr_trailing_tokens` | error | Interpolated string expression has extra tokens |
@@ -213,6 +214,7 @@ when the compiler starts producing it.
 | Code | Severity | Description |
 |---|---|---|
 | `concurrency.not_transferable` | error | Value cannot cross a task or channel boundary because it is not `Transferable` |
+| `concurrency.global_mutable_capture` | error | A transferable task closure directly reads or writes a top-level mutable `var` |
 
 ### `contract`
 
@@ -259,6 +261,7 @@ Regression tests: `compile_reports_violated_param_contract`,
 | `native.runtime_metadata_mismatch` | error | Native runtime metadata targets a different compiler version, target, or artifact name |
 | `native.runtime_missing` | error | Native runtime library could not be found or built |
 | `native.runtime_symbol_missing` | error | Native linker reported an unresolved runtime/backend symbol |
+| `native.target_unsupported` | error | Native AOT/JIT code generation was requested for a target different from the compiler host |
 
 ### `bind`
 

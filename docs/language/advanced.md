@@ -63,8 +63,33 @@ const value: int = lazy.force(delayed)
 
 `handle[T]` is an opaque foreign/resource-shaped value. It is useful at an FFI
 boundary, but it does not give Ori code a raw pointer or permission to free
-memory manually. The public safety rules are in
+memory manually, is not transferable across tasks, and is only borrowed for the
+lifetime promised by the host API. Export aggregates containing borrowed
+handles are rejected. `==` and `!=` compare pointer identity only and never
+dereference the pointee; semantic equality, lifetime, and foreign-thread
+affinity are not yet a complete language contract (`LANG-HANDLE-1`). To create
+an explicit null sentinel, assign `handles.null()` to a `handle[T]` value. To
+test only the sentinel, import `ori.handle` and call `handles.is_null(value)`;
+this never dereferences the pointer. `@c_export` validates opaque managed handles against the runtime
+registry before entering Ori code. For concrete non-generic payloads it also
+checks the registered payload size and compiler source-type tag; null, foreign,
+wrong-size, or wrong-type pointers follow the deterministic bounds-failure
+path. The generated wrapper has no provenance-only fallback: a missing concrete
+layout or source-type tag is a compile-time code-generation error. Hosts must
+therefore use the handle from the matching export. The public safety rules are in
 [16-runtime-ffi-safety.md](../spec/16-runtime-ffi-safety.md).
+
+Generic graph nodes use the same `Equatable.equals` contract as maps and sets.
+For a user-defined struct, the first concrete operation on a `graph.Graph[T]`
+installs that callback; equivalent values then share one node and undirected
+edge queries compare by value. `graph.clone` and `graph.transitive_closure`
+preserve the callback. Enums support structural `==`/`!=` directly and can be
+used as graph nodes when they carry `Hashable`; explicit `Equatable` still
+overrides structural equality. Non-recursive structural keys use generated
+native hash callbacks. A user-defined `hash(self) -> int` method on `Hashable`
+overrides the generated callback. If explicit `Equatable` is non-structural
+and no `hash` method is supplied, the runtime uses a constant-hash correctness
+fallback; recursive admission and performance tuning remain open.
 
 ## Contracts and variadic parameters
 
@@ -178,10 +203,13 @@ The supported keys are `target_os`, `target_arch`, `target_family`,
 and type errors inside it are not. See the [normative attribute rules](../spec/02-lexical.md#conditional-compilation)
 and [manifest feature fields](../spec/17-project-and-docs.md#oriproj).
 
-## Contiguous buffers and SIMD vectorization
+## Contiguous buffers and SIMD status
 
 `buffer[T]` represents flat, contiguous heap memory for numeric arrays, pixel arrays, and audio samples.
-The native HIR optimizer auto-vectorizes and strip-mines countable elementwise loops (`GFX-SIMD-1`) on buffers and arrays into 128-bit vector operations:
+The native backend currently emits scalar operations for loops over buffers and
+arrays. `GFX-SIMD-1` remains planned; no vectorizer is enabled in the HIR
+pipeline until a proven transformation, target-feature policy, and benchmark
+threshold exist.
 
 ```ori
 import ori.buffer = buf

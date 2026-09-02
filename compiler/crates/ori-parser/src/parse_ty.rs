@@ -121,6 +121,13 @@ impl<'src> Parser<'src> {
                     return Some(Type::Result(Box::new(ok), Box::new(err), span.cover(end)));
                 }
                 let (args, end) = self.parse_type_arg_list(2)?;
+                if args.len() != 2 {
+                    // `parse_type_arg_list` emits the arity diagnostic, but
+                    // callers must still recover without indexing a short
+                    // vector. Returning no type lets the enclosing parser
+                    // synchronize at the next statement boundary.
+                    return None;
+                }
                 Some(Type::Result(
                     Box::new(args[0].clone()),
                     Box::new(args[1].clone()),
@@ -147,6 +154,9 @@ impl<'src> Parser<'src> {
                     return Some(Type::Map(Box::new(key), Box::new(val), span.cover(end)));
                 }
                 let (args, end) = self.parse_type_arg_list(2)?;
+                if args.len() != 2 {
+                    return None;
+                }
                 Some(Type::Map(
                     Box::new(args[0].clone()),
                     Box::new(args[1].clone()),

@@ -108,9 +108,7 @@ pub fn lower_type_with_local_aliases_and_structs(
         AstType::Buffer(inner, span) => {
             let elem_ty = rec!(inner);
             // Buffer[T] requires Inline(T) == true (no ARC, contiguous, FFI).
-            if !is_inline_ty_with_structs(&elem_ty, struct_sigs)
-                && !elem_ty.is_error()
-            {
+            if !is_inline_ty_with_structs(&elem_ty, struct_sigs) && !elem_ty.is_error() {
                 let elem_display = elem_ty.display_in(def_map);
                 let (why, action) =
                     match non_inline_reason_with_structs(&elem_ty, struct_sigs) {
@@ -287,7 +285,10 @@ pub fn lower_type_with_local_aliases_and_structs(
                 sink,
                 aliases,
             );
-            Ty::Any(id.unwrap_or(crate::def::DefId(u32::MAX)))
+            // Do not manufacture a trait identity after name resolution
+            // failed. `Ty::Error` keeps recovery fail-closed and prevents an
+            // invalid `any` type from reaching HIR or backend layout code.
+            id.map(Ty::Any).unwrap_or(Ty::Error)
         }
 
         // ── Callable type ─────────────────────────────────────────────────────
@@ -543,7 +544,10 @@ fn lower_named(
                     name: SmolStr::new(n),
                 };
             } else {
-                return Ty::Named(crate::def::DefId(0x4000_0000 | (idx as u32)), args.to_vec());
+                return Ty::Named(
+                    crate::def::DefId::synthetic_type_param(idx as u32),
+                    args.to_vec(),
+                );
             }
         }
     }
@@ -668,7 +672,9 @@ fn resolve_name(
     if let Some(id) = def_map.lookup(&local) {
         return Some(id);
     }
-    // Return a dummy DefId for numeric and boolean constants so they resolve without error
+    // Keep numeric and boolean type-name recovery deterministic without
+    // colliding with real definitions. The checker will reject the resulting
+    // synthetic type if it is used beyond parser recovery.
     if name.is_single() {
         let text = name.last().as_str();
         if text
@@ -683,8 +689,7 @@ fn resolve_name(
             let mut hasher = DefaultHasher::new();
             text.hash(&mut hasher);
             let hash = hasher.finish() as u32;
-            let dummy_id = 0x2000_0000 | (hash & 0x1FFF_FFFF);
-            return Some(crate::def::DefId(dummy_id));
+            return Some(crate::def::DefId::synthetic_literal(hash));
         }
     }
     sink.emit(

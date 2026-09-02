@@ -15,7 +15,7 @@
 | [plano-arc-nim-2026-07-16.md](plano-arc-nim-2026-07-16.md) | **LANG-MEM-0…9** — plano ARC/ORC do estudo Nim (**concluído 2026-07-18**: dono único da cascata, collector incremental, elisão, wrappers do runtime, spec + ADR COW) |
 | [prompt-analisar-nim-para-ori.md](prompt-analisar-nim-para-ori.md) | Prompt mestre do programa de estudo Nim→Ori (campanhas C0–C7; requer clone local do Nim em `_references/nim-lang/`, gitignored) |
 | [PLANO-CDYLIB-EMBED.md](PLANO-CDYLIB-EMBED.md) | `ori compile --lib` / embed baseline (P1 + P2 done; residuals moved to the Host ABI plan) |
-| [embedded-runtime-host-abi-v1.md](embedded-runtime-host-abi-v1.md) | Safe hosted runtime, callbacks, traps, contexts, and Host ABI v1 |
+| [embedded-runtime-host-abi-v1.md](embedded-runtime-host-abi-v1.md) | Experimental hosted runtime, callbacks, traps, contexts, and Host ABI v1; ownership/lifecycle P0/P1 findings are closed, with sanitizer and foreign-host matrix work tracked as P2 QA |
 | [static-metadata-attributes.md](static-metadata-attributes.md) | Static compiler metadata and extensible declaration attributes |
 | [interactive-compiler-service.md](interactive-compiler-service.md) | Persistent compiler service, generational handles, and modular JIT |
 | [value-types-performance.md](value-types-performance.md) | Measurement-led value-type, operator, and small-aggregate optimization |
@@ -26,7 +26,7 @@
 | [embedded-execution-profile.md](embedded-execution-profile.md) | Freestanding targets, allocator/runtime profiles, MMIO, and embedded CI |
 | [native-binding-generation.md](native-binding-generation.md) | Deterministic C binding generation and ABI validation |
 | [package-ecosystem-production.md](package-ecosystem-production.md) | Production registry protocol, supply chain, and toolchain channels |
-| [roadmap-code-audit-performance-architecture.md](roadmap-code-audit-performance-architecture.md) | Comprehensive code audit, memory safety, and performance optimization roadmap |
+| [roadmap-code-audit-performance-architecture.md](roadmap-code-audit-performance-architecture.md) | External audit (2026-08-29) reconciled with the implementation on 2026-09-01; ordered language-first P0/P1 closure wave before tools/QA |
 | [ORI_GRAPHICS_LANGUAGE_EVOLUTION.md](ORI_GRAPHICS_LANGUAGE_EVOLUTION.md) | Numeric/CPU graphics evolution program (inline structs, buffers, bitwise, BCE, SIMD later) |
 | [freeze-and-abi-gates.md](freeze-and-abi-gates.md) | FREEZE-1 / ABI-1 gates **+ 1.0 readiness checklist** (merged) |
 | [stdlib-merge-policy.md](stdlib-merge-policy.md) | Stdlib API merge policy (M2) |

@@ -164,8 +164,9 @@ These types are built into the language and require no import.
 | `array[T, size: N]` | Fixed-length sequence stored **inline** — see below |
 | `buffer[T]` | Mutable, contiguous, fixed-length heap block — see below |
 | `slice[T]` | A read-only **window** over a `list[T]` — see below |
-| `map[K, V]` | Key-value mapping. Current runtime supports `int`, `string`, and user-defined keys that implement `Hashable` and `Equatable` |
-| `set[T]` | Unordered unique values. Current runtime supports `int`, `string`, and user-defined elements that implement `Hashable` and `Equatable` |
+| `map[K, V]` | Key-value mapping. `int` and `string` use native hashing; non-recursive user-defined struct or enum values with `Hashable` use a user `hash(self) -> int` method when present, otherwise generated structural hashing. Explicit, non-structural `Equatable` without `hash` uses a constant hash (`LANG-COLL-EQHASH-1`) |
+| `set[T]` | Unordered unique values. `int` and `string` use native hashing; non-recursive user-defined struct or enum values with `Hashable` use a user `hash(self) -> int` method when present, otherwise generated structural hashing. Explicit, non-structural `Equatable` without `hash` uses a constant hash (`LANG-COLL-EQHASH-1`) |
+| `graph.Graph[T]` | Directed or undirected graph. `int` and `string` nodes use native equality; user-defined structs and non-recursive enums with `Hashable` dispatch structural or explicit `Equatable` after the first concrete node operation and preserve that callback through graph copies. |
 | `optional[T]` | A value that may be absent |
 | `result[T, E]` | A value that represents success or failure |
 | `range[int]` | An inclusive integer range |
@@ -227,6 +228,38 @@ reason copy-on-write was (`docs/planning/adr-arc-cow-collections.md`).
   cannot cross a task or channel boundary.
 
 ---
+
+## Borrowed handles (`handle[T]`)
+
+`handle[T]` is currently a pointer-shaped, borrowed FFI value. It does not own
+an ARC allocation, does not retain `T`, and is not `Transferable`; passing it to
+`task.spawn` or a channel is rejected. A null handle is represented by the
+runtime pointer value `0`. The safe probe `ori.handle.is_null(handle)` checks
+that representation without dereferencing or retaining the pointee. The
+generic `ori.handle.null()` constructor creates that null sentinel explicitly;
+its type is inferred from the expected `handle[T]` type:
+
+```ori
+import ori.handle = handles
+
+const missing: handle[int] = handles.null()
+
+is_missing(value: handle[int]) -> bool
+    return handles.is_null(value)
+end
+```
+
+The constructor and probe do not establish pointee lifetime or thread affinity.
+Ori still does not provide a safe dereference operation. A non-null handle must
+come from a host/`extern c` API whose lifetime contract remains in force.
+
+`==` and `!=` compare handle pointer identity only; they never dereference or
+retain the pointee. Do not store a handle beyond the lifetime guaranteed by its
+host API, or expose one in an aggregate return without a documented owner. The checker rejects `@c_export` aggregates containing a
+borrowed handle, including nested structs and enum payloads. The complete
+nullability, lifetime, equality, FFI, and cross-thread contract is tracked in
+`LANG-HANDLE-1`; this section describes the current implementation boundary
+rather than promising an ownership guarantee.
 
 ## Fixed-Size Arrays (`array[T, size: N]`)
 

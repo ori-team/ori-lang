@@ -1,13 +1,14 @@
 // Comprehensive Ori language spec tests, organized by the 10-part test prompt.
 // Uses the same TestDir + pipeline helpers as the other ori-driver integration tests.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ori_driver::package::{
-    run_get_dependencies, run_install_package, run_publish_package, GetDependenciesOptions,
-    InstallPackageOptions, PublishPackageOptions,
+    run_get_dependencies, run_install_package, run_lock_package, run_publish_package,
+    GetDependenciesOptions, InstallPackageOptions, LockPackageOptions, PublishPackageOptions,
 };
 use ori_driver::pipeline::{
     run_build, run_check, run_compile, run_doc, run_fmt, run_new_project, CheckOutput,
@@ -3657,6 +3658,9 @@ end
         .is_file());
     assert!(registry.join("packages/demo.math/versions.json").is_file());
     assert!(registry.join("index.json").is_file());
+    assert!(registry
+        .join("packages/demo.math/0.4.0.tar.gz.sha256")
+        .is_file());
 
     std::env::set_var("ORI_REGISTRY", &registry);
     std::env::set_var("ORI_PACKAGE_CACHE", &cache);
@@ -3783,7 +3787,7 @@ end
 }
 
 #[test]
-fn package_publish_refuses_overwrite_without_force() {
+fn package_publish_versions_are_immutable_even_with_force() {
     let dir = TestDir::new("package_publish_no_overwrite");
     dir.write(
         "pkg/ori.pkg.toml",
@@ -3820,13 +3824,14 @@ end
     })
     .expect_err("second publish without --force");
     assert!(err.contains("package.publish_exists"), "{err}");
-    run_publish_package(PublishPackageOptions {
+    let forced = run_publish_package(PublishPackageOptions {
         path: dir.path("pkg"),
         registry: Some(registry.display().to_string()),
         token: None,
         force: true,
     })
-    .expect("force publish");
+    .expect_err("force cannot replace an immutable package version");
+    assert!(forced.contains("package.publish_immutable"), "{forced}");
 }
 
 fn init_git_package_repo(root: &std::path::Path) {
@@ -3937,6 +3942,98 @@ end
     assert!(!out.has_errors, "{:?}", out.diagnostics);
 
     std::env::remove_var("ORI_PACKAGE_CACHE");
+}
+
+#[test]
+fn package_lock_restores_exact_git_commit_and_rejects_changed_cache_bytes() {
+    let dir = TestDir::new("package_lock_exact_git_restore");
+    dir.write(
+        "remote/ori.pkg.toml",
+        r#"[package]
+name = "demo.locked"
+version = "1.0.0"
+entry = "src/lib.orl"
+ori_version = "0.3.0"
+"#,
+    );
+    dir.write(
+        "remote/src/lib.orl",
+        "module demo.locked\n\npublic value() -> int\n    return 1\nend\n",
+    );
+    init_git_package_repo(&dir.path("remote"));
+    let url = dir.path("remote").display().to_string();
+    dir.write(
+        "app/ori.pkg.toml",
+        &format!(
+            r#"[package]
+name = "demo.app"
+version = "1.0.0"
+entry = "src/main.orl"
+ori_version = "0.3.0"
+
+[dependencies]
+demo.locked = {{ git = "{url}", branch = "main", version = "1.0.0" }}
+"#
+        ),
+    );
+    dir.write("app/src/main.orl", "module demo.app\n");
+    let cache = dir.path("cache");
+    run_get_dependencies(GetDependenciesOptions {
+        path: dir.path("app"),
+        cache_root: Some(cache.clone()),
+    })
+    .expect("create exact lock and cache");
+    let locked_source = std::fs::read_to_string(cache.join("demo.locked/1.0.0/src/lib.orl"))
+        .expect("read locked source");
+
+    dir.write(
+        "remote/src/lib.orl",
+        "module demo.locked\n\npublic value() -> int\n    return 2\nend\n",
+    );
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(dir.path("remote"))
+        .args(["add", "."])
+        .status()
+        .expect("git add moved branch");
+    assert!(status.success());
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(dir.path("remote"))
+        .args(["commit", "-m", "move branch"])
+        .status()
+        .expect("git commit moved branch");
+    assert!(status.success());
+
+    std::fs::remove_dir_all(&cache).expect("clear cache");
+    run_get_dependencies(GetDependenciesOptions {
+        path: dir.path("app"),
+        cache_root: Some(cache.clone()),
+    })
+    .expect("restore exact commit from lock into empty cache");
+    assert_eq!(
+        std::fs::read_to_string(cache.join("demo.locked/1.0.0/src/lib.orl")).unwrap(),
+        locked_source,
+        "a moved branch must not change the locked tree"
+    );
+
+    run_lock_package(LockPackageOptions {
+        path: dir.path("app"),
+        locked: true,
+        cache_root: Some(cache.clone()),
+        offline: true,
+    })
+    .expect("verified cache must satisfy --locked --offline");
+
+    std::fs::write(cache.join("demo.locked/1.0.0/src/lib.orl"), "tampered").expect("tamper cache");
+    let error = run_lock_package(LockPackageOptions {
+        path: dir.path("app"),
+        locked: true,
+        cache_root: Some(cache),
+        offline: true,
+    })
+    .expect_err("one changed cache byte must fail locked validation");
+    assert!(error.contains("package.cache_digest_mismatch"), "{error}");
 }
 
 #[test]
@@ -5813,6 +5910,51 @@ end
     let output = Command::new(&exe).output().unwrap();
     assert!(output.status.success(), "{output:?}");
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "8\n9\n");
+}
+
+#[test]
+fn check_accepts_long_ct0_const_dependency_chain_iteratively() {
+    let mut source = String::from("module app.main\n\n");
+    for index in 0..4_096 {
+        if index == 0 {
+            source.push_str("const c0: int = 0\n");
+        } else {
+            source.push_str(&format!("const c{index}: int = c{}\n", index - 1));
+        }
+    }
+    source.push_str("\nmain()\n    const values: array[int, size: c4095] = []\nend\n");
+
+    let dir = TestDir::new("ct0_deep_dependency_chain");
+    dir.write("main.orl", &source);
+    let result = catch_unwind(AssertUnwindSafe(|| run_check(&dir.path("main.orl"))))
+        .expect("deep CT-0 dependency chain must not overflow the compiler stack")
+        .unwrap();
+    assert!(
+        !result.has_errors,
+        "an acyclic CT-0 chain is valid regardless of generated depth: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn check_reports_long_ct0_cycles_without_recursive_evaluation() {
+    let mut source = String::from("module app.main\n\n");
+    for index in 0..512 {
+        let next = (index + 1) % 512;
+        source.push_str(&format!("const c{index}: int = c{next}\n"));
+    }
+    source.push_str("\nmain()\n    const values: array[int, size: c0] = []\nend\n");
+
+    let dir = TestDir::new("ct0_long_dependency_cycle");
+    dir.write("main.orl", &source);
+    let result = catch_unwind(AssertUnwindSafe(|| run_check(&dir.path("main.orl"))))
+        .expect("long CT-0 cycle must not overflow the compiler stack")
+        .unwrap();
+    assert!(
+        diagnostic_codes(&result).contains(&"consteval.cycle"),
+        "long cycles must retain the stable diagnostic: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]

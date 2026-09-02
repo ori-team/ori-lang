@@ -643,6 +643,7 @@ fn is_qualified_name_part(kind: Option<&TokenKind>) -> bool {
             | Some(TokenKind::Void)
             | Some(TokenKind::Tuple)
             | Some(TokenKind::Lazy)
+            | Some(TokenKind::Handle)
             | Some(TokenKind::BoolTy)
             | Some(TokenKind::IntTy)
             | Some(TokenKind::Int8Ty)

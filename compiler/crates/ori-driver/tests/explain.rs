@@ -21,3 +21,11 @@ fn explain_covers_gate_codes() {
 fn explain_unknown_code_returns_none() {
     assert!(explain_code("not.a.real.code").is_none());
 }
+
+#[test]
+fn explain_uses_canonical_result_constructors() {
+    let entry = explain_code("type.unused_result").expect("unused-result explanation");
+    let text = format_explanation(entry);
+    assert!(text.contains("ok`/`err"));
+    assert!(!text.contains("success`/`error"));
+}

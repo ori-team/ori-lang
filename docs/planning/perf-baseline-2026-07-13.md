@@ -300,3 +300,34 @@ ORI_PERF_LARGE_COMPILE=1 \
 cargo test -p ori-driver --test performance_guard \
   measure_check_large_single_file_scaling -- --ignored --nocapture
 ```
+
+## Wave 10 (2026-08-25) — frontend signature indexes and iterative CT-0
+
+Two focused debug-profile guards extend the compiler scalability baseline:
+
+| Probe | Generated shape | Pipeline wall time |
+|---|---:|---:|
+| Checker signature families | 1,000 each of values, structs, enums and impls, with field/method/variant lookups | **1.366–1.369 s** |
+| CT-0 dependency chain | 10,000 module constants | **0.46–0.91 s** |
+
+The checker builds immutable lookup indexes for definition signatures, fields,
+variants, trait methods and `(type, trait)` / `(type, method)` implementations.
+The module-constant evaluator walks dependency chains with an explicit DFS
+stack and memoization, so valid generated depth is limited by available heap
+instead of the Rust call stack. A separate 512-node cycle regression preserves
+`consteval.cycle` without recursive evaluation.
+
+Reproduce the strict guards:
+
+```bash
+cd compiler
+ORI_PERF_STRICT=1 cargo test -p ori-driver --test performance_guard \
+  check_large_signature_families_stay_within_indexed_budget -- --ignored --nocapture
+
+ORI_PERF_STRICT=1 cargo test -p ori-driver --test performance_guard \
+  check_ten_thousand_const_dependencies_stays_within_linear_budget -- --ignored --nocapture
+```
+
+These are compiler-pipeline measurements, not release-runtime comparisons.
+Absolute budgets remain opt-in because shared CI hosts vary; correctness and
+bounded completion remain mandatory in the normal regression suites.

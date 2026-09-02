@@ -68,6 +68,17 @@ and inspect the current-thread result with:
 | `ori_host_error_code() -> int32_t` | Return zero when no hosted error is pending |
 | `ori_host_error_message() -> const char *` | Borrowed NUL-terminated message until the next error operation |
 
+The runtime reserves host error code `1002` (`ORI_HOST_ERROR_INVALID_ARGUMENT`)
+for a legacy pointer-only byte boundary that receives an unregistered foreign
+pointer, and `1003` (`ORI_HOST_ERROR_INVALID_UTF8`) for
+an invalid UTF-8 NUL-terminated string supplied at a legacy C-string boundary,
+and `1004` (`ORI_HOST_ERROR_THREAD_SPAWN`) for a runtime worker that could not
+be created. Code `1004` includes the worker name and operating-system cause in
+the thread-local message slot; the affected future is terminal `Failed`. The
+current compatibility entry points return their existing empty/sentinel value
+after recording these errors; hosts must check the slot before treating the
+call as successful.
+
 This slot is an execution aid for the experimental Rust hosted API, not a
 general recovery mechanism for arbitrary native faults. Standalone AOT/JIT
 keeps the existing abort policy.
@@ -275,23 +286,38 @@ through registered ARC edges (single cascade owner — see
 `docs/planning/adr-arc-single-cascade-owner.md` and Spec 10).
 Layout guard test: `ori_heap_header_layout_is_stable` (`ori-runtime`).
 
+Concrete user `struct`/`enum` payloads allocated by native code use the
+compiler-private `ori_alloc_typed(size, destructor, type_tag)` entry point.
+`type_tag` lives in the ARC registry, not in the public header, and is checked
+by `ori_handle_validate_size_type` at `@c_export` ingress. Runtime-owned and
+legacy allocations use tag `0` and are not valid substitutes for a typed
+export handle.
+
 ### 6.2 Core ARC API (stable symbols)
 
 | Symbol | Contract |
 |--------|----------|
 | `ori_alloc(size, destructor)` | Allocate header+payload; register; return payload; refcount = 1 |
+| `ori_alloc_typed(size, destructor, type_tag)` | Compiler-private allocation with a non-zero source-type tag in the ARC registry |
 | `ori_arc_retain(ptr)` | No-op if null or not registered |
 | `ori_arc_release(ptr)` | No-op if null or not registered; free at 0 after dtor |
 | `ori_arc_register_edge(owner, child)` | Strong edge owner→child for cycle GC; retains child |
 | `ori_arc_unregister_edge(owner, child)` | Remove edge; release child edge retain |
 | `ori_arc_collect_cycles()` | Trial-deletion collector; returns reclaimed count |
+| `ori_handle_validate_size_type(ptr, size, type_tag)` | Compiler-private ingress guard for concrete exported aggregate handles; aborts on invalid provenance, size, or tag |
+
+The standard-library helper `ori.handle.null()` lowers to
+`ori_handle_null()`, which returns the null pointer sentinel for a borrowed
+`handle[T]`. It carries no ARC ownership and is safe only for comparisons and
+`ori.handle.is_null`; it does not make a host resource live.
 
 Detailed safety rules: [16-runtime-ffi-safety.md](16-runtime-ffi-safety.md).  
 Language-level ARC rules: [10-memory.md](10-memory.md).
 
 ### 6.3 Registration
 
-Only payloads returned by `ori_alloc` (or constructors that call it) are
+Only payloads returned by `ori_alloc`/`ori_alloc_typed` (or constructors that
+call them) are
 registered. Static/literal C strings and some runtime `malloc` boxes are
 **not** ARC-managed; retain/release ignore them.
 
@@ -364,8 +390,21 @@ typedef struct OriSet {
     int64_t *ht;
     int64_t  ht_cap;
     uint8_t  item_kind;
+    void    *hash_fn; /* optional Hashable callback: i64(value) -> i64 */
+    void    *eq_fn;   /* optional Equatable callback: (ptr,ptr) -> i8 */
 } OriSet;
 ```
+
+Generated native aggregate callbacks use compiler-private symbols
+`__hash_helper_struct_<DefId>` and `__hash_helper_enum_<DefId>`. Their ABI is
+`int64_t callback(void *payload)`. Structural non-recursive fields contribute
+stable scalar/string/bytes hashes and nested aggregate hashes. A user-defined
+`Hashable.hash(self) -> int` implementation, when present, is called by the
+generated callback. When a type has an explicit non-structural `Equatable`
+implementation without that method, the generated callback returns a constant
+zero hash so the equality/hash invariant remains sound. Legacy equality-only
+callers may leave `hash_fn` null; the runtime then keeps its linear
+compatibility path.
 
 ### 7.6 `map[K,V]` — `OriMap`
 
@@ -385,6 +424,10 @@ typedef struct OriMap {
 ```
 
 Dense `keys[0..len)` / `values[0..len)`; hash table stores dense indices.
+
+For a custom key, `hash_fn` is called before probing and `eq_fn` resolves
+collisions. `ori_map_new_custom` and the `*_with_hash` variants install both
+callbacks; the older equality-only entry points remain valid with a zero hash.
 
 ### 7.7 Other runtime structs
 
@@ -454,6 +497,38 @@ current mangler.
   that wraps the Ori main.
 - That is the CRT entry for AOT executables and the JIT entry lookup target.
 
+### 8.3a Hosted module lifecycle
+
+A host must not call an exported Ori function before both runtime and module
+initialization complete. It must use this order for each loaded generation:
+
+1. call `ori_rt_init()` and require a zero result;
+2. call `ori_rt_thread_attach()` on every foreign thread before that thread
+   enters Ori;
+3. call `__ori_module_init()` once (repeated calls are idempotent);
+4. call exported functions;
+5. call `__ori_module_shutdown()` to release managed globals;
+6. call `ori_rt_thread_detach()` on every attached foreign thread;
+7. call `ori_rt_shutdown_ex(timeout_ms)` and unload the runtime only after it
+   returns zero.
+
+`ori_rt_shutdown()` remains a compatibility wrapper with a five-second
+deadline. Hosts that unload a library must use the result-returning form. Error
+`ORI_HOST_ERROR_SHUTDOWN_BUSY` (`1006`) means executable code is still reachable
+by a worker or a foreign thread remains attached; unloading in that state
+violates the ABI.
+
+Hosted JIT generations run their global initializer before publication and run
+the paired teardown while their executable module is still alive. A failed
+initializer is not published. Shared-module initialization uses a generated
+guard and its shutdown resets that guard after clearing managed global slots.
+Each slot is cleared before its value is released so destructor re-entry cannot
+observe the value currently being finalized.
+
+On Linux, runtime-created threads install a per-thread alternate signal stack.
+Foreign threads use the attach/detach calls above. Runtime shutdown restores the
+previous process `SIGSEGV`/`SIGBUS` actions before an allowed unload.
+
 ### 8.3b `@c_export` — the host-facing surface
 
 `@c_export` on a `public` function emits an **unmangled** symbol with the
@@ -471,6 +546,7 @@ Accepted types:
 | `float`, `float32`, `float64` | `double`, `float`, `double` |
 | `bool` | `bool` from `<stdbool.h>` |
 | `string` | `const char *` — NUL-terminated |
+| `bytes` | `const OriBytes *` — borrowed `{ data, len }` view; `len` is exact and may include `0x00` |
 | scalar-field `struct` parameter | `const OriType *` |
 | scalar-field `struct` return | `void` return plus final `OriType *out` parameter |
 | managed `struct` parameter | borrowed `const OriTypeHandle *` |
@@ -482,9 +558,14 @@ Accepted types:
 | `void` (return only) | `void` |
 
 `T` and `E` in the `optional`/`result` rows use the scalar, string, scalar
-struct, or managed-handle bridge described in this section. A `result` branch
+struct, bytes, or managed-handle bridge described in this section. A `result` branch
 may be `void`, in which case its payload parameter is omitted; an `optional`
 payload may not be `void`.
+
+`bytes` parameters are copied into an ARC-managed allocation before the Ori
+function is called, so the host may release or overwrite the input buffer after
+the call returns. A `bytes` return uses `void` plus a final `OriBytes *out`
+parameter; the host owns `out->data` and releases it with `ori_arc_release()`.
 
 Direct `list`, `map`, `set`, and `tuple` values, plus nested
 `optional`/`result`, generic structs, and empty structs, are **rejected** with
@@ -504,10 +585,15 @@ scores.dll    → scores.h
 The header is the canonical host declaration. It contains:
 
 - `<stdbool.h>` and `<stdint.h>`;
+- `OriBytes { const uint8_t *data; int64_t len; }` when an export uses
+  `bytes`; input views are borrowed for the call and output views transfer one
+  owned ARC reference in `out->data`;
 - `extern "C"` guards for C++;
 - declarations for `ori_rt_init`, `ori_rt_version`, `ori_rt_abi_version`,
-  `__ori_module_init`, `ori_rt_shutdown`, and the hosted-error read functions,
-  `ori_arc_retain`, and `ori_arc_release`;
+  `ori_rt_target`, thread attach/detach, `__ori_module_init`,
+  `__ori_module_shutdown`, `ori_rt_shutdown_ex`, the compatibility
+  `ori_rt_shutdown`, the hosted-error read functions, `ori_arc_retain`, and
+  `ori_arc_release`;
 - one complete `typedef struct` for each scalar struct used directly by an
   export and one incomplete handle declaration for each managed struct;
 - `OriResultTag` with `ORI_RESULT_ERR = 0` and `ORI_RESULT_OK = 1` when an
@@ -586,7 +672,15 @@ after the call.
 call `ori_arc_release(handle)`. If it deliberately creates another C-side owner,
 it must first call `ori_arc_retain(handle)` and later release both references.
 Passing an arbitrary foreign pointer as a handle is invalid: unlike a foreign
-C string, it has no Ori object layout behind it.
+C string, it has no Ori object layout behind it. Generated wrappers validate
+that each handle is a live allocation registered by the Ori runtime before
+retaining it or entering user code. For a concrete non-generic opaque payload,
+the compiler tags allocations and the wrapper validates the emitted payload
+size and source-type tag. A null, foreign, wrong-size, or same-size wrong-type
+pointer is rejected by the deterministic runtime bounds-failure path. Generic
+or legacy allocations without a tag cannot cross a generated aggregate export
+boundary; the native backend fails closed if it cannot emit the concrete
+payload size and source-type tag required by the wrapper.
 
 This is an additive host-facing contract. The struct's private field layout is
 not part of `ori-native-abi-1`; hosts interact with it only through exported
@@ -670,6 +764,7 @@ A host that only reads the result immediately and never frees it is memory-safe
 but unbounded. Treat `ori_arc_release` as mandatory in long-running hosts.
 
 Regression tests: `check_c_export_accepts_string_params_and_return`,
+`check_c_export_accepts_length_aware_bytes_params_and_return`,
 `check_c_export_accepts_scalar_structs`,
 `check_c_export_accepts_managed_struct_handles`,
 `check_c_export_accepts_optional_and_result_bridges`,
@@ -677,7 +772,8 @@ Regression tests: `check_c_export_accepts_string_params_and_return`,
 `check_c_export_requires_a_portable_c_symbol_name`,
 `compile_lib_c_export_produces_shared_object_on_linux`,
 `compile_lib_c_export_scalar_struct_round_trips_through_a_c_host`,
-`compile_lib_c_export_managed_struct_handle_preserves_host_ownership`, and
+`compile_lib_c_export_managed_struct_handle_preserves_host_ownership` (including
+the foreign-pointer rejection path), and
 `compile_lib_c_export_string_round_trips_through_a_c_host`, and
 `compile_lib_c_export_optional_and_result_round_trip_through_c_host` (build real
 C hosts with `cc`, include the generated headers, and exercise the full

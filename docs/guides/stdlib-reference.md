@@ -21,7 +21,7 @@ but new code should prefer `ori.string`, `ori.map`, and the other parents.
 | I/O | `ori.io`, `ori.fs`, `ori.path` | streams, files, paths |
 | Text and bytes | `ori.string`, `ori.string_view`, `ori.bytes`, `ori.convert` | parsing, formatting, zero-copy views, encoding |
 | Collections & memory | `ori.list`, `ori.map`, `ori.set`, `ori.queue`, `ori.stack`, `ori.deque`, `ori.heap`, `ori.linked_list`, `ori.doubly_linked_list`, `ori.buffer`, `ori.slotmap`, `ori.span` | containers, contiguous buffers, generational slots |
-| Graphics & windowing | `ori.window`, `ori.image` | freestanding OS window creation, event polling, pixel buffers, BMP/PPM images |
+| Graphics & windowing | `ori.window`, `ori.image` | BMP/PPM image helpers are implemented; `ori.window` is currently a disconnected state stub with no OS window, real events, or pixel presentation |
 | Data formats | `ori.json`, `ori.validate` | JSON and validation helpers |
 | Time and randomness | `ori.time`, `ori.random`, `ori.format` | time, sampling, display |
 | Processes and environment | `ori.args`, `ori.config`, `ori.os`, `ori.process` | command-line tools and host state |
@@ -46,6 +46,10 @@ end
 The complete signatures and backend status are in [12-stdlib.md](../spec/12-stdlib.md).
 The generated website data comes from `ori doc export`; run `ori doc check` to
 validate inline docs and `.oridoc` sidecars.
+
+Async filesystem, connect, and TLS helpers use a shared bounded native pool
+(up to four workers and 256 queued jobs), so blocking work does not create one
+thread per request.
 
 ## Text positions and bytes
 

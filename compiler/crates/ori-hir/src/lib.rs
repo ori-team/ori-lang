@@ -1,4 +1,4 @@
-﻿// ori-hir  real module exports, implementation pending
+//! High-level intermediate representation and lowering passes.
 
 pub mod hir;
 pub mod lower;
