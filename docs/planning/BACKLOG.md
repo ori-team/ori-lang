@@ -83,7 +83,7 @@ implementation before tooling and QA expansion.
 | 3 | **LANG-HANDLE-1** | Specify and enforce `handle[T]` nullability, lifetime, equality, FFI, and transfer | 0 | M | **done** |
 | 4 | **LANG-FFI-1** | Prevent foreign strings from escaping through `@c_export` aggregates | 0 | M | **done** |
 | 5 | **LANG-OWNERSHIP-VERIFY-1** | Verify async frame liveness/cleanup against HIR ownership facts | 0 | XL | **done** |
-| 6 | **LANG-GRAPH-LIST-1** | Make graph key semantics generic and make linked-list names/complexity truthful | 1 | L | **partial** |
+| 6 | **LANG-GRAPH-LIST-1** | Make graph key semantics generic and make linked-list names/complexity truthful | 1 | L | **done** |
 | 7 | **LANG-STD-ERRORS-1** | Replace sentinel/string operational errors with stable typed stdlib errors | 1 | XL | **todo** |
 | 8 | **LANG-CHANNEL-1** | Define bounded-channel capacity/backpressure and closure behavior | 1 | M | **done** |
 | 9 | **LANG-IO-POOL-1** | Use a bounded shared worker pool for async filesystem operations | 1 | M | **done** |
@@ -151,17 +151,16 @@ receives hash zero.
 Evidence: native collection regressions plus the runtime hash-callback/slot-
 repair unit test pass.
 
-**Graph key slice completed 2026-09-01 (partial):** generic graph operations
-now dispatch `Equatable.equals` for user-defined struct nodes, including
-equivalent-by-value lookup and undirected edge matching. The constructor is
-type-erased; the first concrete node operation attaches the callback, and
-subsequent operations retain the graph's established node kind. Non-recursive
-enums with `Hashable` now use structural equality, while an explicit
-`Equatable` implementation still overrides it; structural enum equality is
-also available outside collections. Recursive/generic edge cases and
-linked-list naming/complexity are still open. Native driver and
-runtime regressions cover callback lookup, edge matching, graph copies, and
-ARC cleanup.
+**Graph key and linked-list slice completed 2026-09-02:** generic graph operations
+dispatch `Equatable.equals` for user-defined struct nodes (including nested
+structs with value equality) and structural equality for enums with `Hashable`.
+Equivalent-by-value lookup, undirected edge matching, graph clone, and
+transitive closure preserve custom callbacks. Linked lists (`linked_list` and
+`doubly_linked_list`) are truthfully specified as positional cursor abstractions
+backed by an indexed double-ended ring buffer (`VecDeque`) to prevent pointer
+cycles under ARC, with O(1) amortized push/pop at ends and O(n) positional
+operations. Native driver and runtime regressions cover callback lookup, edge
+matching, nested struct equality, graph copies, and ARC cleanup.
 
 **Bounded-channel slice completed 2026-09-01:** `channel.create_bounded` is a
 typed native constructor returning `optional[channel.Channel[T]]`. Positive

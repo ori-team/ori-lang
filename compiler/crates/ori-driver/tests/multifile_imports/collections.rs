@@ -1031,6 +1031,75 @@ end
 }
 
 #[test]
+fn compile_runs_graph_nested_struct_node_equatable_native() {
+    let dir = TestDir::new("graph_nested_struct_node_equatable_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.graph = graph
+import ori.io = io
+
+struct Meta
+    tag: string
+end
+
+struct Node
+    id: int
+    meta: Meta
+end
+
+apply Meta use core.Hashable
+end
+
+apply Meta use core.Equatable
+    equals(self, other: Meta) -> bool
+        return self.tag == other.tag
+    end
+end
+
+apply Node use core.Hashable
+end
+
+apply Node use core.Equatable
+    equals(self, other: Node) -> bool
+        return self.id == other.id and self.meta == other.meta
+    end
+end
+
+main()
+    const network: graph.Graph[Node] = graph.new(false)
+    const n1: Node = Node { id: 10, meta: Meta { tag: "alpha" } }
+    const n2: Node = Node { id: 10, meta: Meta { tag: "alpha" } }
+    const n3: Node = Node { id: 20, meta: Meta { tag: "beta" } }
+    graph.add_node(network, n1)
+    io.println(string(graph.has_node(network, n2)))
+    graph.add_edge(network, n1, n3)
+    io.println(string(graph.has_edge(network, n2, n3)))
+end
+"#,
+    );
+
+    let exe = dir.path(if cfg!(windows) {
+        "graph_nested_node.exe"
+    } else {
+        "graph_nested_node"
+    });
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "true\ntrue\n"
+    );
+}
+
+#[test]
 fn compile_runs_graph_enum_node_structural_equality_native() {
     let dir = TestDir::new("graph_enum_node_structural_equality_native");
     dir.write(

@@ -728,7 +728,11 @@ possible. `maps.try_remove(m, key)` returns the removed value as
 `deque`, `queue`, `stack`, `linked_list`, and `doubly_linked_list` are distinct
 opaque stdlib types. `deque`, `queue`, and `stack` use the native deque runtime
 so front/back operations avoid the old list-front shifting cost. The linked-list
-modules expose cursor APIs as stable positions for the current list state.
+modules expose cursor APIs as positional indices over an indexed double-ended
+buffer sequence (backed by `VecDeque`) rather than raw heap-allocated pointer
+nodes, ensuring cyclic reference safety under ARC. Consequently, push/pop at
+the ends are O(1) amortized, while cursor lookup, `insert_after`, and `remove_at`
+are O(n).
 `cursor_front`, `cursor_back`, `find`, `value_at`, `insert_after`,
 `insert_before`, and `remove_at` return `optional`/`bool` instead of panicking on
 invalid cursors. A cursor is invalid after structural changes that move or remove
