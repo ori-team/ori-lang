@@ -1044,6 +1044,94 @@ end
 }
 
 #[test]
+fn e2e_cancel_scope_using_disposes_and_cancels_on_exit() {
+    let dir = TestDir::new("cancel_scope_using");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.cancel = cancel
+import ori.io = io
+import ori.task = task
+
+run_with_scope(tok: task.CancelToken) -> void
+    using scope: cancel.CancelScope = cancel.create_scope_with(tok)
+    io.println(string(task.is_cancelled(tok)))
+end
+
+main()
+    const tok: task.CancelToken = task.create_token()
+    run_with_scope(tok)
+    io.println(string(task.is_cancelled(tok)))
+end
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .output()
+        .expect("failed to run cancel_scope_using test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "cancel_scope_using failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("false\ntrue") || stdout.contains("false\r\ntrue"),
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
+fn e2e_task_scope_using_tracks_and_joins_children() {
+    let dir = TestDir::new("task_scope_using");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.cancel = cancel
+import ori.io = io
+import ori.list = lists
+import ori.task = task
+
+run_tasks() -> void
+    using scope: cancel.TaskScope = cancel.create_task_scope()
+    const job1: task.Job[void] = task.spawn(() => io.println("CHILD_1"))
+    const job2: task.Job[void] = task.spawn(() => io.println("CHILD_2"))
+    lists.push(scope.jobs, job1)
+    lists.push(scope.jobs, job2)
+end
+
+main()
+    run_tasks()
+    io.println("PARENT_CONTINUES_AFTER_JOIN")
+end
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("run")
+        .arg(dir.path("main.orl"))
+        .env("ORI_USE_JIT", "1")
+        .output()
+        .expect("failed to run task_scope_using test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "task_scope_using failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.contains("CHILD_1"), "stdout: {stdout}");
+    assert!(stdout.contains("CHILD_2"), "stdout: {stdout}");
+    assert!(stdout.contains("PARENT_CONTINUES_AFTER_JOIN"), "stdout: {stdout}");
+}
+
+#[test]
 fn e2e_doctest_extraction_and_execution() {
     let dir = TestDir::new("doctest_demo");
     dir.write(

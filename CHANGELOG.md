@@ -12,6 +12,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Structured concurrency scopes (`ASYNC-STRUCT-1`).**
+  `ori.cancel.CancelScope` and `ori.cancel.TaskScope` now implement `core.Disposable`,
+  providing deterministic cancellation on scope exit and child task joining with `using`.
+  `TaskScope` tracks spawned child jobs, propagates token cancellation on block exit,
+  and waits for all child tasks to complete, preventing orphaned tasks from outliving
+  the parent scope.
+
 - **Typed process output and safe crypto helpers (`LANG-STD-ERRORS-1`, partial).**
   Added `ori.process.ProcessOutput` (`status: int`, `stdout: bytes`, `stderr: bytes`)
   and `proc.run_output(program, args) -> result[ProcessOutput, string]`, capturing

@@ -2,6 +2,7 @@ module ori.cancel
 
 -- Structured cancellation scopes and task lifecycle combinators (ASYNC-STRUCT-1, CONC-THREADS-1).
 
+import ori.core = core
 import ori.task = task
 
 public struct CancelScope
@@ -15,6 +16,18 @@ public create_scope() -> CancelScope
     }
 end
 
+public create_scope_with(token: task.CancelToken) -> CancelScope
+    return CancelScope {
+        token: token,
+    }
+end
+
+apply CancelScope use core.Disposable
+    mut dispose(self) -> void
+        task.cancel(self.token)
+    end
+end
+
 public cancel(scope: CancelScope) -> void
     task.cancel(scope.token)
 end
@@ -26,4 +39,46 @@ end
 public async defer_cancel(scope: CancelScope, millis: int) -> void
     await task.sleep(millis)
     task.cancel(scope.token)
+end
+
+public struct TaskScope
+    token: task.CancelToken
+    jobs: list[task.Job[void]]
+end
+
+public create_task_scope() -> TaskScope
+    return TaskScope {
+        token: task.create_token(),
+        jobs: [],
+    }
+end
+
+public create_task_scope_with(token: task.CancelToken) -> TaskScope
+    return TaskScope {
+        token: token,
+        jobs: [],
+    }
+end
+
+apply TaskScope use core.Disposable
+    mut dispose(self) -> void
+        task.cancel(self.token)
+        for job in self.jobs
+            task.join(job)
+        end
+    end
+end
+
+public cancel_tasks(scope: TaskScope) -> void
+    task.cancel(scope.token)
+end
+
+public is_tasks_cancelled(scope: TaskScope) -> bool
+    return task.is_cancelled(scope.token)
+end
+
+public join_tasks(scope: TaskScope) -> void
+    for job in scope.jobs
+        task.join(job)
+    end
 end

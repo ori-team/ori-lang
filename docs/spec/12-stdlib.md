@@ -1198,6 +1198,46 @@ generated async frame reaches its terminal state.
 
 ---
 
+## `ori.cancel` — Structured Cancellation and Task Scopes
+
+`ori.cancel` provides structured lifetime management for cancellation tokens and child tasks, ensuring child tasks do not leak and cancellation propagates on scope exit.
+
+```ori
+import ori.cancel = cancel
+import ori.io = io
+import ori.list = lists
+import ori.task = task
+
+run_tasks() -> void
+    using scope: cancel.TaskScope = cancel.create_task_scope()
+    const job1: task.Job[void] = task.spawn(() => io.println("child 1"))
+    const job2: task.Job[void] = task.spawn(() => io.println("child 2"))
+    lists.push(scope.jobs, job1)
+    lists.push(scope.jobs, job2)
+    -- On block exit, scope.dispose() cancels the token and joins all tracked jobs.
+end
+```
+
+| Type / Function | Type | Notes |
+|---|---|---|
+| `CancelScope` | `struct { token: task.CancelToken }` | Cancellation scope implementing `core.Disposable`. |
+| `create_scope()` | `→ CancelScope` | Creates a scope with a fresh cancellation token. |
+| `create_scope_with(token)` | `task.CancelToken → CancelScope` | Wraps an existing token in a scope. |
+| `cancel(scope)` | `CancelScope → void` | Cancels the scope's token immediately. |
+| `is_cancelled(scope)` | `CancelScope → bool` | Checks if the scope has been cancelled. |
+| `defer_cancel(scope, millis)` | `CancelScope, int → future[void]` | Asynchronously waits then cancels the scope. |
+| `TaskScope` | `struct { token: task.CancelToken, jobs: list[task.Job[void]] }` | Structured task scope implementing `core.Disposable`. |
+| `create_task_scope()` | `→ TaskScope` | Creates a task scope with a fresh token and empty job list. |
+| `create_task_scope_with(token)` | `task.CancelToken → TaskScope` | Wraps an existing token into a task scope. |
+| `cancel_tasks(scope)` | `TaskScope → void` | Cancels the task scope's token. |
+| `is_tasks_cancelled(scope)` | `TaskScope → bool` | Checks if the task scope has been cancelled. |
+| `join_tasks(scope)` | `TaskScope → void` | Explicitly joins all tracked jobs. |
+
+Structured concurrency rule:
+Both `CancelScope` and `TaskScope` implement `core.Disposable`. When used with `using`, their `dispose` method is guaranteed to run upon exiting the block (by normal completion, return, or error). For `CancelScope`, `dispose` calls `task.cancel(scope.token)`. For `TaskScope`, `dispose` calls `task.cancel(scope.token)` and then joins every child job in `scope.jobs`, preventing detached background tasks from outliving the parent scope.
+
+---
+
 ## `ori.channel` - Channels
 
 Status: implemented in the native runtime with real synchronization.
