@@ -33,6 +33,7 @@ def find_ori(repo: Path) -> Path | None:
 def corpus(case_count: int) -> list[bytes]:
     rng = random.Random(0x4F5249)
     cases = [
+        # Base cases
         b"",
         b"module app.main\n\nmain()\nend\n",
         b"module app.main\n\nmain(\n",
@@ -40,8 +41,35 @@ def corpus(case_count: int) -> list[bytes]:
         b"module app.main\n\nmain()\n    const x: result[int, string] = ok(1)\n",
         (b"module app.main\n\nmain()\n" + b"    if true\n" * 512),
         b"module app.main\n\nmain()\n    check 1, 2\nend\n",
+
+        # Unterminated / malformed lexical constructs
+        b'module app.main\nmain()\n    const s = "unterminated string literal\nend\n',
+        b'module app.main\nmain()\n    const s = f"unclosed interpolation {1 + 2\nend\n',
+        b'module app.main\n--| unclosed multi-line comment block\nmain()\nend\n',
+        b'module app.main\n\x00\x00\x00\nmain()\nend\n',
+        b'module app.main\nmain()\n    const s = "embedded \x00 null"\nend\n',
+        b'module app.main\nmain()\n    const ident_\x00_bad = 1\nend\n',
+
+        # Extreme numbers and identifiers
+        b'module app.main\nmain()\n    const x = ' + (b'9' * 4000) + b'\nend\n',
+        b'module app.main\nmain()\n    const x = 0x' + (b'F' * 4000) + b'\nend\n',
+        b'module app.main\nmain()\n    const x = 1.0e999999999999999999999\nend\n',
+        b'module app.main\nmain()\n    const x = 1.0e+-\nend\n',
+        b'module app.main\nmain()\n    const ' + (b'a' * 4000) + b' = 1\nend\n',
+
+        # Deep nesting across syntax axes
+        b'module app.main\nmain()\n    const x = ' + (b'(' * 256) + b'1' + (b')' * 256) + b'\nend\n',
+        b'module app.main\nmain()\n    const x = ' + (b'[' * 256) + b'1' + (b']' * 256) + b'\nend\n',
+        b'module app.main\nmain()\n    const x = ' + (b'f(' * 128) + b'1' + (b')' * 128) + b'\nend\n',
+        b'module app.main\nmain()\n    const x: ' + (b'optional[' * 128) + b'int' + (b']' * 128) + b' = none\nend\n',
+        b'module app.main\nmain()\n    match true\n        case ' + (b'some(' * 128) + b'true' + (b')' * 128) + b': return\n    end\nend\n',
+
+        # Malformed attributes
+        b'module app.main\n@cfg(all(any(not(), target = "unknown"), feature = 123))\nmain()\nend\n',
+        b'module app.main\n@c_export(\nmain()\nend\n',
+        b'module app.main\n@!!!bad_attr(1, 2, 3)\nmain()\nend\n',
     ]
-    alphabet = b"()[]{}:,=<>+-*/_|'\" \t\nabcXYZ012"
+    alphabet = b"()[]{}:,=<>+-*/_|'\" \t\nabcXYZ012\x00\xff"
     while len(cases) < case_count:
         size = rng.randrange(0, 512)
         cases.append(bytes(rng.choice(alphabet) for _ in range(size)))

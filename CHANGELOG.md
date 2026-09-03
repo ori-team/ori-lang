@@ -19,6 +19,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Hostile-input fuzzing and pathological literal robust testing (`AUD-QA-3`).**
+  Enriched `tools/qa/fuzz_smoke.py` with structured generators covering extreme number literals (4,000 digits),
+  pathological identifiers (4,000 chars), unclosed strings/f-strings/comments, embedded null bytes (`\0`),
+  malformed `@cfg` predicates, and 256-level nested expressions/calls/types/patterns with signal, timeout,
+  and panic detection. Added in-memory hostile input tests in `tests/security_robustness.rs` ensuring graceful
+  termination and bounded diagnostic spans.
+
 - **Multi-phase diagnostic shape verification and expanded curated example execution (`AUD-QA-2`).**
   Expanded `tests/diagnostic_catalog.rs` to validate real diagnostic shapes, severities, primary spans, and
   actionable advice across all major compiler phases (parser `parse.module_missing`, resolver `name.undefined`,

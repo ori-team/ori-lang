@@ -555,3 +555,49 @@ end
     );
     assert_eq!(stdout.trim(), "size:2\nleaks:0");
 }
+
+#[test]
+fn hostile_inputs_and_pathological_literals_never_panic_in_checker() {
+    let cases = [
+        (
+            "pathological_identifier",
+            format!("module app.main\nmain()\n    const {}: int = 1\nend\n", "a".repeat(4000)),
+        ),
+        (
+            "pathological_integer_literal",
+            format!("module app.main\nmain()\n    const x: int = {}\nend\n", "9".repeat(4000)),
+        ),
+        (
+            "pathological_hex_literal",
+            format!("module app.main\nmain()\n    const x: int = 0x{}\nend\n", "F".repeat(4000)),
+        ),
+        (
+            "pathological_float_exponent",
+            "module app.main\nmain()\n    const x: float = 1.0e999999999999999999999\nend\n".to_string(),
+        ),
+        (
+            "unclosed_fstring_interpolation",
+            "module app.main\nmain()\n    const s: string = f\"unclosed {1 + 2\nend\n".to_string(),
+        ),
+        (
+            "malformed_cfg_predicate",
+            "module app.main\n@cfg(all(any(not(), target = \"unknown\"), feature = 123))\nmain()\nend\n".to_string(),
+        ),
+        (
+            "embedded_null_byte_in_string",
+            "module app.main\nmain()\n    const s: string = \"embedded \0 null\"\nend\n".to_string(),
+        ),
+    ];
+
+    for (name, source) in cases {
+        let dir = TestDir::new(name);
+        dir.write("main.orl", &source);
+        let checked = catch_unwind(AssertUnwindSafe(|| run_check(&dir.path("main.orl"))))
+            .unwrap_or_else(|panic| panic!("checker panicked for hostile case `{name}`: {panic:?}"))
+            .unwrap_or_else(|error| {
+                panic!("checker returned infrastructure error for `{name}`: {error}")
+            });
+        assert_diagnostic_spans_within_sources(&checked.cache, &checked.diagnostics);
+    }
+}
+
