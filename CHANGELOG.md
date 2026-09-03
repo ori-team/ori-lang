@@ -19,6 +19,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Persistent daemon session caching, warm check hits, and invalidation (`CLI-DAEMON-1`).**
+  Extended `ori daemon` with `DaemonSession` state tracking: caches type-check results keyed
+  by source content SHA-256 with bounded capacity (256 entries) and FIFO eviction. Enables
+  warm check cache hits (`"cached": true`), explicit file or full cache invalidation (`"invalidate"`),
+  and operational statistics (`"stats"` for `check_hits`, `check_misses`, `invalidations`, and
+  `cached_entries`). Covered by 9 unit tests in `pipeline/daemon.rs` and E2E daemon smoke in `tests/dx_scripting.rs`.
+
 - **Doctest output assertions, compile-fail directives, and rich diagnostics (`DX-DOCTEST-1`).**
   Extended `ori test --doc` doctest runner with directive parsing and execution:
   captures stdout during in-process Cranelift JIT execution to validate `-- output: <text>`

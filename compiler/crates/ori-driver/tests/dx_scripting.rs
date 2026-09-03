@@ -1252,10 +1252,20 @@ end
         );
         writeln!(stdin, "{}", check_req).unwrap();
 
-        let fmt_req = r#"{"jsonrpc":"2.0","method":"fmt","params":{"code":"module app.main\npublic foo()->int\nreturn 42\nend\n"},"id":2}"#;
+        // Second check with identical source should hit session cache
+        let check_req2 = format!(
+            r#"{{"jsonrpc":"2.0","method":"check","params":{{"file":"{}"}},"id":2}}"#,
+            dir.path("sample.orl").display()
+        );
+        writeln!(stdin, "{}", check_req2).unwrap();
+
+        let stats_req = r#"{"jsonrpc":"2.0","method":"stats","id":3}"#;
+        writeln!(stdin, "{}", stats_req).unwrap();
+
+        let fmt_req = r#"{"jsonrpc":"2.0","method":"fmt","params":{"code":"module app.main\npublic foo()->int\nreturn 42\nend\n"},"id":4}"#;
         writeln!(stdin, "{}", fmt_req).unwrap();
 
-        let shutdown_req = r#"{"jsonrpc":"2.0","method":"shutdown","id":3}"#;
+        let shutdown_req = r#"{"jsonrpc":"2.0","method":"shutdown","id":5}"#;
         writeln!(stdin, "{}", shutdown_req).unwrap();
     }
 
@@ -1269,6 +1279,14 @@ end
     assert!(
         stdout.contains(r#""has_errors":false"#),
         "expected has_errors:false in check response: {stdout}"
+    );
+    assert!(
+        stdout.contains(r#""cached":true"#),
+        "expected cached:true in warm check response: {stdout}"
+    );
+    assert!(
+        stdout.contains(r#""check_hits":1"#),
+        "expected check_hits:1 in stats response: {stdout}"
     );
     assert!(
         stdout.contains(r#""result":{"status":"shutdown"}"#),
