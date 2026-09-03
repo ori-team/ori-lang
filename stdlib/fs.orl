@@ -1,5 +1,40 @@
 module ori.fs
 
+import ori.string = strings
+
+public enum FsError
+    NotFound
+    PermissionDenied
+    AlreadyExists
+    InvalidPath
+    Other(message: string)
+end
+
+public parse_fs_error(msg: string) -> FsError
+    if strings.contains(msg, "No such file") or strings.contains(msg, "not found")
+        return FsError.NotFound
+    end
+    if strings.contains(msg, "Permission denied") or strings.contains(msg, "access denied")
+        return FsError.PermissionDenied
+    end
+    if strings.contains(msg, "already exists") or strings.contains(msg, "File exists")
+        return FsError.AlreadyExists
+    end
+    if strings.contains(msg, "Invalid") or strings.contains(msg, "invalid")
+        return FsError.InvalidPath
+    end
+    return FsError.Other(message: msg)
+end
+
+public try_read_text(path: string) -> result[string, FsError]
+    match ori.fs.read_text(path)
+        case ok(text):
+            return ok(text)
+        case err(msg):
+            return err(parse_fs_error(msg))
+    end
+end
+
 -- Public domain aliases (S3 culture 1.3 / 2.4)
 public alias TextResult = result[string, string]
 public alias BoolResult = result[bool, string]

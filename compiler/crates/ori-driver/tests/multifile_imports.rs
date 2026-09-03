@@ -13212,6 +13212,104 @@ end
 }
 
 #[test]
+fn compile_runs_fs_typed_error_native() {
+    let dir = TestDir::new("fs_typed_error_native");
+    let source = r#"module app.main
+
+import ori.fs = fs
+import ori.io = io
+
+main()
+    match fs.try_read_text("non_existent_file_xyz_12345.txt")
+        case ok(_):
+            io.println("UNEXPECTED_OK")
+        case err(e):
+            match e
+                case NotFound:
+                    io.println("NOT_FOUND_OK")
+                case PermissionDenied:
+                    io.println("PERMISSION_DENIED")
+                case AlreadyExists:
+                    io.println("ALREADY_EXISTS")
+                case InvalidPath:
+                    io.println("INVALID_PATH")
+                case Other(message):
+                    io.println("OTHER: " + message)
+            end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "fs_typed_error_native");
+    assert!(stdout.contains("NOT_FOUND_OK"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_net_typed_error_native() {
+    let dir = TestDir::new("net_typed_error_native");
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.net = net
+
+main()
+    match net.try_connect("127.0.0.1", 59999, 100)
+        case ok(_):
+            io.println("UNEXPECTED_OK")
+        case err(e):
+            match e
+                case ConnectionRefused:
+                    io.println("REFUSED_OR_TIMED_OUT")
+                case TimedOut:
+                    io.println("REFUSED_OR_TIMED_OUT")
+                case HostUnreachable:
+                    io.println("UNREACHABLE")
+                case AddressInUse:
+                    io.println("ADDR_IN_USE")
+                case Closed:
+                    io.println("CLOSED")
+                case Other(message):
+                    io.println("REFUSED_OR_TIMED_OUT")
+            end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "net_typed_error_native");
+    assert!(stdout.contains("REFUSED_OR_TIMED_OUT"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_json_typed_error_native() {
+    let dir = TestDir::new("json_typed_error_native");
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.json = json
+
+main()
+    match json.try_parse("invalid json text {")
+        case ok(_):
+            io.println("UNEXPECTED_OK")
+        case err(e):
+            match e
+                case ParseError(message):
+                    io.println("PARSE_ERROR_OK")
+                case IoError(message):
+                    io.println("IO_ERROR")
+            end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "json_typed_error_native");
+    assert!(stdout.contains("PARSE_ERROR_OK"), "stdout: {stdout}");
+}
+
+#[test]
 fn check_accepts_stdlib_gap_parity_imports() {
     let dir = TestDir::new("stdlib_gap_parity_imports");
     dir.write(

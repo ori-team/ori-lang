@@ -19,7 +19,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and waits for all child tasks to complete, preventing orphaned tasks from outliving
   the parent scope.
 
-- **Typed process output and safe crypto helpers (`LANG-STD-ERRORS-1`, partial).**
+- **Typed stdlib errors, process output, and safe crypto helpers (`LANG-STD-ERRORS-1`).**
+  Added structured, exhaustive error enums in the standard library replacing bare strings:
+  `ori.fs.FsError` (`NotFound`, `PermissionDenied`, `AlreadyExists`, `InvalidPath`, `Other`),
+  `ori.net.NetError` (`ConnectionRefused`, `TimedOut`, `HostUnreachable`, `AddressInUse`, `Closed`, `Other`),
+  and `ori.json.JsonError` (`ParseError`, `IoError`). Added typed operations `fs.try_read_text`,
+  `net.try_connect`, `json.try_parse`, and `json.try_read`.
   Added `ori.process.ProcessOutput` (`status: int`, `stdout: bytes`, `stderr: bytes`)
   and `proc.run_output(program, args) -> result[ProcessOutput, string]`, capturing
   unmodified binary output without lossy UTF-8 conversion. Added safe string decoding

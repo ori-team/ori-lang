@@ -4,6 +4,43 @@ import ori.net = net
 import ori.string = str
 import ori.task = task
 
+public enum NetError
+    ConnectionRefused
+    TimedOut
+    HostUnreachable
+    AddressInUse
+    Closed
+    Other(message: string)
+end
+
+public parse_net_error(msg: string) -> NetError
+    if str.contains(msg, "refused") or str.contains(msg, "ConnectionRefused")
+        return NetError.ConnectionRefused
+    end
+    if str.contains(msg, "timed out") or str.contains(msg, "TimedOut") or str.contains(msg, "timeout")
+        return NetError.TimedOut
+    end
+    if str.contains(msg, "unreachable") or str.contains(msg, "HostUnreachable")
+        return NetError.HostUnreachable
+    end
+    if str.contains(msg, "already in use") or str.contains(msg, "AddressInUse")
+        return NetError.AddressInUse
+    end
+    if str.contains(msg, "closed") or str.contains(msg, "Closed")
+        return NetError.Closed
+    end
+    return NetError.Other(message: msg)
+end
+
+public try_connect(host: string, port: int, timeout_ms: int) -> result[ori.net.Connection, NetError]
+    match net.connect(host, port, timeout_ms)
+        case ok(conn):
+            return ok(conn)
+        case err(msg):
+            return err(parse_net_error(msg))
+    end
+end
+
 -- Public domain aliases (S3 culture 1.3 / 2.4)
 public alias ConnectionResult = result[ori.net.Connection, string]
 public alias ListenerResult = result[ori.net.Listener, string]

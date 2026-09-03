@@ -3,6 +3,29 @@ module ori.json
 import ori.fs = fs
 import ori.string = str
 
+public enum JsonError
+    ParseError(message: string)
+    IoError(message: string)
+end
+
+public try_parse(content: string) -> result[ori.json.Value, JsonError]
+    match ori.json.parse(content)
+        case ok(v):
+            return ok(v)
+        case err(msg):
+            return err(JsonError.ParseError(message: msg))
+    end
+end
+
+public try_read(file_path: string) -> result[ori.json.Value, JsonError]
+    match fs.read_text(file_path)
+        case ok(text):
+            return try_parse(text)
+        case err(msg):
+            return err(JsonError.IoError(message: msg))
+    end
+end
+
 -- Public domain aliases (S3 culture 1.3 / 2.4)
 public alias ValueResult = result[ori.json.Value, string]
 public alias TextResult = result[string, string]

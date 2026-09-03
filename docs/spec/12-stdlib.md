@@ -378,6 +378,19 @@ write_text_result(path: string, content: string) -> result[string, string]
 exists_result(path: string) -> result[bool, string]
 remove_file(path: string) -> result[void, string]
 move_path(from: string, to: string) -> result[void, string]
+try_read_text(path: string) -> result[string, FsError]
+```
+
+Typed errors for filesystem operations:
+
+```ori
+public enum FsError
+    NotFound
+    PermissionDenied
+    AlreadyExists
+    InvalidPath
+    Other(message: string)
+end
 ```
 
 The async variants complete on the native runtime and return the same
@@ -1306,8 +1319,19 @@ enum Value
 end
 
 json.parse(text: string) -> result[json.Value, string]
+json.try_parse(text: string) -> result[json.Value, JsonError]
+json.try_read(file_path: string) -> result[json.Value, JsonError]
 json.stringify(value: json.Value) -> string
 json.stringify_pretty(value: json.Value) -> string
+```
+
+Typed errors for JSON operations:
+
+```ori
+public enum JsonError
+    ParseError(message: string)
+    IoError(message: string)
+end
 ```
 
 Current behavior:
@@ -1394,6 +1418,20 @@ net.udp_recv_from(sock, max_bytes) -> result[bytes, string]
 net.udp_recv_from_async(sock, max_bytes) -> future[result[bytes, string]]
 net.udp_close(sock)
 net.udp_local_port(sock) -> int
+net.try_connect(host, port, timeout_ms) -> result[net.Connection, NetError]
+```
+
+Typed errors for networking operations:
+
+```ori
+public enum NetError
+    ConnectionRefused
+    TimedOut
+    HostUnreachable
+    AddressInUse
+    Closed
+    Other(message: string)
+end
 ```
 
 Current implementation notes:
