@@ -19,6 +19,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Runtime allocation boundary matrix, failure contracts, and typed FFI validation (`AUD-RT-1`, `AUD-RT-2`).**
+  Formalized and regression-tested the public allocation boundary matrix covering `ori_alloc`,
+  `ori_alloc_typed`, collection capacity growth, zeroed buffer allocations, string repeat/padding,
+  and slice length boundaries. Added explicit test coverage for pointer provenance verification
+  (`ori_handle_validate_size_type`, `retain_registered_payload`), safe foreign/stack pointer no-ops,
+  and typed UTF-8 ingress failure diagnostics (`ORI_HOST_ERROR_INVALID_UTF8`).
+
 - **Unicode case-folding full non-Turkic parity across native and C backends (`AUD-UNICODE-1`, `TEXT-UNICODE-1`).**
   Implemented complete Unicode 9.0.0 full non-Turkic case folding in `ori-codegen` C backend (`c_casefold.rs`),
   matching `unicode-casefold` in `ori-runtime` bit-for-bit. Added formal test vectors in

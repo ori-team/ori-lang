@@ -185,6 +185,109 @@ fn fallible_runtime_buffers_reject_invalid_sizes_without_unwinding() {
 }
 
 #[test]
+fn public_allocation_boundary_matrix_and_failure_contracts() {
+    // 1. Header and allocation total bounds
+    assert!(allocation_total(0).is_some());
+    assert!(allocation_total(1024).is_some());
+    assert_eq!(allocation_total(usize::MAX), None);
+    assert_eq!(
+        allocation_total(usize::MAX - std::mem::size_of::<OriHeapHeader>() + 1),
+        None
+    );
+
+    // 2. NUL-terminated payload bounds
+    assert_eq!(nul_terminated_payload_size(0), 1);
+    assert_eq!(nul_terminated_payload_size(100), 101);
+
+    // 3. Fallible zeroed byte buffer allocations
+    assert!(try_zeroed_bytes(-1).is_err());
+    assert!(try_zeroed_bytes(-100).is_err());
+    assert!(try_zeroed_bytes(i64::MAX).is_err());
+    assert_eq!(try_zeroed_bytes(0), Ok(Vec::new()));
+    assert_eq!(try_zeroed_bytes(16), Ok(vec![0; 16]));
+
+    // 4. Repeat string contracts
+    assert_eq!(repeat_string_or_abort("", 100), "");
+    assert_eq!(repeat_string_or_abort("hello", 0), "");
+    assert_eq!(repeat_string_or_abort("hello", -5), "");
+    assert_eq!(repeat_string_or_abort("ab", 3), "ababab");
+
+    // 5. Pad string contracts
+    unsafe {
+        let p1 = pad_string("test", 4, " ", true);
+        assert_eq!(cstr_str(p1), "test");
+        ori_arc_release(p1);
+
+        let p2 = pad_string("test", 2, " ", true);
+        assert_eq!(cstr_str(p2), "test");
+        ori_arc_release(p2);
+
+        let p3 = pad_string("test", 6, "", true);
+        assert_eq!(cstr_str(p3), "  test");
+        ori_arc_release(p3);
+
+        let p4 = pad_string("abc", 6, " ", true);
+        assert_eq!(cstr_str(p4), "   abc");
+        ori_arc_release(p4);
+
+        let p5 = pad_string("abc", 6, " ", false);
+        assert_eq!(cstr_str(p5), "abc   ");
+        ori_arc_release(p5);
+    }
+
+    // 6. Capacity and growth calculations
+    assert_eq!(capacity_bytes(-10, 8), 0);
+    assert_eq!(capacity_bytes(0, 8), 0);
+    assert_eq!(capacity_bytes(10, 8), 80);
+    assert!(grown_capacity(8, 20, 8) >= 20);
+
+    // 7. Checked external slice lengths and bounds
+    assert_eq!(checked_external_slice_len(0, "test"), 0);
+    assert_eq!(checked_external_slice_len(42, "test"), 42);
+    assert_eq!(checked_slice_bounds(10, 2, 7, "test"), (2, 7));
+}
+
+#[test]
+fn pointer_provenance_and_typed_utf8_ffi_contracts() {
+    let _guard = TEST_ARC_LOCK.lock().unwrap();
+    ori_host_clear_error();
+
+    // 1. Foreign / stack pointer provenance: retain and release safely no-op
+    let stack_val = 123456_i64;
+    let foreign_ptr = &stack_val as *const i64 as *mut u8;
+    assert!(!unsafe { retain_registered_payload(foreign_ptr) });
+    unsafe {
+        ori_arc_release(foreign_ptr);
+    }
+    assert!(!lock_arc_state().allocations.contains_key(&(foreign_ptr as usize)));
+
+    // 2. Managed typed aggregate allocation provenance
+    let payload = unsafe { ori_alloc_typed(24, None, 101) };
+    assert!(!payload.is_null());
+    assert!(lock_arc_state().allocations.contains_key(&(payload as usize)));
+    unsafe {
+        ori_handle_validate(payload);
+        ori_handle_validate_size(payload, 24);
+        ori_handle_validate_size_type(payload, 24, 101);
+        ori_arc_release(payload);
+    }
+    assert!(!lock_arc_state().allocations.contains_key(&(payload as usize)));
+
+    // 3. Typed UTF-8 validation across FFI ingress
+    assert_eq!(unsafe { cstr_str_result(std::ptr::null()) }, Ok(""));
+
+    ori_host_clear_error();
+    let invalid_nul_term = [0xC3_u8, 0x28_u8, 0]; // Invalid UTF-8 sequence
+    assert!(unsafe { cstr_str_result(invalid_nul_term.as_ptr()).is_err() });
+    assert_eq!(ori_host_error_code(), ORI_HOST_ERROR_INVALID_UTF8);
+
+    ori_host_clear_error();
+    let invalid_bytes = [0xFF_u8];
+    assert!(unsafe { bounded_cstr_str(invalid_bytes.as_ptr(), 1).is_err() });
+    assert_eq!(ori_host_error_code(), ORI_HOST_ERROR_INVALID_UTF8);
+}
+
+#[test]
 fn string_concat_rejects_invalid_utf8_in_both_abi_shapes() {
     let _guard = TEST_ARC_LOCK.lock().unwrap();
     let invalid = [0xff_u8, 0];
