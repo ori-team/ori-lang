@@ -19,6 +19,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Exhaustive expression and structured binding traversal in AST linter and LSP (`AUD-LSP-5`).**
+  Extended `ori-driver` and `ori-lsp` in-memory semantic linting (`run_lint_source`) to comprehensively traverse
+  all AST expression variants (`MatchExpr` arms and patterns, closures, struct updates, `try`, `await`,
+  `is`, tuple indices, and `suspend` statements). This eliminates false unused variable warnings for bindings
+  used within expression arms, closures, and error propagation, covered by unit tests in `ori-lsp`.
+
 - **Operational ABI export verification and layout regressions (`AUD-ABI-QA-1`).**
   Expanded `tools/qa/abi_exports.sh` to check all 20 canonical public runtime symbols in the staged cdylib
   (`ori_rt_*`, `ori_alloc*`, `ori_arc_*`, `ori_handle_*`, `ori_host_*`, `ori_reactor_*`) in addition to

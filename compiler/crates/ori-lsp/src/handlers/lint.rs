@@ -181,4 +181,58 @@ mod tests {
         let source = "x".repeat(MAX_LINT_SOURCE_BYTES + 1);
         assert!(lint(None, &source, &config).is_empty());
     }
+
+    #[test]
+    fn ast_lint_recognizes_uses_in_match_expressions_and_closures() {
+        let config = LintConfig::default();
+        let source = r#"
+module app.main
+
+fetch() -> result[int, string]
+    return ok(42)
+end
+
+main()
+    const code: int = 42
+    const outcome = match fetch()
+        case ok(val): val + code
+        case else: 0
+    end
+    const add = (x: int) -> x + outcome
+    check add(1) == 85
+end
+"#;
+        let codes = diagnostic_codes(source, &config);
+        assert!(
+            !codes.iter().any(|code| code == "lint.unused_variable"),
+            "bindings read in match expressions, arms, and closures must be recognized as used: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ast_lint_recognizes_uses_in_struct_updates_and_try() {
+        let config = LintConfig::default();
+        let source = r#"
+module app.main
+
+type Point = { x: int, y: int }
+
+compute() -> result[Point, string]
+    const p = Point { x: 10, y: 20 }
+    const delta = 5
+    const updated = p with { x: delta } end
+    return ok(updated)
+end
+
+main()
+    const res = try compute()
+    check res.x == 5
+end
+"#;
+        let codes = diagnostic_codes(source, &config);
+        assert!(
+            !codes.iter().any(|code| code == "lint.unused_variable"),
+            "bindings read in struct updates and try must be recognized as used: {codes:?}"
+        );
+    }
 }

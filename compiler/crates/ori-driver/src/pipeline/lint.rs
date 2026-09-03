@@ -272,10 +272,10 @@ fn lint_stmt(stmt: &Stmt, context: &mut LintContext<'_>) {
         Stmt::Expr(expr) => {
             lint_expr(expr, context);
         }
-        Stmt::Return(ReturnStmt {
-            value: Some(expr), ..
-        }) => {
-            lint_expr(expr, context);
+        Stmt::Return(ReturnStmt { value, .. }) => {
+            if let Some(expr) = value {
+                lint_expr(expr, context);
+            }
         }
         Stmt::Check(CheckStmt { condition, .. }) => {
             // `check` conditions are ordinary expressions. Ignoring them
@@ -421,7 +421,10 @@ fn lint_stmt(stmt: &Stmt, context: &mut LintContext<'_>) {
                 });
             }
         }
-        _ => {}
+        Stmt::Suspend(ori_ast::stmt::SuspendStmt { value, .. }) => {
+            lint_expr(value, context);
+        }
+        Stmt::Break(_) | Stmt::Continue(_) => {}
     }
 }
 
@@ -620,6 +623,47 @@ fn lint_expr(expr: &Expr, context: &mut LintContext<'_>) {
             for f in fields {
                 lint_expr(&f.value, context);
             }
+        }
+        Expr::TupleIndex { object, .. }
+        | Expr::Try { expr: object, .. }
+        | Expr::Await { expr: object, .. }
+        | Expr::IsCheck { value: object, .. } => {
+            lint_expr(object, context);
+        }
+        Expr::StructUpdate { base, updates, .. } => {
+            lint_expr(base, context);
+            for f in updates {
+                lint_expr(&f.value, context);
+            }
+        }
+        Expr::MatchExpr { scrutinee, arms, .. } => {
+            lint_expr(scrutinee, context);
+            for arm in arms {
+                context.with_scope(|context| {
+                    if let Some(pattern) = &arm.pattern {
+                        collect_pattern_bindings(pattern, context);
+                    }
+                    if let Some(guard) = &arm.guard {
+                        lint_expr(guard, context);
+                    }
+                    lint_expr(&arm.body, context);
+                });
+            }
+        }
+        Expr::Closure(closure) => {
+            context.with_scope(|context| {
+                for param in &closure.params {
+                    context.declare(&param.name, false, false, "parameter");
+                }
+                match &closure.body {
+                    ori_ast::expr::ClosureBody::Expr(e) => lint_expr(e, context),
+                    ori_ast::expr::ClosureBody::Block(block) => {
+                        for statement in &block.stmts {
+                            lint_stmt(statement, context);
+                        }
+                    }
+                }
+            });
         }
         _ => {}
     }
