@@ -1,6 +1,7 @@
 // ori-codegen  real lib.rs, implementation provided
 
 pub mod c_backend;
+pub mod c_casefold;
 pub mod c_header;
 pub mod debug_symbols;
 pub mod native_backend;

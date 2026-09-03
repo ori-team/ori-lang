@@ -19,6 +19,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Unicode case-folding full non-Turkic parity across native and C backends (`AUD-UNICODE-1`, `TEXT-UNICODE-1`).**
+  Implemented complete Unicode 9.0.0 full non-Turkic case folding in `ori-codegen` C backend (`c_casefold.rs`),
+  matching `unicode-casefold` in `ori-runtime` bit-for-bit. Added formal test vectors in
+  `tests/unicode_case_fold_conformance.json` covering ASCII, German sharp S (`ß → ss`), umlauts, Latin
+  accents, ligatures (`ﬁ`, `ﬂ`, `ﬃ`, etc.), Greek sigma, Cyrillic, fullwidth Latin, and emoji preservation,
+  with runtime and end-to-end multi-backend regression tests.
+
 - **Eliminate `DefId::INVALID` recovery sentinels in HIR and codegen (`AUD-FRONT-2`).**
   Replaced dummy `DefId::INVALID` sentinel fallbacks with typed `Option<DefId>` representations
   on `HirExprKind::StructLit`, `HirExprKind::EnumVariant`, and `HirExprKind::StructUpdate`.

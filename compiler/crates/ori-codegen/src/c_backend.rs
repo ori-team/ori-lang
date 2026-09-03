@@ -1,3 +1,4 @@
+use crate::c_casefold::ORI_CASEFOLD_H;
 use ori_ast::expr::{BinaryOp, UnaryOp};
 use ori_hir::hir::*;
 use ori_types::{substitute_trait_self, substitute_ty_params, DefId, OpaqueTy, Ty};
@@ -1765,9 +1766,6 @@ static inline bool ori_string_is_ascii(ori_string_t s) {
     }
     return true;
 }
-static inline ori_string_t ori_string_case_fold(ori_string_t s) {
-    return ori_string_to_lower(s);
-}
 static inline ori_string_t ori_err_trace_push(ori_string_t file, int64_t line, ori_string_t err_str) {
     char buf[128];
     int n = snprintf(buf, sizeof(buf), "\n  at %.*s:%lld", (int)file.len, file.data, (long long)line);
@@ -2344,6 +2342,8 @@ impl CCodegen {
 
         // Preamble
         self.out.push_str(ORI_RUNTIME_H);
+        self.out.push('\n');
+        self.out.push_str(ORI_CASEFOLD_H);
         self.out.push('\n');
 
         // Forward declarations for all structs
@@ -6181,6 +6181,7 @@ mod tests {
         {
             if checked.insert(entry.runtime_symbol)
                 && !ORI_RUNTIME_H.contains(&format!("{}(", entry.runtime_symbol))
+                && !ORI_CASEFOLD_H.contains(&format!("{}(", entry.runtime_symbol))
             {
                 missing.push(entry.runtime_symbol);
             }

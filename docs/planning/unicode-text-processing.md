@@ -23,9 +23,7 @@ continuam em `bytes`.
 - native e C/debug contam, fatiam, indexam, buscam e iteram por scalar value;
 - boundaries de entrada usados por `io.read_line` rejeitam UTF-8 inválido;
 - `to_upper`, `to_lower` e helpers têm paridade limitada no C/debug;
-- native AOT/JIT usam case folding Unicode full, non-Turkic pelo crate
-  versionado `unicode-casefold`; C/debug ainda usa fallback lowercase orientado
-  a bytes até receber a mesma tabela;
+- native AOT/JIT e C/debug usam case folding Unicode full, non-Turkic com 100% de paridade (tabelas em `ori-codegen/c_casefold.rs` sincronizadas com `unicode-casefold` em `ori-runtime`);
 - não há grapheme segmentation ou normalization;
 - helpers como `is_digits` e `swap_case` são explicitamente ASCII;
 - não há regex na stdlib.
@@ -38,7 +36,7 @@ continuam em `bytes`.
 | **TEXT-UNICODE-1.1** | nomenclatura e APIs escalares | docs não usam “char” de forma ambígua |
 | **TEXT-UNICODE-1.2** | grapheme views | cursor e truncamento nunca dividem cluster |
 | **TEXT-UNICODE-1.3** | normalização | NFC/NFD/NFKC/NFKD com vetores oficiais |
-| **TEXT-UNICODE-1.4** | case folding e categorias | busca caseless e classificação Unicode explícitas |
+| **TEXT-UNICODE-1.4** | case folding e categorias | **done 2026-09-02:** case folding Unicode full non-Turkic completo com paridade exata entre native Cranelift e C/debug, verificado com suite de vetores de conformidade (`tests/unicode_case_fold_conformance.json`) |
 | **TEXT-UNICODE-1.5** | regex como package/stdlib avaliada | limites, Unicode e proteção contra abuso documentados |
 
 ## 4. Dependências e segurança

@@ -13488,6 +13488,70 @@ end
 }
 
 #[test]
+fn unicode_case_fold_conformance_native_and_c_backend() {
+    let dir = TestDir::new("unicode_case_fold_conformance");
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.string = str
+
+main()
+    -- 1. German sharp S (multi-char full fold: ß -> ss)
+    io.println(str.case_fold("STRAßE"))
+    io.println(str.case_fold("groß"))
+
+    -- 2. Umlauts and accented Latin
+    io.println(str.case_fold("GRÜSSEN"))
+    io.println(str.case_fold("CAFÉ"))
+    io.println(str.case_fold("MAÑANA"))
+    io.println(str.case_fold("ÉLÈVE"))
+
+    -- 3. Ligatures (multi-char full folds: ﬁ -> fi, ﬂ -> fl, ﬃ -> ffi)
+    io.println(str.case_fold("ﬁle"))
+    io.println(str.case_fold("ﬂow"))
+    io.println(str.case_fold("oﬃce"))
+
+    -- 4. Greek and Cyrillic
+    io.println(str.case_fold("ΟΔΥΣΣΕΥΣ"))
+    io.println(str.case_fold("ПРИВЕТ"))
+
+    -- 5. Fullwidth & emoji preservation
+    io.println(str.case_fold("ＨＥＬＬＯ"))
+    io.println(str.case_fold("Ori 🚀 2026"))
+end
+"#;
+    dir.write("main.orl", source);
+
+    // Run native Cranelift AOT
+    let native_stdout = compile_and_run(&dir, "casefold_native");
+    assert!(native_stdout.contains("strasse"), "native: {native_stdout}");
+    assert!(native_stdout.contains("gross"), "native: {native_stdout}");
+    assert!(native_stdout.contains("grüssen"), "native: {native_stdout}");
+    assert!(native_stdout.contains("café"), "native: {native_stdout}");
+    assert!(native_stdout.contains("mañana"), "native: {native_stdout}");
+    assert!(native_stdout.contains("élève"), "native: {native_stdout}");
+    assert!(native_stdout.contains("file"), "native: {native_stdout}");
+    assert!(native_stdout.contains("flow"), "native: {native_stdout}");
+    assert!(native_stdout.contains("office"), "native: {native_stdout}");
+    assert!(native_stdout.contains("\u{03BF}\u{03B4}\u{03C5}\u{03C3}\u{03C3}\u{03B5}\u{03C5}\u{03C3}"), "native: {native_stdout}");
+    assert!(native_stdout.contains("привет"), "native: {native_stdout}");
+    assert!(native_stdout.contains("ｈｅｌｌｏ"), "native: {native_stdout}");
+    assert!(native_stdout.contains("ori 🚀 2026"), "native: {native_stdout}");
+
+    // Run C backend and verify exact bit-for-bit parity
+    let out = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    if let Some(c_out) = compile_and_run_c_source(&dir, "casefold_c", &out.c_source, b"") {
+        let c_stdout = String::from_utf8_lossy(&c_out.stdout);
+        assert_eq!(
+            native_stdout.trim(),
+            c_stdout.trim(),
+            "Native and C backend case folding outputs must match identically"
+        );
+    }
+}
+
+#[test]
 fn check_accepts_stdlib_gap_parity_imports() {
     let dir = TestDir::new("stdlib_gap_parity_imports");
     dir.write(

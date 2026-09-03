@@ -1,0 +1,131 @@
+{
+  "unicode_version": "9.0.0",
+  "variant": "full_non_turkic",
+  "vectors": [
+    {
+      "category": "ascii_upper",
+      "input": "HELLO WORLD",
+      "expected": "hello world"
+    },
+    {
+      "category": "ascii_mixed",
+      "input": "Hello World! 123",
+      "expected": "hello world! 123"
+    },
+    {
+      "category": "german_sharp_s_upper",
+      "input": "STRAßE",
+      "expected": "strasse"
+    },
+    {
+      "category": "german_sharp_s_lower",
+      "input": "groß",
+      "expected": "gross"
+    },
+    {
+      "category": "german_umlauts",
+      "input": "GRÜSSEN",
+      "expected": "grüssen"
+    },
+    {
+      "category": "german_umlauts_multiple",
+      "input": "ÄPFEL UND ÖL",
+      "expected": "äpfel und öl"
+    },
+    {
+      "category": "french_accents",
+      "input": "ÉLÈVE",
+      "expected": "élève"
+    },
+    {
+      "category": "french_accents_cafe",
+      "input": "CAFÉ",
+      "expected": "café"
+    },
+    {
+      "category": "french_diaeresis",
+      "input": "NAÏVE",
+      "expected": "naïve"
+    },
+    {
+      "category": "spanish_accents",
+      "input": "CANCIÓN",
+      "expected": "canción"
+    },
+    {
+      "category": "spanish_enye",
+      "input": "MAÑANA",
+      "expected": "mañana"
+    },
+    {
+      "category": "portuguese_cedilla",
+      "input": "AÇÃO",
+      "expected": "ação"
+    },
+    {
+      "category": "portuguese_mixed",
+      "input": "CORAÇÃO",
+      "expected": "coração"
+    },
+    {
+      "category": "ligature_fi",
+      "input": "ﬁle",
+      "expected": "file"
+    },
+    {
+      "category": "ligature_fl",
+      "input": "ﬂow",
+      "expected": "flow"
+    },
+    {
+      "category": "ligature_ffi",
+      "input": "oﬃce",
+      "expected": "office"
+    },
+    {
+      "category": "ligature_ffl",
+      "input": "waﬄe",
+      "expected": "waffle"
+    },
+    {
+      "category": "ligature_st",
+      "input": "ﬅar",
+      "expected": "star"
+    },
+    {
+      "category": "greek_odysseus",
+      "input": "ΟΔΥΣΣΕΥΣ",
+      "expected": "οδυσσευσ"
+    },
+    {
+      "category": "greek_sigma",
+      "input": "ΣΙΓΜΑ",
+      "expected": "σιγμα"
+    },
+    {
+      "category": "cyrillic_moscow",
+      "input": "МОСКВА",
+      "expected": "москва"
+    },
+    {
+      "category": "cyrillic_privet",
+      "input": "ПРИВЕТ",
+      "expected": "привет"
+    },
+    {
+      "category": "fullwidth_latin",
+      "input": "ＨＥＬＬＯ",
+      "expected": "ｈｅｌｌｏ"
+    },
+    {
+      "category": "emoji_preservation",
+      "input": "Ori 🚀 2026",
+      "expected": "ori 🚀 2026"
+    },
+    {
+      "category": "symbols_preserved",
+      "input": "!@#$%^&*()_+",
+      "expected": "!@#$%^&*()_+"
+    }
+  ]
+}

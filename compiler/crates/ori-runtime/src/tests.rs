@@ -213,6 +213,28 @@ fn string_case_fold_uses_full_non_turkic_unicode_mapping() {
         assert_eq!(cstr_str(result), "strasse");
         ori_arc_release(result);
     }
+
+    // Validate against generated Unicode conformance vectors
+    let vectors_json = include_str!("../../../../tests/unicode_case_fold_conformance.json");
+    let parsed: serde_json::Value = serde_json::from_str(vectors_json).unwrap();
+    let vectors = parsed["vectors"].as_array().unwrap();
+    for v in vectors {
+        let input_str = v["input"].as_str().unwrap();
+        let expected_str = v["expected"].as_str().unwrap();
+        let mut c_input = input_str.as_bytes().to_vec();
+        c_input.push(0);
+        unsafe {
+            let result = ori_string_case_fold(c_input.as_ptr());
+            assert_eq!(
+                cstr_str(result),
+                expected_str,
+                "conformance vector failed for category '{}': input '{}'",
+                v["category"].as_str().unwrap_or(""),
+                input_str
+            );
+            ori_arc_release(result);
+        }
+    }
 }
 
 #[test]

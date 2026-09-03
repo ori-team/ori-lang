@@ -3616,9 +3616,12 @@ end
     );
 }
 
+static PACKAGE_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// PKG-3: publish to a file registry, install by name@version, resolve imports on check.
 #[test]
 fn package_registry_publish_install_and_resolve_on_check() {
+    let _env_guard = PACKAGE_ENV_MUTEX.lock().unwrap();
     let dir = TestDir::new("package_registry_publish_install");
     dir.write(
         "math/ori.pkg.toml",
@@ -3872,6 +3875,7 @@ fn init_git_package_repo(root: &std::path::Path) {
 /// PKG-1/PKG-2: git dependency is fetched into the cache and imports resolve on check.
 #[test]
 fn package_git_dependency_fetches_and_resolves_during_check() {
+    let _env_guard = PACKAGE_ENV_MUTEX.lock().unwrap();
     let dir = TestDir::new("package_git_dependency_check");
     dir.write(
         "remote_math/ori.pkg.toml",
@@ -4038,6 +4042,7 @@ demo.locked = {{ git = "{url}", branch = "main", version = "1.0.0" }}
 
 #[test]
 fn project_git_dependency_resolves_during_check_from_ori_proj() {
+    let _env_guard = PACKAGE_ENV_MUTEX.lock().unwrap();
     let dir = TestDir::new("project_git_dependency_check");
     dir.write(
         "remote_lib/ori.pkg.toml",
@@ -4102,6 +4107,7 @@ end
 
 #[test]
 fn package_version_dependency_resolves_from_cache_after_install() {
+    let _env_guard = PACKAGE_ENV_MUTEX.lock().unwrap();
     let dir = TestDir::new("package_version_from_cache");
     dir.write(
         "math/ori.pkg.toml",
