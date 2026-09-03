@@ -1615,6 +1615,15 @@ impl<'src> Parser<'src> {
     fn parse_newtype_decl(&mut self, vis: Visibility) -> Option<NewtypeDecl> {
         let start = self.advance().unwrap().span; // newtype
         let name = self.parse_name()?;
+        let type_params = self.parse_type_params_opt();
+        if !type_params.is_empty() {
+            let span = type_params[0].name.span;
+            self.error(
+                "parse.newtype_generics_unsupported",
+                "generic newtypes are not supported yet",
+                span,
+            );
+        }
         self.expect(&TokenKind::Eq)?;
         let repr = self.parse_type()?;
         let span = start.cover(repr.span());

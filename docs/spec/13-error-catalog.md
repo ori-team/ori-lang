@@ -107,6 +107,7 @@ when the compiler starts producing it.
 | `parse.variadic_not_last` | error | Variadic parameter is not the last parameter |
 | `parse.suspend_missing_value` | error | `suspend` has no value; write `suspend expr` |
 | `parse.async_iter_unsupported` | error | A function is declared both `async` and `iter`; iterators do not await |
+| `parse.newtype_generics_unsupported` | error | Generic newtypes are not supported; use a single-field struct instead |
 
 ### `type`
 

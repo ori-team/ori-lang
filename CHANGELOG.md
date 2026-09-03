@@ -12,6 +12,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Residual feature matrix and diagnostics (`AUD-FRONT-1`).**
+  Added explicit fail-closed diagnostics for unsupported residual syntax forms,
+  including `parse.newtype_generics_unsupported` for generic newtypes and
+  `parse.async_iter_unsupported` for async iterators, completing test coverage
+  across the iterator and newtype matrix in `ori_spec.rs`.
+
 - **Structured concurrency scopes (`ASYNC-STRUCT-1`).**
   `ori.cancel.CancelScope` and `ori.cancel.TaskScope` now implement `core.Disposable`,
   providing deterministic cancellation on scope exit and child task joining with `using`.

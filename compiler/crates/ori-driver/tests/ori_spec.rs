@@ -5450,6 +5450,31 @@ end
     );
 }
 
+#[test]
+fn check_rejects_generic_newtype() {
+    let dir = TestDir::new("newtype_generic_rejected");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+newtype Wrapper[T] = T
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "expected generic newtype to be rejected");
+    assert!(
+        out.diagnostics
+            .iter()
+            .any(|d| d.code == "parse.newtype_generics_unsupported"),
+        "expected parse.newtype_generics_unsupported, got {:?}",
+        out.diagnostics
+    );
+}
+
 // ── Compact `apply Type use Trait` header (0.4 surface) ────────────────────
 //
 // Which form applies is decided by the content, never by the writer: one trait
@@ -7795,6 +7820,58 @@ end
     assert!(!output.status.success(), "contract violation must panic");
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["0", "1", "done"]);
+}
+
+#[test]
+fn check_rejects_async_iter() {
+    let dir = TestDir::new("iter_async_rejected");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+async iter async_gen() -> int
+    suspend 1
+end
+
+main()
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"parse.async_iter_unsupported"),
+        "expected parse.async_iter_unsupported, got: {codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_iter_method() {
+    let dir = TestDir::new("iter_method_rejected");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Counter
+    value: int
+end
+
+apply Counter
+    iter next_val(self) -> int
+        suspend self.value
+    end
+end
+
+main()
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"type.iter_method_unsupported"),
+        "expected type.iter_method_unsupported, got: {codes:?}"
+    );
 }
 
 /// A failed `check` must say so on stderr before dying — a silent SIGILL
