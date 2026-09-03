@@ -13409,6 +13409,85 @@ end
 }
 
 #[test]
+fn compile_runs_anon_struct_and_struct_update_option_def_id_native() {
+    let dir = TestDir::new("aud_front_2_option_def_id");
+    let source = r#"module app.main
+
+import ori.io = io
+
+struct Config
+    port: int
+    debug: bool
+end
+
+enum Status
+    Active
+    Pending(code: int)
+end
+
+update_config(c: Config) -> Config
+    return c with { port: 9000 } end
+end
+
+main()
+    -- Anonymous struct literal: def_id starts as None, gets typed as Config
+    const c: Config = { port: 8080, debug: true }
+    const c2 = update_config(c)
+
+    const s1: Status = Status.Active
+    const s2: Status = Status.Pending(code: 123)
+
+    if c2.port == 9000 and c2.debug
+        match s2
+            case Pending(code):
+                if code == 123
+                    io.println("OPTION_DEF_ID_SUCCESS")
+                end
+            case Active:
+                io.println("UNEXPECTED")
+        end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "aud_front_2_native");
+    assert!(stdout.contains("OPTION_DEF_ID_SUCCESS"), "stdout: {stdout}");
+}
+
+#[test]
+fn build_c_backend_compiles_anon_struct_and_struct_update_option_def_id() {
+    let dir = TestDir::new("c_backend_option_def_id");
+    let source = r#"module app.main
+
+struct Config
+    port: int
+    debug: bool
+end
+
+enum Status
+    Active
+    Pending(code: int)
+end
+
+update_config(c: Config) -> Config
+    return c with { port: 9000 } end
+end
+
+main()
+    const c: Config = { port: 8080, debug: true }
+    const c2 = update_config(c)
+    const s1: Status = Status.Active
+    const s2: Status = Status.Pending(code: 123)
+end
+"#;
+    dir.write("main.orl", source);
+
+    let build = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build.has_errors, "{:?}", build.diagnostics);
+}
+
+#[test]
 fn check_accepts_stdlib_gap_parity_imports() {
     let dir = TestDir::new("stdlib_gap_parity_imports");
     dir.write(

@@ -12,6 +12,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Eliminate `DefId::INVALID` recovery sentinels in HIR and codegen (`AUD-FRONT-2`).**
+  Replaced dummy `DefId::INVALID` sentinel fallbacks with typed `Option<DefId>` representations
+  on `HirExprKind::StructLit`, `HirExprKind::EnumVariant`, and `HirExprKind::StructUpdate`.
+  Anonymous struct literals start as `None` and are refined monotonically during expected-type
+  application; top-level module item lowering lookups fail closed directly; native Cranelift and C
+  backends inspect and unpack `Option<DefId>` safely.
+
 - **Enforce `@inline` and `@no_inline` attributes during optimization and lowering.**
   Functions decorated with `@inline` and `@no_inline` now have their intent propagated
   through HIR `is_inline` and `is_no_inline` flags; leaf-inlining optimization respects

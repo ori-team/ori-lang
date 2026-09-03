@@ -1892,7 +1892,9 @@ fn lower_apply_method(
         Some(trait_name) => format!("{}.{}.{}.{}", namespace, type_name, trait_name, m.name.text),
         None => format!("{}.{}.{}", namespace, type_name, m.name.text),
     };
-    let def_id = def_map.lookup(&path).unwrap_or(DefId::INVALID);
+    let def_id = def_map
+        .lookup(&path)
+        .unwrap_or_else(|| panic!("top-level method `{path}` missing from DefMap"));
     funcs.push(HirFunc {
         def_id,
         name: SmolStr::new(&path),
@@ -2080,7 +2082,9 @@ pub fn lower(
                     })
                     .collect();
                 let path = format!("{}.{}", namespace, s.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(DefId::INVALID);
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("struct `{path}` missing from DefMap"));
                 let repr_c = item.attrs.iter().any(|a| {
                     a.name.text == "repr"
                         && a.args
@@ -2119,7 +2123,9 @@ pub fn lower(
                     l.async_inner_ret_ty = None;
                     l.pop();
                     let path = format!("{}.{}.{}", namespace, s.name.text, m.name.text);
-                    let def_id = def_map.lookup(&path).unwrap_or(DefId::INVALID);
+                    let def_id = def_map
+                        .lookup(&path)
+                        .unwrap_or_else(|| panic!("struct method `{path}` missing from DefMap"));
                     funcs.push(HirFunc {
                         def_id,
                         name: SmolStr::new(&path),
@@ -2139,7 +2145,9 @@ pub fn lower(
             }
             Item::Enum(e) => {
                 let path = format!("{}.{}", namespace, e.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(DefId::INVALID);
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("enum `{path}` missing from DefMap"));
                 let tp: Vec<SmolStr> = e.type_params.iter().map(|p| p.name.text.clone()).collect();
                 let variants = e
                     .variants
@@ -2263,7 +2271,9 @@ pub fn lower(
                         l.async_inner_ret_ty = None;
                         l.pop();
                         let path = format!("{}.{}.{}", namespace, t.name.text, func.name.text);
-                        let def_id = def_map.lookup(&path).unwrap_or(DefId::INVALID);
+                        let def_id = def_map
+                            .lookup(&path)
+                            .unwrap_or_else(|| panic!("trait method `{path}` missing from DefMap"));
                         funcs.push(HirFunc {
                             def_id,
                             name: SmolStr::new(&path),
@@ -2289,7 +2299,9 @@ pub fn lower(
                     continue;
                 }
                 let path = format!("{}.{}", namespace, f.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(DefId::INVALID);
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("function `{path}` missing from DefMap"));
                 let previous_where_constraints = std::mem::take(&mut l.current_where_constraints);
                 l.current_where_constraints = l
                     .func_sig(def_id)
@@ -2337,7 +2349,9 @@ pub fn lower(
                 let mut value = l.lower_expr(&c.value, &[]);
                 apply_expected_expr_ty(&mut value, &ty);
                 let path = format!("{}.{}", namespace, c.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(DefId::INVALID);
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("const `{path}` missing from DefMap"));
                 consts.push(HirConst {
                     def_id,
                     name: SmolStr::new(&path),
@@ -2353,7 +2367,9 @@ pub fn lower(
                 let mut value = l.lower_expr(&v.value, &[]);
                 apply_expected_expr_ty(&mut value, &ty);
                 let path = format!("{}.{}", namespace, v.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(DefId::INVALID);
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("var `{path}` missing from DefMap"));
                 consts.push(HirConst {
                     def_id,
                     name: SmolStr::new(&path),
@@ -3438,7 +3454,7 @@ impl<'a> Lowerer<'a> {
                 if let Some((def_id, variant)) = self.resolve_enum_variant(q) {
                     return HirExpr {
                         kind: HirExprKind::EnumVariant {
-                            def_id,
+                            def_id: Some(def_id),
                             variant,
                             fields: Vec::new(),
                         },
@@ -4093,7 +4109,10 @@ impl<'a> Lowerer<'a> {
                     if let Some(def_id) = self.resolve_def_id_with_kind(&name, DefKind::Struct) {
                         let fields = self.lower_named_args(args, tp);
                         return HirExpr {
-                            kind: HirExprKind::StructLit { def_id, fields },
+                            kind: HirExprKind::StructLit {
+                                def_id: Some(def_id),
+                                fields,
+                            },
                             ty: Ty::Named(def_id, Vec::new()),
                             span: *span,
                         };
@@ -4102,7 +4121,7 @@ impl<'a> Lowerer<'a> {
                         let fields = self.lower_named_args(args, tp);
                         return HirExpr {
                             kind: HirExprKind::EnumVariant {
-                                def_id,
+                                def_id: Some(def_id),
                                 variant,
                                 fields,
                             },
@@ -4393,9 +4412,10 @@ impl<'a> Lowerer<'a> {
                 ..
             } => {
                 let def_id = self
-                    .resolve_def_id_with_kind(&type_name.to_string(), DefKind::Struct)
-                    .unwrap_or(DefId::INVALID);
-                let ty = Ty::Named(def_id, Vec::new());
+                    .resolve_def_id_with_kind(&type_name.to_string(), DefKind::Struct);
+                let ty = def_id
+                    .map(|id| Ty::Named(id, Vec::new()))
+                    .unwrap_or(Ty::Infer(0));
                 // Each field value is lowered against its declared type. It
                 // matters for forms whose storage depends on context: `[1, 2]`
                 // is a heap list by default but must become an inline array
@@ -4403,7 +4423,7 @@ impl<'a> Lowerer<'a> {
                 let hfields: Vec<(SmolStr, HirExpr)> = fields
                     .iter()
                     .map(|f| {
-                        let declared = self.struct_field_ty(def_id, f.name.text.as_str());
+                        let declared = def_id.and_then(|id| self.struct_field_ty(id, f.name.text.as_str()));
                         (
                             f.name.text.clone(),
                             self.lower_expr_expecting(&f.value, tp, declared.as_ref()),
@@ -4426,7 +4446,7 @@ impl<'a> Lowerer<'a> {
                     .collect();
                 HirExpr {
                     kind: HirExprKind::StructLit {
-                        def_id: DefId::INVALID,
+                        def_id: None,
                         fields: hfields,
                     },
                     ty: Ty::Infer(0),
@@ -4442,16 +4462,17 @@ impl<'a> Lowerer<'a> {
                     .as_ref()
                     .map(|t| t.to_string())
                     .unwrap_or_default();
-                let def_id = self
-                    .resolve_def_id_with_kind(&def_path, DefKind::Enum)
-                    .unwrap_or(DefId::INVALID);
+                let def_id = self.resolve_def_id_with_kind(&def_path, DefKind::Enum);
+                let ty = def_id
+                    .map(|id| Ty::Named(id, Vec::new()))
+                    .unwrap_or(Ty::Infer(0));
                 HirExpr {
                     kind: HirExprKind::EnumVariant {
                         def_id,
                         variant: variant.text.clone(),
                         fields: Vec::new(),
                     },
-                    ty: Ty::Named(def_id, Vec::new()),
+                    ty,
                     span,
                 }
             }
@@ -4465,9 +4486,10 @@ impl<'a> Lowerer<'a> {
                     .as_ref()
                     .map(|t| t.to_string())
                     .unwrap_or_default();
-                let def_id = self
-                    .resolve_def_id_with_kind(&def_path, DefKind::Enum)
-                    .unwrap_or(DefId::INVALID);
+                let def_id = self.resolve_def_id_with_kind(&def_path, DefKind::Enum);
+                let ty = def_id
+                    .map(|id| Ty::Named(id, Vec::new()))
+                    .unwrap_or(Ty::Infer(0));
                 let hfields: Vec<(SmolStr, HirExpr)> = fields
                     .iter()
                     .map(|f| (f.name.text.clone(), self.lower_expr(&f.value, tp)))
@@ -4478,7 +4500,7 @@ impl<'a> Lowerer<'a> {
                         variant: variant.text.clone(),
                         fields: hfields,
                     },
-                    ty: Ty::Named(def_id, Vec::new()),
+                    ty,
                     span,
                 }
             }
@@ -4549,9 +4571,9 @@ impl<'a> Lowerer<'a> {
             Expr::StructUpdate { base, updates, .. } => {
                 let base_h = self.lower_expr(base, tp);
                 let def_id = if let Ty::Named(id, _) = &base_h.ty {
-                    *id
+                    Some(*id)
                 } else {
-                    DefId::INVALID
+                    None
                 };
                 let hupdates: Vec<(SmolStr, HirExpr)> = updates
                     .iter()
@@ -5734,9 +5756,9 @@ fn apply_expected_expr_ty(expr: &mut HirExpr, expected: &Ty) {
             expr.ty = expected.clone();
         }
         (HirExprKind::StructLit { def_id, .. }, Ty::Named(expected_def_id, _))
-            if *def_id == DefId::INVALID =>
+            if def_id.is_none() =>
         {
-            *def_id = *expected_def_id;
+            *def_id = Some(*expected_def_id);
             expr.ty = expected.clone();
         }
         _ => {}

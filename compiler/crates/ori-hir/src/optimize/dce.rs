@@ -441,7 +441,10 @@ fn expr_effect(expr: &HirExpr, contract_structs: &HashSet<DefId>) -> ExprEffect 
             let fields = fields
                 .iter()
                 .map(|(_, expr)| expr_effect(expr, contract_structs));
-            let allocation = if contract_structs.contains(def_id) {
+            let allocation = if def_id
+                .as_ref()
+                .is_some_and(|id| contract_structs.contains(id))
+            {
                 ExprEffect::Effectful
             } else {
                 ExprEffect::MayTrap
@@ -456,7 +459,10 @@ fn expr_effect(expr: &HirExpr, contract_structs: &HashSet<DefId>) -> ExprEffect 
             let values = updates
                 .iter()
                 .map(|(_, expr)| expr_effect(expr, contract_structs));
-            let allocation = if contract_structs.contains(def_id) {
+            let allocation = if def_id
+                .as_ref()
+                .is_some_and(|id| contract_structs.contains(id))
+            {
                 ExprEffect::Effectful
             } else {
                 ExprEffect::MayTrap

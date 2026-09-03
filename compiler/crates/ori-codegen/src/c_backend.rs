@@ -3968,7 +3968,7 @@ impl CCodegen {
                         format!(".{} = {}", mangle(n), es)
                     })
                     .collect();
-                if *def_id != DefId::INVALID {
+                if let Some(def_id) = def_id {
                     format!("(({}){{ {} }})", def_c_name(*def_id), fields_s.join(", "))
                 } else {
                     format!("({{ {} }})", fields_s.join(", "))
@@ -3979,7 +3979,9 @@ impl CCodegen {
                 variant,
                 fields,
             } => {
-                let type_name = def_c_name(*def_id);
+                let type_name = def_id
+                    .map(def_c_name)
+                    .unwrap_or_else(|| "ori_enum_t".to_string());
                 let tag = format!("{}__{}", type_name, mangle(variant));
                 if fields.is_empty() {
                     format!("(({}){{ .tag = {} }})", type_name, tag)
@@ -4180,7 +4182,9 @@ impl CCodegen {
                 updates,
             } => {
                 let base_s = self.expr_to_c(base);
-                let type_name = def_c_name(*def_id);
+                let type_name = def_id
+                    .map(def_c_name)
+                    .unwrap_or_else(|| "void*".to_string());
                 let tmp = self.fresh_tmp();
                 let overrides: Vec<String> = updates
                     .iter()
@@ -5858,7 +5862,7 @@ mod tests {
             mutable: false,
             value: expr(
                 HirExprKind::StructLit {
-                    def_id: holder_id,
+                    def_id: Some(holder_id),
                     fields: vec![(
                         "values".into(),
                         expr(

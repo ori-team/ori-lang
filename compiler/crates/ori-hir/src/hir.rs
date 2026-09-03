@@ -368,11 +368,11 @@ pub enum HirExprKind {
 
     // Construction
     StructLit {
-        def_id: DefId,
+        def_id: Option<DefId>,
         fields: Vec<(SmolStr, HirExpr)>,
     },
     EnumVariant {
-        def_id: DefId,
+        def_id: Option<DefId>,
         variant: SmolStr,
         fields: Vec<(SmolStr, HirExpr)>,
     },
@@ -439,7 +439,7 @@ pub enum HirExprKind {
     },
     // Struct update `base with { field: value } end`
     StructUpdate {
-        def_id: DefId,
+        def_id: Option<DefId>,
         base: Box<HirExpr>,
         updates: Vec<(SmolStr, HirExpr)>,
     },

@@ -15570,11 +15570,14 @@ impl<'a> FuncCodegen<'a> {
             }
             HirExprKind::Await(inner) => self.emit_await(inner, &expr.ty)?,
             HirExprKind::StructLit { def_id, fields } => {
-                if let Some(layout) = self.struct_layouts.get(def_id).cloned() {
+                let def_id = def_id.ok_or_else(|| {
+                    "unresolved struct literal during native codegen".to_string()
+                })?;
+                if let Some(layout) = self.struct_layouts.get(&def_id).cloned() {
                     // Managed fields are owned by their registered ARC edges
                     // (single cascade owner). A custom destructor may observe
                     // the fields, but it must not release their edge-owned +1.
-                    let base = self.malloc_typed_bytes(layout.size, *def_id)?;
+                    let base = self.malloc_typed_bytes(layout.size, def_id)?;
                     for (fname, fexpr) in fields {
                         let fexpr_is_owned = Self::expr_produces_owned_ref(fexpr);
                         let val = self.emit_expr(fexpr)?;
@@ -15958,10 +15961,13 @@ impl<'a> FuncCodegen<'a> {
                 fields,
                 ..
             } => {
-                if let Some(layout) = self.enum_layouts.get(def_id).cloned() {
+                let def_id = def_id.ok_or_else(|| {
+                    format!("unresolved enum variant `{variant}` during native codegen")
+                })?;
+                if let Some(layout) = self.enum_layouts.get(&def_id).cloned() {
                     // Payload fields are owned by registered ARC edges only;
                     // see StructLit above.
-                    let base = self.malloc_typed_bytes(layout.size, *def_id)?;
+                    let base = self.malloc_typed_bytes(layout.size, def_id)?;
 
                     if let Some(v_layout) = layout.variant(variant) {
                         // Store the tag at offset 0
@@ -16163,9 +16169,12 @@ impl<'a> FuncCodegen<'a> {
                 base,
                 updates,
             } => {
-                if let Some(layout) = self.struct_layouts.get(def_id).cloned() {
+                let def_id = def_id.ok_or_else(|| {
+                    "unresolved struct update during native codegen".to_string()
+                })?;
+                if let Some(layout) = self.struct_layouts.get(&def_id).cloned() {
                     let base_ptr = self.emit_expr(base)?;
-                    let new_ptr = self.malloc_typed_bytes(layout.size, *def_id)?;
+                    let new_ptr = self.malloc_typed_bytes(layout.size, def_id)?;
                     let updated_names: Vec<_> =
                         updates.iter().map(|(name, _)| name.clone()).collect();
                     // Copy all bytes from base
