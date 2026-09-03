@@ -27,6 +27,18 @@
 | Linux package v0.3.2 | ✅ |
 | Open work | → **[BACKLOG.md](BACKLOG.md)** |
 
+### Wave atual de sistemas nativos e engines (2026-09-03)
+
+Após o fechamento integral das auditorias de linguagem (`AUD-*`), a lista de trabalho aberto em `BACKLOG.md` concentra as evoluções gerais de baixo nível para sistemas nativos e engines (2D/3D), confrontadas com o ecossistema real em `game-engine-full` e `ori_game_engine_2d_3d_roadmap.md`:
+
+| ID | Prioridade | Escala | O que entrega |
+|---|:---:|:---:|---|
+| **PKG-NATIVE-1** | P1 | M | Dependências nativas declarativas (`[native.dependencies]`, `pkg-config`, bibliotecas por OS) no `ori.pkg.toml` |
+| **LANG-NOALLOC-1** | P1 | M | Atributo `@noalloc` com verificação estática no checker/HIR contra alocações em hot paths de 60/120 FPS |
+| **LANG-ALIGN-1** | P2 | S | Controle de alinhamento explícito `@align(N)` para layouts GPU uniform/storage buffers e SIMD |
+| **MEM-REGION-1** | P2 | L | Arenas/regiões de memória com escopo seguro (`using region = mem.region()`) e análise de escape |
+| **LANG-SIMD-1** | P3 | L | Vetores SIMD portáteis (`simd[float32, 4]`) baixados diretamente para instruções vetoriais Cranelift |
+
 ---
 
 ## Prioridade 2026-07-13 (curto / médio) — *historical table*

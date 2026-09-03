@@ -90,6 +90,19 @@ implementation before tooling and QA expansion.
 | 10 | **META-ATTR-1** | Define schemas/effects for custom attributes or reject unsupported names | 1 | M | **done** |
 | 11 | **ASYNC-STRUCT-1** | Structured Concurrency & Cancellation Scopes | 1 | M | **done** |
 
+### High-Performance Native Systems & Engine Foundation Wave (2026-09-03)
+
+Derived from the deep architectural confrontation with `/home/raillen/Documentos/ori_game_engine_2d_3d_roadmap.md` and the 35 packages in `game-engine-full`.
+In full adherence to the language core principle (AGENTS.md / Roadmap §2), these capabilities remain strictly general-purpose low-level systems features without introducing game-specific syntax, engine types, or monorepo packages.
+
+| Order | ID | Contract to finish | P | D | Status |
+|---:|---|---|:---:|:---:|---|
+| 1 | **PKG-NATIVE-1** | Declarative native dependencies (`[native.dependencies]`, `pkg-config`, platform link flags) | 1 | M | `todo` |
+| 2 | **LANG-NOALLOC-1** | Static `@noalloc` verification attribute for zero-allocation hot paths and audio/frame loops | 1 | M | `todo` |
+| 3 | **LANG-ALIGN-1** | Explicit struct and field alignment control (`@align(N)`) for GPU uniform buffers / SIMD | 2 | S | `todo` |
+| 4 | **MEM-REGION-1** | Scoped memory arenas/regions (`using region = mem.region()`) with compile-time escape analysis | 2 | L | `todo` |
+| 5 | **LANG-SIMD-1** | Portable fixed-width SIMD vector primitives (`simd[float32, 4]`) with Cranelift vector lowering | 3 | L | `todo` |
+
 Each row must add a normative rule, production implementation, focused
 regression, and a changelog entry before it moves to `done`. Performance and
 editor work remain below this wave even when their code already exists.
@@ -398,6 +411,11 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 | **ERR-TRACE-1** | Zero-Cost Error Return Traces | 3 | M | **done** | **2026-09-02:** Exposed `ori.err_trace` in stdlib (`stdlib/err_trace.orl`) with `push(file, line, message)` and `format(message)`, wired C ABI `ori_err_trace_push` (with `line: int`) and `ori_err_trace_format` across Cranelift native backend, C backend, and runtime staticlib, covered with native and C E2E regressions. |
 | **CLI-DAEMON-1** | Persistent Compilation & Evaluation Daemon | 3 | M | **done** | **2026-09-02:** stdin requests use typed `serde_json` DTOs and JSON builders; malformed JSON, escaped IDs/parameters, invalid protocol envelopes, exact shutdown detection, and bounded line buffering at 1 MiB request/8 MiB source limits are covered; persistent `DaemonSession` caches check results keyed by source content SHA-256 with bounded capacity (256 entries) and FIFO eviction; supports warm check hits (`"cached": true`), explicit invalidation (`"invalidate"` per-file or full), and operational counters (`"stats"` for `check_hits`, `check_misses`, `invalidations`). Covered by 9 unit tests in `daemon.rs` and E2E daemon smoke in `dx_scripting.rs`. |
 | **GFX-WINDOW-1** | Freestanding Window & Canvas Graphics | 2 | M | **done (removed)** | **2026-09-02:** Removed disconnected `stdlib/window.orl` stub and unused `ori_window_*` runtime stubs; freestanding window/canvas is explicitly out of product scope per AGENTS.md (product focus is compiler, core language, DX, docs, and CLI). Direct BMP/PPM image export remains supported via `ori.image`. |
+| **PKG-NATIVE-1** | Declarative Native Dependencies & Platform Link Flags | 1 | M | `todo` | Declarative manifest sections in `ori.pkg.toml` (`[native.dependencies.<lib>]` with `pkg_config = "..."`, `static = bool`, `framework = "..."`), per-platform library lists (`[native.linux] libraries = ["GL", "X11", "m", "dl"]`, `[native.windows] libraries = ["user32", "opengl32"]`, `[native.macos] frameworks = ["OpenGL", "Cocoa"]`), and explicit `library_dirs` without requiring manual `.a` GNU ld script workarounds (`libsysdeps.a`) or shell staging scripts. |
+| **LANG-NOALLOC-1** | Static `@noalloc` Verification Attribute | 1 | M | `todo` | Compile-time static check for functions annotated with `@noalloc` (game update ticks, audio callbacks, render command generation, physics integration): checker and HIR analysis assert that the function body and synchronous calls perform no dynamic heap allocations, dynamic list/map resizing, string formatting allocations (`fmt.*`), or managed boxing, emitting diagnostic `perf.allocation_in_noalloc` on violation. |
+| **LANG-ALIGN-1** | Explicit Struct and Field Alignment Control (`@align(N)`) | 2 | S | `todo` | General-purpose `@align(N)` attribute (power-of-2: 1, 2, 4, 8, 16, 32, 64) for `@repr("C")` and inline structs, directly lowered to Cranelift struct layout, memory alignment offsets, and generated C headers (`alignas(N)` / `__attribute__((aligned(N)))`) for GPU uniform/storage buffers (std140/std430), cache-line padded data structures, and SIMD alignment. |
+| **MEM-REGION-1** | Scoped Memory Arenas / Regions (`mem.region`) | 2 | L | `todo` | Scoped arena allocator in `ori.mem` (`using region = mem.region()`) for frame-temporary objects (culling sets, visible lists, command queues, intermediate transformations) with static escape analysis ensuring region-allocated objects cannot escape the `using` block scope or cross threads; enables single O(1) bulk reset / deallocation at frame completion, replacing tens of thousands of ARC retain/release operations in 60/120 FPS game loops. |
+| **LANG-SIMD-1** | Portable Fixed-Width SIMD Vector Primitives | 3 | L | `todo` | Portable typed vector types (`simd[float32, 4]`, `simd[int32, 4]`) lowered directly to Cranelift SIMD IR instructions (x86_64 SSE/AVX and aarch64 NEON) with arithmetic operators (`+`, `-`, `*`, `/`, dot product, shuffle) for CPU transform propagation, frustum-box intersection tests, skeletal animation skinning, and physics integration. |
 
 **Rejected by decision — do not reopen without a new ADR:**
 

@@ -1404,6 +1404,19 @@ The current product policy excludes bringing game/editor packages back into core
 removing or shelving the stub is lower-risk than expanding it without a product
 decision.
 
+### Wave 5 — High-performance native systems & engine foundation (2026-09-03)
+
+Derived from the deep architectural confrontation with `/home/raillen/Documentos/ori_game_engine_2d_3d_roadmap.md` and the 35 packages in `game-engine-full`.
+These features remain strictly general-purpose low-level systems capabilities (Layer A/B/C); no game-specific syntax, engine types, or monorepo packages are introduced.
+
+| Order | Slice | Exit gate |
+|---:|---|---|
+| 5.1 | Declarative native dependencies (`PKG-NATIVE-1`) | `[native.dependencies]` with `pkg-config`, per-platform library lists, and link paths in `ori.pkg.toml` without manual `.a` linker script workarounds |
+| 5.2 | Static `@noalloc` verification (`LANG-NOALLOC-1`) | Static checker/HIR rejection of heap allocations, collection growth, formatting, or boxing in marked functions with `perf.allocation_in_noalloc` |
+| 5.3 | Explicit struct/field alignment (`LANG-ALIGN-1`) | `@align(N)` attribute lowered to Cranelift layout and C headers (`alignas`) for std140/std430 GPU uniform buffers and SIMD |
+| 5.4 | Scoped memory arenas/regions (`MEM-REGION-1`) | `using region = mem.region()` with compile-time escape analysis and single O(1) bulk deallocation at frame exit |
+| 5.5 | Portable SIMD vectors (`LANG-SIMD-1`) | `simd[float32, 4]` lowered to Cranelift vector IR with vector arithmetic and lane operations |
+
 ---
 
 ## 15. Definition of done for every reopened item
