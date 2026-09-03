@@ -91,16 +91,29 @@ fn arc_registry_contention_counter_is_observable() {
     let _guard = TEST_ARC_LOCK.lock().unwrap();
     reset_arc_state_for_test();
     let before = arc_lock_contention_count();
-    unsafe {
-        let value = ori_alloc(8, None);
-        assert!(!value.is_null());
-        ori_arc_retain(value);
-        ori_arc_release(value);
-        ori_arc_release(value);
-    }
+
+    let (tx_start, rx_start) = std::sync::mpsc::channel();
+    let (tx_release, rx_release) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let guard = lock_arc_state();
+        tx_start.send(()).unwrap();
+        rx_release.recv().unwrap();
+        drop(guard);
+    });
+
+    rx_start.recv().unwrap();
+    let waiter = std::thread::spawn(|| {
+        let _guard = lock_arc_state();
+    });
+    // Wait briefly so waiter attempts try_lock and records WouldBlock
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    tx_release.send(()).unwrap();
+    holder.join().unwrap();
+    waiter.join().unwrap();
+
     assert!(
-        arc_lock_contention_count() >= before,
-        "contention counter must be monotonic"
+        arc_lock_contention_count() > before,
+        "contention counter must observe actual contended acquisitions"
     );
 }
 
