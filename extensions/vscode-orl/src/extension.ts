@@ -14,6 +14,7 @@ const execFileAsync = promisify(execFile);
 
 let client: LanguageClient | undefined;
 let doctorChannel: vscode.OutputChannel | undefined;
+let clientRestart: Promise<void> = Promise.resolve();
 
 class OriDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
   public constructor(private readonly context: vscode.ExtensionContext) {}
@@ -49,6 +50,17 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("ori.trace.server")) {
+        updateLanguageClientTrace();
+      }
+      if (event.affectsConfiguration("ori.cfg")) {
+        queueLanguageClientRestart(context);
+      }
+    })
+  );
+
   void suggestWorkspaceBinaries(context);
 
   startLanguageClient(context).catch((err) => {
@@ -59,8 +71,6 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 async function startLanguageClient(context: vscode.ExtensionContext): Promise<void> {
-  const config = () => vscode.workspace.getConfiguration("ori");
-
   const lspPath =
     resolveBinary(context, "lsp.path", process.platform === "win32" ? ["ori-lsp.exe", "ori-lsp"] : ["ori-lsp"]) ??
     "ori-lsp";
@@ -80,19 +90,31 @@ async function startLanguageClient(context: vscode.ExtensionContext): Promise<vo
 
   client = new LanguageClient("oriLanguageServer", "Ori Language Server", serverOptions, clientOptions);
 
-  const trace = config().get<string>("trace.server") ?? "off";
-  client.setTrace(trace === "verbose" ? Trace.Verbose : trace === "messages" ? Trace.Messages : Trace.Off);
-
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("ori.trace.server")) {
-        const t = config().get<string>("trace.server") ?? "off";
-        client?.setTrace(t === "verbose" ? Trace.Verbose : t === "messages" ? Trace.Messages : Trace.Off);
-      }
-    })
-  );
+  updateLanguageClientTrace();
 
   await client.start();
+}
+
+function updateLanguageClientTrace(): void {
+  const trace = vscode.workspace.getConfiguration("ori").get<string>("trace.server") ?? "off";
+  client?.setTrace(trace === "verbose" ? Trace.Verbose : trace === "messages" ? Trace.Messages : Trace.Off);
+}
+
+function queueLanguageClientRestart(context: vscode.ExtensionContext): void {
+  clientRestart = clientRestart
+    .then(async () => {
+      const runningClient = client;
+      client = undefined;
+      if (runningClient) {
+        await runningClient.stop();
+      }
+      await startLanguageClient(context);
+    })
+    .catch((error) => {
+      void vscode.window.showErrorMessage(
+        `Ori LSP failed to restart after a cfg change: ${error instanceof Error ? error.message : String(error)}`
+      );
+    });
 }
 
 export async function deactivate(): Promise<void> {
@@ -112,6 +134,15 @@ function buildOriEnv(): NodeJS.ProcessEnv {
   setIf("ORI_STDLIB_ROOT", cfg.get<string>("stdlib.root"));
   setIf("ORI_RUNTIME_LIB", cfg.get<string>("runtime.lib"));
   setIf("ORI_RUNTIME_CDYLIB", cfg.get<string>("runtime.cdylib"));
+  setIf("ORI_TARGET_TRIPLE", cfg.get<string>("cfg.target"));
+  setIf("ORI_EXECUTION_PROFILE", cfg.get<string>("cfg.executionProfile"));
+  const features = cfg.get<string[]>("cfg.features") ?? [];
+  if (features.length > 0) {
+    env["ORI_FEATURES"] = [...new Set(features)].sort().join(",");
+  }
+  if (cfg.get<boolean>("cfg.noDefaultFeatures")) {
+    env["ORI_NO_DEFAULT_FEATURES"] = "1";
+  }
   // Prefer explicit AOT over JIT when both are set.
   if (cfg.get<boolean>("useAot")) {
     env["ORI_USE_AOT"] = "1";

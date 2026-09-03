@@ -32,6 +32,14 @@ mod tests {
         }
     }
 
+    fn bytes_lit(bytes: &[u8]) -> HirExpr {
+        HirExpr {
+            kind: HirExprKind::BytesLit(bytes.to_vec()),
+            ty: Ty::Bytes,
+            span: span(),
+        }
+    }
+
     fn var(name: &str) -> HirExpr {
         HirExpr {
             kind: HirExprKind::Var(SmolStr::new(name)),
@@ -90,6 +98,8 @@ mod tests {
                 is_public: true,
                 is_async: false,
                 is_mut: false,
+                is_inline: false,
+                is_no_inline: false,
                 c_export_name: None,
                 span: span(),
             }],
@@ -176,6 +186,8 @@ mod tests {
             is_public: false,
             is_async: false,
             is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
             c_export_name: None,
             span: span(),
         };
@@ -218,6 +230,8 @@ mod tests {
                     is_public: true,
                     is_async: false,
                     is_mut: false,
+                    is_inline: false,
+                    is_no_inline: false,
                     c_export_name: None,
                     span: span(),
                 },
@@ -231,6 +245,94 @@ mod tests {
             HirStmt::Return(Some(e), _) => match e.kind {
                 HirExprKind::IntLit(42) => {}
                 ref other => panic!("expected IntLit(42) after inline+fold, got {other:?}"),
+            },
+            other => panic!("expected Return, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn leaf_inline_respects_no_inline_under_aggressive() {
+        let add_one = HirFunc {
+            def_id: DefId(2),
+            name: SmolStr::new("add_one"),
+            params: vec![HirParam {
+                name: SmolStr::new("x"),
+                ty: Ty::Int,
+                default: None,
+                contract: None,
+                variadic: false,
+                span: span(),
+            }],
+            return_ty: Ty::Int,
+            body: HirBlock {
+                stmts: vec![HirStmt::Return(
+                    Some(bin(ori_ast::expr::BinaryOp::Add, var("x"), int_lit(1))),
+                    span(),
+                )],
+                span: span(),
+            },
+            closure_captures: vec![],
+            is_public: false,
+            is_async: false,
+            is_mut: false,
+            is_inline: false,
+            is_no_inline: true,
+            c_export_name: None,
+            span: span(),
+        };
+        let mut module = HirModule {
+            namespace: SmolStr::new("app"),
+            structs: vec![],
+            enums: vec![],
+            traits: vec![],
+            trait_impls: vec![],
+            funcs: vec![
+                add_one,
+                HirFunc {
+                    def_id: DefId(1),
+                    name: SmolStr::new("main"),
+                    params: vec![],
+                    return_ty: Ty::Int,
+                    body: HirBlock {
+                        stmts: vec![HirStmt::Return(
+                            Some(HirExpr {
+                                kind: HirExprKind::Call {
+                                    callee: Box::new(HirExpr {
+                                        kind: HirExprKind::Var(SmolStr::new("add_one")),
+                                        ty: Ty::Int,
+                                        span: span(),
+                                    }),
+                                    args: vec![HirArg {
+                                        label: None,
+                                        value: int_lit(41),
+                                        spread: false,
+                                    }],
+                                },
+                                ty: Ty::Int,
+                                span: span(),
+                            }),
+                            span(),
+                        )],
+                        span: span(),
+                    },
+                    closure_captures: vec![],
+                    is_public: true,
+                    is_async: false,
+                    is_mut: false,
+                    is_inline: false,
+                    is_no_inline: false,
+                    c_export_name: None,
+                    span: span(),
+                },
+            ],
+            consts: vec![],
+            externs: vec![],
+        };
+        optimize_module(&mut module, OptLevel::Aggressive);
+        match &module.funcs[1].body.stmts[0] {
+            HirStmt::Return(Some(e), _) => match &e.kind {
+                HirExprKind::Call { .. } => {}
+                other => panic!("expected Call preserved due to no_inline, got {other:?}"),
             },
             other => panic!("expected Return, got {other:?}"),
         }
@@ -261,6 +363,8 @@ mod tests {
             is_public: false,
             is_async: false,
             is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
             c_export_name: None,
             span: span(),
         };
@@ -303,6 +407,8 @@ mod tests {
                     is_public: true,
                     is_async: false,
                     is_mut: false,
+                    is_inline: false,
+                    is_no_inline: false,
                     c_export_name: None,
                     span: span(),
                 },
@@ -321,5 +427,259 @@ mod tests {
             }
             other => panic!("expected Return, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn leaf_inline_skips_allocating_bytes_arguments() {
+        let ignore_bytes = HirFunc {
+            def_id: DefId(2),
+            name: SmolStr::new("ignore_bytes"),
+            params: vec![HirParam {
+                name: SmolStr::new("value"),
+                ty: Ty::Bytes,
+                default: None,
+                contract: None,
+                variadic: false,
+                span: span(),
+            }],
+            return_ty: Ty::Int,
+            body: HirBlock {
+                stmts: vec![HirStmt::Return(Some(int_lit(1)), span())],
+                span: span(),
+            },
+            closure_captures: vec![],
+            is_public: false,
+            is_async: false,
+            is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
+            c_export_name: None,
+            span: span(),
+        };
+        let call = HirExpr {
+            kind: HirExprKind::Call {
+                callee: Box::new(HirExpr {
+                    kind: HirExprKind::Var(SmolStr::new("ignore_bytes")),
+                    ty: Ty::Func {
+                        params: vec![Ty::Bytes],
+                        ret: Box::new(Ty::Int),
+                    },
+                    span: span(),
+                }),
+                args: vec![HirArg {
+                    label: None,
+                    value: bytes_lit(b"payload"),
+                    spread: false,
+                }],
+            },
+            ty: Ty::Int,
+            span: span(),
+        };
+        let mut module = HirModule {
+            namespace: SmolStr::new("app"),
+            structs: vec![],
+            enums: vec![],
+            traits: vec![],
+            trait_impls: vec![],
+            funcs: vec![
+                ignore_bytes,
+                HirFunc {
+                    def_id: DefId(1),
+                    name: SmolStr::new("main"),
+                    params: vec![],
+                    return_ty: Ty::Int,
+                    body: HirBlock {
+                        stmts: vec![HirStmt::Return(Some(call), span())],
+                        span: span(),
+                    },
+                    closure_captures: vec![],
+                    is_public: true,
+                    is_async: false,
+                    is_mut: false,
+                    is_inline: false,
+                    is_no_inline: false,
+                    c_export_name: None,
+                    span: span(),
+                },
+            ],
+            consts: vec![],
+            externs: vec![],
+        };
+
+        optimize_module(&mut module, OptLevel::Aggressive);
+
+        assert!(
+            matches!(
+                &module.funcs[1].body.stmts[0],
+                HirStmt::Return(
+                    Some(HirExpr {
+                        kind: HirExprKind::Call { .. },
+                        ..
+                    }),
+                    _
+                )
+            ),
+            "aggressive inlining must retain an allocating bytes argument"
+        );
+    }
+
+    #[test]
+    fn dce_removes_unused_pure_binding() {
+        let mut module = empty_module_with_body(vec![HirStmt::Let {
+            name: SmolStr::new("unused"),
+            ty: Ty::Int,
+            mutable: false,
+            value: bin(ori_ast::expr::BinaryOp::Add, int_lit(2), int_lit(3)),
+            span: span(),
+        }]);
+
+        optimize_module(&mut module, OptLevel::Default);
+
+        assert!(
+            module.funcs[0].body.stmts.is_empty(),
+            "DCE should remove an unused pure binding"
+        );
+    }
+
+    #[test]
+    fn dce_keeps_unused_integer_division_that_may_trap() {
+        let mut module = empty_module_with_body(vec![HirStmt::Let {
+            name: SmolStr::new("unused"),
+            ty: Ty::Int,
+            mutable: false,
+            value: bin(ori_ast::expr::BinaryOp::Div, int_lit(1), int_lit(0)),
+            span: span(),
+        }]);
+
+        optimize_module(&mut module, OptLevel::Default);
+
+        assert!(
+            matches!(
+                module.funcs[0].body.stmts.first(),
+                Some(HirStmt::Let { .. })
+            ),
+            "DCE must retain an unused integer division because it can trap"
+        );
+    }
+
+    #[test]
+    fn dce_keeps_all_integer_operations_with_backend_guards() {
+        for op in [
+            ori_ast::expr::BinaryOp::Div,
+            ori_ast::expr::BinaryOp::Rem,
+            ori_ast::expr::BinaryOp::Shl,
+            ori_ast::expr::BinaryOp::Shr,
+        ] {
+            let mut module = empty_module_with_body(vec![HirStmt::Let {
+                name: SmolStr::new("unused"),
+                ty: Ty::Int,
+                mutable: false,
+                value: bin(op, int_lit(1), int_lit(0)),
+                span: span(),
+            }]);
+
+            optimize_module(&mut module, OptLevel::Default);
+
+            assert!(
+                matches!(
+                    module.funcs[0].body.stmts.first(),
+                    Some(HirStmt::Let { .. })
+                ),
+                "DCE removed guarded operation {op:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dce_keeps_bindings_used_by_associated_call_arguments() {
+        // Associated calls have no receiver expression. Their arguments still
+        // read enclosing bindings and must participate in DCE's use scan.
+        let associated_call = HirExpr {
+            kind: HirExprKind::AssociatedCall {
+                receiver_ty: Ty::Int,
+                method: SmolStr::new("consume"),
+                args: vec![var("argument")],
+            },
+            ty: Ty::Int,
+            span: span(),
+        };
+        let mut module = empty_module_with_body(vec![
+            HirStmt::Let {
+                name: SmolStr::new("argument"),
+                ty: Ty::Int,
+                mutable: false,
+                value: int_lit(7),
+                span: span(),
+            },
+            HirStmt::Let {
+                name: SmolStr::new("unused_result"),
+                ty: Ty::Int,
+                mutable: false,
+                value: associated_call,
+                span: span(),
+            },
+        ]);
+
+        optimize_module(&mut module, OptLevel::Default);
+
+        let names = module.funcs[0]
+            .body
+            .stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                HirStmt::Let { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["argument", "unused_result"]);
+    }
+
+    #[test]
+    fn dce_keeps_unused_runtime_allocation() {
+        let mut module = empty_module_with_body(vec![HirStmt::Let {
+            name: SmolStr::new("unused"),
+            ty: Ty::List(Box::new(Ty::Int)),
+            mutable: false,
+            value: HirExpr {
+                kind: HirExprKind::ListLit {
+                    elem_ty: Ty::Int,
+                    elements: vec![],
+                },
+                ty: Ty::List(Box::new(Ty::Int)),
+                span: span(),
+            },
+            span: span(),
+        }]);
+
+        optimize_module(&mut module, OptLevel::Default);
+
+        assert!(
+            matches!(
+                module.funcs[0].body.stmts.first(),
+                Some(HirStmt::Let { .. })
+            ),
+            "DCE must retain an unused runtime allocation"
+        );
+    }
+
+    #[test]
+    fn dce_keeps_unused_bytes_literal_allocation() {
+        let mut module = empty_module_with_body(vec![HirStmt::Let {
+            name: SmolStr::new("unused"),
+            ty: Ty::Bytes,
+            mutable: false,
+            value: bytes_lit(b"payload"),
+            span: span(),
+        }]);
+
+        optimize_module(&mut module, OptLevel::Default);
+
+        assert!(
+            matches!(
+                module.funcs[0].body.stmts.first(),
+                Some(HirStmt::Let { .. })
+            ),
+            "DCE must retain a bytes literal because native codegen allocates it"
+        );
     }
 }

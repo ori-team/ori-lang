@@ -67,10 +67,24 @@ fn stderr_of_aborting_program(name: &str, source: &str) -> String {
 /// expected to abort. Both pipes are captured, so buffered stdout only shows up
 /// when the runtime flushes it before aborting.
 fn output_of_aborting_program(name: &str, source: &str) -> (String, String) {
+    output_of_aborting_program_at_opt_level(name, source, None)
+}
+
+/// Build `source` with an explicit optimizer level, run it, and return the
+/// `(stdout, stderr)` of a process that is expected to abort.
+fn output_of_aborting_program_at_opt_level(
+    name: &str,
+    source: &str,
+    opt_level: Option<&str>,
+) -> (String, String) {
     let dir = TestDir::new(name);
     dir.write("main.orl", source);
     let exe = exe_path(&dir, "app");
-    let compiled = Command::new(ori_exe())
+    let mut compile = Command::new(ori_exe());
+    if let Some(opt_level) = opt_level {
+        compile.env("ORI_OPT", opt_level);
+    }
+    let compiled = compile
         .arg("compile")
         .arg(dir.path("main.orl"))
         .arg("-o")
@@ -151,6 +165,317 @@ end
             String::from_utf8_lossy(&compiled.stderr)
         );
     }
+}
+
+#[test]
+fn dce_keeps_unused_integer_division_trap_at_every_opt_level() {
+    let source = r#"module app.main
+
+import ori.io = io
+
+main()
+    const unused: int = 1 / 0
+    io.println("unreachable")
+end
+"#;
+
+    for level in OPT_LEVELS {
+        let (_stdout, stderr) = output_of_aborting_program_at_opt_level(
+            &format!("unused_division_{level}"),
+            source,
+            Some(level),
+        );
+        assert!(
+            stderr.contains("ori integer division or remainder by zero"),
+            "unused division must keep its runtime trap at ORI_OPT={level}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn dce_keeps_unused_integer_remainder_trap_at_every_opt_level() {
+    let source = r#"module app.main
+
+import ori.io = io
+
+main()
+    var divisor: int = 0
+    const unused: int = 1 % divisor
+    io.println("unreachable")
+end
+"#;
+
+    for level in OPT_LEVELS {
+        let (_stdout, stderr) = output_of_aborting_program_at_opt_level(
+            &format!("unused_remainder_{level}"),
+            source,
+            Some(level),
+        );
+        assert!(
+            stderr.contains("ori integer division or remainder by zero"),
+            "unused remainder must keep its runtime trap at ORI_OPT={level}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn dce_keeps_unused_shift_bounds_trap_at_every_opt_level() {
+    let source = r#"module app.main
+
+import ori.io = io
+
+main()
+    var count: int = 64
+    const unused: int = 1 << count
+    io.println("unreachable")
+end
+"#;
+
+    for level in OPT_LEVELS {
+        let (_stdout, stderr) = output_of_aborting_program_at_opt_level(
+            &format!("unused_shift_{level}"),
+            source,
+            Some(level),
+        );
+        assert!(
+            stderr.contains("ori shift count out of range"),
+            "unused shift must keep its runtime guard at ORI_OPT={level}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn dce_keeps_unused_index_bounds_trap_at_every_opt_level() {
+    let source = r#"module app.main
+
+import ori.io = io
+
+main()
+    const values: list[int] = [1]
+    const unused: int = values[2]
+    io.println("unreachable")
+end
+"#;
+
+    for level in OPT_LEVELS {
+        let (_stdout, stderr) = output_of_aborting_program_at_opt_level(
+            &format!("unused_index_{level}"),
+            source,
+            Some(level),
+        );
+        assert!(
+            stderr.contains("ori list index out of bounds"),
+            "unused index must keep its runtime guard at ORI_OPT={level}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn aggressive_inlining_keeps_an_unused_trapping_argument() {
+    let source = r#"module app.main
+
+import ori.io = io
+
+ignore(value: int) -> int
+    return 1
+end
+
+main()
+    io.println(f"{ignore(1 / 0)}")
+end
+"#;
+
+    let (_stdout, stderr) = output_of_aborting_program_at_opt_level(
+        "inline_unused_trapping_argument",
+        source,
+        Some("aggressive"),
+    );
+    assert!(
+        stderr.contains("ori integer division or remainder by zero"),
+        "aggressive inlining must not omit an unused trapping argument: {stderr}"
+    );
+}
+
+#[test]
+fn aggressive_inlining_preserves_argument_snapshots_and_single_evaluation() {
+    // Call arguments are evaluated before entering the callee. Textually
+    // substituting `current` into `combine` used to move its second read past
+    // `change()`, while substituting `produce()` twice would duplicate it.
+    let source = r#"module app.main
+
+import ori.io = io
+
+var current: int = 1
+var calls: int = 0
+
+change() -> int
+    current = 2
+    return 0
+end
+
+produce() -> int
+    calls = calls + 1
+    return 4
+end
+
+combine(first: int, second: int) -> int
+    return first + change() + second
+end
+
+twice(value: int) -> int
+    return value + value
+end
+
+main()
+    io.println(f"{combine(current, current)}")
+    io.println(f"{twice(produce())}")
+    io.println(f"{calls}")
+end
+"#;
+
+    assert_same_output_at_every_opt_level("inline_argument_evaluation", source, "2\n8\n1");
+}
+
+#[test]
+fn aggressive_inlining_keeps_parameter_contract_checks() {
+    let source = r#"module app.main
+
+import ori.io = io
+
+positive(value: int if it > 0) -> int
+    return value
+end
+
+main()
+    io.println(f"{positive(0)}")
+end
+"#;
+
+    let (_stdout, stderr) = output_of_aborting_program_at_opt_level(
+        "inline_parameter_contract",
+        source,
+        Some("aggressive"),
+    );
+    assert!(
+        stderr.contains("contract.param_violation"),
+        "aggressive inlining must not erase parameter contracts: {stderr}"
+    );
+}
+
+#[test]
+fn dce_keeps_associated_call_argument_bindings_at_every_opt_level() {
+    // Associated calls carry no receiver expression in HIR. DCE must still
+    // see their arguments, or it can delete `argument` before the static
+    // dispatch is lowered.
+    let source = r#"module app.main
+
+import ori.io = io
+
+struct User
+    seed: int
+end
+
+apply User
+    consume(value: int) -> int
+        return value
+    end
+end
+
+main()
+    const argument: int = 41
+    const unused_result: int = User.consume(argument)
+    io.println("associated call survived")
+end
+"#;
+
+    assert_same_output_at_every_opt_level(
+        "associated_call_argument_dce",
+        source,
+        "associated call survived",
+    );
+}
+
+#[test]
+fn dce_keeps_bindings_used_only_by_match_guards_at_every_opt_level() {
+    let source = r#"module app.main
+
+import ori.io = io
+
+main()
+    const threshold: int = 10
+    match 11
+    case value if value > threshold:
+        io.println("guard kept")
+    case else:
+        io.println("wrong arm")
+    end
+end
+"#;
+
+    assert_same_output_at_every_opt_level("match_guard_binding_dce", source, "guard kept");
+}
+
+#[test]
+fn dce_keeps_failed_field_contracts_at_every_opt_level() {
+    let source = r#"module app.main
+
+import ori.io = io
+
+struct Positive
+    value: int if it > 0
+end
+
+main()
+    const unused: Positive = Positive { value: 0 }
+    io.println("unreachable")
+end
+"#;
+
+    for level in OPT_LEVELS {
+        let (_stdout, stderr) = output_of_aborting_program_at_opt_level(
+            &format!("unused_field_contract_{level}"),
+            source,
+            Some(level),
+        );
+        assert!(
+            stderr.contains("contract.field_violation"),
+            "DCE must retain failed field contracts at ORI_OPT={level}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn dce_keeps_custom_destructors_at_every_opt_level() {
+    let source = r#"module app.main
+
+import ori.core = core
+import ori.io = io
+
+struct Resource
+    label: string
+end
+
+apply Resource use core.Destructor
+    mut destroy(self)
+        io.println("destroy:" + self.label)
+    end
+end
+
+consume()
+    const resource: Resource = Resource { label: "optimizer" + "-resource" }
+end
+
+main()
+    consume()
+    io.println("done")
+end
+"#;
+
+    assert_same_output_at_every_opt_level(
+        "unused_custom_destructor_dce",
+        source,
+        "destroy:optimizer-resource\ndone",
+    );
 }
 
 #[test]
@@ -536,4 +861,67 @@ end
     let run = Command::new(&host).output().unwrap();
     assert!(run.status.success());
     assert_eq!(normalize_stdout(run.stdout).trim(), "18446744073709551615");
+}
+
+#[test]
+fn emitted_c_check_message_is_not_a_format_string() {
+    if !cfg!(target_os = "linux") || Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let dir = TestDir::new("emitted_c_check_message");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+main()
+    check false, "quote \" slash \\ line\n %s %n"
+end
+"#,
+    );
+    let generated = dir.path("main.c");
+    let emitted = Command::new(ori_exe())
+        .arg("emit")
+        .arg("c")
+        .arg(dir.path("main.orl"))
+        .arg("-o")
+        .arg(&generated)
+        .output()
+        .unwrap();
+    assert!(
+        emitted.status.success(),
+        "emitting C failed: {}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let host = exe_path(&dir, "check_host");
+    let compiled = Command::new("cc")
+        .arg("-std=c11")
+        .arg("-Wformat")
+        .arg("-Werror=format-security")
+        .arg("-o")
+        .arg(&host)
+        .arg(&generated)
+        .arg("-lm")
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "emitted C failed to compile:\n{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let run = Command::new(&host).output().unwrap();
+    assert!(
+        !run.status.success(),
+        "failed check must terminate the C host"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("quote \" slash \\ line\n"),
+        "stderr: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("%s %n"),
+        "percent sequences must stay data: {stderr:?}"
+    );
 }

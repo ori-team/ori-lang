@@ -20,7 +20,7 @@ ori --version
 | `ori new <path>` | Create a new project (`--lib` for a library) |
 | `ori check <file>` | Type-check and report diagnostics — no binary produced |
 | `ori run <file>` | Compile and run through the native runtime |
-| `ori test <file>` | Run functions marked `@test` |
+| `ori test <file> [--doc]` | Run functions marked `@test` (or `--doc` to run markdown doctests) |
 | `ori explain <code>` | Explain a diagnostic code, e.g. `ori explain type.type_mismatch` |
 
 ```bash
@@ -32,6 +32,23 @@ ori run main.orl
 
 `ori check .` walks up until it finds `ori.proj`, so it works from any
 subfolder of a project. `ori check ori.proj` is equivalent.
+
+All compilation commands accept the same conditional-compilation selection:
+
+```bash
+ori check . --features tls,telemetry
+ori run . --no-default-features
+ori check . --execution-profile embedded
+ori check . --target x86_64-unknown-linux-gnu
+```
+
+Features must be declared under `[features]` in the project/package manifest.
+These flags also affect AOT cache fingerprints. `--target` selects cfg facts
+and native runtime artifacts; it does not by itself promise full native
+cross-compilation. A triple whose architecture or OS is outside cfg v1 is
+rejected instead of being treated as an OS-free target.
+Likewise, `--execution-profile embedded` selects cfg branches; it does not yet
+turn the desktop runtime into a freestanding or sandboxed runtime.
 
 ---
 
@@ -54,10 +71,12 @@ Compiling a shared library instead of an executable:
 ori compile main.orl --lib -o libmy_app.so
 ```
 
-Only functions marked `@c_export` are visible to C. The export surface covers
-scalars (`int`, `float`, `bool`, …) and **`string`**, which crosses as a
-NUL-terminated `const char *`. Aggregates — structs, `list`, `map`, `optional`,
-`result` — are not exportable yet.
+Only functions marked `@c_export` are visible to C. The ABI currently covers
+scalars, `string`, non-empty non-generic scalar structs, managed structs through
+opaque ARC handles, and direct `optional`/`result` bridges. Direct `list`,
+`map`, `set`, `tuple`, nested sum types, generic structs, and empty structs are
+still rejected. The generated header is the canonical host declaration; see
+[ABI-1](../spec/19-abi.md#83b-c_export--the-host-facing-surface).
 
 A string **returned** to the host is owned by the host: free it with
 `ori_arc_release`, or it leaks. A string **passed in** stays owned by the host;
@@ -74,8 +93,9 @@ Ori never frees it. See [../spec/19-abi.md](../spec/19-abi.md) §8.3b.
 | `ori summary` | Print entry, namespaces, and imports of the project |
 | `ori install <name> --path .` | Install a package into the local cache |
 | `ori get` | Fetch git/path dependencies into the local cache |
-| `ori lock [path]` | Resolve dependencies and write `ori.lock`; use `--locked` to validate only |
-| `ori publish` | Publish a package to the registry in `ORI_REGISTRY` |
+| `ori lock [path]` | Resolve dependencies and atomically write digest-bearing `ori.lock` v2 |
+| `ori lock [path] --locked --offline` | Restore the exact lock from verified cache/path content without network |
+| `ori publish` | Immutably publish a package and SHA-256 archive digest to `ORI_REGISTRY` |
 | `ori update` | Update the toolchain to the latest published release |
 
 Manifest fields are specified in
@@ -93,11 +113,14 @@ Manifest fields are specified in
 
 ---
 
-## Formatting and migration
+## Formatting, linting, and tools
 
 | Command | What it does |
 |---|---|
-| `ori fmt <file>` | Format a source file and print the result |
+| `ori fmt <path> [-w / --write] [-c / --check]` | Format a source file or recursively format directory (`-w` in-place, `-c` check) |
+| `ori lint <path>` | Run semantic code linter for unused variables and code redundancy |
+| `ori daemon [--stdio]` | Run the experimental process-persistent stdio prototype; it rebuilds fresh pipelines and is not yet a complete/cached JSON-RPC service |
+| `ori bindgen <header.h> [--module <name>]` | Generate low-level Ori `extern "c"` bindings and `@repr("C")` structs from C header |
 | `ori migrate-syntax <path>` | Best-effort rewrite of pre-S3 syntax in `.orl` files |
 
 `ori migrate-syntax` handles the mechanical S3 cutover. It rewrites:
@@ -164,6 +187,19 @@ it.
 The C backend is a debug aid, not a semantic reference — the native backend is
 ([../spec/14-backend-support.md](../spec/14-backend-support.md)).
 
+Maintainers can compile and run a hostile `check` message through the generated
+C under AddressSanitizer and UndefinedBehaviorSanitizer:
+
+```sh
+cd compiler
+cargo test -p ori-driver --test c_backend_sanitizers -- --nocapture
+```
+
+The test probes `clang` and then `cc`. It prints an explicit `SKIP` when neither
+compiler can compile and run with both sanitizers. Set `ORI_C_SANITIZER_CC` to
+one compiler executable, or set `ORI_REQUIRE_C_SANITIZERS=1` to turn missing
+sanitizer support into a gate failure (recommended in CI).
+
 ## Program debugging
 
 Use the cooperative native debugger for native programs, including async
@@ -206,8 +242,10 @@ bindings and closure captures with source lines.
 | Variable | Effect |
 |---|---|
 | `ORI_PACKAGE_CACHE` | Where packages are installed (default `~/.ori/packages`) |
-| `ORI_REGISTRY` | Registry URL used by `ori publish` / `ori install` |
+| `ORI_REGISTRY` | Registry path or HTTPS URL used by `ori publish` / `ori install` |
 | `ORI_REGISTRY_TOKEN` | Auth token for the registry |
+| `ORI_OFFLINE` | Refuse package network access and require verified cache entries |
+| `ORI_ALLOW_INSECURE_REGISTRY` | Allow plain HTTP only for an explicitly trusted local-development registry |
 | `ORI_STDLIB_ROOT` | Override the stdlib location |
 | `ORI_RUNTIME_LIB` / `ORI_RUNTIME_CDYLIB` | Point at a specific staged native runtime |
 | `ORI_REQUIRE_PACKAGED_RUNTIME` | Fail instead of falling back to a Cargo build of the runtime |
@@ -219,7 +257,11 @@ bindings and closure captures with source lines.
 `--no-color` is accepted by every command and disables ANSI output.
 
 When a project contains `ori.lock`, dependency resolution is checked before
-compilation. Imports remain package-scoped: use a dependency's qualified module
+compilation. The lock pins normalized source identity, exact Git revision, and
+the SHA-256 of every dependency tree; changed bytes fail instead of being
+silently re-resolved. Registry HTTPS is mandatory by default, published
+versions are immutable, and archive downloads/extraction have hard byte, entry,
+path, and depth limits. Imports remain package-scoped: use a dependency's qualified module
 name (`demo.math`) rather than relying on a bare module search across packages.
 Native rebuilds report the number of changed source modules. Rebuilds keep
 unchanged source objects in `.ori/modules/` and link them with regenerated

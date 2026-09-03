@@ -1,109 +1,111 @@
 # Ori documentation
 
-> Current project version: **0.3.8**  
-> Language surface: **S3**  
-> Native ABI: **`ori-native-abi-1`**
+> **Surface:** S3 (`0.3.0`) · inference option B (`0.3.1`) · workspace `0.3.8-dev`
+> **Languages:** English is primary on GitHub · Portuguese is maintained in parallel  
+> **Status:** living docs — must match the compiler, not aspirational designs
 
-Start with the canonical [`ATLAS.md`](ATLAS.md). It maps documents to code, tests, decisions, and operational procedures.
-
-## By audience
+This tree is the product documentation for Ori. Use it by audience:
 
 | Audience | Start here |
-|---|---|
-| New user | [Install](install.md) → [Language tour](language/tour.md) → [First project](guides/first-project.md) |
-| Portuguese reader | [Índice em português](README.pt-BR.md) |
-| Language user | [Guides](guides/README.md) · [CLI reference](guides/cli-reference.md) · [Examples](../examples/) |
-| Language implementer | [Specification](spec/README.md) · [Compiler pipeline](architecture/compiler-pipeline.md) |
-| Contributor | [Project start](../PROJECT_START.md) · [Operational rules](../AGENTS.md) |
-| Runtime contributor | [Runtime and memory](architecture/runtime-and-memory.md) · [Unsafe policy](security/unsafe-code-policy.md) |
-| Maintainer | [Product status](product/status.md) · [Versioning](product/versioning.md) · [Operations](operations/README.md) |
-| AI agent | [ATLAS](ATLAS.md) · [Catalog](catalog.yaml) · [`.ai/`](../.ai/README.md) |
+|----------|------------|
+| **New user** | [Install](install.md) → [Language tour](language/tour.md) → [First project](guides/first-project.md) |
+| **Book (draft, PT)** | **[Ori book](book/README.md)** (PDF/HTML distribution is not committed) |
+| **Everyday coding** | [Cookbook](guides/cookbook.md) · [Errors / optional / result](guides/errors-null-void.md) · [Examples](../examples/) |
+| **Performance** | [Performance microbench](guides/performance.md) (Ori vs Python vs Rust) · [PT](guides/performance.pt-BR.md) |
+| **Language contract** | [Specification](spec/README.md) (normative, English) |
+| **Advanced language** | [Advanced types](language/advanced.md) · [Async](language/concurrency.md) · [C ABI](language/interop.md) |
+| **Maintainers / planning** | **[BACKLOG](planning/BACKLOG.md)** (only open-work list) · [Planning](planning/README.md) · [AGENTS.md](../AGENTS.md) |
 
-## Domains
+Portuguese index: [README.pt-BR.md](README.pt-BR.md).
+
+---
+
+## Language policy (standard)
+
+| Document class | Language | Notes |
+|----------------|----------|--------|
+| **GitHub primary surface** (root `README.md`, `docs/**` user guides, install) | **English** | Canonical for links, CI badges, releases |
+| **Portuguese parallel** | **`*.pt-BR.md` sibling** or `README.pt-BR.md` | Same structure and version as EN; no orphan PT-only user guides |
+| **Normative spec** (`docs/spec/`) | **English** | Single source of truth for implementers |
+| **Planning / backlog** (`docs/planning/`) | Portuguese or English (file’s existing language) | Not user-facing product docs |
+| **Book** (`docs/book/`) | Portuguese prose; S3 code samples | Draft narrative/reference; does **not** replace `spec/` |
+| **Historical** (`docs/planning/historico/`, `docs/archive/`) | as written | Do not teach as current surface |
+| **Code + code comments** | English | Project matrix in `AGENTS.md` |
+
+**Rules:**
+
+1. User-facing examples must be **valid S3** (`module`, no declaration `func`, `import path = alias`, types with `[]`, `ok`/`err`, `try`, `end` blocks).
+2. Prefer `import ori.X = short` and canonical stdlib parents `ori.X` (not `.utils` in new docs).
+3. Project layout is **root-first**: `ori.proj` + `main.orl` (no forced `src/`).
+4. When changing syntax, runtime, or CLI, update **EN + PT** user docs in the same change as the code when the change is user-visible.
+5. Spec stays English-only; do not fork the normative chapters into PT.
+
+---
+
+## Directory map
 
 ```text
 docs/
-├── ATLAS.md                 canonical navigation and impact map
-├── catalog.yaml             machine-readable document relationships
-├── product/                 identity, status, versioning, accessibility
-├── architecture/            current system and invariants
-├── spec/                    normative language, runtime, project, and ABI contracts
-├── implementation/          standards and safe extension paths
-├── quality/                 tests, conformance, diagnostics, performance
-├── security/                threat model and unsafe/FFI policy
-├── governance/              language evolution and RFC process
-├── decisions/               ADR policy and accepted decisions
-├── rfcs/                    significant public proposals
-├── plans/                   active complex execution plans
-├── operations/              development and release procedures
-├── language/                user-facing language learning
-├── guides/                  task-oriented user guides
-├── book/                    long-form Portuguese book
-└── archive/                 categorized historical evidence
+├── README.md              # this file (EN index)
+├── README.pt-BR.md        # PT index
+├── install.md             # end-user install (EN)
+├── install.pt-BR.md       # end-user install (PT)
+├── language/              # learn the language (user-facing)
+│   ├── tour.md
+│   ├── advanced.md        # arrays, slices, contracts, generics, associated items
+│   ├── concurrency.md     # async, tasks, channels, iter generators
+│   ├── interop.md         # extern, @c_export, and ABI-1
+│   └── *.pt-BR.md         # Portuguese siblings
+├── guides/                # how-to guides (EN + .pt-BR)
+│   ├── first-project.md
+│   ├── cookbook.md
+│   ├── errors-null-void.md
+│   ├── testing.md
+│   ├── report-bugs.md
+│   ├── bootstrapping.md
+│   ├── stdlib-reference.md
+│   ├── debugging.md
+│   ├── performance.md     # Ori / Python / Rust microbench (EN + .pt-BR)
+│   └── language-comparison.md  # older multi-lang suite (historical notes)
+├── ATLAS.md               # implementation/documentation coverage entry point
+├── atlas/                 # machine-readable feature registry
+├── spec/                  # normative language + ABI (EN)
+├── book/                  # Ori book draft (PT narrative + reference)
+└── planning/              # maintainers only (not a tutorial)
+    └── historico/         # completed / archived plans
 ```
 
-The historical documentation migration is complete:
+Polyglot harness (sources + runner): [`tools/bench/polyglot/`](../tools/bench/polyglot/).
 
-- `docs/planning/BACKLOG.md` is the canonical open-work list;
-- accepted decisions live in `docs/decisions/adr/`;
-- completed plans and investigations live in categorized directories under `docs/archive/`;
-- the former `docs/planning/historico/` root has been removed;
-- the complete move map is in [`archive/MIGRATION_REPORT.md`](archive/MIGRATION_REPORT.md).
+---
 
-Planning documents never override the normative specification.
+## Current language surface (quick)
 
-## Canonical-source rules
+| Topic | Canonical form |
+|-------|----------------|
+| File header | `module app.main` |
+| Function | `name(params) -> T` / `main()` — **no** `func` keyword |
+| Types | `list[T]`, `map[K, V]`, `optional[T]`, `result[T, E]` |
+| Result | `ok(v)` / `err(e)` · match `case ok(x):` / `case err(m):` |
+| Propagate | `try expr` only |
+| Imports | `import ori.io = io` · `import ori.fs (read_text)` · `import ori.io` |
+| Traits | `import ori.core = core` · `apply Type` + `use core.Displayable` |
+| Pipe | `x \|> f` (kept; typed as `f(x)`) |
+| Local inference | option B: field / index / call / pipe when type is known |
+| Async | `async main()` + `await` (native); C/debug rejects async |
+| Project | `ori.proj` + recommended `main.orl` at project root |
 
-1. One subject has one canonical current document.
-2. Other documents link instead of repeating the full explanation.
-3. Architecture describes implementation today.
-4. Specification describes accepted behavior today.
-5. ADRs explain durable decisions.
-6. RFCs describe proposals under review.
-7. ExecPlans describe complex accepted implementation work.
-8. Archived documents may contain obsolete versions, commands, or syntax.
-9. Active status documents use project version `0.3.8`.
-10. New canonical documents update both `ATLAS.md` and `catalog.yaml`.
+Full contract: [spec/01-overview.md](spec/01-overview.md). Migration from pre-S3: `ori migrate-syntax`.
 
-## Language policy
+---
 
-| Document class | Language policy |
-|---|---|
-| Root GitHub presentation and primary user docs | English canonical |
-| Maintained user-facing translation | Portuguese sibling such as `*.pt-BR.md` |
-| Normative specification | English only |
-| Planning and historical evidence | Existing language may be preserved |
-| Book | Portuguese |
-| Code and code comments | English |
+## Version pins
 
-When a user-visible behavior changes, update maintained EN/PT siblings in the same PR.
+| Artifact | Version |
+|----------|---------|
+| Language surface (S3) | `0.3.0` |
+| Local inference + option B | `0.3.1` |
+| Latest release | `v0.3.7` |
+| Cargo workspace | `0.3.8-dev` |
 
-## Current syntax baseline
-
-Active examples must use current S3 syntax:
-
-- `module app.name`;
-- functions without a declaration `func` keyword;
-- `public` visibility;
-- types with `[]`;
-- `import path = alias`;
-- `ok`, `err`, and `try`;
-- `apply Type` and `use Trait`;
-- `end`-delimited blocks.
-
-Historical documents must be clearly archived before preserving removed syntax.
-
-## Quality
-
-Documentation changes should validate:
-
-- internal links;
-- canonical-source ownership;
-- active version references;
-- runnable examples;
-- EN/PT parity where maintained;
-- document metadata and catalog entries;
-- archived-state rules;
-- absence of obsolete project identity in active material.
-
-See [quality documentation](quality/README.md) and [documentation templates](templates/DOCUMENT.md).
+Changelog: [CHANGELOG.md](../CHANGELOG.md).

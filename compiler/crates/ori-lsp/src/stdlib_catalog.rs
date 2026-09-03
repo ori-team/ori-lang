@@ -77,7 +77,7 @@ fn build_catalog() -> StdlibCatalog {
     }
 
     if let Some(root) = ori_driver::pipeline::find_stdlib_root() {
-        scan_stdlib_dir(&root, &root, &mut catalog);
+        scan_stdlib_dir(&root, &mut catalog);
     }
 
     catalog
@@ -400,14 +400,14 @@ fn extract_doc_comments(source: &str, start_offset: usize) -> Option<String> {
     }
 }
 
-fn scan_stdlib_dir(root: &Path, dir: &Path, catalog: &mut StdlibCatalog) {
+fn scan_stdlib_dir(dir: &Path, catalog: &mut StdlibCatalog) {
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in read.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            scan_stdlib_dir(root, &path, catalog);
+            scan_stdlib_dir(&path, catalog);
         } else if path.extension().is_some_and(|e| e == "orl") {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 scan_stdlib_orl(&path, &content, catalog);
@@ -420,7 +420,18 @@ fn scan_stdlib_orl(path: &Path, content: &str, catalog: &mut StdlibCatalog) {
     let file_id = ori_diagnostics::FileId(0);
     let mut sink = ori_diagnostics::DiagnosticSink::default();
     let tokens = ori_lexer::lex(content, file_id, &mut sink);
-    let source_file = ori_parser::parse(&tokens, content, file_id, &mut sink);
+    let mut source_file = ori_parser::parse(&tokens, content, file_id, &mut sink);
+    if let Err(error) = ori_driver::pipeline::filter_intrinsic_source_for_current_configuration(
+        &mut source_file,
+        file_id,
+        &mut sink,
+    ) {
+        eprintln!(
+            "ori-lsp: cannot index stdlib module `{}`: {error}",
+            path.display()
+        );
+        return;
+    }
     let namespace = source_file.namespace.name.to_string();
 
     for item in &source_file.items {
@@ -562,7 +573,7 @@ end
 "#;
         let map = import_alias_map(source);
         assert!(
-            map.get("io").is_none(),
+            !map.contains_key("io"),
             "bare import must not invent short alias `io`: {map:?}"
         );
         assert_eq!(map.get("ori.io"), Some(&"ori.io".to_string()));

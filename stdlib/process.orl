@@ -1,7 +1,32 @@
 module ori.process
 
+import ori.bytes = bytes_mod
 import ori.convert = conv
 import ori.map = maps
+import ori.string = string_mod
+
+public struct ProcessOutput
+    status: int
+    stdout: bytes
+    stderr: bytes
+end
+
+public stdout_text(output: ProcessOutput) -> result[string, string]
+    return string_mod.from_bytes(output.stdout)
+end
+
+public stderr_text(output: ProcessOutput) -> result[string, string]
+    return string_mod.from_bytes(output.stderr)
+end
+
+public run_output(program: string, args: list[string]) -> result[ProcessOutput, string]
+    match ori.process.run_output_raw(program, args)
+        case ok(raw):
+            return ok(ProcessOutput { status: raw.0, stdout: raw.1, stderr: raw.2 })
+        case err(msg):
+            return err(msg)
+    end
+end
 
 public exit_code(capture: map[string, string]) -> int
     if some(raw) = maps.try_get(capture, "status")

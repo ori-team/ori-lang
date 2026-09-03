@@ -1,7 +1,7 @@
 # Backend support matrix
 
-Status: current as of 2026-07-23 (FREEZE-1 / 0.3.x).
-Residual cleanup: [`../planning/qa/residual-cleanup-2026-07-13.md`](../archive/audits/residual-cleanup-2026-07-13.md) · audit `tools/qa/residual_audit.sh`.
+Status: current as of 2026-08-10 (FREEZE-1 / workspace 0.3.8-dev).
+Residual cleanup: [`../planning/qa/residual-cleanup-2026-07-13.md`](../planning/qa/residual-cleanup-2026-07-13.md) · audit `tools/qa/residual_audit.sh`.
 
 This page separates three things:
 
@@ -22,6 +22,7 @@ Legend:
 | --- | --- | --- | --- | --- |
 | Basic expressions and statements | yes | yes | partial | Native is the main execution path. C/debug is not full parity. |
 | Functions and imports | yes | yes | partial | Native tests cover local imports, transitive imports and entry module. |
+| Structured `@cfg` | yes | yes | yes | Filtering occurs in the shared frontend before HIR, so AOT, JIT, C/debug, docs, and exported ABI receive the same active declarations. |
 | Structs, enums and tuples | yes | yes | partial | Native ABI has layout tests. |
 | Traits and `any[Trait]` | yes | yes | partial | Native tests cover dynamic dispatch. |
 | Generics and monomorphization | yes | yes | partial | Native tests cover generic functions and imported generic traits. |
@@ -32,7 +33,7 @@ Legend:
 | `ori.net` (TCP/TLS/UDP) | yes | yes | no | Native runtime only (rustls). Sync path blocking; async uses shared I/O reactor with `poll(2)` readiness (STDLIB-4k) for read/write/accept/UDP; connect/TLS still worker+future (STDLIB-4b). |
 | File I/O async | yes | yes | no | L1 `fs.read_text_async` / `write_text_async` (worker + future); L2 `read_text_in_background` Jobs. |
 | `bytes` with internal NUL | yes | partial | partial | Native preserves embedded NUL bytes; the C/debug backend does not expose the length-carrying `bytes` representation. `string` still rejects internal NUL at conversion boundary. |
-| Unicode `string.len`, `slice`, `index_of` | yes | yes | partial | Indices are Unicode scalar indices, not byte offsets. |
+| Unicode `len(string)`, methods, and iteration | yes | yes | yes | Global/method length, slices, indexing, `index_of`, `chars`, and direct iteration use Unicode scalar values, not UTF-8 byte offsets. Generated-C execution covers accents, emoji, and rejection of malformed input. Grapheme APIs remain separate future library work. |
 | Async functions and `await` | yes | yes* | no | *Promised native subset closed (LANG-1). Rare residual layout failures only — see inventory. C/debug rejects async. |
 | `using` resource cleanup | yes | yes | partial | Sync and async `using` supported; async dispose on normal return, `try`, cancel, fail, and `break`. |
 | `core.Destructor` automatic cleanup | yes | yes | no | Native AOT/JIT run the callback before field cleanup. C/debug rejects it with `backend.c_unsupported` rather than changing semantics. |
@@ -51,7 +52,7 @@ Supported today (covered by `concurrency_async.rs`):
 - `const x: T = try await future`.
 - `await` inside top-level return expressions, call arguments, and operators.
 - `await` inside top-level statement conditions, such as `if await flag()`.
-- `using` inside `async func` with `dispose()` on scope exit, cancellation, failure, propagation (`try`), and `break`.
+- `using` inside an `async` function with `dispose()` on scope exit, cancellation, failure, propagation (`try`), and `break`.
 - Multiple awaits in the same async function with preserved ARC locals across suspensions.
 
 ### LANG-1 status (2026-07-13)
@@ -95,7 +96,7 @@ Current failure mode:
 
 Intentionally **not** supported on the C route:
 
-- `async func`, `await`, `task.*`, `channel.*`, `atomic.*`
+- `async` functions, `await`, `task.*`, `channel.*`, `atomic.*`
 - `json.parse` / structured `json.Value` (C emits FFI stubs only; no dedicated C lowering)
 - `ori.net.*` (TCP/TLS/UDP; native runtime only)
 
@@ -166,12 +167,12 @@ Legend:
 
 Full async/concurrency parity in the C/debug backend is **intentionally not
 part of its contract**.
-The native Cranelift backend is the reference implementation for `async func`,
+The native Cranelift backend is the reference implementation for `async` functions,
 `await`, `task.*`, `channel.*`, and `atomic.*`.
 
 Current C/debug behaviour:
 
-- `async func` / `await` in user code: rejected at C codegen with an actionable
+- `async` functions / `await` in user code: rejected at C codegen with an actionable
   message (`backend.c_unsupported` via `ori emit c`).
 - Stdlib async/concurrency symbols: rejected at C codegen (same route).
 - Sync subset (`ori emit c` on non-async programs): supported per the matrix above.
@@ -198,5 +199,5 @@ language decision explicitly promotes C to a product backend.
 - **LANG-RES (2026-07-13):** closed for product surface — no known
   product-blocking native residual. Gate test:
   `compile_runs_lang_res_product_surface_native`. Closure write-up:
-  `docs/archive/audits/lang-res-closure.md`. Reopen only with a concrete blocker
+  `docs/planning/historico/lang-res-closure.md`. Reopen only with a concrete blocker
   program (valid language surface + `backend.native_unsupported`).

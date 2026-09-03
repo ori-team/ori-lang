@@ -33,11 +33,58 @@ pointer, length, lifetime, and ownership requirements in this chapter apply to
 all exported entry points. Critical ARC primitives additionally keep local
 `# Safety` rustdoc beside their implementation.
 
+## `handle[T]` boundary
+
+`handle[T]` is the source-level spelling for a borrowed, opaque host pointer.
+It is intentionally weaker than an ARC-managed Ori value:
+
+- the runtime does not retain or release the pointee;
+- the handle is not `Transferable` and cannot cross a spawned-task boundary;
+- a null pointer (`0`) is representable, and `ori.handle.is_null` provides a
+  non-dereferencing probe for that sentinel; there is still no dedicated
+  nullable constructor or safe dereference operation;
+- `==` and `!=` compare pointer identity only; they never dereference or retain
+  the pointee. This is not semantic equality, and handles are not hashable by
+  this rule;
+- generated FFI wrappers may borrow the pointer only for the duration of the
+  call. They must not store it, return it after the host-owned object expires,
+  or expose it to another thread.
+- `@c_export` wrappers validate opaque managed handles against the runtime ARC
+  registry before retaining or dereferencing them. The compiler emits a
+  concrete payload size and source-type tag for every managed aggregate export;
+  null, foreign, wrong-size, and wrong-type pointers take the deterministic
+  bounds-failure path instead of reaching user code. There is no generated
+  provenance-only fallback for generic or legacy untyped handles: such a
+  boundary is rejected during code generation.
+
+The compiler currently checks the shape of `handle[T]`, preserves its pointer
+representation, rejects it at task/channel transfer boundaries, and rejects
+`@c_export` aggregates that would retain it past a host call. The
+`ori.handle.is_null` helper is safe because it only compares the pointer with
+null; it does not validate or retain the pointee. The compiler still does not
+prove pointee lifetime, nullable construction, or host-thread affinity.
+Callers therefore own those invariants. A future contract (`LANG-HANDLE-1`)
+must add explicit nullable handling, safe access helpers, and compile-time
+rejection of escaping borrows before this boundary can be considered complete.
+
 ## String functions
 
 Ori strings currently use a nul-terminated UTF-8 representation.
 
 - `*const c_char` string inputs must point to valid nul-terminated UTF-8.
+- If a legacy pointer-returning entry point receives invalid UTF-8, it records
+  host error `1003` (`ORI_HOST_ERROR_INVALID_UTF8`) in the current thread's
+  hosted-error slot and returns its documented compatibility value. Hosts must
+  inspect and clear that slot; new typed boundaries must return an explicit
+  error instead of using the compatibility value.
+- If a runtime worker cannot be created, it records host error `1004`
+  (`ORI_HOST_ERROR_THREAD_SPAWN`) with the worker name and operating-system
+  cause. The associated future still reaches `Failed`; hosts should inspect the
+  error slot before starting another operation.
+- A worker or callback panic is caught only at a declared `C-unwind` boundary.
+  It produces a terminal failed future or structured callback trap and a
+  readable runtime diagnostic; it must never unwind through an `extern "C"`
+  dispatcher.
 - Functions that create strings allocate a new managed string payload.
 - Functions that return borrowed internal string pointers keep ownership in the
   source object. Callers must not free those pointers directly.
@@ -52,11 +99,18 @@ Ori bytes are length-aware binary payloads.
 
 - Bytes APIs must preserve `0x00` and must not use `CStr` to compute payload
   length.
+- Legacy pointer-only byte entry points reject unregistered foreign pointers
+  with host error `1002` (`ORI_HOST_ERROR_INVALID_ARGUMENT`) instead of
+  probing memory for a terminator. Hosts must use the explicit `(data, len)`
+  `OriBytes` view for foreign buffers.
 - Inputs are valid when the data pointer is non-null for `len > 0`.
 - A null data pointer is valid only when `len == 0`.
 - UTF-8 decoding into `string` must reject interior NUL while strings remain
   nul-terminated.
 - File APIs that read or write bytes must use the explicit bytes length.
+- Generated `@c_export` headers represent bytes as `OriBytes { data, len }`.
+  The wrapper copies the view before calling Ori; hosts must keep `data` valid
+  for the call and must release returned `out->data` with `ori_arc_release()`.
 
 ## Collection functions
 
@@ -117,6 +171,22 @@ function. Broad FFI families use this chapter as their shared contract. When a
 runtime entry point becomes a public Rust API, it must also gain function-level
 `# Safety` rustdoc before its visibility is widened.
 
+## Hosted runtime lifecycle
+
+- Runtime-created threads attach a per-thread stack-guard altstack and detach
+  it on exit. Foreign threads must bracket calls with
+  `ori_rt_thread_attach()`/`ori_rt_thread_detach()`.
+- `__ori_module_init()` constructs dynamic globals once per generation;
+  `__ori_module_shutdown()` releases their managed slots before code unload.
+- `ori_rt_shutdown_ex(timeout_ms)` cancels persistent queues, joins persistent
+  workers, drains executor closures, waits for detached jobs, and rejects
+  shutdown while another foreign thread remains attached. Only return value
+  zero permits `dlclose`/`FreeLibrary`.
+- Error `1006` means workers remain reachable and the cdylib must stay loaded.
+- Linux signal handlers cache page size before installation, use only
+  async-signal-safe operations in the handler, preserve the previous action,
+  and restore it at successful shutdown.
+
 ## Native link strategies
 
 The native backend (`ori-codegen::native_backend`) supports four link strategies,
@@ -153,6 +223,14 @@ The JIT path requires the runtime cdylib to be staged alongside the staticlib
 (see `runtime/README.md`). `find_native_runtime_cdylib()` in the driver resolves
 the cdylib path with the same search order as the staticlib (`ORI_RUNTIME_CDYLIB`
 override → packaged → cargo fallback).
+
+Before a staged cdylib is loaded, codegen validates its filename, target,
+package version, ABI revision, and SHA-256 against `runtime-link.json`. It then
+queries `ori_rt_version`, `ori_rt_abi_version`, and `ori_rt_target` from the
+loaded library before registering runtime symbols. Missing or mismatched
+identity fails with `native.abi_mismatch`; staged metadata without a digest is
+not accepted. Staging with `--skip-build` refuses an artifact older than the
+runtime source tree.
 
 `ori compile` and `ori test` remain AOT-only:
 - `ori compile` produces a distributable binary artifact; JIT'd code cannot be

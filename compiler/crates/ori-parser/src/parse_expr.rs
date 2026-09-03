@@ -17,17 +17,21 @@ struct NormalizedTripleString {
 fn infix_prec(kind: &TokenKind) -> Option<(u8, u8)> {
     // Returns (left_prec, right_prec). right > left → right-associative.
     match kind {
-        TokenKind::Pipe => Some((1, 2)), // |>  left-assoc
-        TokenKind::Or => Some((3, 4)),   // or
-        TokenKind::And => Some((5, 6)),  // and
+        TokenKind::Pipe => Some((1, 2)),                   // |>  left-assoc
+        TokenKind::Or => Some((3, 4)),                     // or
+        TokenKind::Bar => Some((5, 6)),                    // |   bitwise or
+        TokenKind::Caret => Some((7, 8)),                  // ^   bitwise xor
+        TokenKind::Amp => Some((9, 10)),                   // &   bitwise and
+        TokenKind::And => Some((11, 12)),                  // and
+        TokenKind::Shl | TokenKind::Shr => Some((13, 14)), // shifts
         TokenKind::EqEq
         | TokenKind::BangEq
         | TokenKind::Lt
         | TokenKind::LtEq
         | TokenKind::Gt
-        | TokenKind::GtEq => Some((7, 8)), // comparisons
-        TokenKind::Plus | TokenKind::Minus => Some((9, 10)),
-        TokenKind::Star | TokenKind::Slash | TokenKind::Percent => Some((11, 12)),
+        | TokenKind::GtEq => Some((15, 16)), // comparisons
+        TokenKind::Plus | TokenKind::Minus => Some((17, 18)),
+        TokenKind::Star | TokenKind::Slash | TokenKind::Percent => Some((19, 20)),
         _ => None,
     }
 }
@@ -47,6 +51,11 @@ fn token_to_binop(kind: &TokenKind) -> Option<BinaryOp> {
         TokenKind::GtEq => Some(BinaryOp::Ge),
         TokenKind::And => Some(BinaryOp::And),
         TokenKind::Or => Some(BinaryOp::Or),
+        TokenKind::Amp => Some(BinaryOp::Band),
+        TokenKind::Bar => Some(BinaryOp::Bor),
+        TokenKind::Caret => Some(BinaryOp::Bxor),
+        TokenKind::Shl => Some(BinaryOp::Shl),
+        TokenKind::Shr => Some(BinaryOp::Shr),
         _ => None,
     }
 }
@@ -184,6 +193,18 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_unary(&mut self) -> Option<Expr> {
+        // Unary operators recurse directly instead of passing through the
+        // precedence parser. Keep their depth under the same front-end bound
+        // so a generated `not not not ...` input cannot exhaust the stack.
+        if !self.enter_nesting() {
+            return None;
+        }
+        let parsed = self.parse_unary_inner();
+        self.leave_nesting();
+        parsed
+    }
+
+    fn parse_unary_inner(&mut self) -> Option<Expr> {
         let span = self.current_span();
         if self.eat(&TokenKind::Minus) {
             let operand = self.parse_unary()?;
@@ -199,6 +220,15 @@ impl<'src> Parser<'src> {
             let s = span.cover(operand.span());
             return Some(Expr::Unary {
                 op: UnaryOp::Not,
+                operand: Box::new(operand),
+                span: s,
+            });
+        }
+        if self.eat(&TokenKind::Tilde) {
+            let operand = self.parse_unary()?;
+            let s = span.cover(operand.span());
+            return Some(Expr::Unary {
+                op: UnaryOp::BitNot,
                 operand: Box::new(operand),
                 span: s,
             });
@@ -971,7 +1001,7 @@ impl<'src> Parser<'src> {
         Some((fields, end))
     }
 
-    fn unescape_string_content(&mut self, content: &str, base: usize) -> SmolStr {
+    pub(crate) fn unescape_string_content(&mut self, content: &str, base: usize) -> SmolStr {
         let mut out = String::new();
         let mut iter = content.char_indices().peekable();
         while let Some((i, ch)) = iter.next() {
@@ -1339,7 +1369,7 @@ impl<'src> Parser<'src> {
     fn parse_fstr_interpolated_expr(&mut self, source: &str, span: Span) -> Option<Expr> {
         let mut nested_sink = DiagnosticSink::default();
         let mut tokens = lex(source, self.file_id, &mut nested_sink);
-        let offset = span.start as u32;
+        let offset = span.start;
         for token in &mut tokens {
             token.span = offset_span(token.span, offset);
         }

@@ -150,15 +150,20 @@ fn scan_orl_file(
     stdlib_root: &Path,
     catalog: &mut Vec<ExportSymbol>,
     modules: &mut BTreeSet<String>,
-) {
+) -> Result<(), String> {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
-        Err(_) => return,
+        Err(_) => return Ok(()),
     };
     let file_id = FileId(0);
     let mut sink = DiagnosticSink::default();
     let tokens = ori_lexer::lex(&content, file_id, &mut sink);
-    let source_file = ori_parser::parse(&tokens, &content, file_id, &mut sink);
+    let mut source_file = ori_parser::parse(&tokens, &content, file_id, &mut sink);
+    crate::pipeline::filter_intrinsic_source_for_current_configuration(
+        &mut source_file,
+        file_id,
+        &mut sink,
+    )?;
     let namespace = source_file.namespace.name.to_string();
     modules.insert(namespace.clone());
 
@@ -184,9 +189,14 @@ fn scan_orl_file(
             source: rel_source.clone(),
         });
     }
+    Ok(())
 }
 
-fn scan_orl_layer(root: &Path, catalog: &mut Vec<ExportSymbol>, modules: &mut BTreeSet<String>) {
+fn scan_orl_layer(
+    root: &Path,
+    catalog: &mut Vec<ExportSymbol>,
+    modules: &mut BTreeSet<String>,
+) -> Result<(), String> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let entries = match fs::read_dir(&dir) {
@@ -198,10 +208,11 @@ fn scan_orl_layer(root: &Path, catalog: &mut Vec<ExportSymbol>, modules: &mut BT
             if path.is_dir() {
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "orl") {
-                scan_orl_file(&path, root, catalog, modules);
+                scan_orl_file(&path, root, catalog, modules)?;
             }
         }
     }
+    Ok(())
 }
 
 const KEYWORDS: &[&str] = &[
@@ -214,11 +225,11 @@ const KEYWORDS: &[&str] = &[
 ];
 
 /// Build the full documentation export payload.
-pub fn build_doc_export() -> DocExport {
+pub fn build_doc_export() -> Result<DocExport, String> {
     let (mut symbols, mut modules) = build_runtime_symbols();
 
     if let Some(root) = find_stdlib_root() {
-        scan_orl_layer(&root, &mut symbols, &mut modules);
+        scan_orl_layer(&root, &mut symbols, &mut modules)?;
     }
 
     symbols.sort_by(|a, b| a.id.cmp(&b.id));
@@ -233,14 +244,14 @@ pub fn build_doc_export() -> DocExport {
         })
         .collect();
 
-    DocExport {
+    Ok(DocExport {
         version: env!("CARGO_PKG_VERSION").to_string(),
         generated_at: chrono_lite_timestamp(),
         modules: modules.into_iter().collect(),
         symbols,
         errors,
         keywords: KEYWORDS.iter().map(|k| (*k).to_string()).collect(),
-    }
+    })
 }
 
 fn chrono_lite_timestamp() -> String {
@@ -254,7 +265,7 @@ fn chrono_lite_timestamp() -> String {
 
 /// Serialize documentation export to pretty JSON.
 pub fn export_doc_json() -> Result<String, String> {
-    let export = build_doc_export();
+    let export = build_doc_export()?;
     serde_json::to_string_pretty(&export).map_err(|e| format!("json encode failed: {e}"))
 }
 
@@ -274,7 +285,7 @@ mod tests {
 
     #[test]
     fn export_contains_runtime_and_errors() {
-        let export = build_doc_export();
+        let export = build_doc_export().expect("build documentation export");
         assert!(export.symbols.iter().any(|s| s.id == "ori.io.print"));
         assert!(export.errors.iter().any(|e| e.code == "name.undefined"));
         assert!(export.modules.iter().any(|m| m == "ori.fs"));

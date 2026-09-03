@@ -25,10 +25,14 @@ improve maintainability without losing performance contracts — not a checklist
 
 | API | Model |
 |-----|--------|
-| `fs.read_text_async` / `write_text_async` | L1 future + worker (awaitable) |
-| `net.connect_async` / `connect_tls_async` | L1 future + worker (awaitable) |
+| `fs.read_text_async` / `write_text_async` | L1 future + shared bounded worker pool (awaitable) |
+| `net.connect_async` / `connect_tls_async` | L1 future + shared bounded worker pool (awaitable) |
 | `net.accept_async` / `read_some_async` / `write_all_async` / `udp_*_async` | L1 future + **poll reactor** (STDLIB-4k) |
 | `*_in_background` / `task.run_blocking` | Job offload (still valid) |
+
+The blocking pool is bounded to four workers and a 256-job FIFO queue. A full
+queue waits for capacity; shutdown and worker-creation failures complete the
+future as errors.
 
 ---
 

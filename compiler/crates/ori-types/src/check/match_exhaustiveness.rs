@@ -177,10 +177,10 @@ impl<'a> Checker<'a> {
                 }
                 let mut missing = Vec::new();
                 if !seen_success {
-                    missing.push("success(...)".to_string());
+                    missing.push("ok(...)".to_string());
                 }
                 if !seen_error {
-                    missing.push("error(...)".to_string());
+                    missing.push("err(...)".to_string());
                 }
                 self.emit_match_non_exhaustive(span, missing);
             }
@@ -311,10 +311,10 @@ impl<'a> Checker<'a> {
             Pattern::None(_) => Some("none".to_string()),
             Pattern::Ok(inner, _) => self
                 .match_duplicate_key(inner, true)
-                .map(|key| format!("success({key})")),
+                .map(|key| format!("ok({key})")),
             Pattern::Err(inner, _) => self
                 .match_duplicate_key(inner, true)
-                .map(|key| format!("error({key})")),
+                .map(|key| format!("err({key})")),
             Pattern::Tuple(patterns, _) => {
                 let mut keys = Vec::new();
                 for pattern in patterns {

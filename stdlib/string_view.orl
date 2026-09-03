@@ -1,0 +1,96 @@
+module ori.string_view
+
+-- Zero-copy string slicing and view utilities (STR-VIEW-1).
+
+public struct StringView
+    source: string
+    start: int
+    length: int
+end
+
+public from_string(s: string) -> StringView
+    return StringView {
+        source: s,
+        start: 0,
+        length: ori.string.len(s),
+    }
+end
+
+public from_sub(s: string, start: int, length: int) -> StringView
+    const total: int = ori.string.len(s)
+    var st: int = start
+    if st < 0
+        st = 0
+    end
+    if st > total
+        st = total
+    end
+    var len: int = length
+    if len < 0
+        len = 0
+    end
+    if st + len > total
+        len = total - st
+    end
+    return StringView {
+        source: s,
+        start: st,
+        length: len,
+    }
+end
+
+public len(view: StringView) -> int
+    return view.length
+end
+
+public is_empty(view: StringView) -> bool
+    return view.length <= 0
+end
+
+public subview(view: StringView, start: int, length: int) -> StringView
+    var st: int = view.start + start
+    if st < view.start
+        st = view.start
+    end
+    const max_end: int = view.start + view.length
+    if st > max_end
+        st = max_end
+    end
+    var len: int = length
+    if len < 0
+        len = 0
+    end
+    if st + len > max_end
+        len = max_end - st
+    end
+    return StringView {
+        source: view.source,
+        start: st,
+        length: len,
+    }
+end
+
+public to_string(view: StringView) -> string
+    if view.length <= 0
+        return ""
+    end
+    return ori.string.slice(view.source, view.start, view.start + view.length)
+end
+
+public starts_with(view: StringView, prefix: string) -> bool
+    const pref_len: int = ori.string.len(prefix)
+    if pref_len > view.length
+        return false
+    end
+    const sub: string = ori.string.slice(view.source, view.start, view.start + pref_len)
+    return sub == prefix
+end
+
+public ends_with(view: StringView, suffix: string) -> bool
+    const suff_len: int = ori.string.len(suffix)
+    if suff_len > view.length
+        return false
+    end
+    const sub: string = ori.string.slice(view.source, view.start + view.length - suff_len, view.start + view.length)
+    return sub == suffix
+end

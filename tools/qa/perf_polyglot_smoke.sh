@@ -6,7 +6,7 @@ poly="$root/tools/bench/polyglot"
 ORI_BIN="${ORI_BIN:-$(command -v ori)}"
 export ORI_USE_SYSTEM_LINKER="${ORI_USE_SYSTEM_LINKER:-}"
 # Prefer clean linker defaults
-unset ORI_USE_SYSTEM_LINKER 2>/dev/null || true
+unset ORI_USE_SYSTEM_LINKER
 
 echo "== perf_polyglot_smoke: ori=$ORI_BIN =="
 "$ORI_BIN" --version

@@ -9,6 +9,7 @@ members = [
     "crates/ori-codegen",
     "crates/ori-runtime",
     "crates/ori-diagnostics",
+    "crates/ori-embed",
     "crates/ori-lsp",
     "crates/ori-driver",
 ]
@@ -27,6 +28,7 @@ libc       = "0.2"
 serde      = "1"
 serde_json = "1"
 smol_str   = "0.2"
+unicode-casefold = "0.2"
 thiserror  = "2"
 lsp-types  = "0.95"
 tower-lsp  = "0.20"
@@ -44,11 +46,14 @@ cranelift-jit      = "0.131"
 # Dynamic library loading for JIT runtime resolution
 libloading         = "0.8"
 
-# Self-update (`ori update`): HTTPS release download + archive checksum
+# Self-update and package transport/archive integrity
 ureq = { version = "2", features = ["json"] }
 sha2 = "0.10"
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
 gimli = { version = "0.33", features = ["write", "std"] }
 object = { version = "0.39", default-features = false, features = ["read_core", "elf", "coff", "macho"] }
+rayon = "1.10"
 
 # Internal crates
 ori-diagnostics = { path = "crates/ori-diagnostics" }
@@ -60,3 +65,4 @@ ori-hir         = { path = "crates/ori-hir" }
 ori-codegen     = { path = "crates/ori-codegen" }
 ori-runtime     = { path = "crates/ori-runtime" }
 ori-driver      = { path = "crates/ori-driver" }
+ori-embed       = { path = "crates/ori-embed" }

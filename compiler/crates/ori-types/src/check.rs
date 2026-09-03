@@ -1,10 +1,12 @@
 use crate::def::{DefId, DefKind, DefMap};
 use crate::literal::{parse_float_literal, parse_int_literal, NumericLiteralErrorKind};
 use crate::resolve::{
-    import_aliases, DeprecatedSig, EnumSig, FuncSig, ImplSig, ReExport, StructSig, TraitSig,
-    ValueSig, WhereConstraintSig,
+    import_aliases, DeprecatedSig, EnumSig, EnumVariantSig, FuncSig, ImplSig, ReExport,
+    ResolvedModule, StructSig, TraitMethodSig, TraitSig, ValueSig, WhereConstraintSig,
 };
-use crate::ty::{expand_ty_aliases, substitute_trait_self, substitute_ty_params};
+use crate::ty::{
+    expand_ty_aliases, replace_json_placeholder, substitute_trait_self, substitute_ty_params,
+};
 use crate::ty::{OpaqueTy, Ty};
 use ori_ast::common::{Attr, AttrArg, Name, QualifiedName, Visibility, WhereConstraint};
 use ori_ast::expr::{Arg, ArgValue, BinaryOp, ClosureBody, Expr, FStrPart, UnaryOp};
@@ -30,6 +32,40 @@ struct Scope {
     vars: HashMap<SmolStr, Ty>,
     mutable: HashSet<SmolStr>,
     using_bindings: HashSet<SmolStr>,
+    /// Transferability facts for first-class function values bound locally.
+    /// A function type alone does not describe its captured environment, so
+    /// task-boundary checks consult this side table before accepting it.
+    function_values: HashMap<SmolStr, ClosureTransferSummary>,
+}
+
+/// Conservative effect summary for a closure stored in a local binding.
+/// Unknown effects stay rejected until the checker has a concrete fact.
+#[derive(Debug, Default, Clone)]
+struct ClosureTransferSummary {
+    captures: HashMap<SmolStr, Ty>,
+    has_global_mutable_effect: bool,
+    unknown_effect: bool,
+}
+
+impl ClosureTransferSummary {
+    fn merge_nested(&mut self, nested: &Self) {
+        self.has_global_mutable_effect |= nested.has_global_mutable_effect;
+        self.unknown_effect |= nested.unknown_effect;
+        for (name, ty) in &nested.captures {
+            self.captures
+                .entry(name.clone())
+                .or_insert_with(|| ty.clone());
+        }
+    }
+
+    fn is_transferable(&self, checker: &Checker<'_>) -> bool {
+        !self.has_global_mutable_effect
+            && !self.unknown_effect
+            && self
+                .captures
+                .values()
+                .all(|ty| checker.is_transferable_ty(ty))
+    }
 }
 
 impl Scope {
@@ -62,20 +98,59 @@ impl Scope {
     fn is_using_binding(&self, name: &str) -> bool {
         self.using_bindings.contains(name)
     }
+
+    fn set_function_value(&mut self, name: SmolStr, summary: ClosureTransferSummary) {
+        self.function_values.insert(name, summary);
+    }
+
+    fn function_value(&self, name: &str) -> Option<&ClosureTransferSummary> {
+        self.function_values.get(name)
+    }
 }
 
 // ── Checker ───────────────────────────────────────────────────────────────────
 
+/// Immutable lookup tables shared by every per-file checker in one resolved
+/// module graph.
+#[derive(Debug)]
+pub(crate) struct CheckerIndexes {
+    func_sig_indices: HashMap<DefId, usize>,
+    value_sig_indices: HashMap<DefId, usize>,
+    struct_sig_indices: HashMap<DefId, usize>,
+    struct_field_indices: HashMap<DefId, HashMap<SmolStr, usize>>,
+    enum_sig_indices: HashMap<DefId, usize>,
+    enum_variant_indices: HashMap<DefId, HashMap<SmolStr, usize>>,
+    trait_sig_indices: HashMap<DefId, usize>,
+    trait_method_indices: HashMap<DefId, HashMap<SmolStr, usize>>,
+    impl_sig_indices: HashMap<(DefId, DefId), usize>,
+    impl_indices_by_type: HashMap<DefId, Vec<usize>>,
+    impl_indices_by_type_and_method: HashMap<(DefId, SmolStr), Vec<usize>>,
+    deprecated_sig_indices: HashMap<DefId, usize>,
+    type_alias_map: HashMap<DefId, (usize, Ty)>,
+    newtype_map: HashMap<DefId, Ty>,
+}
+
 pub struct Checker<'a> {
     def_map: &'a DefMap,
     func_sigs: &'a [FuncSig], // return types for all declared functions
-    func_sig_indices: HashMap<DefId, usize>,
+    func_sig_indices: &'a HashMap<DefId, usize>,
     value_sigs: &'a [ValueSig],
+    value_sig_indices: &'a HashMap<DefId, usize>,
     struct_sigs: &'a [StructSig],
+    struct_sig_indices: &'a HashMap<DefId, usize>,
+    struct_field_indices: &'a HashMap<DefId, HashMap<SmolStr, usize>>,
     enum_sigs: &'a [EnumSig],
+    enum_sig_indices: &'a HashMap<DefId, usize>,
+    enum_variant_indices: &'a HashMap<DefId, HashMap<SmolStr, usize>>,
     trait_sigs: &'a [TraitSig],
+    trait_sig_indices: &'a HashMap<DefId, usize>,
+    trait_method_indices: &'a HashMap<DefId, HashMap<SmolStr, usize>>,
     impl_sigs: &'a [ImplSig],
+    impl_sig_indices: &'a HashMap<(DefId, DefId), usize>,
+    impl_indices_by_type: &'a HashMap<DefId, Vec<usize>>,
+    impl_indices_by_type_and_method: &'a HashMap<(DefId, SmolStr), Vec<usize>>,
     deprecated_sigs: &'a [DeprecatedSig],
+    deprecated_sig_indices: &'a HashMap<DefId, usize>,
     reexports: &'a [ReExport],
     namespace: &'a str,
     file_id: FileId,
@@ -92,14 +167,21 @@ pub struct Checker<'a> {
     current_iter_elem_ty: Option<Ty>,
     loop_depth: usize,
     closure_scope_roots: Vec<usize>,
+    closure_transfer_summaries: Vec<ClosureTransferSummary>,
+    last_function_value_summary: Option<ClosureTransferSummary>,
     transferable_closure_depth: usize,
+    /// Local functions whose body, directly or transitively, touches a
+    /// top-level mutable `var`. Transferable closures must not call them.
+    transferable_global_functions: HashSet<SmolStr>,
+    /// Cross-file function effect summary built during name resolution.
+    transferable_global_function_defs: &'a HashSet<DefId>,
     current_where_constraints: Vec<WhereConstraintSig>,
     infer: HashMap<u32, Ty>,
     /// `DefId` -> `(arity, underlying_ty)` for each `type alias` declaration.
-    type_alias_map: HashMap<DefId, (usize, Ty)>,
+    type_alias_map: &'a HashMap<DefId, (usize, Ty)>,
     /// `DefId` -> representation for each `newtype`. Unlike aliases this is
     /// never substituted while checking — that is what keeps it nominal.
-    newtype_map: HashMap<DefId, Ty>,
+    newtype_map: &'a HashMap<DefId, Ty>,
     /// Associated types of the `use Trait` section being checked
     /// (`type Item = int`), so method signatures in that section can name
     /// them. Empty outside an `apply … use …` body.
@@ -109,49 +191,173 @@ pub struct Checker<'a> {
     /// Return analysis runs after the body and cannot re-derive this (it has
     /// no types), so exhaustiveness is recorded here as it is computed.
     exhaustive_matches: HashSet<ori_diagnostics::Span>,
+    /// Set of function names within the current file marked with `@noalloc`.
+    noalloc_funcs: HashSet<SmolStr>,
 }
 
-impl<'a> Checker<'a> {
-    pub fn new(
-        def_map: &'a DefMap,
-        func_sigs: &'a [FuncSig],
-        value_sigs: &'a [ValueSig],
-        struct_sigs: &'a [StructSig],
-        enum_sigs: &'a [EnumSig],
-        trait_sigs: &'a [TraitSig],
-        impl_sigs: &'a [ImplSig],
+impl CheckerIndexes {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn build(
+        func_sigs: &[FuncSig],
+        value_sigs: &[ValueSig],
+        struct_sigs: &[StructSig],
+        enum_sigs: &[EnumSig],
+        trait_sigs: &[TraitSig],
+        impl_sigs: &[ImplSig],
         type_alias_sigs: &[crate::resolve::TypeAliasSig],
         newtype_sigs: &[crate::resolve::NewtypeSig],
-        deprecated_sigs: &'a [DeprecatedSig],
-        reexports: &'a [ReExport],
-        namespace: &'a str,
-        file_id: FileId,
-        sink: &'a mut DiagnosticSink,
+        deprecated_sigs: &[DeprecatedSig],
     ) -> Self {
-        let type_alias_map: HashMap<DefId, (usize, Ty)> = type_alias_sigs
+        let type_alias_map = type_alias_sigs
             .iter()
-            .map(|s| (s.def_id, (s.type_params.len(), s.ty.clone())))
+            .map(|sig| (sig.def_id, (sig.type_params.len(), sig.ty.clone())))
             .collect();
-        let newtype_map: HashMap<DefId, Ty> = newtype_sigs
+        let newtype_map = newtype_sigs
             .iter()
-            .map(|s| (s.def_id, s.repr.clone()))
+            .map(|sig| (sig.def_id, sig.repr.clone()))
             .collect();
         let func_sig_indices = func_sigs
             .iter()
             .enumerate()
             .map(|(index, sig)| (sig.def_id, index))
             .collect();
+        let value_sig_indices = value_sigs
+            .iter()
+            .enumerate()
+            .map(|(index, sig)| (sig.def_id, index))
+            .collect();
+        let struct_sig_indices = struct_sigs
+            .iter()
+            .enumerate()
+            .map(|(index, sig)| (sig.def_id, index))
+            .collect();
+        let struct_field_indices = struct_sigs
+            .iter()
+            .map(|sig| {
+                let mut fields = HashMap::new();
+                for (index, (name, _)) in sig.fields.iter().enumerate() {
+                    fields.entry(name.clone()).or_insert(index);
+                }
+                (sig.def_id, fields)
+            })
+            .collect();
+        let enum_sig_indices = enum_sigs
+            .iter()
+            .enumerate()
+            .map(|(index, sig)| (sig.def_id, index))
+            .collect();
+        let enum_variant_indices = enum_sigs
+            .iter()
+            .map(|sig| {
+                let mut variants = HashMap::new();
+                for (index, variant) in sig.variants.iter().enumerate() {
+                    variants.entry(variant.name.clone()).or_insert(index);
+                }
+                (sig.def_id, variants)
+            })
+            .collect();
+        let trait_sig_indices = trait_sigs
+            .iter()
+            .enumerate()
+            .map(|(index, sig)| (sig.def_id, index))
+            .collect();
+        let trait_method_indices = trait_sigs
+            .iter()
+            .map(|sig| {
+                let mut methods = HashMap::new();
+                for (index, method) in sig.methods.iter().enumerate() {
+                    methods.entry(method.name.clone()).or_insert(index);
+                }
+                (sig.def_id, methods)
+            })
+            .collect();
+        let mut impl_sig_indices = HashMap::new();
+        let mut impl_indices_by_type: HashMap<DefId, Vec<usize>> = HashMap::new();
+        let mut impl_indices_by_type_and_method = HashMap::new();
+        for (index, sig) in impl_sigs.iter().enumerate() {
+            impl_sig_indices
+                .entry((sig.type_def_id, sig.trait_def_id))
+                .or_insert(index);
+            impl_indices_by_type
+                .entry(sig.type_def_id)
+                .or_default()
+                .push(index);
+            // Index both explicitly implemented methods and trait defaults.
+            // A default method has no entry in `ImplSig::methods`, but it is
+            // still callable through the implementing concrete type. Keeping
+            // it in the same index lets method lookup remain O(1) without
+            // scanning every impl for each field access.
+            let trait_methods = trait_sigs
+                .iter()
+                .find(|trait_sig| trait_sig.def_id == sig.trait_def_id)
+                .map(|trait_sig| trait_sig.methods.as_slice())
+                .unwrap_or(&[]);
+            for method_name in sig.methods.iter().map(|method| method.name.clone()).chain(
+                trait_methods
+                    .iter()
+                    .filter(|method| method.has_default)
+                    .map(|method| method.name.clone()),
+            ) {
+                impl_indices_by_type_and_method
+                    .entry((sig.type_def_id, method_name))
+                    .or_insert_with(Vec::new)
+                    .push(index);
+            }
+        }
+        let deprecated_sig_indices = deprecated_sigs
+            .iter()
+            .enumerate()
+            .map(|(index, sig)| (sig.def_id, index))
+            .collect();
         Self {
-            def_map,
-            func_sigs,
             func_sig_indices,
-            value_sigs,
-            struct_sigs,
-            enum_sigs,
-            trait_sigs,
-            impl_sigs,
-            deprecated_sigs,
-            reexports,
+            value_sig_indices,
+            struct_sig_indices,
+            struct_field_indices,
+            enum_sig_indices,
+            enum_variant_indices,
+            trait_sig_indices,
+            trait_method_indices,
+            impl_sig_indices,
+            impl_indices_by_type,
+            impl_indices_by_type_and_method,
+            deprecated_sig_indices,
+            type_alias_map,
+            newtype_map,
+        }
+    }
+}
+
+impl<'a> Checker<'a> {
+    pub fn new(
+        resolved: &'a ResolvedModule,
+        namespace: &'a str,
+        file_id: FileId,
+        sink: &'a mut DiagnosticSink,
+    ) -> Self {
+        let indexes = &resolved.checker_indexes;
+        Self {
+            def_map: &resolved.def_map,
+            func_sigs: &resolved.func_sigs,
+            func_sig_indices: &indexes.func_sig_indices,
+            value_sigs: &resolved.value_sigs,
+            value_sig_indices: &indexes.value_sig_indices,
+            struct_sigs: &resolved.struct_sigs,
+            struct_sig_indices: &indexes.struct_sig_indices,
+            struct_field_indices: &indexes.struct_field_indices,
+            enum_sigs: &resolved.enum_sigs,
+            enum_sig_indices: &indexes.enum_sig_indices,
+            enum_variant_indices: &indexes.enum_variant_indices,
+            trait_sigs: &resolved.trait_sigs,
+            trait_sig_indices: &indexes.trait_sig_indices,
+            trait_method_indices: &indexes.trait_method_indices,
+            impl_sigs: &resolved.impl_sigs,
+            impl_sig_indices: &indexes.impl_sig_indices,
+            impl_indices_by_type: &indexes.impl_indices_by_type,
+            impl_indices_by_type_and_method: &indexes.impl_indices_by_type_and_method,
+            deprecated_sigs: &resolved.deprecated_sigs,
+            deprecated_sig_indices: &indexes.deprecated_sig_indices,
+            reexports: &resolved.reexports,
             namespace,
             file_id,
             sink,
@@ -165,13 +371,18 @@ impl<'a> Checker<'a> {
             current_iter_elem_ty: None,
             loop_depth: 0,
             closure_scope_roots: Vec::new(),
+            closure_transfer_summaries: Vec::new(),
+            last_function_value_summary: None,
             transferable_closure_depth: 0,
+            transferable_global_functions: HashSet::new(),
+            transferable_global_function_defs: &resolved.transferable_global_function_defs,
             current_where_constraints: Vec::new(),
             infer: HashMap::new(),
-            type_alias_map,
-            newtype_map,
+            type_alias_map: &indexes.type_alias_map,
+            newtype_map: &indexes.newtype_map,
             local_type_aliases: HashMap::new(),
             exhaustive_matches: HashSet::new(),
+            noalloc_funcs: HashSet::new(),
         }
     }
 
@@ -262,38 +473,67 @@ impl<'a> Checker<'a> {
     }
 
     fn value_ty(&self, def_id: DefId) -> Option<Ty> {
-        self.value_sigs
-            .iter()
-            .find(|s| s.def_id == def_id)
-            .map(|s| s.ty.clone())
+        let index = self.value_sig_indices.get(&def_id)?;
+        self.value_sigs.get(*index).map(|sig| sig.ty.clone())
     }
 
     fn struct_field_ty(&self, def_id: DefId, field: &str) -> Option<Ty> {
-        self.struct_sigs
-            .iter()
-            .find(|s| s.def_id == def_id)
-            .and_then(|s| s.fields.iter().find(|(name, _)| name == field))
-            .map(|(_, ty)| ty.clone())
+        self.struct_field_ref(def_id, field).cloned()
+    }
+
+    fn struct_sig(&self, def_id: DefId) -> Option<&StructSig> {
+        let index = self.struct_sig_indices.get(&def_id)?;
+        self.struct_sigs.get(*index)
+    }
+
+    fn struct_field_ref(&self, def_id: DefId, field: &str) -> Option<&Ty> {
+        let field_index = self.struct_field_indices.get(&def_id)?.get(field)?;
+        self.struct_sig(def_id)?
+            .fields
+            .get(*field_index)
+            .map(|(_, ty)| ty)
     }
 
     fn enum_sig(&self, def_id: DefId) -> Option<&EnumSig> {
-        self.enum_sigs.iter().find(|s| s.def_id == def_id)
+        let index = self.enum_sig_indices.get(&def_id)?;
+        self.enum_sigs.get(*index)
+    }
+
+    fn enum_variant_sig(&self, def_id: DefId, variant: &str) -> Option<&EnumVariantSig> {
+        let variant_index = self.enum_variant_indices.get(&def_id)?.get(variant)?;
+        self.enum_sig(def_id)?.variants.get(*variant_index)
     }
 
     fn trait_sig(&self, def_id: DefId) -> Option<&TraitSig> {
-        self.trait_sigs.iter().find(|s| s.def_id == def_id)
+        let index = self.trait_sig_indices.get(&def_id)?;
+        self.trait_sigs.get(*index)
+    }
+
+    fn trait_method_sig(&self, def_id: DefId, method: &str) -> Option<&TraitMethodSig> {
+        let method_index = self.trait_method_indices.get(&def_id)?.get(method)?;
+        self.trait_sig(def_id)?.methods.get(*method_index)
+    }
+
+    fn impl_sig(&self, type_def_id: DefId, trait_def_id: DefId) -> Option<&ImplSig> {
+        let index = self.impl_sig_indices.get(&(type_def_id, trait_def_id))?;
+        self.impl_sigs.get(*index)
+    }
+
+    fn impl_indices_for_type(&self, type_def_id: DefId) -> &[usize] {
+        self.impl_indices_by_type
+            .get(&type_def_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     fn named_type_implements_trait(&self, type_def_id: DefId, trait_def_id: DefId) -> bool {
-        self.impl_sigs
-            .iter()
-            .any(|sig| sig.type_def_id == type_def_id && sig.trait_def_id == trait_def_id)
+        self.impl_sig(type_def_id, trait_def_id).is_some()
     }
 
     fn iterable_impl_for_type(&self, type_def_id: DefId) -> Option<&ImplSig> {
-        self.impl_sigs
+        self.impl_indices_for_type(type_def_id)
             .iter()
-            .filter(|sig| sig.type_def_id == type_def_id)
+            .filter_map(|index| self.impl_sigs.get(*index))
             .find(|sig| {
                 self.def_map
                     .get(sig.trait_def_id)
@@ -331,9 +571,7 @@ impl<'a> Checker<'a> {
             );
             return None;
         };
-        let Some(next_sig) = self.func_sig_ref(next_method.func_def_id) else {
-            return None;
-        };
+        let next_sig = self.func_sig_ref(next_method.func_def_id)?;
         let self_ty = Ty::Named(*type_def_id, Vec::new());
         let valid_params =
             next_sig.params.len() == 1 && next_sig.params[0].is_assignable_to(&self_ty);
@@ -396,15 +634,17 @@ impl<'a> Checker<'a> {
         // and `Default` as method-less markers.
         let self_ty = Ty::Named(type_def_id, Vec::new());
         let mut matches = Vec::new();
-        for impl_sig in self
-            .impl_sigs
-            .iter()
-            .filter(|sig| sig.type_def_id == type_def_id)
+        let lookup_key = (type_def_id, SmolStr::new(method));
+        for impl_index in self
+            .impl_indices_by_type_and_method
+            .get(&lookup_key)
+            .into_iter()
+            .flatten()
         {
-            let Some(trait_sig) = self.trait_sig(impl_sig.trait_def_id) else {
+            let Some(impl_sig) = self.impl_sigs.get(*impl_index) else {
                 continue;
             };
-            if let Some(method_sig) = trait_sig.methods.iter().find(|sig| sig.name == method) {
+            if let Some(method_sig) = self.trait_method_sig(impl_sig.trait_def_id, method) {
                 let mut method_sig = method_sig.clone();
                 // A generic trait's parameters are bound positionally by
                 // `use Container[int]`. Without this the method signature keeps
@@ -443,10 +683,7 @@ impl<'a> Checker<'a> {
                 && constraint.param_index == param_index
                 && constraint.param_name == *param_name
         }) {
-            let Some(method_sig) = self
-                .trait_sig(constraint.trait_def_id)
-                .and_then(|trait_sig| trait_sig.methods.iter().find(|sig| sig.name == method))
-            else {
+            let Some(method_sig) = self.trait_method_sig(constraint.trait_def_id, method) else {
                 continue;
             };
             let mut method_sig = method_sig.clone();
@@ -481,6 +718,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        self.transferable_global_functions = collect_transferable_global_functions(self, file);
         // Collect local top-level definition names for conflict detection
         let local_names: Vec<SmolStr> = file
             .items
@@ -561,10 +799,41 @@ impl<'a> Checker<'a> {
         for alias in invalid_aliases {
             self.aliases.remove(&alias);
         }
+        // Collect `@noalloc` function names in this file for strict call verification.
+        for item in &file.items {
+            if let Item::Func(f) = &item.item {
+                if item.attrs.iter().any(|a| a.name.text == "noalloc") {
+                    self.noalloc_funcs.insert(f.name.text.clone());
+                }
+            }
+            // Same for struct/apply/impl method declarations.
+            if let Item::Struct(s) = &item.item {
+                for m in &s.methods {
+                    if item.attrs.iter().any(|a| a.name.text == "noalloc") {
+                        self.noalloc_funcs.insert(m.name.text.clone());
+                    }
+                }
+            }
+            if let Item::Apply(apply) = &item.item {
+                for member in &apply.free_members {
+                    if let ApplyMember::Method(m) = member {
+                        if item.attrs.iter().any(|a| a.name.text == "noalloc") {
+                            self.noalloc_funcs.insert(m.name.text.clone());
+                        }
+                    }
+                }
+            }
+        }
         for item in &file.items {
             self.check_item_attrs(item);
             match &item.item {
-                Item::Func(f) => self.check_func(f, &[], None),
+                Item::Func(f) => {
+                    let is_noalloc = item.attrs.iter().any(|a| a.name.text == "noalloc");
+                    if is_noalloc {
+                        self.check_noalloc_func(f);
+                    }
+                    self.check_func(f, &[], None)
+                }
                 Item::Const(c) => {
                     let expected = self.lower(&c.ty, &[]);
                     self.check_collection_runtime_limits(&expected, c.ty.span());
@@ -781,7 +1050,7 @@ impl<'a> Checker<'a> {
                         "unknown attribute",
                     ))
                     .with_action(
-                        "use one of `@test`, `@deprecated`, `@inline`, `@no_inline`, `@cfg`, `@repr`, or `@c_export`",
+                        "use one of `@test`, `@deprecated`, `@inline`, `@no_inline`, `@noalloc`, `@align`, `@cfg`, `@repr`, or `@c_export`",
                     ),
                 );
                 continue;
@@ -921,7 +1190,7 @@ impl<'a> Checker<'a> {
                         "parameter type",
                     ))
                     .with_action(
-                        "`@c_export` accepts scalars, `string`, non-generic structs, and `optional`/`result` containing those types",
+                        "`@c_export` accepts scalars, `string`, length-aware `bytes`, non-generic structs, and `optional`/`result` containing those types",
                     ),
                 );
             }
@@ -939,7 +1208,7 @@ impl<'a> Checker<'a> {
                     )
                     .with_label(Label::primary(self.file_id, ret.span(), "return type"))
                     .with_action(
-                        "return a scalar, `string`, a non-generic struct, or `optional`/`result` containing those types",
+                        "return a scalar, `string`, length-aware `bytes`, a non-generic struct, or `optional`/`result` containing those types",
                     ),
                 );
             }
@@ -976,10 +1245,81 @@ impl<'a> Checker<'a> {
         if !args.is_empty() {
             return false;
         }
-        self.struct_sigs
-            .iter()
-            .find(|sig| sig.def_id == *def_id)
-            .is_some_and(|sig| !sig.fields.is_empty())
+        let Some(sig) = self.struct_sig(*def_id) else {
+            return false;
+        };
+        if sig.fields.is_empty() {
+            return false;
+        }
+        // A managed export wrapper can keep a struct alive after the host
+        // call.  A borrowed `handle[T]` field would then outlive the host
+        // guarantee and become a dangling pointer.  Reject the aggregate at
+        // the language boundary instead of pretending ARC makes the borrow
+        // owned.
+        let mut visiting = HashSet::new();
+        !self.type_contains_borrowed_handle(ty, &mut visiting)
+    }
+
+    fn type_contains_borrowed_handle(&self, ty: &Ty, visiting: &mut HashSet<DefId>) -> bool {
+        match ty {
+            Ty::Handle(_) => true,
+            Ty::Optional(inner)
+            | Ty::List(inner)
+            | Ty::Buffer(inner)
+            | Ty::Slice(inner)
+            | Ty::Set(inner)
+            | Ty::Range(inner)
+            | Ty::Lazy(inner)
+            | Ty::Future(inner)
+            | Ty::TaskJob(inner)
+            | Ty::Channel(inner) => self.type_contains_borrowed_handle(inner, visiting),
+            Ty::Result(ok, err) | Ty::Map(ok, err) => {
+                self.type_contains_borrowed_handle(ok, visiting)
+                    || self.type_contains_borrowed_handle(err, visiting)
+            }
+            Ty::Array(elem, _) => self.type_contains_borrowed_handle(elem, visiting),
+            Ty::Tuple(items) => items
+                .iter()
+                .any(|item| self.type_contains_borrowed_handle(item, visiting)),
+            Ty::Func { params, ret } => {
+                params
+                    .iter()
+                    .any(|item| self.type_contains_borrowed_handle(item, visiting))
+                    || self.type_contains_borrowed_handle(ret, visiting)
+            }
+            Ty::Opaque { args, .. } | Ty::Named(_, args) => {
+                if let Ty::Named(def_id, _) = ty {
+                    if !visiting.insert(*def_id) {
+                        return false;
+                    }
+                    let found = self
+                        .struct_sig(*def_id)
+                        .map(|sig| {
+                            sig.fields.iter().any(|(_, field_ty)| {
+                                self.type_contains_borrowed_handle(field_ty, visiting)
+                            })
+                        })
+                        .unwrap_or_else(|| {
+                            self.enum_sig(*def_id).is_some_and(|sig| {
+                                sig.variants.iter().any(|variant| {
+                                    variant.fields.iter().any(|(_, field_ty)| {
+                                        self.type_contains_borrowed_handle(field_ty, visiting)
+                                    })
+                                })
+                            })
+                        });
+                    visiting.remove(def_id);
+                    found
+                        || args
+                            .iter()
+                            .any(|arg| self.type_contains_borrowed_handle(arg, visiting))
+                } else {
+                    args.iter()
+                        .any(|arg| self.type_contains_borrowed_handle(arg, visiting))
+                }
+            }
+            _ => false,
+        }
     }
 
     /// Reject a function whose every path calls itself.
@@ -1006,6 +1346,379 @@ impl<'a> Checker<'a> {
                 "every path through this function recurses",
             ))
             .with_action("add a branch that returns without calling this function"),
+        );
+    }
+
+    /// Perform static analysis on functions marked `@noalloc` (`LANG-NOALLOC-1`).
+    ///
+    /// Asserts that the function does not perform dynamic heap allocations (list/map/set
+    /// literals, interpolated strings, closures, await scheduling) and does not call
+    /// functions that allocate or are not themselves marked `@noalloc`.
+    fn check_noalloc_func(&mut self, func: &FuncDecl) {
+        if func.is_async {
+            self.sink.emit(
+                Diagnostic::error(
+                    "perf.allocation_in_noalloc",
+                    format!("`@noalloc` function `{}` cannot be async", func.name.text),
+                )
+                .with_label(Label::primary(
+                    self.file_id,
+                    func.name.span,
+                    "async function allocates execution frames on heap",
+                ))
+                .with_action("remove `@noalloc` or make the function synchronous"),
+            );
+        }
+        self.check_noalloc_block(&func.body, &func.name.text);
+    }
+
+    fn check_noalloc_block(&mut self, block: &Block, func_name: &str) {
+        for stmt in &block.stmts {
+            self.check_noalloc_stmt(stmt, func_name);
+        }
+    }
+
+    fn check_noalloc_stmt(&mut self, stmt: &Stmt, func_name: &str) {
+        match stmt {
+            Stmt::Expr(expr) => self.check_noalloc_expr(expr, func_name),
+            Stmt::Const(c) => self.check_noalloc_expr(&c.value, func_name),
+            Stmt::Var(v) => self.check_noalloc_expr(&v.value, func_name),
+            Stmt::Destructure(d) => self.check_noalloc_expr(&d.value, func_name),
+            Stmt::Assign(a) => self.check_noalloc_expr(&a.value, func_name),
+            Stmt::CompoundAssign(ca) => self.check_noalloc_expr(&ca.value, func_name),
+            Stmt::If(i) => {
+                self.check_noalloc_expr(&i.condition, func_name);
+                self.check_noalloc_block(&i.then_block, func_name);
+                for (cond, blk) in &i.else_ifs {
+                    self.check_noalloc_expr(cond, func_name);
+                    self.check_noalloc_block(blk, func_name);
+                }
+                if let Some(eb) = &i.else_block {
+                    self.check_noalloc_block(eb, func_name);
+                }
+            }
+            Stmt::IfSome(i) => {
+                self.check_noalloc_expr(&i.value, func_name);
+                self.check_noalloc_block(&i.then_block, func_name);
+                if let Some(eb) = &i.else_block {
+                    self.check_noalloc_block(eb, func_name);
+                }
+            }
+            Stmt::While(w) => {
+                self.check_noalloc_expr(&w.condition, func_name);
+                self.check_noalloc_block(&w.body, func_name);
+            }
+            Stmt::WhileSome(ws) => {
+                self.check_noalloc_expr(&ws.value, func_name);
+                self.check_noalloc_block(&ws.body, func_name);
+            }
+            Stmt::For(f) => {
+                if !matches!(f.iterable.as_ref(), Expr::Range { .. }) {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "perf.allocation_in_noalloc",
+                            "iterating over a dynamic collection inside `@noalloc` function",
+                        )
+                        .with_label(Label::primary(
+                            self.file_id,
+                            f.iterable.span(),
+                            "dynamic collection iteration here",
+                        ))
+                        .with_action(
+                            "use a numeric range loop `for i in 0..N` or a fixed-size array/span",
+                        ),
+                    );
+                }
+                self.check_noalloc_expr(&f.iterable, func_name);
+                self.check_noalloc_block(&f.body, func_name);
+            }
+            Stmt::Repeat(r) => {
+                self.check_noalloc_expr(&r.count, func_name);
+                self.check_noalloc_block(&r.body, func_name);
+            }
+            Stmt::Loop(l) => {
+                self.check_noalloc_block(&l.body, func_name);
+            }
+            Stmt::Match(m) => {
+                self.check_noalloc_expr(&m.scrutinee, func_name);
+                for case in &m.cases {
+                    match case {
+                        ori_ast::stmt::MatchCase::Pattern { guard, body, .. } => {
+                            if let Some(g) = guard {
+                                self.check_noalloc_expr(g, func_name);
+                            }
+                            for s in body {
+                                self.check_noalloc_stmt(s, func_name);
+                            }
+                        }
+                        ori_ast::stmt::MatchCase::Else { body, .. } => {
+                            for s in body {
+                                self.check_noalloc_stmt(s, func_name);
+                            }
+                        }
+                    }
+                }
+            }
+            Stmt::Return(r) => {
+                if let Some(expr) = &r.value {
+                    self.check_noalloc_expr(expr, func_name);
+                }
+            }
+            Stmt::Suspend(s) => {
+                self.check_noalloc_expr(&s.value, func_name);
+            }
+            Stmt::Check(c) => {
+                self.check_noalloc_expr(&c.condition, func_name);
+            }
+            Stmt::Using(using_stmt) => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "`using` statement cannot be used inside `@noalloc` function",
+                    )
+                    .with_label(Label::primary(
+                        self.file_id,
+                        using_stmt.span,
+                        "resource binding here",
+                    ))
+                    .with_action("manage resources outside the zero-allocation hot path"),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn check_noalloc_expr(&mut self, expr: &Expr, func_name: &str) {
+        match expr {
+            Expr::List { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "list literal allocates heap memory",
+                    )
+                    .with_label(Label::primary(self.file_id, *span, "heap allocation here"))
+                    .with_action("use an inline array `array[T, size: N]` or pass a pre-allocated buffer/span"),
+                );
+            }
+            Expr::Map { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "map literal allocates heap memory",
+                    )
+                    .with_label(Label::primary(self.file_id, *span, "heap allocation here"))
+                    .with_action("avoid creating heap-allocated maps inside `@noalloc` functions"),
+                );
+            }
+            Expr::Set { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "set literal allocates heap memory",
+                    )
+                    .with_label(Label::primary(self.file_id, *span, "heap allocation here"))
+                    .with_action("avoid creating heap-allocated sets inside `@noalloc` functions"),
+                );
+            }
+            Expr::FStrLit { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "interpolated string formats and allocates heap memory",
+                    )
+                    .with_label(Label::primary(
+                        self.file_id,
+                        *span,
+                        "string allocation here",
+                    ))
+                    .with_action("avoid string formatting inside `@noalloc` functions"),
+                );
+            }
+            Expr::Closure(closure) => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "closure allocation is forbidden inside `@noalloc` function",
+                    )
+                    .with_label(Label::primary(
+                        self.file_id,
+                        closure.span,
+                        "closure allocation here",
+                    ))
+                    .with_action("use a named function or avoid closure allocation"),
+                );
+            }
+            Expr::Await { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "`await` allocates and schedules asynchronous tasks",
+                    )
+                    .with_label(Label::primary(self.file_id, *span, "await allocation here"))
+                    .with_action("perform asynchronous operations outside `@noalloc` functions"),
+                );
+            }
+            Expr::Binary { op, lhs, rhs, span } => {
+                if *op == BinaryOp::Add
+                    && (matches!(lhs.as_ref(), Expr::StrLit { .. })
+                        || matches!(rhs.as_ref(), Expr::StrLit { .. }))
+                {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "perf.allocation_in_noalloc",
+                            "string concatenation allocates heap memory",
+                        )
+                        .with_label(Label::primary(
+                            self.file_id,
+                            *span,
+                            "string concatenation here",
+                        ))
+                        .with_action("avoid string concatenation inside `@noalloc` functions"),
+                    );
+                }
+                self.check_noalloc_expr(lhs, func_name);
+                self.check_noalloc_expr(rhs, func_name);
+            }
+            Expr::Unary { operand, .. } => {
+                self.check_noalloc_expr(operand, func_name);
+            }
+            Expr::Range { start, end, .. } => {
+                self.check_noalloc_expr(start, func_name);
+                self.check_noalloc_expr(end, func_name);
+            }
+            Expr::Tuple { elements, .. } => {
+                for el in elements {
+                    self.check_noalloc_expr(el, func_name);
+                }
+            }
+            Expr::StructLit { fields, .. } | Expr::AnonStructLit { fields, .. } => {
+                for field in fields {
+                    self.check_noalloc_expr(&field.value, func_name);
+                }
+            }
+            Expr::EnumVariantNamed { fields, .. } => {
+                for field in fields {
+                    self.check_noalloc_expr(&field.value, func_name);
+                }
+            }
+            Expr::Field { object, .. } => {
+                self.check_noalloc_expr(object, func_name);
+            }
+            Expr::TupleIndex { object, .. } => {
+                self.check_noalloc_expr(object, func_name);
+            }
+            Expr::Index { object, index, .. } => {
+                self.check_noalloc_expr(object, func_name);
+                if let ori_ast::expr::IndexExpr::Single(idx) = index {
+                    self.check_noalloc_expr(idx, func_name);
+                }
+            }
+            Expr::IfExpr {
+                condition,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                self.check_noalloc_expr(condition, func_name);
+                self.check_noalloc_expr(then_expr, func_name);
+                self.check_noalloc_expr(else_expr, func_name);
+            }
+            Expr::MatchExpr {
+                scrutinee, arms, ..
+            } => {
+                self.check_noalloc_expr(scrutinee, func_name);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.check_noalloc_expr(guard, func_name);
+                    }
+                    self.check_noalloc_expr(&arm.body, func_name);
+                }
+            }
+            Expr::StructUpdate { base, updates, .. } => {
+                self.check_noalloc_expr(base, func_name);
+                for field in updates {
+                    self.check_noalloc_expr(&field.value, func_name);
+                }
+            }
+            Expr::IsCheck { value, .. } => {
+                self.check_noalloc_expr(value, func_name);
+            }
+            Expr::Pipe { value, func, .. } => {
+                self.check_noalloc_expr(value, func_name);
+                self.check_noalloc_expr(func, func_name);
+            }
+            Expr::Try { expr, .. } => {
+                self.check_noalloc_expr(expr, func_name);
+            }
+            Expr::Call { callee, args, span } => {
+                self.check_noalloc_call(callee, args, *span, func_name);
+            }
+            _ => {}
+        }
+    }
+
+    fn check_noalloc_call(&mut self, callee: &Expr, args: &[Arg], span: Span, func_name: &str) {
+        for arg in args {
+            let value = match &arg.value {
+                ArgValue::Expr(e) | ArgValue::Spread(e) => e,
+            };
+            self.check_noalloc_expr(value, func_name);
+        }
+
+        let callee_name = match callee {
+            Expr::Ident(name) => name.text.to_string(),
+            Expr::QualifiedIdent(name) => name.to_string(),
+            _ => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "indirect call through expression is forbidden in `@noalloc` context",
+                    )
+                    .with_label(Label::primary(self.file_id, span, "indirect call here"))
+                    .with_action("call direct `@noalloc` functions only"),
+                );
+                return;
+            }
+        };
+
+        if is_pure_non_allocating_intrinsic(&callee_name) {
+            return;
+        }
+
+        if is_known_allocating_function(&callee_name) {
+            self.sink.emit(
+                Diagnostic::error(
+                    "perf.allocation_in_noalloc",
+                    format!(
+                        "call to allocating standard function `{callee_name}` inside `@noalloc` function `{func_name}`"
+                    ),
+                )
+                .with_label(Label::primary(self.file_id, span, "allocating call here"))
+                .with_action("avoid allocating standard library functions in hot paths"),
+            );
+            return;
+        }
+
+        let base_name = callee_name.rsplit('.').next().unwrap_or(&callee_name);
+        if self.noalloc_funcs.contains(base_name) {
+            return;
+        }
+
+        self.sink.emit(
+            Diagnostic::error(
+                "perf.allocation_in_noalloc",
+                format!(
+                    "call to function `{callee_name}` which is not marked `@noalloc` inside `@noalloc` function `{func_name}`"
+                ),
+            )
+            .with_label(Label::primary(
+                self.file_id,
+                span,
+                "call to non-@noalloc function here",
+            ))
+            .with_action(format!(
+                "annotate `{callee_name}` with `@noalloc` or avoid calling allocating functions"
+            )),
         );
     }
 
@@ -1198,17 +1911,8 @@ impl<'a> Checker<'a> {
             // Look up the alias's underlying type.
             let (arity, underlying) = self.type_alias_map.get(&def_id)?;
             match underlying {
-                Ty::Named(target_id, args) if args.is_empty() || *arity > 0 => {
-                    // For generic aliases with args, the where constraint should
-                    // already have concrete types. For non-generic aliases, just
-                    // follow to the target.
-                    if *arity == 0 {
-                        def_id = *target_id;
-                    } else {
-                        // Generic alias used without type args in where clause.
-                        // This is invalid — where clause needs concrete trait.
-                        return None;
-                    }
+                Ty::Named(target_id, args) if args.is_empty() && *arity == 0 => {
+                    def_id = *target_id;
                 }
                 _ => return None,
             }
@@ -1574,6 +2278,10 @@ impl<'a> Checker<'a> {
         value: &Expr,
         tp: &[SmolStr],
     ) -> Ty {
+        // A binding owns the summary produced by the RHS closure (if any).
+        // Clear the previous expression's result before checking this one so
+        // a non-closure cannot accidentally inherit stale transfer facts.
+        self.last_function_value_summary = None;
         if let Some(ast_ty) = ann {
             let ann_ty = self.lower(ast_ty, tp);
             self.check_collection_runtime_limits(&ann_ty, ast_ty.span());
@@ -1638,15 +2346,50 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// Preserve transfer facts when a function value is stored in a local.
+    /// Anonymous closures publish the captures collected while their body was
+    /// checked. Named functions have no lexical environment, but their
+    /// definition summary still determines whether they may touch a mutable
+    /// global when called from another task.
+    fn function_value_summary_for_binding(
+        &mut self,
+        value: &Expr,
+        ty: &Ty,
+    ) -> Option<ClosureTransferSummary> {
+        if !matches!(ty, Ty::Func { .. }) {
+            self.last_function_value_summary = None;
+            return None;
+        }
+        if matches!(value, Expr::Closure(_)) {
+            return self.last_function_value_summary.take();
+        }
+        if let Some(name) = local_function_value_name(value) {
+            if let Some(summary) = self.lookup_function_value(&name) {
+                return Some(summary);
+            }
+        }
+        let def_id = self.named_function_value_def_id(value)?;
+        let def = self.def_map.get(def_id);
+        let name = def.name.clone();
+        Some(ClosureTransferSummary {
+            has_global_mutable_effect: self.transferable_global_function_defs.contains(&def_id)
+                || self.transferable_global_functions.contains(&name),
+            unknown_effect: def.kind == DefKind::Extern,
+            ..ClosureTransferSummary::default()
+        })
+    }
+
     fn check_stmt(&mut self, stmt: &Stmt, expected_ret: &Ty, tp: &[SmolStr]) {
         match stmt {
             Stmt::Const(c) => {
                 let ty = self.resolve_local_binding_ty(&c.name, c.ty.as_ref(), &c.value, tp);
-                self.bind_checked(&c.name, ty, false, false);
+                let summary = self.function_value_summary_for_binding(&c.value, &ty);
+                self.bind_checked_with_summary(&c.name, ty, false, false, summary);
             }
             Stmt::Var(v) => {
                 let ty = self.resolve_local_binding_ty(&v.name, v.ty.as_ref(), &v.value, tp);
-                self.bind_checked(&v.name, ty, true, false);
+                let summary = self.function_value_summary_for_binding(&v.value, &ty);
+                self.bind_checked_with_summary(&v.name, ty, true, false, summary);
             }
             Stmt::Destructure(d) => {
                 // The struct type comes from the annotation when written, and
@@ -1752,6 +2495,30 @@ impl<'a> Checker<'a> {
                         );
                     }
                     return;
+                }
+                if let Some(val) = &r.value {
+                    if let Some(root) = expr_root_name(val) {
+                        if let Some((_, is_using)) = self.lookup_binding_flags(&root.text) {
+                            if is_using {
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        "using.escape",
+                                        format!(
+                                            "scoped resource `{}` bound by `using` cannot escape its declaring block via return",
+                                            root.text
+                                        ),
+                                    )
+                                    .with_label(Label::primary(
+                                        self.file_id,
+                                        val.span(),
+                                        "scoped resource escapes here",
+                                    ))
+                                    .with_why("deterministic resource cleanup disposes the value upon exiting the block scope".to_string())
+                                    .with_action("process the scoped resource inside the using block without returning it directly"),
+                                );
+                            }
+                        }
+                    }
                 }
                 let ret_ty = r.value.as_ref().map_or(Ty::Void, |e| {
                     if expr_needs_expected_context(e) {
@@ -2039,7 +2806,14 @@ impl<'a> Checker<'a> {
                 self.check_lvalue_mutable(&a.lvalue);
                 let lhs_ty = self.infer_lvalue_ty(&a.lvalue);
                 // Push expected type so context-typed struct/enum shorthand works on assign.
+                self.last_function_value_summary = None;
                 self.check_expr_assignable_to(&a.value, &lhs_ty);
+                if let LValue::Ident(name) = &a.lvalue {
+                    let summary = self.function_value_summary_for_binding(&a.value, &lhs_ty);
+                    self.set_function_value_for_local(&name.text, summary);
+                } else {
+                    self.last_function_value_summary = None;
+                }
             }
             Stmt::CompoundAssign(c) => {
                 let rhs_ty = self.infer_expr(&c.value);
@@ -2132,6 +2906,8 @@ impl<'a> Checker<'a> {
         self.push_scope();
         let closure_scope_root = self.scopes.len() - 1;
         self.closure_scope_roots.push(closure_scope_root);
+        self.closure_transfer_summaries
+            .push(ClosureTransferSummary::default());
         for (param, ty) in closure.params.iter().zip(param_tys.iter()) {
             self.bind_checked(&param.name, ty.clone(), false, false);
         }
@@ -2182,6 +2958,7 @@ impl<'a> Checker<'a> {
         self.loop_depth = prev_loop_depth;
         self.closure_scope_roots.pop();
         self.pop_scope();
+        self.last_function_value_summary = self.closure_transfer_summaries.pop();
 
         Ty::Func {
             params: param_tys,
@@ -2216,6 +2993,29 @@ impl<'a> Checker<'a> {
                             .with_action(format!("write exactly {len} elements")),
                         );
                     }
+                }
+                expected.clone()
+            }
+            Expr::List { elements, span } if matches!(expected, Ty::Simd(_, _)) => {
+                let Ty::Simd(elem_ty, lanes) = expected else {
+                    unreachable!("guarded by the match arm")
+                };
+                for element in elements {
+                    self.check_expr_assignable_to(element, elem_ty);
+                }
+                if elements.len() != *lanes as usize {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "type.simd_length_mismatch",
+                            format!(
+                                "`{}` needs {lanes} elements, found {}",
+                                expected.display_in(self.def_map),
+                                elements.len()
+                            ),
+                        )
+                        .with_label(Label::primary(self.file_id, *span, "simd literal"))
+                        .with_action(format!("write exactly {lanes} elements")),
+                    );
                 }
                 expected.clone()
             }
@@ -2372,7 +3172,6 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-
         expected.clone()
     }
 
@@ -2411,11 +3210,14 @@ impl<'a> Checker<'a> {
             return Ty::Error;
         }
 
-        let field_sig = self
-            .struct_sigs
-            .iter()
-            .find(|s| s.def_id == def_id)
-            .map(|s| s.fields.clone())
+        let declared_fields = self
+            .struct_sig(def_id)
+            .map(|sig| {
+                sig.fields
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         let mut provided = HashSet::new();
         for field in fields {
@@ -2435,9 +3237,8 @@ impl<'a> Checker<'a> {
                 self.infer_expr(&field.value);
                 continue;
             }
-            if let Some((_, expected)) = field_sig.iter().find(|(name, _)| name == &field.name.text)
-            {
-                self.check_expr_assignable_to(&field.value, expected);
+            if let Some(expected) = self.struct_field_ty(def_id, &field.name.text) {
+                self.check_expr_assignable_to(&field.value, &expected);
             } else {
                 self.infer_expr(&field.value);
                 self.sink.emit(
@@ -2454,7 +3255,7 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-        for (name, _) in &field_sig {
+        for name in &declared_fields {
             if !provided.contains(name) {
                 self.sink.emit(
                     Diagnostic::error(
@@ -2641,15 +3442,12 @@ impl<'a> Checker<'a> {
         if def.kind != DefKind::Struct {
             return None;
         }
-        self.struct_sigs
-            .iter()
-            .find(|sig| sig.def_id == *def_id)
-            .map(|sig| {
-                sig.fields
-                    .iter()
-                    .map(|(name, ty)| (name.clone(), substitute_ty_params(ty, args)))
-                    .collect()
-            })
+        self.struct_sig(*def_id).map(|sig| {
+            sig.fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), substitute_ty_params(ty, args)))
+                .collect()
+        })
     }
 
     fn emit_anon_struct_type_unknown(&mut self, expected: &Ty, span: ori_diagnostics::Span) {
@@ -2743,6 +3541,7 @@ impl<'a> Checker<'a> {
                     let def = self.def_map.get(id);
                     match def.kind {
                         crate::def::DefKind::Const | crate::def::DefKind::Var => {
+                            self.check_global_mutable_capture(&path, q.span, id);
                             self.value_ty(id).unwrap_or(Ty::Infer(id.0))
                         }
                         crate::def::DefKind::Func | crate::def::DefKind::Extern => self
@@ -2984,6 +3783,23 @@ impl<'a> Checker<'a> {
                         self.expect_bool(&t, operand.span());
                         Ty::Bool
                     }
+                    UnaryOp::BitNot => {
+                        if !t.is_integer() && !t.is_error() {
+                            self.sink.emit(
+                                Diagnostic::error(
+                                    "type.unary_bitnot_non_integer",
+                                    format!(
+                                        "unary `~` applied to non-integer type `{}`",
+                                        t.display_in(self.def_map)
+                                    ),
+                                )
+                                .with_label(Label::primary(self.file_id, *span, "here"))
+                                .with_action("use an integer operand"),
+                            );
+                            return Ty::Error;
+                        }
+                        t
+                    }
                 }
             }
             Expr::Binary { op, lhs, rhs, span } => {
@@ -3169,6 +3985,9 @@ impl<'a> Checker<'a> {
 
                 // If callee is a named function, look up its return type
                 if let Expr::QualifiedIdent(q) = callee.as_ref() {
+                    if self.transferable_closure_depth > 0 {
+                        self.check_receiver_method_global_effect(q);
+                    }
                     if q.is_single() {
                         if let Some(ret) =
                             self.infer_never_form_call(q.last().as_str(), args, expr.span())
@@ -3193,6 +4012,37 @@ impl<'a> Checker<'a> {
                         self.check_visibility(def_id, q.span);
                         let def = self.def_map.get(def_id);
                         if def.kind == DefKind::Func || def.kind == DefKind::Extern {
+                            let is_local_definition = self
+                                .def_map
+                                .get(def_id)
+                                .path
+                                .strip_prefix(self.namespace)
+                                .is_some_and(|suffix| suffix.starts_with('.'));
+                            let may_access_global = (is_local_definition
+                                && self.transferable_global_functions.contains(&q.last().text))
+                                || self.transferable_global_function_defs.contains(&def_id);
+                            if may_access_global {
+                                self.record_closure_global_effect();
+                            }
+                            if self.transferable_closure_depth > 0 && may_access_global {
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        "concurrency.global_mutable_capture",
+                                        format!(
+                                            "transferable closure calls `{}` which may access a mutable global",
+                                            q.last().text
+                                        ),
+                                    )
+                                    .with_label(Label::primary(
+                                        self.file_id,
+                                        q.span,
+                                        "task-boundary call here",
+                                    ))
+                                    .with_action(
+                                        "pass the state explicitly, or use `atomic.AtomicInt`/a channel for shared mutation",
+                                    ),
+                                );
+                            }
                             if let Some(sig) = self.func_sig(def_id) {
                                 // An iterator has no callable value: it only
                                 // exists inlined inside a `for` head.
@@ -3332,6 +4182,31 @@ impl<'a> Checker<'a> {
                     let expanded_path = self.expand_alias(&path);
                     if let Some(ret) = self.infer_stdlib_call(&expanded_path, args, expr.span()) {
                         return ret;
+                    }
+                }
+                if let Some(name) = local_function_value_name(callee) {
+                    if let Some(summary) = self.lookup_function_value(&name) {
+                        if summary.has_global_mutable_effect {
+                            self.record_closure_global_effect();
+                            if self.transferable_closure_depth > 0 {
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        "concurrency.global_mutable_capture",
+                                        format!(
+                                            "transferable closure calls `{name}` which may access a mutable global"
+                                        ),
+                                    )
+                                    .with_label(Label::primary(
+                                        self.file_id,
+                                        callee.span(),
+                                        "task-boundary function value here",
+                                    ))
+                                    .with_action(
+                                        "pass the state explicitly, or use `atomic.AtomicInt`/a channel for shared mutation",
+                                    ),
+                                );
+                            }
+                        }
                     }
                 }
                 let callee_ty = self.infer_expr(callee);
@@ -3617,6 +4492,69 @@ impl<'a> Checker<'a> {
                                 }
                                 *elem.clone()
                             }
+                            Ty::Simd(elem, lanes) => {
+                                if !idx_ty.is_assignable_to(&Ty::Int) && !idx_ty.is_error() {
+                                    self.sink.emit(
+                                        Diagnostic::error(
+                                            "type.index_not_int",
+                                            format!(
+                                                "simd index must be `int`, found `{}`",
+                                                idx_ty.display_in(self.def_map)
+                                            ),
+                                        )
+                                        .with_label(Label::primary(
+                                            self.file_id,
+                                            *span,
+                                            "index here",
+                                        ))
+                                        .with_action("use an integer index"),
+                                    );
+                                }
+                                if let Expr::IntLit { raw, .. } = idx_expr.as_ref() {
+                                    if let Ok(i) = raw.parse::<i64>() {
+                                        if i >= *lanes as i64 {
+                                            self.sink.emit(
+                                                Diagnostic::error(
+                                                    "type.simd_index_out_of_bounds",
+                                                    format!(
+                                                        "simd has {lanes} lanes, index {i} is out of bounds"
+                                                    ),
+                                                )
+                                                .with_label(Label::primary(
+                                                    self.file_id,
+                                                    *span,
+                                                    "out of bounds",
+                                                ))
+                                                .with_action(format!(
+                                                    "use a lane index between 0 and {}",
+                                                    lanes - 1
+                                                )),
+                                            );
+                                        }
+                                    }
+                                }
+                                *elem.clone()
+                            }
+                            Ty::Buffer(elem) => {
+                                if !idx_ty.is_assignable_to(&Ty::Int) && !idx_ty.is_error() {
+                                    self.sink.emit(
+                                        Diagnostic::error(
+                                            "type.index_not_int",
+                                            format!(
+                                                "buffer index must be `int`, found `{}`",
+                                                idx_ty.display_in(self.def_map)
+                                            ),
+                                        )
+                                        .with_label(Label::primary(
+                                            self.file_id,
+                                            *span,
+                                            "index here",
+                                        ))
+                                        .with_action("use an integer index"),
+                                    );
+                                }
+                                *elem.clone()
+                            }
                             Ty::Map(key, val) => {
                                 if !idx_ty.is_assignable_to(key) && !idx_ty.is_error() {
                                     self.sink.emit(
@@ -3676,18 +4614,18 @@ impl<'a> Checker<'a> {
                             _ if obj_ty.is_error() || obj_ty.contains_infer() => Ty::Infer(0),
                             _ => {
                                 self.sink.emit(
-                                    Diagnostic::error(
-                                        "type.not_indexable",
-                                        format!(
-                                            "type `{}` does not support indexing",
-                                            obj_ty.display_in(self.def_map)
+                                        Diagnostic::error(
+                                            "type.not_indexable",
+                                            format!(
+                                                "type `{}` does not support indexing",
+                                                obj_ty.display_in(self.def_map)
+                                            ),
+                                        )
+                                        .with_label(Label::primary(self.file_id, *span, "indexed here"))
+                                        .with_action(
+                                            "only list, buffer, array, map, string, and tuple values can be indexed",
                                         ),
-                                    )
-                                    .with_label(Label::primary(self.file_id, *span, "indexed here"))
-                                    .with_action(
-                                        "only list, map, string, and tuple values can be indexed",
-                                    ),
-                                );
+                                    );
                                 Ty::Error
                             }
                         }
@@ -3701,7 +4639,7 @@ impl<'a> Checker<'a> {
                         }
                         // Slicing returns same collection type
                         match &obj_ty {
-                            Ty::List(_) | Ty::String => obj_ty,
+                            Ty::Buffer(_) | Ty::List(_) | Ty::String => obj_ty,
                             _ if obj_ty.is_error() || obj_ty.contains_infer() => Ty::Infer(0),
                             _ => {
                                 self.sink.emit(
@@ -3795,7 +4733,10 @@ impl<'a> Checker<'a> {
         use BinaryOp::*;
         match op {
             Add | Sub | Mul | Div | Rem => {
-                if lt.is_numeric() && lt == rt {
+                if (lt.is_numeric() && lt == rt)
+                    || (matches!(op, Add | Sub | Mul | Div)
+                        && matches!(lt, Ty::Simd(elem, lanes) if matches!(rt, Ty::Simd(r_elem, r_lanes) if elem == r_elem && lanes == r_lanes)))
+                {
                     lt.clone()
                 } else if op == Add && lt == &Ty::String && rt == &Ty::String {
                     Ty::String
@@ -3826,6 +4767,53 @@ impl<'a> Checker<'a> {
                             span,
                             "here",
                         )),
+                    );
+                    Ty::Error
+                }
+            }
+            // GFX-BITWISE-1: bitwise ops require matching integer types.
+            Band | Bor | Bxor => {
+                if lt.is_integer() && lt == rt {
+                    lt.clone()
+                } else if lt.is_error() || rt.is_error() {
+                    Ty::Error
+                } else {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "type.bitwise_type_mismatch",
+                            format!(
+                                "bitwise operator `{}` requires matching integer types, got `{}` and `{}`",
+                                operator_symbol(op),
+                                lt.display_in(self.def_map),
+                                rt.display_in(self.def_map)
+                            ),
+                        )
+                        .with_label(Label::primary(self.file_id, span, "here"))
+                        .with_action("use integer operands of the same width"),
+                    );
+                    Ty::Error
+                }
+            }
+            // Shifts: LHS integer, RHS integer (width may differ); the result
+            // keeps the LHS width. The shift count is validated at runtime.
+            Shl | Shr => {
+                if lt.is_integer() && rt.is_integer() {
+                    lt.clone()
+                } else if lt.is_error() || rt.is_error() {
+                    Ty::Error
+                } else {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "type.shift_type_mismatch",
+                            format!(
+                                "shift operator `{}` requires integer operands, got `{}` and `{}`",
+                                operator_symbol(op),
+                                lt.display_in(self.def_map),
+                                rt.display_in(self.def_map)
+                            ),
+                        )
+                        .with_label(Label::primary(self.file_id, span, "here"))
+                        .with_action("use integer operands"),
                     );
                     Ty::Error
                 }
@@ -3902,7 +4890,7 @@ impl<'a> Checker<'a> {
         if ty.is_numeric()
             || matches!(
                 ty,
-                Ty::Bool | Ty::String | Ty::Infer(_) | Ty::Never | Ty::Any(_)
+                Ty::Bool | Ty::String | Ty::Handle(_) | Ty::Infer(_) | Ty::Never | Ty::Any(_)
             )
         {
             return true;
@@ -3928,7 +4916,7 @@ impl<'a> Checker<'a> {
             }
             Ty::Bytes => true,
             Ty::Named(def_id, args) => {
-                self.supports_structural_struct_equality(*def_id, args, visiting_named)
+                self.supports_structural_named_equality(*def_id, args, visiting_named)
             }
             Ty::Opaque { kind, args } if kind.is_list_backed_collection() => {
                 if let Some(elem_ty) = args.first() {
@@ -3978,7 +4966,7 @@ impl<'a> Checker<'a> {
         if def.kind != DefKind::Struct {
             return false;
         }
-        let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == def_id) else {
+        let Some(sig) = self.struct_sig(def_id) else {
             return false;
         };
         visiting_named.push(def_id);
@@ -3988,6 +4976,40 @@ impl<'a> Checker<'a> {
         });
         visiting_named.pop();
         supported
+    }
+
+    fn supports_structural_named_equality(
+        &self,
+        def_id: DefId,
+        args: &[Ty],
+        visiting_named: &mut Vec<DefId>,
+    ) -> bool {
+        if visiting_named.contains(&def_id) {
+            return false;
+        }
+        let Some(def) = self.def_map.all_defs().get(def_id.0 as usize) else {
+            return false;
+        };
+        match def.kind {
+            DefKind::Struct => {
+                self.supports_structural_struct_equality(def_id, args, visiting_named)
+            }
+            DefKind::Enum => {
+                let Some(sig) = self.enum_sig(def_id) else {
+                    return false;
+                };
+                visiting_named.push(def_id);
+                let supported = sig.variants.iter().all(|variant| {
+                    variant.fields.iter().all(|(_, field_ty)| {
+                        let substituted = substitute_ty_params(field_ty, args);
+                        self.supports_generic_equality_inner(&substituted, visiting_named)
+                    })
+                });
+                visiting_named.pop();
+                supported
+            }
+            _ => false,
+        }
     }
 
     fn unsupported_struct_equality_field(&self, ty: &Ty) -> Option<(SmolStr, Ty)> {
@@ -4005,15 +5027,11 @@ impl<'a> Checker<'a> {
         if visiting_named.contains(def_id) {
             return None;
         }
-        let Some(def) = self.def_map.all_defs().get(def_id.0 as usize) else {
-            return None;
-        };
+        let def = self.def_map.all_defs().get(def_id.0 as usize)?;
         if def.kind != DefKind::Struct {
             return None;
         }
-        let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
-            return None;
-        };
+        let sig = self.struct_sig(*def_id)?;
         visiting_named.push(*def_id);
         let unsupported = sig
             .fields
@@ -4498,11 +5516,7 @@ impl<'a> Checker<'a> {
             return None;
         }
 
-        let Some(method_sig) = self
-            .trait_sig(trait_def_id)
-            .and_then(|sig| sig.methods.iter().find(|method| method.name == method_name))
-            .cloned()
-        else {
+        let Some(method_sig) = self.trait_method_sig(trait_def_id, method_name).cloned() else {
             self.sink.emit(
                 Diagnostic::error(
                     "type.no_such_method",
@@ -4680,9 +5694,9 @@ impl<'a> Checker<'a> {
         let (params, ret) = stdlib_func_sig(path)?;
         let params: Vec<Ty> = params
             .into_iter()
-            .map(|p| self.replace_json_placeholder(p))
+            .map(|p| replace_json_placeholder(p, self.def_map))
             .collect();
-        let ret = self.replace_json_placeholder(ret);
+        let ret = replace_json_placeholder(ret, self.def_map);
         // Warn if this stdlib function lacks native codegen support.
         if !crate::stdlib::stdlib_native_codegen_available(path) {
             self.sink.emit(
@@ -4694,10 +5708,10 @@ impl<'a> Checker<'a> {
                 .with_action("use an alternative function or wait for native runtime support"),
             );
         }
-        let (params, mut ret) = freshen_stdlib_infers(params, ret, span.start as u32);
+        let (params, mut ret) = freshen_stdlib_infers(params, ret, span.start);
         self.check_call_args(args, &params, span);
-        let first_arg_ty = args.first().and_then(|arg| match &arg.value {
-            ArgValue::Expr(expr) | ArgValue::Spread(expr) => Some(self.infer_expr(expr)),
+        let first_arg_ty = args.first().map(|arg| match &arg.value {
+            ArgValue::Expr(expr) | ArgValue::Spread(expr) => self.infer_expr(expr),
         });
         let first_list_backed_collection_elem = first_arg_ty
             .as_ref()
@@ -5083,11 +6097,8 @@ impl<'a> Checker<'a> {
                     params,
                     ret: thunk_ret,
                 }),
-            ) => {
-                if params.is_empty() {
-                    ret = Ty::Lazy(thunk_ret.clone());
-                }
-            }
+            ) if params.is_empty() => ret = Ty::Lazy(thunk_ret.clone()),
+            ("ori.lazy.once", Some(Ty::Func { .. })) => {}
             ("ori.lazy.force", Some(Ty::Lazy(inner))) => ret = *inner.clone(),
             ("ori.task.join", Some(Ty::TaskJob(inner))) => {
                 ret = Ty::Result(inner.clone(), Box::new(Ty::TaskJoinError));
@@ -5107,66 +6118,6 @@ impl<'a> Checker<'a> {
             _ => {}
         }
         Some(ret)
-    }
-
-    fn replace_json_placeholder(&self, ty: Ty) -> Ty {
-        let json_val_def_id = self.def_map.lookup("ori.json.Value");
-        fn recurse(t: Ty, json_val_def_id: Option<DefId>) -> Ty {
-            match t {
-                Ty::Named(id, _) if id == crate::stdlib::JSON_VALUE_PLACEHOLDER => {
-                    if let Some(concrete_id) = json_val_def_id {
-                        Ty::Named(concrete_id, vec![])
-                    } else {
-                        Ty::Named(id, vec![])
-                    }
-                }
-                Ty::Named(id, args) => {
-                    let new_args = args
-                        .into_iter()
-                        .map(|arg| recurse(arg, json_val_def_id))
-                        .collect();
-                    Ty::Named(id, new_args)
-                }
-                Ty::Optional(inner) => Ty::Optional(Box::new(recurse(*inner, json_val_def_id))),
-                Ty::Result(ok, err) => Ty::Result(
-                    Box::new(recurse(*ok, json_val_def_id)),
-                    Box::new(recurse(*err, json_val_def_id)),
-                ),
-                Ty::List(inner) => Ty::List(Box::new(recurse(*inner, json_val_def_id))),
-                Ty::Map(k, v) => Ty::Map(
-                    Box::new(recurse(*k, json_val_def_id)),
-                    Box::new(recurse(*v, json_val_def_id)),
-                ),
-                Ty::Set(inner) => Ty::Set(Box::new(recurse(*inner, json_val_def_id))),
-                Ty::Range(inner) => Ty::Range(Box::new(recurse(*inner, json_val_def_id))),
-                Ty::Tuple(elems) => Ty::Tuple(
-                    elems
-                        .into_iter()
-                        .map(|e| recurse(e, json_val_def_id))
-                        .collect(),
-                ),
-                Ty::Lazy(inner) => Ty::Lazy(Box::new(recurse(*inner, json_val_def_id))),
-                Ty::Future(inner) => Ty::Future(Box::new(recurse(*inner, json_val_def_id))),
-                Ty::TaskJob(inner) => Ty::TaskJob(Box::new(recurse(*inner, json_val_def_id))),
-                Ty::Channel(inner) => Ty::Channel(Box::new(recurse(*inner, json_val_def_id))),
-                Ty::Func { params, ret } => Ty::Func {
-                    params: params
-                        .into_iter()
-                        .map(|p| recurse(p, json_val_def_id))
-                        .collect(),
-                    ret: Box::new(recurse(*ret, json_val_def_id)),
-                },
-                Ty::Opaque { kind, args } => Ty::Opaque {
-                    kind,
-                    args: args
-                        .into_iter()
-                        .map(|a| recurse(a, json_val_def_id))
-                        .collect(),
-                },
-                other => other,
-            }
-        }
-        recurse(ty, json_val_def_id)
     }
 
     fn infer_task_spawn_call(
@@ -5196,6 +6147,61 @@ impl<'a> Checker<'a> {
 
         match work_ty {
             Ty::Func { params, ret } => {
+                let named_def = match &arg.value {
+                    ArgValue::Expr(expr) => self.named_function_value_def_id(expr),
+                    ArgValue::Spread(_) => None,
+                };
+                if let Some(def_id) = named_def {
+                    let name = self.def_map.get(def_id).name.clone();
+                    let unsafe_named = self.transferable_global_function_defs.contains(&def_id)
+                        || self.transferable_global_functions.contains(&name);
+                    if unsafe_named {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                "concurrency.global_mutable_capture",
+                                format!(
+                                    "transferable closure calls `{name}` which may access a mutable global"
+                                ),
+                            )
+                            .with_label(Label::primary(
+                                self.file_id,
+                                arg.span,
+                                "task-boundary function value here",
+                            ))
+                            .with_action(
+                                "pass the state explicitly, or use `atomic.AtomicInt`/a channel for shared mutation",
+                            ),
+                        );
+                    } else if self.def_map.get(def_id).kind == DefKind::Extern {
+                        self.expect_function_summary_transferable(
+                            &ClosureTransferSummary {
+                                unknown_effect: true,
+                                ..ClosureTransferSummary::default()
+                            },
+                            arg.span,
+                        );
+                    }
+                } else if !matches!(&arg.value, ArgValue::Expr(expr) if matches!(expr.as_ref(), Expr::Closure(_)))
+                {
+                    let local_summary = match &arg.value {
+                        ArgValue::Expr(expr) => local_function_value_name(expr)
+                            .and_then(|name| self.lookup_function_value(&name)),
+                        ArgValue::Spread(_) => None,
+                    };
+                    if let Some(summary) = local_summary {
+                        self.expect_function_summary_transferable(&summary, arg.span);
+                    } else {
+                        // A function value with no recorded environment is
+                        // still rejected: its captures cannot be audited.
+                        self.expect_transferable_ty(
+                            &Ty::Func {
+                                params: params.clone(),
+                                ret: ret.clone(),
+                            },
+                            arg.span,
+                        );
+                    }
+                }
                 self.expect_closure_params(&params, &[], arg.span);
                 self.expect_transferable_ty(&ret, arg.span);
                 Some(Ty::TaskJob(ret))
@@ -5217,6 +6223,26 @@ impl<'a> Checker<'a> {
                 Some(Ty::TaskJob(Box::new(Ty::Infer(0))))
             }
         }
+    }
+
+    /// Resolve a direct source-level function name passed as a value. Named
+    /// functions have no lexical captures; their global effects are therefore
+    /// checked from the precomputed definition summary in `task.spawn`.
+    fn named_function_value_def_id(&mut self, expr: &Expr) -> Option<DefId> {
+        let path = match expr {
+            Expr::Ident(name) => name.text.to_string(),
+            Expr::QualifiedIdent(name) => name.to_string(),
+            _ => return None,
+        };
+        let expanded = self.expand_alias(&path);
+        let def_id = self
+            .resolve_def_id(&expanded)
+            .or_else(|| self.resolve_def_id(&path))?;
+        matches!(
+            self.def_map.get(def_id).kind,
+            DefKind::Func | DefKind::Extern
+        )
+        .then_some(def_id)
     }
 
     fn infer_test_assert_equality_call(
@@ -5383,18 +6409,22 @@ impl<'a> Checker<'a> {
                 else {
                     return Some(fallback_ret);
                 };
-                self.expect_closure_params(&closure_params, &[elem_ty.clone()], closure_span);
+                self.expect_closure_params(
+                    &closure_params,
+                    std::slice::from_ref(&elem_ty),
+                    closure_span,
+                );
                 if !self.is_current_map_key_supported(&key_ty) {
                     self.sink.emit(
                         Diagnostic::error(
                             "type.hash_key_not_supported",
                             format!(
-                                "`iter.group_by` keys currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
+                                "`iter.group_by` keys currently require `int`, `string`, or a type implementing `Hashable` with built-in/explicit `Equatable`, found `{}`",
                                 key_ty.display_in(self.def_map)
                             ),
                         )
                         .with_label(Label::primary(self.file_id, closure_span, "key produced here"))
-                        .with_action("return an `int`, `string`, or Hashable/Equatable value from the key function"),
+                        .with_action("return an `int`, `string`, or a Hashable value with built-in/explicit Equatable"),
                     );
                 }
                 Some(Ty::Map(
@@ -5441,7 +6471,7 @@ impl<'a> Checker<'a> {
         else {
             return;
         };
-        self.expect_closure_params(&closure_params, &[elem_ty.clone()], closure_span);
+        self.expect_closure_params(&closure_params, std::slice::from_ref(elem_ty), closure_span);
         self.expect_assignable(&closure_ret, &Ty::Bool, closure_span);
     }
 
@@ -5823,11 +6853,14 @@ impl<'a> Checker<'a> {
     }
 
     fn check_struct_constructor_args(&mut self, def_id: DefId, args: &[Arg]) {
-        let fields = self
-            .struct_sigs
-            .iter()
-            .find(|s| s.def_id == def_id)
-            .map(|s| s.fields.clone())
+        let declared_fields = self
+            .struct_sig(def_id)
+            .map(|sig| {
+                sig.fields
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         let mut provided = HashSet::new();
 
@@ -5848,9 +6881,9 @@ impl<'a> Checker<'a> {
                 continue;
             };
 
-            if let Some((_, expected)) = fields.iter().find(|(name, _)| name == &label.text) {
+            if let Some(expected) = self.struct_field_ty(def_id, &label.text) {
                 provided.insert(label.text.clone());
-                self.check_expr_assignable_to(expr, expected);
+                self.check_expr_assignable_to(expr, &expected);
             } else {
                 self.infer_expr(expr);
                 self.sink.emit(
@@ -5864,7 +6897,7 @@ impl<'a> Checker<'a> {
             }
         }
 
-        for (name, _) in fields {
+        for name in declared_fields {
             if !provided.contains(&name) {
                 self.sink.emit(
                     Diagnostic::error(
@@ -5910,7 +6943,7 @@ impl<'a> Checker<'a> {
 
     fn lower(&mut self, ty: &ori_ast::ty::Type, type_params: &[SmolStr]) -> Ty {
         self.mark_type_alias_usage(ty);
-        let raw = crate::lower::lower_type_with_local_aliases(
+        let raw = crate::lower::lower_type_with_local_aliases_and_structs(
             ty,
             self.namespace,
             type_params,
@@ -5919,8 +6952,9 @@ impl<'a> Checker<'a> {
             self.sink,
             &self.aliases,
             &self.local_type_aliases,
+            self.struct_sigs,
         );
-        expand_ty_aliases(raw, self.def_map, &self.type_alias_map)
+        expand_ty_aliases(raw, self.def_map, self.type_alias_map)
     }
 
     /// Walk an AST type and mark any alias prefix as used.
@@ -5986,6 +7020,17 @@ impl<'a> Checker<'a> {
     }
 
     fn bind_checked(&mut self, name: &Name, ty: Ty, mutable: bool, using_binding: bool) {
+        self.bind_checked_with_summary(name, ty, mutable, using_binding, None);
+    }
+
+    fn bind_checked_with_summary(
+        &mut self,
+        name: &Name,
+        ty: Ty,
+        mutable: bool,
+        using_binding: bool,
+        summary: Option<ClosureTransferSummary>,
+    ) {
         if self
             .scopes
             .last()
@@ -6001,7 +7046,60 @@ impl<'a> Checker<'a> {
             );
         }
         if let Some(s) = self.scopes.last_mut() {
-            s.bind_with_flags(name.text.clone(), ty, mutable, using_binding);
+            s.bind_with_flags(name.text.clone(), ty.clone(), mutable, using_binding);
+            if let Some(summary) = summary {
+                s.set_function_value(name.text.clone(), summary);
+            }
+        }
+    }
+
+    fn lookup_function_value(&self, name: &str) -> Option<ClosureTransferSummary> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.function_value(name).cloned())
+    }
+
+    fn set_function_value_for_local(
+        &mut self,
+        name: &str,
+        summary: Option<ClosureTransferSummary>,
+    ) {
+        let Some(scope) = self
+            .scopes
+            .iter_mut()
+            .rev()
+            .find(|scope| scope.contains(name))
+        else {
+            return;
+        };
+        if let Some(summary) = summary {
+            scope.set_function_value(SmolStr::new(name), summary);
+        } else {
+            scope.function_values.remove(name);
+        }
+    }
+
+    fn record_closure_capture(&mut self, name: &str, ty: &Ty) {
+        let nested_summary = matches!(ty, Ty::Func { .. })
+            .then(|| self.lookup_function_value(name))
+            .flatten();
+        if let Some(summary) = self.closure_transfer_summaries.last_mut() {
+            if let Some(nested) = nested_summary {
+                // A closure captures the environment of a nested function
+                // value, not the opaque function pointer itself. Flattening
+                // the audited summary keeps safe nested closures transferable
+                // and propagates global/unknown effects transitively.
+                summary.merge_nested(&nested);
+            } else {
+                summary.captures.insert(SmolStr::new(name), ty.clone());
+            }
+        }
+    }
+
+    fn record_closure_global_effect(&mut self) {
+        if let Some(summary) = self.closure_transfer_summaries.last_mut() {
+            summary.has_global_mutable_effect = true;
         }
     }
 
@@ -6032,6 +7130,18 @@ impl<'a> Checker<'a> {
             self.check_closure_var_capture(name, span, scope_idx, mutable, &ty);
             return ty;
         }
+        // Top-level values are not lexical captures, but a transferable
+        // closure still executes concurrently with its creator. Reading a
+        // mutable global through a bare identifier must use the same race
+        // boundary as an outer `var` capture.
+        if let Some(def_id) = self.resolve_def_id(name) {
+            let def = self.def_map.get(def_id);
+            if matches!(def.kind, DefKind::Const | DefKind::Var) {
+                self.check_global_mutable_capture(name, span, def_id);
+                self.check_visibility(def_id, span);
+                return self.value_ty(def_id).unwrap_or(Ty::Infer(def_id.0));
+            }
+        }
         self.emit_undefined_name(name, span);
         Ty::Error
     }
@@ -6057,12 +7167,93 @@ impl<'a> Checker<'a> {
             .closure_scope_roots
             .last()
             .is_some_and(|closure_scope_root| scope_idx < *closure_scope_root);
+        if captures_outer {
+            self.record_closure_capture(name, ty);
+        }
         if mutable && captures_outer {
             self.emit_closure_captures_var(name, span);
         }
-        if captures_outer && self.transferable_closure_depth > 0 && !self.is_transferable_ty(ty) {
+        let capture_transferable = if matches!(ty, Ty::Func { .. }) {
+            self.lookup_function_value(name)
+                .is_some_and(|summary| summary.is_transferable(self))
+        } else {
+            self.is_transferable_ty(ty)
+        };
+        if captures_outer && self.transferable_closure_depth > 0 && !capture_transferable {
             self.emit_capture_not_transferable(name, ty, span);
         }
+    }
+
+    /// Reject direct access to a mutable top-level value from a closure that
+    /// crosses a native task boundary. Top-level `var` values are shared by
+    /// all threads and have no implicit synchronization.
+    fn check_global_mutable_capture(&mut self, name: &str, span: Span, def_id: DefId) {
+        self.record_closure_global_effect();
+        if self.transferable_closure_depth == 0 || self.def_map.get(def_id).kind != DefKind::Var {
+            return;
+        }
+
+        self.sink.emit(
+            Diagnostic::error(
+                "concurrency.global_mutable_capture",
+                format!("transferable closure cannot access mutable global `{name}`"),
+            )
+            .with_label(Label::primary(
+                self.file_id,
+                span,
+                "mutable global accessed from task closure",
+            ))
+            .with_action(
+                "pass the state explicitly, or use `atomic.AtomicInt`/a channel for shared mutation",
+            ),
+        );
+    }
+
+    /// Reject a receiver call in a transferable closure when any implementation
+    /// of that method is known to reach a mutable global. The receiver may be
+    /// a concrete struct, a trait object (`any[T]`), or a type parameter; the
+    /// syntax-only effect index cannot always recover the dynamic target, so a
+    /// matching method name is treated as potentially unsafe.
+    fn check_receiver_method_global_effect(&mut self, call: &QualifiedName) {
+        if call.parts.len() < 2 {
+            return;
+        }
+        let Some(receiver) = call.parts.first() else {
+            return;
+        };
+        if self.lookup_local_var_binding(receiver.as_str()).is_none() {
+            return;
+        }
+        let method = call.last().as_str();
+        let suffix = format!(".{method}");
+        let summary_marks_method = self.transferable_global_functions.contains(method)
+            || self.transferable_global_function_defs.iter().any(|def_id| {
+                let def = self.def_map.get(*def_id);
+                matches!(def.kind, DefKind::Func | DefKind::Extern) && def.path.ends_with(&suffix)
+            });
+        if !summary_marks_method {
+            return;
+        }
+        self.record_closure_global_effect();
+        if self.transferable_closure_depth == 0 {
+            return;
+        }
+        self.sink.emit(
+            Diagnostic::error(
+                "concurrency.global_mutable_capture",
+                format!(
+                    "transferable closure calls receiver method `{method}` which may access a mutable global"
+                ),
+            )
+            .with_label(Label::primary(
+                self.file_id,
+                call.span,
+                "task-boundary call here",
+            ))
+            .with_action(
+                "pass the state explicitly, or use `atomic.AtomicInt`/a channel for shared mutation",
+            ),
+        );
     }
 
     fn emit_undefined_name(&mut self, name: &str, span: ori_diagnostics::Span) {
@@ -6181,16 +7372,64 @@ impl<'a> Checker<'a> {
         );
     }
 
+    fn expect_function_summary_transferable(
+        &mut self,
+        summary: &ClosureTransferSummary,
+        span: ori_diagnostics::Span,
+    ) {
+        if summary.has_global_mutable_effect {
+            self.sink.emit(
+                Diagnostic::error(
+                    "concurrency.global_mutable_capture",
+                    "function value passed to `task.spawn` may access a mutable global",
+                )
+                .with_label(Label::primary(
+                    self.file_id,
+                    span,
+                    "task-boundary function value here",
+                ))
+                .with_action(
+                    "pass the state explicitly, or use `atomic.AtomicInt`/a channel for shared mutation",
+                ),
+            );
+        }
+        if summary.unknown_effect {
+            self.expect_transferable_ty(
+                &Ty::Func {
+                    params: Vec::new(),
+                    ret: Box::new(Ty::Infer(0)),
+                },
+                span,
+            );
+            return;
+        }
+        for (name, ty) in &summary.captures {
+            if !self.is_transferable_ty(ty) {
+                self.emit_capture_not_transferable(name, ty, span);
+            }
+        }
+    }
+
     fn is_transferable_ty(&self, ty: &Ty) -> bool {
+        let mut visiting = HashSet::new();
+        self.is_transferable_ty_inner(ty, &mut visiting)
+    }
+
+    /// Check transferability while allowing recursive data types to revisit an
+    /// instantiation already on the current path. A recursive enum such as
+    /// `json.Value` is transferable when every non-recursive payload is; the
+    /// path guard prevents that legitimate recursion from overflowing the
+    /// checker while still rejecting a sibling field such as `lazy[T]`.
+    fn is_transferable_ty_inner(&self, ty: &Ty, visiting: &mut HashSet<(DefId, Vec<Ty>)>) -> bool {
         match ty {
             // A const argument is a compile-time tag, never runtime data.
             Ty::ConstInt(_, _) => true,
             // Elements live inline, so an array moves exactly when they do.
-            Ty::Array(elem, _) => self.is_transferable_ty(elem),
-            // A slice points at a list owned by the sending side; letting it
-            // cross a task boundary would share that list without the receiver
-            // owning it.
-            Ty::Slice(_) => false,
+            Ty::Array(elem, _) => self.is_transferable_ty_inner(elem, visiting),
+            Ty::Simd(elem, _) => self.is_transferable_ty_inner(elem, visiting),
+            // A buffer/slice owns its heap block/window; sharing without
+            // ownership would dangle — not transferable.
+            Ty::Buffer(_) | Ty::Slice(_) => false,
             Ty::Bool
             | Ty::Int
             | Ty::Int8
@@ -6218,22 +7457,70 @@ impl<'a> Checker<'a> {
             | Ty::Range(inner)
             | Ty::Future(inner)
             | Ty::TaskJob(inner)
-            | Ty::Channel(inner) => self.is_transferable_ty(inner),
+            | Ty::Channel(inner) => self.is_transferable_ty_inner(inner, visiting),
             Ty::Map(key, value) | Ty::Result(key, value) => {
-                self.is_transferable_ty(key) && self.is_transferable_ty(value)
+                self.is_transferable_ty_inner(key, visiting)
+                    && self.is_transferable_ty_inner(value, visiting)
             }
-            Ty::Opaque { args, .. } => args.iter().all(|arg| self.is_transferable_ty(arg)),
-            Ty::Tuple(items) => items.iter().all(|item| self.is_transferable_ty(item)),
-            Ty::Named(def_id, args) => {
-                if let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) {
-                    return sig.fields.iter().all(|(_, field_ty)| {
-                        self.is_transferable_ty(&substitute_ty_params(field_ty, args))
-                    });
+            Ty::Opaque { kind, args } => {
+                // Collection handles own their payload and can move between
+                // tasks when their element types are transferable.  Resource
+                // handles, however, borrow process/OS state and are not
+                // `Send`/`Sync` by construction; treating a zero-argument
+                // opaque as transferable would let a spawned task use a file,
+                // socket, or stream after the creator closes it.  Cancellation
+                // tokens are the explicit exception: their state is an atomic
+                // flag designed for cross-task coordination.
+                match kind {
+                    OpaqueTy::NodeId | OpaqueTy::CancelToken => true,
+                    OpaqueTy::Deque
+                    | OpaqueTy::Queue
+                    | OpaqueTy::Stack
+                    | OpaqueTy::LinkedList
+                    | OpaqueTy::DoublyLinkedList
+                    | OpaqueTy::Tree
+                    | OpaqueTy::HashTable
+                    | OpaqueTy::Graph
+                    | OpaqueTy::Heap => args
+                        .iter()
+                        .all(|arg| self.is_transferable_ty_inner(arg, visiting)),
+                    OpaqueTy::File
+                    | OpaqueTy::Connection
+                    | OpaqueTy::Input
+                    | OpaqueTy::Output
+                    | OpaqueTy::Listener
+                    | OpaqueTy::UdpSocket => false,
                 }
-                if self.enum_sigs.iter().any(|sig| sig.def_id == *def_id) {
+            }
+            Ty::Tuple(items) => items
+                .iter()
+                .all(|item| self.is_transferable_ty_inner(item, visiting)),
+            Ty::Named(def_id, args) => {
+                let key = (*def_id, args.clone());
+                if !visiting.insert(key.clone()) {
                     return true;
                 }
-                self.user_type_implements_core_trait_id(*def_id, "Transferable")
+                let transferable = if let Some(sig) = self.struct_sig(*def_id) {
+                    sig.fields.iter().all(|(_, field_ty)| {
+                        self.is_transferable_ty_inner(
+                            &substitute_ty_params(field_ty, args),
+                            visiting,
+                        )
+                    })
+                } else if let Some(sig) = self.enum_sig(*def_id) {
+                    sig.variants.iter().all(|variant| {
+                        variant.fields.iter().all(|(_, field_ty)| {
+                            self.is_transferable_ty_inner(
+                                &substitute_ty_params(field_ty, args),
+                                visiting,
+                            )
+                        })
+                    })
+                } else {
+                    self.user_type_implements_core_trait_id(*def_id, "Transferable")
+                };
+                visiting.remove(&key);
+                transferable
             }
             Ty::Infer(_) | Ty::Param { .. } | Ty::Error => true,
             Ty::Func { .. } | Ty::Lazy(_) | Ty::Handle(_) | Ty::Any(_) => false,
@@ -6592,11 +7879,11 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-        if let Some(deprecated) = self
-            .deprecated_sigs
-            .iter()
-            .find(|deprecated| deprecated.def_id == def_id)
-        {
+        let deprecated = self
+            .deprecated_sig_indices
+            .get(&def_id)
+            .and_then(|index| self.deprecated_sigs.get(*index));
+        if let Some(deprecated) = deprecated {
             self.sink.emit(
                 Diagnostic::warning("attr.deprecated", format!("`{}` is deprecated", def.name))
                     .with_label(Label::primary(
@@ -6678,7 +7965,7 @@ impl<'a> Checker<'a> {
                         Diagnostic::error(
                             "type.collection_hash_unsupported",
                             format!(
-                                "`map` keys currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
+                                "`map` keys currently require `int`, `string`, or a type implementing `Hashable` with built-in/explicit `Equatable`, found `{}`",
                                 key.display_in(self.def_map)
                             ),
                         )
@@ -6686,7 +7973,7 @@ impl<'a> Checker<'a> {
                         .with_why(
                             "the current map runtime hashes built-in keys directly and accepts user-defined keys behind the `Hashable`/`Equatable` trait gate",
                         )
-                        .with_action("use `int`, `string`, or implement both `ori.core.Hashable` and `ori.core.Equatable` for the key type"),
+                        .with_action("use `int`, `string`, or implement `ori.core.Hashable` on a structurally comparable type (or add `ori.core.Equatable`)"),
                     );
                 }
                 self.check_collection_runtime_limits(value, span);
@@ -6697,7 +7984,7 @@ impl<'a> Checker<'a> {
                         Diagnostic::error(
                             "type.collection_hash_unsupported",
                             format!(
-                                "`set` elements currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
+                                "`set` elements currently require `int`, `string`, or a type implementing `Hashable` with built-in/explicit `Equatable`, found `{}`",
                                 elem.display_in(self.def_map)
                             ),
                         )
@@ -6705,7 +7992,7 @@ impl<'a> Checker<'a> {
                         .with_why(
                             "the current set runtime hashes built-in elements directly and accepts user-defined elements behind the `Hashable`/`Equatable` trait gate",
                         )
-                        .with_action("use `set[int]`, `set[string]`, or implement both `ori.core.Hashable` and `ori.core.Equatable` for the element type"),
+                        .with_action("use `set[int]`, `set[string]`, or implement `ori.core.Hashable` on a structurally comparable type (or add `ori.core.Equatable`)"),
                     );
                 }
                 self.check_collection_runtime_limits(elem, span);
@@ -6721,7 +8008,7 @@ impl<'a> Checker<'a> {
                         Diagnostic::error(
                             "type.collection_hash_unsupported",
                             format!(
-                                "`hash_table` keys currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
+                                "`hash_table` keys currently require `int`, `string`, or a type implementing `Hashable` with built-in/explicit `Equatable`, found `{}`",
                                 key.display_in(self.def_map)
                             ),
                         )
@@ -6729,7 +8016,7 @@ impl<'a> Checker<'a> {
                         .with_why(
                             "the current hash_table runtime reuses the map hashing engine and follows the same key support",
                         )
-                        .with_action("use `int`, `string`, or implement both `ori.core.Hashable` and `ori.core.Equatable` for the key type"),
+                        .with_action("use `int`, `string`, or implement `ori.core.Hashable` on a structurally comparable type (or add `ori.core.Equatable`)"),
                     );
                 }
                 self.check_collection_runtime_limits(key, span);
@@ -6745,7 +8032,7 @@ impl<'a> Checker<'a> {
                         Diagnostic::error(
                             "type.collection_hash_unsupported",
                             format!(
-                                "`graph` nodes currently require `int`, `string`, or a type implementing `Hashable` and `Equatable`, found `{}`",
+                                "`graph` nodes currently require `int`, `string`, or a type implementing `Hashable` with built-in/explicit `Equatable`, found `{}`",
                                 node.display_in(self.def_map)
                             ),
                         )
@@ -6753,7 +8040,7 @@ impl<'a> Checker<'a> {
                         .with_why(
                             "the current graph runtime stores nodes with the same key support used by map/hash_table",
                         )
-                        .with_action("use `int`, `string`, or implement both `ori.core.Hashable` and `ori.core.Equatable` for the node type"),
+                        .with_action("use `int`, `string`, or implement `ori.core.Hashable` on a structurally comparable type (or add `ori.core.Equatable`)"),
                     );
                 }
                 self.check_collection_runtime_limits(node, span);
@@ -6783,6 +8070,7 @@ impl<'a> Checker<'a> {
             }
             Ty::Optional(inner)
             | Ty::List(inner)
+            | Ty::Buffer(inner)
             | Ty::Range(inner)
             | Ty::Lazy(inner)
             | Ty::Future(inner)
@@ -6845,7 +8133,13 @@ impl<'a> Checker<'a> {
             return false;
         };
         self.user_type_implements_core_trait_id(*type_def_id, "Hashable")
-            && self.user_type_implements_core_trait_id(*type_def_id, "Equatable")
+            // Structural equality is the built-in Equatable contract for
+            // aggregates whose fields/variant payloads are comparable. An
+            // explicit Equatable implementation still overrides it, but a
+            // Hashable marker alone is sufficient when the type already has a
+            // sound structural equality operation.
+            && (self.user_type_implements_core_trait_id(*type_def_id, "Equatable")
+                || self.supports_builtin_equality(ty))
     }
 
     fn param_has_hash_and_eq(&self, ty: &Ty) -> bool {
@@ -6903,10 +8197,7 @@ impl<'a> Checker<'a> {
             return None;
         };
         let trait_def_id = self.def_map.lookup(&format!("ori.core.{trait_name}"))?;
-        let impl_sig = self
-            .impl_sigs
-            .iter()
-            .find(|sig| sig.type_def_id == *type_def_id && sig.trait_def_id == trait_def_id)?;
+        let impl_sig = self.impl_sig(*type_def_id, trait_def_id)?;
         let method = impl_sig
             .methods
             .iter()
@@ -6929,17 +8220,19 @@ impl<'a> Checker<'a> {
             return true;
         }
         match (a, b) {
-            (Infer(id), _) => return self.unify_infer(*id, b),
-            (_, Infer(id)) => return self.unify_infer(*id, a),
+            (Infer(id), _) => self.unify_infer(*id, b),
+            (_, Infer(id)) => self.unify_infer(*id, a),
             (Optional(x), Optional(y)) => self.unify(x, y),
             (Result(ok1, err1), Result(ok2, err2)) => {
                 self.unify(ok1, ok2) && self.unify(err1, err2)
             }
             (List(x), List(y))
+            | (Buffer(x), Buffer(y))
             | (Slice(x), Slice(y))
             | (Set(x), Set(y))
             | (Range(x), Range(y))
             | (Lazy(x), Lazy(y))
+            | (Handle(x), Handle(y))
             | (Future(x), Future(y))
             | (TaskJob(x), TaskJob(y))
             | (Channel(x), Channel(y)) => self.unify(x, y),
@@ -7010,6 +8303,7 @@ impl<'a> Checker<'a> {
             | Ty::Set(t)
             | Ty::Range(t)
             | Ty::Lazy(t)
+            | Ty::Handle(t)
             | Ty::Future(t)
             | Ty::TaskJob(t)
             | Ty::Channel(t) => Self::contains_infer_id(t, id),
@@ -7050,6 +8344,7 @@ impl<'a> Checker<'a> {
             Ty::Set(t) => Ty::Set(Box::new(self.resolve_infer(t))),
             Ty::Range(t) => Ty::Range(Box::new(self.resolve_infer(t))),
             Ty::Lazy(t) => Ty::Lazy(Box::new(self.resolve_infer(t))),
+            Ty::Handle(t) => Ty::Handle(Box::new(self.resolve_infer(t))),
             Ty::Future(t) => Ty::Future(Box::new(self.resolve_infer(t))),
             Ty::TaskJob(t) => Ty::TaskJob(Box::new(self.resolve_infer(t))),
             Ty::Channel(t) => Ty::Channel(Box::new(self.resolve_infer(t))),
@@ -7240,14 +8535,7 @@ impl<'a> Checker<'a> {
             if self.def_map.get(*def_id).kind != DefKind::Enum {
                 return None;
             }
-            let Some(enum_sig) = self.enum_sig(*def_id) else {
-                return None;
-            };
-            let variant = enum_sig
-                .variants
-                .iter()
-                .find(|variant| variant.name == name.text)
-                .cloned();
+            let variant = self.enum_variant_sig(*def_id, &name.text).cloned();
             if variant.is_none() {
                 self.sink.emit(
                     Diagnostic::error(
@@ -7386,7 +8674,18 @@ impl<'a> Checker<'a> {
     /// Infer the type of an lvalue target (variable, field, or index).
     fn infer_lvalue_ty(&mut self, lv: &LValue) -> Ty {
         match lv {
-            LValue::Ident(n) => self.lookup_local_var(&n.text).unwrap_or(Ty::Infer(0)),
+            LValue::Ident(n) => self
+                .lookup_local_var(&n.text)
+                .or_else(|| {
+                    let def_id = self.resolve_def_id(&n.text)?;
+                    let def = self.def_map.get(def_id);
+                    if matches!(def.kind, DefKind::Const | DefKind::Var) {
+                        self.value_ty(def_id)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(Ty::Infer(0)),
             LValue::Field { base, field, .. } => {
                 let base_ty = self.infer_lvalue_ty(base);
                 if let Ty::Named(def_id, _) = &base_ty {
@@ -7400,7 +8699,7 @@ impl<'a> Checker<'a> {
                 let base_ty = self.infer_lvalue_ty(base);
                 self.infer_expr(index);
                 match &base_ty {
-                    Ty::List(elem) => *elem.clone(),
+                    Ty::List(elem) | Ty::Buffer(elem) | Ty::Array(elem, _) => *elem.clone(),
                     Ty::Map(_, val) => *val.clone(),
                     _ => Ty::Infer(0),
                 }
@@ -7413,6 +8712,28 @@ impl<'a> Checker<'a> {
             return;
         };
         let Some((mutable, using_binding)) = self.lookup_binding_flags(&root.text) else {
+            if let Some(def_id) = self.resolve_def_id(&root.text) {
+                match self.def_map.get(def_id).kind {
+                    DefKind::Var => {
+                        self.check_global_mutable_capture(&root.text, root.span, def_id);
+                    }
+                    DefKind::Const => {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                "bind.const_reassignment",
+                                format!("`{}` is not mutable", root.text),
+                            )
+                            .with_label(Label::primary(
+                                self.file_id,
+                                root.span,
+                                "immutable global binding",
+                            ))
+                            .with_action("declare it with `var` if reassignment is intended"),
+                        );
+                    }
+                    _ => {}
+                }
+            }
             return;
         };
         if using_binding {
@@ -7525,6 +8846,982 @@ impl<'a> Checker<'a> {
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
+/// Build a conservative local effect index for top-level mutable globals.
+///
+/// The ordinary checker validates each function in isolation. A task closure
+/// can nevertheless call a helper whose body touches a shared `var`, so the
+/// direct-use check alone is insufficient. This small pre-pass records local
+/// function calls and computes a fixed point over the call graph. The resolver
+/// runs the same analysis across loaded modules for named free functions and
+/// publishes the resulting definition IDs to the checker. Function values
+/// remain conservative follow-up work tracked by `CONC-THREADS-1`.
+/// Receiver-based calls are indexed by method name below; this deliberately
+/// over-approximates dynamic dispatch so a method that can touch a mutable
+/// global is never missed at a task boundary.
+fn collect_transferable_global_functions(
+    checker: &Checker<'_>,
+    file: &SourceFile,
+) -> HashSet<SmolStr> {
+    let globals: HashSet<SmolStr> = file
+        .items
+        .iter()
+        .filter_map(|item| match &item.item {
+            Item::Const(value) => Some(value.name.text.clone()),
+            Item::Var(value) => Some(value.name.text.clone()),
+            _ => None,
+        })
+        .collect();
+
+    let mut functions: Vec<(SmolStr, &FuncDecl)> = Vec::new();
+    for item in &file.items {
+        match &item.item {
+            Item::Func(func) => functions.push((func.name.text.clone(), func)),
+            Item::Struct(structure) => functions.extend(
+                structure
+                    .methods
+                    .iter()
+                    .map(|func| (func.name.text.clone(), func)),
+            ),
+            Item::Apply(apply) => {
+                functions.extend(apply.free_members.iter().filter_map(|member| match member {
+                    ApplyMember::Method(func) => Some((func.name.text.clone(), func)),
+                    ApplyMember::Bind { .. } => None,
+                }));
+                for use_section in &apply.uses {
+                    functions.extend(use_section.members.iter().filter_map(
+                        |member| match member {
+                            ApplyMember::Method(func) => Some((func.name.text.clone(), func)),
+                            ApplyMember::Bind { .. } => None,
+                        },
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let function_names: HashSet<SmolStr> = functions.iter().map(|(name, _)| name.clone()).collect();
+    let mut direct = HashSet::new();
+    let mut calls: HashMap<SmolStr, HashSet<SmolStr>> = HashMap::new();
+    for (name, function) in functions {
+        let mut touches_global = false;
+        let mut called = HashSet::new();
+        scan_global_effect_block(
+            &function.body,
+            &globals,
+            &function_names,
+            checker.namespace,
+            &mut touches_global,
+            &mut called,
+        );
+        if touches_global {
+            direct.insert(name.clone());
+        }
+        calls.insert(name, called);
+    }
+
+    let mut unsafe_functions = direct;
+    loop {
+        let mut changed = false;
+        for (name, called) in &calls {
+            if !unsafe_functions.contains(name)
+                && called
+                    .iter()
+                    .any(|callee| unsafe_functions.contains(callee))
+            {
+                changed = unsafe_functions.insert(name.clone()) || changed;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    unsafe_functions
+}
+
+fn local_function_value_name(expr: &Expr) -> Option<SmolStr> {
+    match expr {
+        Expr::Ident(name) => Some(name.text.clone()),
+        Expr::QualifiedIdent(path) if path.is_single() => Some(path.last().text.clone()),
+        _ => None,
+    }
+}
+
+fn scan_global_effect_block(
+    block: &Block,
+    globals: &HashSet<SmolStr>,
+    function_names: &HashSet<SmolStr>,
+    namespace: &str,
+    touches_global: &mut bool,
+    calls: &mut HashSet<SmolStr>,
+) {
+    for statement in &block.stmts {
+        scan_global_effect_stmt(
+            statement,
+            globals,
+            function_names,
+            namespace,
+            touches_global,
+            calls,
+        );
+    }
+}
+
+fn scan_global_effect_stmt(
+    statement: &Stmt,
+    globals: &HashSet<SmolStr>,
+    function_names: &HashSet<SmolStr>,
+    namespace: &str,
+    touches_global: &mut bool,
+    calls: &mut HashSet<SmolStr>,
+) {
+    macro_rules! scan_expr {
+        ($expr:expr) => {
+            scan_global_effect_expr(
+                $expr,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            )
+        };
+    }
+    match statement {
+        Stmt::Const(value) => scan_expr!(&value.value),
+        Stmt::Var(value) => scan_expr!(&value.value),
+        Stmt::Destructure(value) => scan_expr!(&value.value),
+        Stmt::Assign(value) => {
+            scan_global_effect_lvalue(
+                &value.lvalue,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            scan_expr!(&value.value);
+        }
+        Stmt::CompoundAssign(value) => {
+            scan_global_effect_lvalue(
+                &value.lvalue,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            scan_expr!(&value.value);
+        }
+        Stmt::Return(value) => {
+            if let Some(value) = &value.value {
+                scan_expr!(value);
+            }
+        }
+        Stmt::Suspend(value) => scan_expr!(&value.value),
+        Stmt::If(value) => {
+            scan_expr!(&value.condition);
+            scan_global_effect_block(
+                &value.then_block,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            for (condition, block) in &value.else_ifs {
+                scan_expr!(condition);
+                scan_global_effect_block(
+                    block,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+            }
+            if let Some(block) = &value.else_block {
+                scan_global_effect_block(
+                    block,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+            }
+        }
+        Stmt::IfSome(value) => {
+            scan_expr!(&value.value);
+            scan_global_effect_block(
+                &value.then_block,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            if let Some(block) = &value.else_block {
+                scan_global_effect_block(
+                    block,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+            }
+        }
+        Stmt::While(value) => {
+            scan_expr!(&value.condition);
+            scan_global_effect_block(
+                &value.body,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+        }
+        Stmt::WhileSome(value) => {
+            scan_expr!(&value.value);
+            scan_global_effect_block(
+                &value.body,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+        }
+        Stmt::For(value) => {
+            scan_expr!(&value.iterable);
+            scan_global_effect_block(
+                &value.body,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+        }
+        Stmt::Repeat(value) => {
+            scan_expr!(&value.count);
+            scan_global_effect_block(
+                &value.body,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+        }
+        Stmt::Loop(value) => scan_global_effect_block(
+            &value.body,
+            globals,
+            function_names,
+            namespace,
+            touches_global,
+            calls,
+        ),
+        Stmt::Match(value) => {
+            scan_expr!(&value.scrutinee);
+            for case in &value.cases {
+                match case {
+                    ori_ast::stmt::MatchCase::Pattern { guard, body, .. } => {
+                        if let Some(guard) = guard {
+                            scan_expr!(guard);
+                        }
+                        for statement in body {
+                            scan_global_effect_stmt(
+                                statement,
+                                globals,
+                                function_names,
+                                namespace,
+                                touches_global,
+                                calls,
+                            );
+                        }
+                    }
+                    ori_ast::stmt::MatchCase::Else { body, .. } => {
+                        for statement in body {
+                            scan_global_effect_stmt(
+                                statement,
+                                globals,
+                                function_names,
+                                namespace,
+                                touches_global,
+                                calls,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Stmt::Using(value) => scan_expr!(&value.value),
+        Stmt::Check(value) => scan_expr!(&value.condition),
+        Stmt::Expr(value) => scan_expr!(value),
+        Stmt::Break(_) | Stmt::Continue(_) => {}
+    }
+}
+
+fn scan_global_effect_lvalue(
+    lvalue: &LValue,
+    globals: &HashSet<SmolStr>,
+    function_names: &HashSet<SmolStr>,
+    namespace: &str,
+    touches_global: &mut bool,
+    calls: &mut HashSet<SmolStr>,
+) {
+    match lvalue {
+        LValue::Ident(name) => {
+            if globals.contains(&name.text) {
+                *touches_global = true;
+            }
+        }
+        LValue::Field { base, .. } => scan_global_effect_lvalue(
+            base,
+            globals,
+            function_names,
+            namespace,
+            touches_global,
+            calls,
+        ),
+        LValue::Index { base, index, .. } => {
+            scan_global_effect_lvalue(
+                base,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            scan_global_effect_expr(
+                index,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+        }
+    }
+}
+
+fn scan_global_effect_expr(
+    expr: &Expr,
+    globals: &HashSet<SmolStr>,
+    function_names: &HashSet<SmolStr>,
+    namespace: &str,
+    touches_global: &mut bool,
+    calls: &mut HashSet<SmolStr>,
+) {
+    match expr {
+        Expr::Ident(name) => {
+            if globals.contains(&name.text) {
+                *touches_global = true;
+            }
+        }
+        Expr::QualifiedIdent(name) => {
+            if let Some(last) = name.parts.last() {
+                let qualified = name.to_string();
+                if globals.contains(qualified.as_str())
+                    || (globals.contains(&last.text)
+                        && (name.parts.len() == 1
+                            || qualified.starts_with(&format!("{namespace}."))))
+                {
+                    *touches_global = true;
+                }
+            }
+        }
+        Expr::Range { start, end, .. } => {
+            scan_global_effect_expr(
+                start,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            scan_global_effect_expr(
+                end,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+        }
+        Expr::List { elements, .. } | Expr::Set { elements, .. } | Expr::Tuple { elements, .. } => {
+            for element in elements {
+                scan_global_effect_expr(
+                    element,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+            }
+        }
+        Expr::Map { entries, .. } => {
+            for (key, value) in entries {
+                scan_global_effect_expr(
+                    key,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+                scan_global_effect_expr(
+                    value,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+            }
+        }
+        Expr::StructLit { fields, .. }
+        | Expr::AnonStructLit { fields, .. }
+        | Expr::EnumVariantNamed { fields, .. } => {
+            for field in fields {
+                scan_global_effect_expr(
+                    &field.value,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+            }
+        }
+        Expr::Unary { operand, .. }
+        | Expr::Try { expr: operand, .. }
+        | Expr::Await { expr: operand, .. }
+        | Expr::IsCheck { value: operand, .. } => scan_global_effect_expr(
+            operand,
+            globals,
+            function_names,
+            namespace,
+            touches_global,
+            calls,
+        ),
+        Expr::Binary { lhs, rhs, .. } => {
+            scan_global_effect_expr(
+                lhs,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            scan_global_effect_expr(
+                rhs,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+        }
+        Expr::Field { object, .. } | Expr::TupleIndex { object, .. } => scan_global_effect_expr(
+            object,
+            globals,
+            function_names,
+            namespace,
+            touches_global,
+            calls,
+        ),
+        Expr::Call { callee, args, .. } => {
+            if let Some(name) = called_function_name(callee, function_names, namespace) {
+                calls.insert(name);
+            }
+            for name in called_method_names(callee, function_names) {
+                calls.insert(name);
+            }
+            scan_global_effect_expr(
+                callee,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            for argument in args {
+                let value = match &argument.value {
+                    ArgValue::Expr(value) | ArgValue::Spread(value) => value,
+                };
+                scan_global_effect_expr(
+                    value,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+            }
+        }
+        Expr::Index { object, index, .. } => {
+            scan_global_effect_expr(
+                object,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            match index {
+                ori_ast::expr::IndexExpr::Single(index) => scan_global_effect_expr(
+                    index,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                ),
+                ori_ast::expr::IndexExpr::Range { start, end } => {
+                    if let Some(start) = start {
+                        scan_global_effect_expr(
+                            start,
+                            globals,
+                            function_names,
+                            namespace,
+                            touches_global,
+                            calls,
+                        );
+                    }
+                    if let Some(end) = end {
+                        scan_global_effect_expr(
+                            end,
+                            globals,
+                            function_names,
+                            namespace,
+                            touches_global,
+                            calls,
+                        );
+                    }
+                }
+            }
+        }
+        Expr::Pipe { value, func, .. } => {
+            scan_global_effect_expr(
+                value,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            scan_global_effect_expr(
+                func,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+        }
+        Expr::IfExpr {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            scan_global_effect_expr(
+                condition,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            scan_global_effect_expr(
+                then_expr,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            scan_global_effect_expr(
+                else_expr,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+        }
+        Expr::MatchExpr {
+            scrutinee, arms, ..
+        } => {
+            scan_global_effect_expr(
+                scrutinee,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    scan_global_effect_expr(
+                        guard,
+                        globals,
+                        function_names,
+                        namespace,
+                        touches_global,
+                        calls,
+                    );
+                }
+                scan_global_effect_expr(
+                    &arm.body,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+            }
+        }
+        Expr::Closure(closure) => match &closure.body {
+            ori_ast::expr::ClosureBody::Expr(body) => scan_global_effect_expr(
+                body,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            ),
+            ori_ast::expr::ClosureBody::Block(body) => scan_global_effect_block(
+                body,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            ),
+        },
+        Expr::StructUpdate { base, updates, .. } => {
+            scan_global_effect_expr(
+                base,
+                globals,
+                function_names,
+                namespace,
+                touches_global,
+                calls,
+            );
+            for update in updates {
+                scan_global_effect_expr(
+                    &update.value,
+                    globals,
+                    function_names,
+                    namespace,
+                    touches_global,
+                    calls,
+                );
+            }
+        }
+        Expr::FStrLit { parts, .. } => {
+            for part in parts {
+                if let FStrPart::Interpolated(value) = part {
+                    scan_global_effect_expr(
+                        value,
+                        globals,
+                        function_names,
+                        namespace,
+                        touches_global,
+                        calls,
+                    );
+                }
+            }
+        }
+        Expr::BoolLit(_, _)
+        | Expr::IntLit { .. }
+        | Expr::FloatLit { .. }
+        | Expr::StrLit { .. }
+        | Expr::BytesLit { .. }
+        | Expr::None(_)
+        | Expr::SelfExpr(_)
+        | Expr::EnumVariantUnit { .. } => {}
+    }
+}
+
+fn called_function_name(
+    callee: &Expr,
+    function_names: &HashSet<SmolStr>,
+    namespace: &str,
+) -> Option<SmolStr> {
+    let name = match callee {
+        Expr::Ident(name) => name.text.clone(),
+        Expr::QualifiedIdent(name) => {
+            let qualified = name.to_string();
+            if name.parts.len() > 1 {
+                if qualified.starts_with(&format!("{namespace}.")) {
+                    return Some(name.parts.last()?.text.clone());
+                }
+                return function_names
+                    .contains(qualified.as_str())
+                    .then_some(SmolStr::new(qualified));
+            }
+            name.parts.last()?.text.clone()
+        }
+        _ => return None,
+    };
+    function_names.contains(&name).then_some(name)
+}
+
+/// Return every known function path whose final component matches a receiver
+/// method call such as `reader.read()` or `value.render()`. The syntax tree
+/// does not carry the resolved receiver type at this pre-pass, so matching by
+/// the final component is intentionally conservative: an unrelated method
+/// with the same name may cause a task to be rejected, but a mutable-global
+/// method can never silently cross the boundary.
+fn called_method_names(callee: &Expr, function_names: &HashSet<SmolStr>) -> Vec<SmolStr> {
+    let method = match callee {
+        Expr::Field { field, .. } => field.text.clone(),
+        // The parser represents `receiver.method()` as a qualified name.
+        // Only the final component is available without type resolution, so
+        // treat every multi-part call as a possible receiver dispatch.
+        Expr::QualifiedIdent(name) if name.parts.len() > 1 => name
+            .parts
+            .last()
+            .map(|part| part.text.clone())
+            .unwrap_or_default(),
+        _ => return Vec::new(),
+    };
+    let suffix = format!(".{method}");
+    function_names
+        .iter()
+        .filter(|candidate| candidate.as_str() == method.as_str() || candidate.ends_with(&suffix))
+        .cloned()
+        .collect()
+}
+
+/// Build the cross-file effect summary used by task-boundary checking.
+///
+/// Resolution registers every source file in one [`DefMap`], so this pass can
+/// safely connect an imported function call to the body that implements it.
+/// Receiver calls are conservatively matched by method name; function values
+/// remain a follow-up because their captured environment is not represented in
+/// this syntax-only pass.
+pub(crate) fn collect_transferable_global_function_defs(
+    files: &[(&SourceFile, FileId)],
+    def_map: &DefMap,
+    reexports: &[ReExport],
+) -> HashSet<DefId> {
+    let mut function_defs = Vec::new();
+    for (file, _) in files {
+        let namespace = file.namespace.name.to_string();
+        for item in &file.items {
+            let mut candidates: Vec<(String, &FuncDecl)> = Vec::new();
+            match &item.item {
+                Item::Func(function) => {
+                    candidates.push((format!("{namespace}.{}", function.name.text), function));
+                }
+                Item::Struct(structure) => {
+                    candidates.extend(structure.methods.iter().map(|function| {
+                        (
+                            format!("{namespace}.{}.{}", structure.name.text, function.name.text),
+                            function,
+                        )
+                    }));
+                }
+                Item::Trait(trait_decl) => {
+                    candidates.extend(trait_decl.members.iter().filter_map(
+                        |member| match member {
+                            ori_ast::item::TraitMember::Default(function) => Some((
+                                format!(
+                                    "{namespace}.{}.{}",
+                                    trait_decl.name.text, function.name.text
+                                ),
+                                function,
+                            )),
+                            ori_ast::item::TraitMember::Required(_)
+                            | ori_ast::item::TraitMember::Type(_) => None,
+                        },
+                    ));
+                }
+                Item::Apply(apply) => {
+                    let type_name = apply.for_type.last().text.clone();
+                    candidates.extend(apply.free_members.iter().filter_map(
+                        |member| match member {
+                            ApplyMember::Method(function) => Some((
+                                format!("{namespace}.{type_name}.{}", function.name.text),
+                                function,
+                            )),
+                            ApplyMember::Bind { .. } => None,
+                        },
+                    ));
+                    for use_section in &apply.uses {
+                        let trait_name = use_section.trait_name.last().text.clone();
+                        for member in &use_section.members {
+                            if let ApplyMember::Method(function) = member {
+                                candidates.push((
+                                    format!(
+                                        "{namespace}.{type_name}.{trait_name}.{}",
+                                        function.name.text
+                                    ),
+                                    function,
+                                ));
+                            }
+                        }
+                    }
+                }
+                Item::Enum(_)
+                | Item::Alias(_)
+                | Item::Newtype(_)
+                | Item::Const(_)
+                | Item::Var(_)
+                | Item::Extern(_) => {}
+            }
+            for (path, function) in candidates {
+                if let Some(def_id) = def_map.lookup(&path) {
+                    function_defs.push((def_id, function, namespace.clone(), path));
+                }
+            }
+        }
+    }
+
+    let all_function_paths: HashSet<SmolStr> = def_map
+        .all_defs()
+        .iter()
+        .filter(|def| matches!(def.kind, DefKind::Func | DefKind::Extern))
+        .map(|def| def.path.clone())
+        .collect();
+    let all_global_paths: HashSet<SmolStr> = def_map
+        .all_defs()
+        .iter()
+        .filter(|def| matches!(def.kind, DefKind::Const | DefKind::Var))
+        .map(|def| def.path.clone())
+        .collect();
+
+    let mut direct = HashSet::new();
+    let mut calls: HashMap<DefId, HashSet<DefId>> = HashMap::new();
+
+    for (file, _) in files {
+        let namespace = file.namespace.name.to_string();
+        let aliases = import_aliases(file, reexports);
+        let mut function_names = all_function_paths.clone();
+        let mut globals = all_global_paths.clone();
+
+        // Keep unqualified local references working with the existing scanner.
+        for (def_id, function, _, path) in function_defs
+            .iter()
+            .filter(|(_, _, ns, _)| ns == &namespace)
+        {
+            let def = def_map.get(*def_id);
+            function_names.insert(def.name.clone());
+            function_names.insert(function.name.text.clone());
+            function_names.insert(SmolStr::new(path));
+        }
+        for def in def_map
+            .all_defs()
+            .iter()
+            .filter(|def| def.path.starts_with(&format!("{namespace}.")))
+        {
+            if matches!(def.kind, DefKind::Const | DefKind::Var) {
+                globals.insert(def.name.clone());
+            }
+        }
+
+        // Add visible import spellings (module aliases and selected members)
+        // so the syntax scanner can resolve them without type-checking again.
+        for (visible, target) in &aliases {
+            if all_function_paths.contains(target) {
+                function_names.insert(visible.clone());
+            }
+            if all_global_paths.contains(target) {
+                globals.insert(visible.clone());
+            }
+            for path in &all_function_paths {
+                if let Some(suffix) = path.strip_prefix(&format!("{target}.")) {
+                    function_names.insert(SmolStr::new(format!("{visible}.{suffix}")));
+                }
+            }
+            for path in &all_global_paths {
+                if let Some(suffix) = path.strip_prefix(&format!("{target}.")) {
+                    globals.insert(SmolStr::new(format!("{visible}.{suffix}")));
+                }
+            }
+        }
+
+        for (def_id, function, function_namespace, _) in function_defs
+            .iter()
+            .filter(|(_, _, ns, _)| ns == &namespace)
+        {
+            let mut touches_global = false;
+            let mut called_names = HashSet::new();
+            scan_global_effect_block(
+                &function.body,
+                &globals,
+                &function_names,
+                &namespace,
+                &mut touches_global,
+                &mut called_names,
+            );
+            if touches_global {
+                direct.insert(*def_id);
+            }
+
+            let mut called_defs = HashSet::new();
+            for called in called_names {
+                let expanded = expand_effect_alias(&called, &aliases);
+                let candidate = if expanded.contains('.') {
+                    expanded.clone()
+                } else {
+                    format!("{function_namespace}.{expanded}")
+                };
+                if let Some(callee) = def_map
+                    .lookup(&candidate)
+                    .or_else(|| def_map.lookup(&expanded))
+                {
+                    if matches!(def_map.get(callee).kind, DefKind::Func | DefKind::Extern) {
+                        called_defs.insert(callee);
+                    }
+                }
+            }
+            calls.insert(*def_id, called_defs);
+        }
+    }
+
+    let mut unsafe_functions = direct;
+    loop {
+        let mut changed = false;
+        for (function, called) in &calls {
+            if !unsafe_functions.contains(function)
+                && called
+                    .iter()
+                    .any(|callee| unsafe_functions.contains(callee))
+            {
+                changed = unsafe_functions.insert(*function) || changed;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    unsafe_functions
+}
+
+fn expand_effect_alias(path: &str, aliases: &HashMap<SmolStr, SmolStr>) -> String {
+    let mut prefix_end = path.len();
+    loop {
+        let prefix = &path[..prefix_end];
+        if let Some(target) = aliases.get(prefix) {
+            return format!("{}{}", target, &path[prefix_end..]);
+        }
+        let Some(dot) = path[..prefix_end].rfind('.') else {
+            break;
+        };
+        prefix_end = dot;
+    }
+    path.to_owned()
+}
+
 fn lvalue_root_name(lv: &LValue) -> Option<&Name> {
     match lv {
         LValue::Ident(name) => Some(name),
@@ -7616,6 +9913,7 @@ fn ty_is_locally_inferable(ty: &Ty) -> bool {
         Ty::Error | Ty::Infer(_) | Ty::Never | Ty::Void => false,
         Ty::Optional(inner)
         | Ty::List(inner)
+        | Ty::Buffer(inner)
         | Ty::Set(inner)
         | Ty::Range(inner)
         | Ty::Lazy(inner)
@@ -7791,36 +10089,54 @@ fn item_target_name(item: &Item) -> &'static str {
 fn is_known_attr(name: &str) -> bool {
     matches!(
         name,
-        "test" | "deprecated" | "inline" | "no_inline" | "cfg" | "repr" | "c_export"
+        "test"
+            | "deprecated"
+            | "inline"
+            | "no_inline"
+            | "noalloc"
+            | "align"
+            | "cfg"
+            | "repr"
+            | "c_export"
     )
 }
 
 fn attr_applies_to(name: &str, target: &str) -> bool {
     match name {
-        "test" | "inline" | "no_inline" | "c_export" => target == "func",
+        "test" | "inline" | "no_inline" | "noalloc" | "c_export" => target == "func",
         "deprecated" | "cfg" => true,
-        "repr" => target == "struct",
+        "repr" | "align" => target == "struct",
         _ => false,
     }
 }
 
 fn attr_args_valid(name: &str, attr: &Attr) -> bool {
     match name {
-        "test" | "inline" | "no_inline" => attr.args.is_empty(),
+        "test" | "inline" | "no_inline" | "noalloc" => attr.args.is_empty(),
+        "align" => {
+            matches!(attr.args.as_slice(), [AttrArg::Int(raw, _)] if is_valid_align_value(raw))
+        }
         "c_export" => matches!(attr.args.as_slice(), [] | [AttrArg::String(_, _)]),
         "deprecated" => matches!(attr.args.as_slice(), [AttrArg::String(_, _)]),
-        "cfg" => matches!(
-            attr.args.as_slice(),
-            [AttrArg::String(_, _)] | [AttrArg::Named { .. }]
-        ),
+        "repr" => matches!(attr.args.as_slice(), [AttrArg::String(value, _)] if value == "C"),
+        "cfg" => matches!(attr.args.as_slice(), [AttrArg::Cfg(_)]),
         _ => true,
+    }
+}
+
+fn is_valid_align_value(raw: &str) -> bool {
+    if let Ok(n) = raw.parse::<u32>() {
+        matches!(n, 1 | 2 | 4 | 8 | 16 | 32 | 64)
+    } else {
+        false
     }
 }
 
 fn attr_target_action(name: &str) -> &'static str {
     match name {
         "test" => "move `@test` to a function declaration",
-        "inline" | "no_inline" => "use this attribute only on function declarations",
+        "inline" | "no_inline" | "noalloc" => "use this attribute only on function declarations",
+        "align" => "use `@align(N)` only on struct declarations",
         "c_export" => "move `@c_export` to a free `public` function",
         _ => "move the attribute to a declaration that supports it",
     }
@@ -7828,10 +10144,14 @@ fn attr_target_action(name: &str) -> &'static str {
 
 fn attr_arg_action(name: &str) -> &'static str {
     match name {
-        "test" | "inline" | "no_inline" => "remove the attribute arguments",
+        "test" | "inline" | "no_inline" | "noalloc" => "remove the attribute arguments",
+        "align" => {
+            "use `@align(N)` with a power-of-two integer between 1 and 64 (1, 2, 4, 8, 16, 32, 64)"
+        }
         "c_export" => "use `@c_export` or `@c_export(\"symbol_name\")`",
         "deprecated" => "use `@deprecated(\"message\")` with exactly one string message",
-        "cfg" => "use `@cfg(\"condition\")` or `@cfg(key: value)`",
+        "repr" => "use exactly `@repr(\"C\")`",
+        "cfg" => "use one structured predicate, such as `@cfg(target_os: linux)`",
         _ => "use the documented argument form for this attribute",
     }
 }
@@ -7853,6 +10173,7 @@ fn is_c_export_direct_ty(ty: &Ty) -> bool {
             | Ty::Float64
             | Ty::Bool
             | Ty::String
+            | Ty::Bytes
             | Ty::Void
     )
 }
@@ -7991,6 +10312,8 @@ fn stdlib_named_ty_exists(path: &str) -> bool {
             | "ori.task.Job"
             | "ori.task.JoinError"
             | "ori.task.CancelToken"
+            | "task.CancelToken"
+            | "CancelToken"
             | "ori.channel.Channel"
             | "ori.channel.SendError"
             | "ori.channel.ReceiveError"
@@ -8078,6 +10401,7 @@ fn contains_generic_param(ty: &Ty) -> bool {
         | Ty::Set(inner)
         | Ty::Range(inner)
         | Ty::Lazy(inner)
+        | Ty::Handle(inner)
         | Ty::Future(inner)
         | Ty::TaskJob(inner)
         | Ty::Channel(inner) => contains_generic_param(inner),
@@ -8130,6 +10454,7 @@ fn freshen_infer_ty(ty: Ty, remap: &mut HashMap<u32, u32>, base: u32) -> Ty {
         Ty::Set(inner) => Ty::Set(Box::new(freshen_infer_ty(*inner, remap, base))),
         Ty::Range(inner) => Ty::Range(Box::new(freshen_infer_ty(*inner, remap, base))),
         Ty::Lazy(inner) => Ty::Lazy(Box::new(freshen_infer_ty(*inner, remap, base))),
+        Ty::Handle(inner) => Ty::Handle(Box::new(freshen_infer_ty(*inner, remap, base))),
         Ty::Future(inner) => Ty::Future(Box::new(freshen_infer_ty(*inner, remap, base))),
         Ty::TaskJob(inner) => Ty::TaskJob(Box::new(freshen_infer_ty(*inner, remap, base))),
         Ty::Channel(inner) => Ty::Channel(Box::new(freshen_infer_ty(*inner, remap, base))),
@@ -8184,6 +10509,7 @@ fn infer_generic_substitution(template: &Ty, actual: &Ty, subst: &mut HashMap<u3
         | (Ty::Set(t), Ty::Set(a))
         | (Ty::Range(t), Ty::Range(a))
         | (Ty::Lazy(t), Ty::Lazy(a))
+        | (Ty::Handle(t), Ty::Handle(a))
         | (Ty::Future(t), Ty::Future(a))
         | (Ty::TaskJob(t), Ty::TaskJob(a))
         | (Ty::Channel(t), Ty::Channel(a)) => infer_generic_substitution(t, a, subst),
@@ -8253,6 +10579,7 @@ fn substitute_generic_params(ty: &Ty, subst: &HashMap<u32, Ty>) -> Ty {
         Ty::Set(inner) => Ty::Set(Box::new(substitute_generic_params(inner, subst))),
         Ty::Range(inner) => Ty::Range(Box::new(substitute_generic_params(inner, subst))),
         Ty::Lazy(inner) => Ty::Lazy(Box::new(substitute_generic_params(inner, subst))),
+        Ty::Handle(inner) => Ty::Handle(Box::new(substitute_generic_params(inner, subst))),
         Ty::Future(inner) => Ty::Future(Box::new(substitute_generic_params(inner, subst))),
         Ty::TaskJob(inner) => Ty::TaskJob(Box::new(substitute_generic_params(inner, subst))),
         Ty::Channel(inner) => Ty::Channel(Box::new(substitute_generic_params(inner, subst))),
@@ -8307,6 +10634,7 @@ fn apply_type_constructor(ctor: &Ty, args: Vec<Ty>) -> Ty {
         Ty::Set(_) if !args.is_empty() => Ty::Set(Box::new(args[0].clone())),
         Ty::Range(_) if !args.is_empty() => Ty::Range(Box::new(args[0].clone())),
         Ty::Lazy(_) if !args.is_empty() => Ty::Lazy(Box::new(args[0].clone())),
+        Ty::Handle(_) if !args.is_empty() => Ty::Handle(Box::new(args[0].clone())),
         Ty::Future(_) if !args.is_empty() => Ty::Future(Box::new(args[0].clone())),
         Ty::TaskJob(_) if !args.is_empty() => Ty::TaskJob(Box::new(args[0].clone())),
         Ty::Channel(_) if !args.is_empty() => Ty::Channel(Box::new(args[0].clone())),
@@ -8335,6 +10663,7 @@ fn strip_type_constructor_args(ty: &Ty) -> (Ty, Vec<Ty>) {
         Ty::Set(inner) => (Ty::Set(Box::new(Ty::Infer(0))), vec![*inner.clone()]),
         Ty::Range(inner) => (Ty::Range(Box::new(Ty::Infer(0))), vec![*inner.clone()]),
         Ty::Lazy(inner) => (Ty::Lazy(Box::new(Ty::Infer(0))), vec![*inner.clone()]),
+        Ty::Handle(inner) => (Ty::Handle(Box::new(Ty::Infer(0))), vec![*inner.clone()]),
         Ty::Future(inner) => (Ty::Future(Box::new(Ty::Infer(0))), vec![*inner.clone()]),
         Ty::TaskJob(inner) => (Ty::TaskJob(Box::new(Ty::Infer(0))), vec![*inner.clone()]),
         Ty::Channel(inner) => (Ty::Channel(Box::new(Ty::Infer(0))), vec![*inner.clone()]),
@@ -8374,6 +10703,30 @@ fn comparison_op_text(op: BinaryOp) -> &'static str {
         BinaryOp::Gt => ">",
         BinaryOp::Ge => ">=",
         _ => "<comparison>",
+    }
+}
+
+/// Symbol of a bitwise/shift operator for diagnostics.
+fn operator_symbol(op: BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Band => "&",
+        BinaryOp::Bor => "|",
+        BinaryOp::Bxor => "^",
+        BinaryOp::Shl => "<<",
+        BinaryOp::Shr => ">>",
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Rem => "%",
+        BinaryOp::Eq => "==",
+        BinaryOp::Ne => "!=",
+        BinaryOp::Lt => "<",
+        BinaryOp::Le => "<=",
+        BinaryOp::Gt => ">",
+        BinaryOp::Ge => ">=",
+        BinaryOp::And => "and",
+        BinaryOp::Or => "or",
     }
 }
 
@@ -8546,4 +10899,49 @@ fn for_second_binding_ty(ty: &Ty) -> Ty {
         // iterable itself as non-iterable before we ever bind this.
         _ => Ty::Error,
     }
+}
+
+fn is_pure_non_allocating_intrinsic(name: &str) -> bool {
+    matches!(
+        name,
+        "math.abs"
+            | "math.min"
+            | "math.max"
+            | "math.sqrt"
+            | "math.sin"
+            | "math.cos"
+            | "math.tan"
+            | "math.floor"
+            | "math.ceil"
+            | "math.round"
+            | "math.pow"
+            | "math.clamp"
+            | "math.atan2"
+            | "buffer.get"
+            | "buffer.set"
+            | "buffer.len"
+            | "buffer.is_empty"
+            | "span.get"
+            | "span.set_at"
+            | "span.len"
+            | "span.is_empty"
+            | "mem.size_of"
+            | "mem.align_of"
+            | "assert"
+            | "panic"
+            | "todo"
+            | "unreachable"
+    )
+}
+
+fn is_known_allocating_function(name: &str) -> bool {
+    name.starts_with("fmt.")
+        || name.starts_with("strings.")
+        || name.starts_with("lists.")
+        || name.starts_with("maps.")
+        || name.starts_with("sets.")
+        || name.starts_with("task.spawn")
+        || name.starts_with("channel.create")
+        || name.starts_with("fs.")
+        || name.starts_with("net.")
 }

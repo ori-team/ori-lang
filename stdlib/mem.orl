@@ -1,0 +1,41 @@
+module ori.mem
+
+-- Scoped memory arenas / bump regions (MEM-REGION-1).
+--
+-- Enables bulk O(1) resets for frame-temporary objects (game loops, culling lists,
+-- command queues, temporary buffers) replacing per-object ARC retain/release operations.
+
+import ori.core = core
+
+public struct Region
+    _handle: handle[Region]
+end
+
+public region() -> Region
+    const h: handle[Region] = ori.mem.region_new()
+    return Region {
+        _handle: h,
+    }
+end
+
+apply Region use core.Disposable
+    mut dispose(self) -> void
+        ori.mem.region_free(self._handle)
+    end
+end
+
+public reset(r: Region) -> void
+    ori.mem.region_reset(r._handle)
+end
+
+public free(r: Region) -> void
+    ori.mem.region_free(r._handle)
+end
+
+public size(r: Region) -> int
+    return ori.mem.region_size(r._handle)
+end
+
+public count(r: Region) -> int
+    return ori.mem.region_count(r._handle)
+end

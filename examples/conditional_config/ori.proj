@@ -1,0 +1,17 @@
+manifest = 1
+name = "conditional_config"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[source]
+root_namespace = "app"
+
+[features]
+default = ["telemetry"]
+telemetry = []
+
+[docs]
+paths = ["docs"]
+mode = "sidecar-first"
+require_public = "off"

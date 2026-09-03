@@ -2,10 +2,13 @@
 
 Language support for **Ori** (`.orl`) in [Zed](https://zed.dev).
 
+Portuguese: [README.pt-BR.md](README.pt-BR.md).
+
 - Language config (`.orl`, `--` and `--| |--` comments, all Ori delimiters)
 - **LSP** via `ori-lsp` on `PATH`
 
-Version **0.3.5** (matches language package).
+Extension artifact **0.3.5**. The compiler workspace is `0.3.8-dev` (latest
+release `v0.3.7`); extension artifacts are versioned separately until rebuilt.
 
 ## Install
 
@@ -48,13 +51,19 @@ export PATH="$PWD/target/debug:$PATH"
 
 Optional: force stdlib if auto-detect fails (extension sets `ORI_STDLIB_ROOT` when it finds `stdlib/` in the worktree).
 
+For structured `@cfg`, start Zed with the same environment used by the CLI:
+`ORI_TARGET_TRIPLE`, `ORI_EXECUTION_PROFILE`, `ORI_FEATURES`, and
+`ORI_NO_DEFAULT_FEATURES`. The current Zed extension API does not expose a
+dedicated Ori settings form, so the language server inherits these values from
+the editor process.
+
 ## Features / limits
 
 | Feature | Status |
 |---------|--------|
 | Open `.orl` as language Ori | yes |
 | `ori-lsp` diagnostics / hover / complete | yes (if on PATH) |
-| Cooperative DAP debugger | available through `ori debug --dap`; automatic Zed wiring is not available in the current extension API |
+| Cooperative DAP debugger | yes — registered `ori-dap` adapter launches `ori debug --dap` for the active `.orl` file |
 | Tree-sitter syntax colors | **not yet** |
 | Zed extension store | **not yet** (GitHub zip + dev install) |
 

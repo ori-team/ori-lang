@@ -539,7 +539,10 @@ check index < len(items), "index out of expected range"
 A failed `check` is a non-recoverable panic — it is not meant for business
 logic error handling.
 
-The optional second argument is a message string for the panic message.
+The optional second argument must be a string literal; general string-valued
+expressions are not accepted in this position. Literal escapes are decoded with
+the same rules as other string literals. A non-literal message is a parse error
+(`parse.check_message_literal`).
 On failure the program prints to stderr and aborts:
 
 ```text

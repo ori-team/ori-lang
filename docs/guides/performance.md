@@ -7,6 +7,10 @@
 > **Harness:** [`tools/bench/polyglot/`](../../tools/bench/polyglot/)  
 > **Latest machine report:** [`tools/bench/polyglot/results/LATEST.md`](../../tools/bench/polyglot/results/LATEST.md)
 
+This page preserves the **2026-07-14 historical measurement**. It is not a
+claim about the current `0.3.8-dev` workspace; rerun the harness before using
+the numbers for a current decision.
+
 ## Snapshot (2026-07-14, loop-GC fix + mid-end)
 
 | Item | Value |
@@ -14,7 +18,7 @@
 | Host | Linux x86_64 · Intel Core i7-3632QM @ 2.20 GHz |
 | Samples | **5** (median wall time) |
 | Timer | `time.perf_counter` around the process (µs) |
-| Ori | **0.3.4** AOT (`ori compile`, mid-end **Default**) |
+| Ori | **0.3.4** AOT (`ori compile`, mid-end **Default**, historical) |
 | Python | CPython **3.12.3** |
 | Rust | **1.95.0** release |
 | C | **gcc 13.3** `-O2` |
@@ -104,6 +108,19 @@ polyglot suite unless noted.
 8. Host is a laptop CPU; **ratios matter more than absolute milliseconds**.
 9. This does **not** measure I/O, async, FFI, multi-file projects, or real apps.
 
+## Zero-allocation hot paths (`@noalloc` + `mem.region` + `simd`)
+
+The high-performance systems wave (2026-09-03) provides general-purpose zero-allocation
+primitives for 60/120 FPS frame loops:
+
+- `@noalloc` statically checks that marked functions perform no dynamic heap allocations
+  (rejecting `list`/`map`/`set`, string formatting, closures, `await`, `using`, and allocating calls).
+- `using r: mem.Region = mem.region()` creates bump-arenas with O(1) bulk resets (`mem.reset`),
+  eliminating per-object reference-counting overhead in tick loops.
+- `simd[float32, 4]` lowers directly to CPU vector registers (x86_64 SSE/AVX and ARM NEON)
+  with parallel vector arithmetic (`+`, `-`, `*`, `/`).
+- `@align(N)` explicitly aligns struct layouts for GPU uniform buffers (`alignas(N)`).
+
 ## How to reproduce
 
 Requires `ori`, `python3`, `cargo`/`rustc`, `gcc`, `go`, `node`, `tsc`, `ruby`, `nim`
@@ -124,5 +141,5 @@ Sources: `tools/bench/polyglot/{ori,python,rust_*,c,go,javascript,typescript,rub
 | [tools/bench/polyglot/README.md](../../tools/bench/polyglot/README.md) | Harness layout |
 | [results/LATEST.md](../../tools/bench/polyglot/results/LATEST.md) | Full machine report |
 | [language-comparison.md](language-comparison.md) | Older PowerShell multi-lang suite (historical) |
-| [../planning/perf-baseline-2026-07-13.md](../archive/audits/perf-baseline-2026-07-13.md) | Compiler-side LANG-PERF baseline |
-| [../planning/historico/perf-runtime-midend-plan.md](../archive/plans/perf-runtime-midend-plan.md) | LANG-PERF-2 mid-end plan |
+| [../planning/perf-baseline-2026-07-13.md](../planning/perf-baseline-2026-07-13.md) | Compiler-side LANG-PERF baseline |
+| [../planning/historico/perf-runtime-midend-plan.md](../planning/historico/perf-runtime-midend-plan.md) | LANG-PERF-2 mid-end plan |

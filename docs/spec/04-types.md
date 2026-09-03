@@ -67,6 +67,10 @@ scope permanently.
 
 Primitive types are value types: they are copied on assignment.
 
+All integer types support bitwise operations (`&`, `|`, `^`, `~`, `<<`, `>>`)
+since 0.3.8 (GFX-BITWISE-1); see Chapter 05 for precedence and shift
+semantics (arithmetic `>>` on signed, logical on unsigned).
+
 `string` and `bytes` are immutable managed values with reference counting.
 Assigning a `string` copies the reference, not the content.
 
@@ -158,9 +162,12 @@ These types are built into the language and require no import.
 |---|---|
 | `list[T]` | Ordered, resizable sequence |
 | `array[T, size: N]` | Fixed-length sequence stored **inline** — see below |
+| `simd[T, N]` | Fixed-width SIMD vector (`simd[float32, 4]`, `simd[int32, lanes: 4]`) lowered to CPU vector registers — see below |
+| `buffer[T]` | Mutable, contiguous, fixed-length heap block — see below |
 | `slice[T]` | A read-only **window** over a `list[T]` — see below |
-| `map[K, V]` | Key-value mapping. Current runtime supports `int`, `string`, and user-defined keys that implement `Hashable` and `Equatable` |
-| `set[T]` | Unordered unique values. Current runtime supports `int`, `string`, and user-defined elements that implement `Hashable` and `Equatable` |
+| `map[K, V]` | Key-value mapping. `int` and `string` use native hashing; non-recursive user-defined struct or enum values with `Hashable` use a user `hash(self) -> int` method when present, otherwise generated structural hashing. Explicit, non-structural `Equatable` without `hash` uses a constant hash (`LANG-COLL-EQHASH-1`) |
+| `set[T]` | Unordered unique values. `int` and `string` use native hashing; non-recursive user-defined struct or enum values with `Hashable` use a user `hash(self) -> int` method when present, otherwise generated structural hashing. Explicit, non-structural `Equatable` without `hash` uses a constant hash (`LANG-COLL-EQHASH-1`) |
+| `graph.Graph[T]` | Directed or undirected graph. `int` and `string` nodes use native equality; user-defined structs and non-recursive enums with `Hashable` dispatch structural or explicit `Equatable` after the first concrete node operation and preserve that callback through graph copies. |
 | `optional[T]` | A value that may be absent |
 | `result[T, E]` | A value that represents success or failure |
 | `range[int]` | An inclusive integer range |
@@ -222,6 +229,38 @@ reason copy-on-write was (`docs/planning/adr-arc-cow-collections.md`).
   cannot cross a task or channel boundary.
 
 ---
+
+## Borrowed handles (`handle[T]`)
+
+`handle[T]` is currently a pointer-shaped, borrowed FFI value. It does not own
+an ARC allocation, does not retain `T`, and is not `Transferable`; passing it to
+`task.spawn` or a channel is rejected. A null handle is represented by the
+runtime pointer value `0`. The safe probe `ori.handle.is_null(handle)` checks
+that representation without dereferencing or retaining the pointee. The
+generic `ori.handle.null()` constructor creates that null sentinel explicitly;
+its type is inferred from the expected `handle[T]` type:
+
+```ori
+import ori.handle = handles
+
+const missing: handle[int] = handles.null()
+
+is_missing(value: handle[int]) -> bool
+    return handles.is_null(value)
+end
+```
+
+The constructor and probe do not establish pointee lifetime or thread affinity.
+Ori still does not provide a safe dereference operation. A non-null handle must
+come from a host/`extern c` API whose lifetime contract remains in force.
+
+`==` and `!=` compare handle pointer identity only; they never dereference or
+retain the pointee. Do not store a handle beyond the lifetime guaranteed by its
+host API, or expose one in an aggregate return without a documented owner. The checker rejects `@c_export` aggregates containing a
+borrowed handle, including nested structs and enum payloads. The complete
+nullability, lifetime, equality, FFI, and cross-thread contract is tracked in
+`LANG-HANDLE-1`; this section describes the current implementation boundary
+rather than promising an ownership guarantee.
 
 ## Fixed-Size Arrays (`array[T, size: N]`)
 
@@ -285,12 +324,49 @@ const page: array[int, size: page_size] = [1, 2, 3, 4, 5, 6, 7, 8]
   end
   ```
 
-### Element types must be scalars
+### Element types: the `Inline(T)` rule
 
-Inline storage has no reference counting, so a managed element (`string`,
-`list`, a struct, …) would be stored without a retain and released by nobody.
-Those are rejected with `type.array_element_not_inline`; use `list[T]` when the
-elements are managed.
+Inline storage has no reference counting, so an element that needs ARC
+ownership would be stored without a retain and released by nobody. The
+element type must therefore be **inline**:
+
+```text
+Inline(bool)      = true
+Inline(integer)   = true
+Inline(float)     = true
+Inline(array[T])  = Inline(T)
+Inline(struct S)  = S has at least one field and every field of S is Inline
+Inline(rest)      = false
+```
+
+A struct whose fields are all inline is itself inline, so graphics-friendly
+types work directly:
+
+```ori
+struct Vec3
+    x: float32
+    y: float32
+    z: float32
+end
+
+struct Triangle
+    a: Vec3
+    b: Vec3
+    c: Vec3
+end
+
+const cube_verts: array[Vec3, size: 8] = [ … ]
+```
+
+Inline struct elements are stored contiguously with no heap block per element
+and no ARC edge; `ori.mem.size_of` reports the whole block
+(`array[Vec3, size: 8]` is 96 bytes on a 4-byte-aligned layout).
+
+A struct holding any managed field (`string`, `list`, a managed struct, …) is
+not inline; `array[SuchStruct, size: N]` is rejected with
+`type.array_element_not_inline`, and the diagnostic names the offending field.
+A recursive struct (`A { next: A }`) has no finite size and is likewise
+rejected. Use `list[T]` when the elements are managed.
 
 ### Backend support
 
@@ -299,7 +375,74 @@ them to a heap list that would behave differently (chapter 14).
 
 ---
 
-## Optional
+## Portable SIMD Vectors (`simd[T, N]`)
+
+`simd[T, N]` (or `simd[T, lanes: N]`) is a first-class value type lowered directly to CPU vector
+registers (x86_64 SSE/AVX `F32x4`/`I32x4` and aarch64 NEON). It supports parallel arithmetic
+operators (`+`, `-`, `*`, `/`) and individual lane indexing.
+
+```ori
+const a: simd[float32, 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32]
+const b: simd[float32, 4] = [10.0f32, 20.0f32, 30.0f32, 40.0f32]
+const c: simd[float32, 4] = a + b    -- single SIMD vector instruction
+const first: float32 = c[0]          -- lane extraction
+```
+
+### Supported Combinations
+
+| Element Type | Supported Lanes | Register Width |
+|---|---|---|
+| `float32`, `int32`, `u32` | 2, 4, 8, 16 | 64-bit, 128-bit, 256-bit, 512-bit |
+| `float64`, `int64`, `u64` | 2, 4 | 128-bit, 256-bit |
+| `int16`, `u16` | 4, 8, 16 | 64-bit, 128-bit, 256-bit |
+| `int8`, `u8` | 8, 16 | 64-bit, 128-bit |
+
+---
+
+## Contiguous Buffers (`buffer[T]`)
+
+`buffer[T]` is the numeric twin of `list[T]` for contiguous, **mutably
+indexable** storage. The length is not part of the type; it is fixed at
+allocation time and never grows — there is no implicit `reserve`, no hashing,
+no versioned iterators, and no ARC edge per element.
+
+```ori
+var pixels: buffer[u32] = ori.buffer.new(width * height)
+var depth: buffer[float32] = ori.buffer.new(width * height)
+var verts: buffer[Vertex] = ori.buffer.new(vertex_count)
+
+pixels[i] = 0xFF00FF00u32
+const value: u32 = pixels[i]
+const n: int = ori.buffer.len(pixels)
+ori.buffer.fill(pixels, 0u32)
+const span: slice[u32] = ori.buffer.as_slice(pixels)
+```
+
+### Rules
+
+- **Elements must be inline.** Exactly the same rule as `array` (`Inline(T)`
+  above): `buffer[string]`, `buffer[list[int]]`, etc. are rejected with
+  `type.array_element_not_inline` (handled as `type.buffer_element_not_inline`
+  once the diagnostic name is disambiguated). Empty structs and recursive
+  structs are not inline.
+- **Allocated with `ori.buffer.new(len)`.** `len` is an `int`; `len < 0` is
+  rejected. Zero is valid.
+- **Length-aware, indexed.** `buf[i]` is `T` (`i` may be `int`, bounds checked
+  at compile time for constants and at runtime otherwise). `buf[i] = v`
+  stores `v`. A length mismatch at construction is `type.buffer_length_mismatch`.
+- **Bounds-checked assignment.** `buf[i] = v` is an `LValue::Index` whose
+  index type is inferred as `int` (like `list[i] = v` and `array[i] = v`).
+- **`ori.mem.size_of` reports a heap pointer** for `buffer` (the header, not the
+  payload), consistent with `list`/`slice`.
+- **Valid everywhere a collection is valid in `check_collection_runtime_limits`.**
+- **Width-preserving `is_assignable_to`.** `buffer[int]` and `buffer[u32]` are
+  different types; neither substitutes for the other.
+
+### Backend support
+
+Native only. The C backend declines `buffer` as `backend.buffer_unsupported`.
+
+
 
 `optional[T]` represents a value that may be absent. There is no `null`.
 

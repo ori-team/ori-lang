@@ -1,3 +1,8 @@
+use ori_ast::expr::{ArgValue, ClosureBody, Expr, FStrPart, IndexExpr};
+use ori_ast::pattern::Pattern;
+use ori_ast::stmt::{Block, LValue, MatchCase, Stmt};
+use ori_diagnostics::Span;
+use ori_lexer::TokenKind;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tower_lsp::lsp_types::{Position, Range};
@@ -60,12 +65,30 @@ pub struct SemanticIndex {
     symbols_by_kind: HashMap<SymbolKind, Vec<SemanticSymbol>>,
     /// All import paths discovered in the file (for cross-file resolution).
     imports: Vec<ResolvedImport>,
+    local_bindings: Vec<LocalBinding>,
+    identifiers: Vec<IdentifierOccurrence>,
+}
+
+#[derive(Clone, Debug)]
+struct LocalBinding {
+    id: u32,
+    name: String,
+    declaration: Span,
+    scope: Span,
+    visible_from: u32,
+}
+
+#[derive(Clone, Debug)]
+struct IdentifierOccurrence {
+    name: String,
+    span: Span,
+    can_reference_binding: bool,
 }
 
 impl SemanticIndex {
-    pub fn build(source: &str) -> Self {
+    pub fn build(source: &str, path: Option<&std::path::Path>) -> Self {
         let mut index = Self::default();
-        index.index_ast(source);
+        index.index_ast(source, path);
         index
     }
 
@@ -91,37 +114,64 @@ impl SemanticIndex {
             .map(|entry| entry.range)
     }
 
-    /// Find all references to a symbol name in the source text.
-    /// Uses word-boundary scanning to find identifiers matching the name.
+    /// Resolve the binding under the cursor and return its declaration. Local
+    /// identities take precedence over same-named top-level declarations.
+    pub fn definition_at(&self, source: &str, position: Position) -> Option<Range> {
+        let occurrence = self.identifier_at(source, position)?;
+        let binding = self.binding_for_occurrence(occurrence)?;
+        Some(span_to_range(source, binding.declaration))
+    }
+
+    pub fn local_symbol_at(&self, source: &str, position: Position) -> Option<&SemanticSymbol> {
+        let occurrence = self.identifier_at(source, position)?;
+        let binding = self.binding_for_occurrence(occurrence)?;
+        let declaration_range = span_to_range(source, binding.declaration);
+        self.symbols.get(&binding.name)?.iter().find(|symbol| {
+            symbol.range == declaration_range
+                && matches!(symbol.kind, SymbolKind::Variable | SymbolKind::Parameter)
+        })
+    }
+
+    /// Find references that resolve to the same local binding as the cursor.
+    /// When the cursor is not on a local, returns no ranges so the caller can
+    /// use the project-wide `DefId` index instead.
+    pub fn find_local_references_at(&self, source: &str, position: Position) -> Vec<Range> {
+        let Some(target) = self
+            .identifier_at(source, position)
+            .and_then(|occurrence| self.binding_for_occurrence(occurrence))
+        else {
+            return Vec::new();
+        };
+
+        self.identifiers
+            .iter()
+            .filter(|occurrence| {
+                occurrence.name == target.name
+                    && self
+                        .binding_for_occurrence(occurrence)
+                        .is_some_and(|binding| binding.id == target.id)
+            })
+            .map(|occurrence| span_to_range(source, occurrence.span))
+            .collect()
+    }
+
+    pub(crate) fn is_local_identifier_at_offset(&self, offset: u32) -> bool {
+        self.identifiers
+            .iter()
+            .find(|occurrence| occurrence.span.start <= offset && offset < occurrence.span.end)
+            .and_then(|occurrence| self.binding_for_occurrence(occurrence))
+            .is_some()
+    }
+
+    /// Find identifier tokens with this spelling. Comments and string
+    /// contents are excluded by construction. Identity-aware handlers should
+    /// prefer `find_local_references_at` or the project `DefId` index.
     pub fn find_references(&self, source: &str, symbol: &str) -> Vec<Range> {
-        let mut refs = Vec::new();
-        let bytes = source.as_bytes();
-        let sym_bytes = symbol.as_bytes();
-        let mut i = 0;
-
-        while i < bytes.len() {
-            // Skip non-identifier bytes
-            if !is_ident_byte(bytes[i]) {
-                i += 1;
-                continue;
-            }
-
-            // Check if this is a word boundary match
-            let start = i;
-            while i < bytes.len() && is_ident_byte(bytes[i]) {
-                i += 1;
-            }
-
-            let word = &bytes[start..i];
-            if word == sym_bytes {
-                let range = Range::new(
-                    position::position_for_byte_offset(source, start),
-                    position::position_for_byte_offset(source, i),
-                );
-                refs.push(range);
-            }
-        }
-        refs
+        self.identifiers
+            .iter()
+            .filter(|occurrence| occurrence.name == symbol)
+            .map(|occurrence| span_to_range(source, occurrence.span))
+            .collect()
     }
 
     /// Returns import information for cross-file navigation.
@@ -143,7 +193,9 @@ impl SemanticIndex {
     /// Import lines take priority over after-dot so `import ori.` completes
     /// modules instead of treating `ori` as a value receiver (S3 IDE UX).
     pub fn completion_context(&self, source: &str, pos: Position) -> CompletionContext {
-        let offset = position::byte_offset_for_position(source, pos);
+        let Ok(offset) = position::byte_offset_for_position(source, pos) else {
+            return CompletionContext::Default;
+        };
         let before = &source[..offset.min(source.len())];
 
         // Restrict to the current line so dots/import from earlier lines
@@ -194,15 +246,41 @@ impl SemanticIndex {
             .push(symbol);
     }
 
-    fn index_ast(&mut self, source: &str) {
+    fn index_ast(&mut self, source: &str, path: Option<&std::path::Path>) {
         let file_id = ori_diagnostics::FileId(0);
         let mut sink = ori_diagnostics::DiagnosticSink::default();
         let tokens = ori_lexer::lex(source, file_id, &mut sink);
-        let source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        let mut source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        if let Some(path) = path {
+            if let Err(error) = ori_driver::pipeline::filter_source_for_current_configuration(
+                path,
+                &mut source_file,
+                file_id,
+                &mut sink,
+            ) {
+                eprintln!("ori-lsp: cannot index `{}`: {error}", path.display());
+                return;
+            }
+        }
 
         for item_with_attrs in &source_file.items {
             self.index_item(&item_with_attrs.item, source);
+            self.collect_item_bindings(&item_with_attrs.item);
         }
+
+        self.identifiers = tokens
+            .iter()
+            .enumerate()
+            .filter(|(_, token)| token.kind == TokenKind::Ident)
+            .map(|(index, token)| IdentifierOccurrence {
+                name: source[token.span.start as usize..token.span.end as usize].to_string(),
+                span: token.span,
+                can_reference_binding: (index == 0 || tokens[index - 1].kind != TokenKind::Dot)
+                    && tokens
+                        .get(index + 1)
+                        .is_none_or(|next| next.kind != TokenKind::Colon),
+            })
+            .collect();
 
         for import in &source_file.imports {
             let namespace = import.path.to_string();
@@ -271,6 +349,363 @@ impl SemanticIndex {
                 });
             }
         }
+    }
+
+    fn identifier_at(&self, source: &str, position: Position) -> Option<&IdentifierOccurrence> {
+        let offset = position::byte_offset_for_position(source, position).ok()? as u32;
+        self.identifiers
+            .iter()
+            .find(|occurrence| occurrence.span.start <= offset && offset < occurrence.span.end)
+    }
+
+    fn binding_for_occurrence(&self, occurrence: &IdentifierOccurrence) -> Option<&LocalBinding> {
+        if let Some(binding) = self.local_bindings.iter().find(|binding| {
+            binding.name == occurrence.name && binding.declaration == occurrence.span
+        }) {
+            return Some(binding);
+        }
+        if !occurrence.can_reference_binding {
+            return None;
+        }
+
+        self.local_bindings
+            .iter()
+            .filter(|binding| {
+                binding.name == occurrence.name
+                    && binding.visible_from <= occurrence.span.start
+                    && binding.scope.start <= occurrence.span.start
+                    && occurrence.span.end <= binding.scope.end
+            })
+            .max_by_key(|binding| (binding.scope.start, binding.visible_from))
+    }
+
+    fn collect_item_bindings(&mut self, item: &ori_ast::item::Item) {
+        match item {
+            ori_ast::item::Item::Func(function) => {
+                for parameter in &function.params {
+                    self.add_local_binding(
+                        &parameter.name,
+                        function.body.span,
+                        function.body.span.start,
+                    );
+                }
+                self.collect_block_bindings(&function.body);
+            }
+            ori_ast::item::Item::Apply(apply) => {
+                for member in apply
+                    .free_members
+                    .iter()
+                    .chain(apply.uses.iter().flat_map(|section| section.members.iter()))
+                {
+                    let ori_ast::item::ApplyMember::Method(method) = member else {
+                        continue;
+                    };
+                    for parameter in &method.params {
+                        self.add_local_binding(
+                            &parameter.name,
+                            method.body.span,
+                            method.body.span.start,
+                        );
+                    }
+                    self.collect_block_bindings(&method.body);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_block_bindings(&mut self, block: &Block) {
+        for statement in &block.stmts {
+            match statement {
+                Stmt::Const(local) => {
+                    self.collect_expression_bindings(&local.value);
+                    self.add_local_binding(&local.name, block.span, local.span.end);
+                }
+                Stmt::Var(local) => {
+                    self.collect_expression_bindings(&local.value);
+                    self.add_local_binding(&local.name, block.span, local.span.end);
+                }
+                Stmt::Destructure(local) => {
+                    self.collect_expression_bindings(&local.value);
+                    for (_, binding) in &local.fields {
+                        self.add_local_binding(binding, block.span, local.span.end);
+                    }
+                }
+                Stmt::Using(local) => {
+                    self.collect_expression_bindings(&local.value);
+                    self.add_local_binding(&local.name, block.span, local.span.end);
+                }
+                Stmt::If(statement) => {
+                    self.collect_expression_bindings(&statement.condition);
+                    self.collect_block_bindings(&statement.then_block);
+                    for (_, branch) in &statement.else_ifs {
+                        self.collect_block_bindings(branch);
+                    }
+                    if let Some(branch) = &statement.else_block {
+                        self.collect_block_bindings(branch);
+                    }
+                }
+                Stmt::IfSome(statement) => {
+                    self.collect_expression_bindings(&statement.value);
+                    self.add_local_binding(
+                        &statement.binding,
+                        statement.then_block.span,
+                        statement.then_block.span.start,
+                    );
+                    self.collect_block_bindings(&statement.then_block);
+                    if let Some(branch) = &statement.else_block {
+                        self.collect_block_bindings(branch);
+                    }
+                }
+                Stmt::While(statement) => {
+                    self.collect_expression_bindings(&statement.condition);
+                    self.collect_block_bindings(&statement.body);
+                }
+                Stmt::WhileSome(statement) => {
+                    self.collect_expression_bindings(&statement.value);
+                    self.add_local_binding(
+                        &statement.binding,
+                        statement.body.span,
+                        statement.body.span.start,
+                    );
+                    self.collect_block_bindings(&statement.body);
+                }
+                Stmt::For(statement) => {
+                    self.collect_expression_bindings(&statement.iterable);
+                    self.add_local_binding(
+                        &statement.binding,
+                        statement.body.span,
+                        statement.body.span.start,
+                    );
+                    if let Some(binding) = &statement.second_binding {
+                        self.add_local_binding(
+                            binding,
+                            statement.body.span,
+                            statement.body.span.start,
+                        );
+                    }
+                    self.collect_block_bindings(&statement.body);
+                }
+                Stmt::Repeat(statement) => {
+                    self.collect_expression_bindings(&statement.count);
+                    self.collect_block_bindings(&statement.body);
+                }
+                Stmt::Loop(statement) => self.collect_block_bindings(&statement.body),
+                Stmt::Match(statement) => {
+                    self.collect_expression_bindings(&statement.scrutinee);
+                    for case in &statement.cases {
+                        match case {
+                            MatchCase::Pattern {
+                                pattern,
+                                body,
+                                span,
+                                ..
+                            } => {
+                                self.collect_pattern_bindings(pattern, *span);
+                                self.collect_statement_bindings(body, *span);
+                            }
+                            MatchCase::Else { body, span } => {
+                                self.collect_statement_bindings(body, *span);
+                            }
+                        }
+                    }
+                }
+                Stmt::Assign(statement) => {
+                    self.collect_lvalue_bindings(&statement.lvalue);
+                    self.collect_expression_bindings(&statement.value);
+                }
+                Stmt::CompoundAssign(statement) => {
+                    self.collect_lvalue_bindings(&statement.lvalue);
+                    self.collect_expression_bindings(&statement.value);
+                }
+                Stmt::Return(statement) => {
+                    if let Some(value) = &statement.value {
+                        self.collect_expression_bindings(value);
+                    }
+                }
+                Stmt::Suspend(statement) => self.collect_expression_bindings(&statement.value),
+                Stmt::Check(statement) => {
+                    self.collect_expression_bindings(&statement.condition);
+                }
+                Stmt::Expr(expression) => self.collect_expression_bindings(expression),
+                Stmt::Break(_) | Stmt::Continue(_) => {}
+            }
+        }
+    }
+
+    fn collect_statement_bindings(&mut self, statements: &[Stmt], scope: Span) {
+        let synthetic_block = Block {
+            stmts: statements.to_vec(),
+            span: scope,
+        };
+        self.collect_block_bindings(&synthetic_block);
+    }
+
+    fn collect_pattern_bindings(&mut self, pattern: &Pattern, scope: Span) {
+        match pattern {
+            Pattern::Binding(name) => self.add_local_binding(name, scope, scope.start),
+            Pattern::VariantNamed { fields, .. } => {
+                for field in fields {
+                    self.collect_pattern_bindings(&field.pattern, scope);
+                }
+            }
+            Pattern::Some(inner, _) | Pattern::Ok(inner, _) | Pattern::Err(inner, _) => {
+                self.collect_pattern_bindings(inner, scope);
+            }
+            Pattern::Tuple(parts, _) | Pattern::Or(parts, _) => {
+                for part in parts {
+                    self.collect_pattern_bindings(part, scope);
+                }
+            }
+            Pattern::Literal(expression) => self.collect_expression_bindings(expression),
+            Pattern::Wildcard(_) | Pattern::VariantUnit { .. } | Pattern::None(_) => {}
+        }
+    }
+
+    fn collect_lvalue_bindings(&mut self, lvalue: &LValue) {
+        match lvalue {
+            LValue::Ident(_) => {}
+            LValue::Field { base, .. } => self.collect_lvalue_bindings(base),
+            LValue::Index { base, index, .. } => {
+                self.collect_lvalue_bindings(base);
+                self.collect_expression_bindings(index);
+            }
+        }
+    }
+
+    fn collect_expression_bindings(&mut self, expression: &Expr) {
+        match expression {
+            Expr::FStrLit { parts, .. } => {
+                for part in parts {
+                    if let FStrPart::Interpolated(expression) = part {
+                        self.collect_expression_bindings(expression);
+                    }
+                }
+            }
+            Expr::Range { start, end, .. }
+            | Expr::Binary {
+                lhs: start,
+                rhs: end,
+                ..
+            } => {
+                self.collect_expression_bindings(start);
+                self.collect_expression_bindings(end);
+            }
+            Expr::List { elements, .. }
+            | Expr::Set { elements, .. }
+            | Expr::Tuple { elements, .. } => {
+                for element in elements {
+                    self.collect_expression_bindings(element);
+                }
+            }
+            Expr::Map { entries, .. } => {
+                for (key, value) in entries {
+                    self.collect_expression_bindings(key);
+                    self.collect_expression_bindings(value);
+                }
+            }
+            Expr::StructLit { fields, .. }
+            | Expr::AnonStructLit { fields, .. }
+            | Expr::EnumVariantNamed { fields, .. } => {
+                for field in fields {
+                    self.collect_expression_bindings(&field.value);
+                }
+            }
+            Expr::Unary { operand, .. }
+            | Expr::Try { expr: operand, .. }
+            | Expr::Await { expr: operand, .. } => self.collect_expression_bindings(operand),
+            Expr::Field { object, .. } | Expr::TupleIndex { object, .. } => {
+                self.collect_expression_bindings(object);
+            }
+            Expr::Call { callee, args, .. } => {
+                self.collect_expression_bindings(callee);
+                for argument in args {
+                    match &argument.value {
+                        ArgValue::Expr(value) | ArgValue::Spread(value) => {
+                            self.collect_expression_bindings(value);
+                        }
+                    }
+                }
+            }
+            Expr::Index { object, index, .. } => {
+                self.collect_expression_bindings(object);
+                match index {
+                    IndexExpr::Single(index) => self.collect_expression_bindings(index),
+                    IndexExpr::Range { start, end } => {
+                        if let Some(start) = start {
+                            self.collect_expression_bindings(start);
+                        }
+                        if let Some(end) = end {
+                            self.collect_expression_bindings(end);
+                        }
+                    }
+                }
+            }
+            Expr::Pipe { value, func, .. } => {
+                self.collect_expression_bindings(value);
+                self.collect_expression_bindings(func);
+            }
+            Expr::IfExpr {
+                condition,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                self.collect_expression_bindings(condition);
+                self.collect_expression_bindings(then_expr);
+                self.collect_expression_bindings(else_expr);
+            }
+            Expr::MatchExpr {
+                scrutinee, arms, ..
+            } => {
+                self.collect_expression_bindings(scrutinee);
+                for arm in arms {
+                    if let Some(pattern) = &arm.pattern {
+                        self.collect_pattern_bindings(pattern, arm.span);
+                    }
+                    if let Some(guard) = &arm.guard {
+                        self.collect_expression_bindings(guard);
+                    }
+                    self.collect_expression_bindings(&arm.body);
+                }
+            }
+            Expr::Closure(closure) => {
+                for parameter in &closure.params {
+                    self.add_local_binding(&parameter.name, closure.span, closure.span.start);
+                }
+                match &closure.body {
+                    ClosureBody::Expr(body) => self.collect_expression_bindings(body),
+                    ClosureBody::Block(body) => self.collect_block_bindings(body),
+                }
+            }
+            Expr::StructUpdate { base, updates, .. } => {
+                self.collect_expression_bindings(base);
+                for field in updates {
+                    self.collect_expression_bindings(&field.value);
+                }
+            }
+            Expr::IsCheck { value, .. } => self.collect_expression_bindings(value),
+            Expr::BoolLit(_, _)
+            | Expr::IntLit { .. }
+            | Expr::FloatLit { .. }
+            | Expr::StrLit { .. }
+            | Expr::BytesLit { .. }
+            | Expr::None(_)
+            | Expr::Ident(_)
+            | Expr::QualifiedIdent(_)
+            | Expr::SelfExpr(_)
+            | Expr::EnumVariantUnit { .. } => {}
+        }
+    }
+
+    fn add_local_binding(&mut self, name: &ori_ast::Name, scope: Span, visible_from: u32) {
+        self.local_bindings.push(LocalBinding {
+            id: self.local_bindings.len() as u32,
+            name: name.text.to_string(),
+            declaration: name.span,
+            scope,
+            visible_from,
+        });
     }
 
     fn index_item(&mut self, item: &ori_ast::item::Item, source: &str) {
@@ -666,15 +1101,11 @@ fn type_to_string(ty: &ori_ast::ty::Type) -> String {
             if a.is_empty() {
                 name.to_string()
             } else {
-                format!("{}<{}>", name.to_string(), a.join(", "))
+                format!("{}[{}]", name, a.join(", "))
             }
         }
         _ => "?".to_string(),
     }
-}
-
-fn is_ident_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 fn span_to_range(source: &str, span: ori_diagnostics::Span) -> Range {
@@ -689,4 +1120,201 @@ fn position_in_range(pos: Position, range: &Range) -> bool {
 
 fn position_is_before(left: Position, right: Position) -> bool {
     left.line < right.line || (left.line == right.line && left.character < right.character)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{type_to_string, SemanticIndex};
+    use crate::utils::position;
+    use ori_ast::common::{Name, QualifiedName};
+    use ori_ast::ty::Type;
+    use ori_diagnostics::Span;
+
+    #[test]
+    fn semantic_index_hides_inactive_cfg_declarations() {
+        let root = std::env::temp_dir().join(format!(
+            "ori_lsp_cfg_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock must be after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create LSP cfg fixture");
+        let source = r#"module app.main
+
+active_symbol()
+end
+
+@cfg(feature: hidden)
+inactive_symbol()
+end
+
+main()
+end
+"#;
+        std::fs::write(root.join("main.orl"), source).expect("write LSP cfg source");
+        std::fs::write(
+            root.join("ori.proj"),
+            "manifest = 1\nname = \"lsp_cfg\"\nversion = \"0.1.0\"\nkind = \"app\"\nentry = \"main.orl\"\n\n[features]\ndefault = []\nhidden = []\n",
+        )
+        .expect("write LSP cfg manifest");
+
+        let index = SemanticIndex::build(source, Some(&root.join("main.orl")));
+        assert!(index.hover("active_symbol").is_some());
+        assert!(index.hover("inactive_symbol").is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn local_references_follow_shadowing_identity() {
+        let source = r#"module app.main
+
+main()
+    const value = 1
+    value
+    if true
+        const value = 2
+        value
+    end
+    value
+end
+"#;
+        let index = SemanticIndex::build(source, None);
+        let inner_use = source
+            .find("        value\n")
+            .expect("fixture contains inner use");
+        let outer_use = source
+            .rfind("    value\n")
+            .expect("fixture contains outer use");
+
+        let inner = index.find_local_references_at(
+            source,
+            position::position_for_byte_offset(source, inner_use + 8),
+        );
+        let outer = index.find_local_references_at(
+            source,
+            position::position_for_byte_offset(source, outer_use + 4),
+        );
+
+        assert_eq!(inner.len(), 2, "inner declaration and inner use");
+        assert_eq!(outer.len(), 3, "outer declaration and two outer uses");
+    }
+
+    #[test]
+    fn hover_type_rendering_uses_canonical_bracket_generics() {
+        let span = Span::DUMMY;
+        let name = QualifiedName::single(Name::new("Box", span));
+        let generic = Type::Generic {
+            name,
+            args: vec![Type::Optional(Box::new(Type::Int(span)), span)],
+            span,
+        };
+
+        assert_eq!(type_to_string(&generic), "Box[optional[int]]");
+        assert!(!type_to_string(&generic).contains('<'));
+        assert!(!type_to_string(&generic).contains('?'));
+    }
+
+    #[test]
+    fn lexical_references_exclude_comments_and_strings() {
+        let source = r#"module app.main
+
+value()
+end
+
+main()
+    -- value is only comment text
+    const text = "value"
+    value()
+end
+"#;
+        let index = SemanticIndex::build(source, None);
+        assert_eq!(index.find_references(source, "value").len(), 2);
+    }
+
+    #[test]
+    fn local_definition_works_after_mixed_unicode_text() {
+        let source =
+            "module app.main\n\nmain()\n    const note = \"é界e\\u{301}🙂\"\n    note\nend\n";
+        let index = SemanticIndex::build(source, None);
+        let usage = source.rfind("note").expect("fixture contains usage");
+        let declaration = source.find("note").expect("fixture contains declaration");
+        let range = index
+            .definition_at(source, position::position_for_byte_offset(source, usage))
+            .expect("local definition resolves");
+
+        assert_eq!(
+            range.start,
+            position::position_for_byte_offset(source, declaration)
+        );
+    }
+
+    #[test]
+    fn closure_parameter_has_its_own_binding_identity() {
+        let source = r#"module app.main
+
+main()
+    const value = 10
+    const increment: func(int) -> int = (value) => value + 1
+    check value == 10
+end
+"#;
+        let index = SemanticIndex::build(source, None);
+        let closure_use = source
+            .find("value + 1")
+            .expect("fixture contains closure use");
+        let outer_use = source
+            .rfind("value == 10")
+            .expect("fixture contains outer use");
+
+        assert_eq!(
+            index
+                .find_local_references_at(
+                    source,
+                    position::position_for_byte_offset(source, closure_use),
+                )
+                .len(),
+            2
+        );
+        assert_eq!(
+            index
+                .find_local_references_at(
+                    source,
+                    position::position_for_byte_offset(source, outer_use),
+                )
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn field_and_named_label_do_not_alias_a_same_named_local() {
+        let source = r#"module app.main
+
+struct Box
+    value: int
+end
+
+consume(value: int)
+end
+
+main()
+    const value = 10
+    const boxed: Box = Box { value: 20 }
+    check boxed.value == value
+    consume(value: value)
+end
+"#;
+        let index = SemanticIndex::build(source, None);
+        let final_value = source
+            .rfind("value)")
+            .expect("fixture contains named argument value");
+        let references = index.find_local_references_at(
+            source,
+            position::position_for_byte_offset(source, final_value),
+        );
+
+        assert_eq!(references.len(), 3, "declaration and two value uses");
+    }
 }

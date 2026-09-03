@@ -94,6 +94,47 @@ fn compile_c_source(dir: &TestDir, name: &str, source: &str) {
     );
 }
 
+fn compile_and_run_c_source(
+    dir: &TestDir,
+    name: &str,
+    source: &str,
+    stdin: &[u8],
+) -> Option<std::process::Output> {
+    let c_path = dir.path(&format!("{name}.c"));
+    let exe = exe_path(dir, name);
+    std::fs::write(&c_path, source).unwrap();
+    let compiled = match Command::new("cc")
+        .arg("-std=gnu11")
+        .arg(&c_path)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .arg("-pthread")
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && cfg!(windows) => return None,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            panic!("`cc` is required to validate generated C on this platform")
+        }
+        Err(err) => panic!("failed to run cc: {err}"),
+    };
+    assert!(
+        compiled.status.success(),
+        "generated C did not link\nstderr:\n{}\nsource:\n{}",
+        String::from_utf8_lossy(&compiled.stderr),
+        source,
+    );
+    let mut child = Command::new(exe)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.as_mut().unwrap().write_all(stdin).unwrap();
+    Some(child.wait_with_output().unwrap())
+}
+
 fn normalize_stdout(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).unwrap().replace("\r\n", "\n")
 }
@@ -4916,6 +4957,34 @@ end
 }
 
 #[test]
+fn check_reports_canonical_result_constructor_names() {
+    let dir = TestDir::new("canonical_result_constructor_names");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+main(value: result[int, string])
+    match value
+    case ok(number):
+        return
+    end
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    let diagnostic = out
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "match.non_exhaustive")
+        .expect("result match should report the missing err case");
+    assert!(diagnostic.message.contains("err(...)") || diagnostic.message.contains("err("));
+    assert!(
+        !diagnostic.message.contains("error(...)") && !diagnostic.message.contains("success(...)")
+    );
+}
+
+#[test]
 fn check_reports_non_exhaustive_enum_match() {
     let dir = TestDir::new("non_exhaustive_enum_match");
     dir.write(
@@ -9512,6 +9581,7 @@ import ori.io = io
 main()
     const text: string = "\u{00e1}\u{00e9}"
     io.print("len=" + string(text.len()))
+    io.print("global_len=" + string(len(text)))
     io.print(text.slice(0, 1))
     io.print("index=" + string(text.index_of("\u{00e9}")))
     io.print("emoji_index=" + string("\u{1f642}x".index_of("x")))
@@ -9530,8 +9600,62 @@ end
     let output = Command::new(&exe).output().unwrap();
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let expected = "len=2\n\u{00e1}\nindex=1\nemoji_index=1\n";
+    let expected = "len=2\nglobal_len=2\n\u{00e1}\nindex=1\nemoji_index=1\n";
     assert_eq!(stdout.replace("\r\n", "\n"), expected);
+}
+
+#[test]
+fn c_backend_runs_unicode_string_positions_in_scalar_values() {
+    let dir = TestDir::new("c_unicode_string_positions");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    const text: string = "\u{00e1}\u{00e9}\u{1f642}"
+    io.print("len=" + string(text.len()))
+    io.print("global_len=" + string(len(text)))
+    io.print(text.slice(1, 3))
+    io.print("index=" + string(text.index_of("\u{1f642}")))
+    io.print("get=" + text[0])
+    const chars: list[string] = text.chars()
+    io.print("char=" + chars[2])
+    for char, index in text
+        io.print("iter=" + string(index) + ":" + char)
+    end
+    match io.read_line()
+        case some(_):
+            io.print("input=some")
+        case none:
+            io.print("input=none")
+    end
+    match io.read_line()
+        case some(line):
+            io.print("valid=" + line)
+        case none:
+            io.print("valid=none")
+    end
+end
+"#,
+    );
+
+    let out = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let Some(output) = compile_and_run_c_source(
+        &dir,
+        "c_unicode_positions",
+        &out.c_source,
+        &[0xC0, 0xAF, b'\n', b'o', b'l', 0xC3, 0xA1, b'\n'],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        normalize_stdout(output.stdout),
+        "len=3\nglobal_len=3\n\u{00e9}\u{1f642}\nindex=2\nget=\u{00e1}\nchar=\u{1f642}\niter=0:\u{00e1}\niter=1:\u{00e9}\niter=2:\u{1f642}\ninput=none\nvalid=ol\u{00e1}\n"
+    );
 }
 
 #[test]
@@ -9794,6 +9918,7 @@ end
         &dir.path("main.orl"),
         TestOptions {
             filter: Some("second".to_string()),
+            ..Default::default()
         },
     )
     .unwrap();
@@ -10059,6 +10184,722 @@ end
 }
 
 #[test]
+fn check_rejects_namespaced_attribute_until_schema_support_exists() {
+    let dir = TestDir::new("unknown_namespaced_attr");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@editor.inspect
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "unregistered metadata must fail closed");
+    assert!(
+        diagnostic_codes(&out).contains(&"attr.unknown"),
+        "expected attr.unknown for a namespaced attribute without schema: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn cfg_filters_inactive_declarations_before_resolution_and_checking() {
+    let dir = TestDir::new("cfg_filter_before_resolution");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_filter"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["tracing"]
+tracing = []
+disabled = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+@cfg(feature: tracing)
+selected() -> int
+    return 41
+end
+
+@cfg(not(feature: tracing))
+selected() -> string
+    return missing_name
+end
+
+@cfg(feature: disabled)
+inactive_broken() -> int
+    return another_missing_name
+end
+
+@cfg(all(any(target_family: unix, target_family: windows), not(target_os: none)))
+host_value() -> int
+    return 1
+end
+
+main()
+    const value: int = selected() + host_value()
+    io.print(string(value))
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("ori.proj")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    assert_eq!(compile_and_run(&dir, "cfg_native"), "42\n");
+}
+
+#[test]
+fn cfg_filters_every_supported_top_level_declaration_kind() {
+    let dir = TestDir::new("cfg_top_level_declaration_kinds");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_top_level_kinds"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["active"]
+active = []
+inactive = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg(feature: active)
+struct Choice
+    value: int
+end
+
+@cfg(feature: inactive)
+struct Choice
+    broken: MissingType
+end
+
+@cfg(feature: active)
+enum Mode
+    Ready
+end
+
+@cfg(feature: inactive)
+enum Mode
+    Broken(value: MissingType)
+end
+
+@cfg(feature: active)
+const selected: int = 42
+
+@cfg(feature: inactive)
+const selected: string = missing_value
+
+@cfg(feature: inactive)
+extern c
+    read_managed(input: string) -> string
+end
+
+main()
+    const choice: Choice = Choice { value: selected }
+    const mode: Mode = Mode.Ready
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("ori.proj")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn cfg_filters_the_same_hir_for_c_and_documentation_routes() {
+    let dir = TestDir::new("cfg_backend_docs_parity");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_parity"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = []
+hidden = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+--|
+Active API.
+|--
+public active_api() -> int
+    return 1
+end
+
+@cfg(feature: hidden)
+--|
+Inactive API.
+|--
+public inactive_api() -> int
+    return 2
+end
+
+main()
+end
+"#,
+    );
+
+    let built = run_build(&dir.path("ori.proj")).unwrap();
+    assert!(!built.has_errors, "{:?}", built.diagnostics);
+    assert!(built.c_source.contains("active_api"), "{}", built.c_source);
+    assert!(
+        !built.c_source.contains("inactive_api"),
+        "{}",
+        built.c_source
+    );
+
+    let docs = run_doc(&dir.path("ori.proj")).unwrap();
+    assert!(!docs.has_errors, "{:?}", docs.diagnostics);
+    assert!(docs.markdown.contains("active_api"), "{}", docs.markdown);
+    assert!(!docs.markdown.contains("inactive_api"), "{}", docs.markdown);
+}
+
+#[test]
+fn cfg_filters_public_symbols_in_imported_modules() {
+    let dir = TestDir::new("cfg_imported_public_symbol");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_import"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["native_api"]
+native_api = []
+"#,
+    );
+    dir.write(
+        "platform.orl",
+        r#"module app.platform
+
+@cfg(feature: native_api)
+public answer() -> int
+    return 42
+end
+
+@cfg(not(feature: native_api))
+public answer() -> string
+    return missing_name
+end
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import app.platform = platform
+
+main()
+    const value: int = platform.answer()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("ori.proj")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn compile_lib_cfg_excludes_inactive_c_exports() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = TestDir::new("cfg_c_export_surface");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_exports"
+version = "0.1.0"
+kind = "lib"
+entry = "lib.orl"
+
+[features]
+default = []
+hidden = []
+"#,
+    );
+    dir.write(
+        "lib.orl",
+        r#"module app.cfg_exports
+
+@c_export
+public active_export() -> int
+    return 1
+end
+
+@cfg(feature: hidden)
+@c_export
+public inactive_export() -> int
+    return 2
+end
+"#,
+    );
+    let library = dir.path("libcfg_exports.so");
+    let output = run_compile_with_options(
+        &dir.path("ori.proj"),
+        &library,
+        CompileOptions {
+            native_raw: false,
+            lib: true,
+        },
+    )
+    .expect("compile cfg library");
+    assert!(!output.has_errors, "{:?}", output.diagnostics);
+    let header =
+        std::fs::read_to_string(dir.path("libcfg_exports.h")).expect("read generated cfg header");
+    assert!(header.contains("active_export"), "{header}");
+    assert!(!header.contains("inactive_export"), "{header}");
+}
+
+#[test]
+fn cfg_rejects_strings_unknown_names_bad_arity_and_duplicates() {
+    let dir = TestDir::new("cfg_invalid_predicates");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg("linux")
+string_form()
+end
+
+@cfg(other_key: value)
+unknown_key()
+end
+
+@cfg(feature: missing)
+unknown_feature()
+end
+
+@cfg(execution_profile: hosted)
+unknown_profile()
+end
+
+@cfg(target_os: lniux)
+unknown_target_value()
+end
+
+@cfg(all())
+empty_all()
+end
+
+@cfg(one(target_os: linux))
+unknown_operator()
+end
+
+@cfg(not(target_os: linux, target_os: windows))
+wide_not()
+end
+
+@cfg(target_os: linux)
+@cfg(target_family: unix)
+duplicate_cfg()
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    let codes = diagnostic_codes(&out);
+    for expected in [
+        "cfg.invalid_predicate",
+        "cfg.unknown_key",
+        "cfg.unknown_feature",
+        "cfg.unknown_value",
+        "cfg.invalid_arity",
+        "cfg.unknown_operator",
+        "cfg.duplicate",
+    ] {
+        assert!(
+            codes.contains(&expected),
+            "missing {expected}: {:?}",
+            out.diagnostics
+        );
+    }
+}
+
+#[test]
+fn cfg_still_reports_syntax_errors_inside_inactive_declarations() {
+    let dir = TestDir::new("cfg_inactive_syntax_error");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg(target_os: none)
+broken()
+    const value: int =
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    assert!(
+        diagnostic_codes(&out).contains(&"parse.expected_expression"),
+        "{:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn cfg_reports_excessive_predicate_nesting_without_crashing() {
+    let dir = TestDir::new("cfg_nesting_limit");
+    let nested = format!("{}target_os: linux{}", "all(".repeat(140), ")".repeat(140));
+    dir.write(
+        "main.orl",
+        &format!("module app.main\n\n@cfg({nested})\nmain()\nend\n"),
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    assert!(
+        diagnostic_codes(&out).contains(&"parse.nesting_too_deep"),
+        "{:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn cfg_rejects_an_undeclared_default_manifest_feature() {
+    let dir = TestDir::new("cfg_undeclared_default");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "bad_cfg_defaults"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["missing"]
+declared = []
+"#,
+    );
+    dir.write("main.orl", "module app.main\n\nmain()\nend\n");
+
+    let error = match run_check(&dir.path("ori.proj")) {
+        Err(error) => error,
+        Ok(_) => panic!("invalid defaults must fail"),
+    };
+    assert!(
+        error.contains("undeclared default feature `missing`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn cfg_uses_package_manifest_default_features() {
+    let dir = TestDir::new("cfg_package_defaults");
+    dir.write(
+        "ori.pkg.toml",
+        r#"[package]
+name = "demo.cfg_package"
+version = "1.0.0"
+entry = "main.orl"
+ori_version = "0.3.8"
+
+[features]
+default = ["active"]
+active = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module demo.cfg_package
+
+@cfg(feature: active)
+selected() -> int
+    return 1
+end
+
+@cfg(not(feature: active))
+selected() -> string
+    return missing_name
+end
+
+main()
+    const value: int = selected()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("ori.pkg.toml")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn formatter_preserves_structured_cfg_predicates() {
+    let dir = TestDir::new("fmt_structured_cfg");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg(all(target_family: unix, not(feature: tls)))
+main()
+end
+"#,
+    );
+
+    let out = run_fmt(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    assert!(
+        out.formatted
+            .contains("@cfg(all(target_family: unix, not(feature: tls)))"),
+        "{}",
+        out.formatted
+    );
+}
+
+#[test]
+fn cli_selects_declared_features_and_execution_profile() {
+    let dir = TestDir::new("cfg_cli_selection");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_cli"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = []
+extra = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@cfg(all(feature: extra, execution_profile: embedded))
+selected() -> int
+    return 1
+end
+
+@cfg(not(all(feature: extra, execution_profile: embedded)))
+selected() -> string
+    return "inactive"
+end
+
+main()
+    const value: int = selected()
+end
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .arg("check")
+        .arg(dir.path("ori.proj"))
+        .arg("--features")
+        .arg("extra")
+        .arg("--execution-profile")
+        .arg("embedded")
+        .arg("--no-color")
+        .output()
+        .expect("run ori check with cfg selection");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cfg_environment_errors_use_catalogued_codes() {
+    let dir = TestDir::new("cfg_environment_errors");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_environment_errors"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = []
+known = []
+"#,
+    );
+    dir.write("main.orl", "module app.main\n\nmain()\nend\n");
+
+    for (variable, value, code) in [
+        ("ORI_TARGET_TRIPLE", "bad target", "cfg.target_invalid"),
+        (
+            "ORI_TARGET_TRIPLE",
+            "x86_64-unknown-fuchsia",
+            "cfg.target_invalid",
+        ),
+        (
+            "ORI_EXECUTION_PROFILE",
+            "sandboxed",
+            "cfg.execution_profile_invalid",
+        ),
+        ("ORI_FEATURES", "bad-name", "cfg.feature_invalid"),
+        ("ORI_FEATURES", "missing", "cfg.feature_not_declared"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ori"))
+            .arg("check")
+            .arg(dir.path("ori.proj"))
+            .arg("--no-color")
+            .env_remove("ORI_TARGET_TRIPLE")
+            .env_remove("ORI_EXECUTION_PROFILE")
+            .env_remove("ORI_FEATURES")
+            .env_remove("ORI_NO_DEFAULT_FEATURES")
+            .env(variable, value)
+            .output()
+            .expect("run ori check with invalid cfg environment");
+        assert!(
+            !output.status.success(),
+            "{variable}={value} unexpectedly passed"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(code),
+            "expected {code} for {variable}={value}, stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn cfg_selection_invalidates_the_native_incremental_cache() {
+    let dir = TestDir::new("cfg_incremental_fingerprint");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_incremental"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = ["enabled"]
+enabled = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+@cfg(feature: enabled)
+message() -> string
+    return "on"
+end
+
+@cfg(not(feature: enabled))
+message() -> string
+    return "off"
+end
+
+main()
+    io.print(message())
+end
+"#,
+    );
+    let executable = exe_path(&dir, "cfg_incremental");
+
+    let first = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .arg("compile")
+        .arg(dir.path("ori.proj"))
+        .arg("--out")
+        .arg(&executable)
+        .arg("--no-color")
+        .output()
+        .expect("compile default cfg");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(
+        normalize_stdout(Command::new(&executable).output().unwrap().stdout),
+        "on\n"
+    );
+
+    let second = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .arg("compile")
+        .arg(dir.path("ori.proj"))
+        .arg("--out")
+        .arg(&executable)
+        .arg("--no-default-features")
+        .arg("--no-color")
+        .output()
+        .expect("compile cfg without defaults");
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert_eq!(
+        normalize_stdout(Command::new(&executable).output().unwrap().stdout),
+        "off\n"
+    );
+
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "cfg_incremental"
+version = "0.1.0"
+kind = "app"
+entry = "main.orl"
+
+[features]
+default = []
+enabled = []
+"#,
+    );
+    let third = Command::new(env!("CARGO_BIN_EXE_ori"))
+        .arg("compile")
+        .arg(dir.path("ori.proj"))
+        .arg("--out")
+        .arg(&executable)
+        .arg("--no-color")
+        .output()
+        .expect("compile after changing manifest defaults");
+    assert!(
+        third.status.success(),
+        "{}",
+        String::from_utf8_lossy(&third.stderr)
+    );
+    assert_eq!(
+        normalize_stdout(Command::new(&executable).output().unwrap().stdout),
+        "off\n"
+    );
+}
+
+#[test]
 fn compile_lib_c_export_produces_shared_object_on_linux() {
     if !cfg!(target_os = "linux") {
         return;
@@ -10071,6 +10912,16 @@ fn compile_lib_c_export_produces_shared_object_on_linux() {
 @c_export
 public add_scores(a: int, b: int) -> int
     return a + b
+end
+
+@c_export
+public keep_optional_bytes(value: optional[bytes]) -> optional[bytes]
+    return value
+end
+
+@c_export
+public keep_result_bytes(value: result[bytes, bytes]) -> result[bytes, bytes]
+    return value
 end
 "#,
     );
@@ -10097,12 +10948,29 @@ end
         header.contains("int64_t add_scores(int64_t a, int64_t b);"),
         "{header}"
     );
+    assert!(header.contains("typedef struct OriBytes"), "{header}");
+    assert!(
+        header.contains("Borrowed string inputs must be NULL or readable NUL-terminated UTF-8"),
+        "{header}"
+    );
+    assert!(
+        header.contains("len >= 0 and data != NULL when len > 0"),
+        "{header}"
+    );
+    assert!(
+        header.contains("bool keep_optional_bytes(bool value_has_value, const OriBytes *value_value, OriBytes *out);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("OriResultTag keep_result_bytes(OriResultTag value_tag, const OriBytes *value_ok, const OriBytes *value_error, OriBytes *ok_out, OriBytes *error_out);"),
+        "{header}"
+    );
 }
 
-// ── `@c_export` accepts `string` and scalar structs ────────────────────────
+// ── `@c_export` accepts `string`, length-aware `bytes`, and scalar structs ──
 //
-// An Ori `string` value is already a NUL-terminated `const char*`, so it can
-// cross the C boundary directly. Scalar structs use pointer/out wrappers.
+// Ori strings use NUL-terminated `const char*` at the host boundary and are
+// copied before the call. Scalar structs use pointer/out wrappers.
 
 #[test]
 fn check_c_export_accepts_string_params_and_return() {
@@ -10121,6 +10989,23 @@ end
 @c_export
 public name_len(name: string) -> int
     return str.len(name)
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_c_export_accepts_length_aware_bytes_params_and_return() {
+    let dir = TestDir::new("c_export_bytes_ok");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@c_export
+public preserve(data: bytes) -> bytes
+    return data
 end
 "#,
     );
@@ -10188,6 +11073,35 @@ end
     );
     let out = run_check(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_c_export_rejects_borrowed_handle_inside_managed_aggregate() {
+    let dir = TestDir::new("c_export_borrowed_handle_aggregate");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Borrowed
+    value: handle[int]
+end
+
+@c_export
+public keep(value: Borrowed) -> Borrowed
+    return value
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(
+        out.has_errors,
+        "borrowed handles must not escape an export aggregate"
+    );
+    assert!(
+        diagnostic_codes(&out).contains(&"attr.c_export_bad_type"),
+        "expected an FFI type diagnostic: {:?}",
+        out.diagnostics
+    );
 }
 
 #[test]
@@ -10349,8 +11263,40 @@ int main(int argc, char **argv) {
 "#,
     );
 
+    dir.write("asan_probe.c", "int main(void) { return 0; }\n");
+    let asan_probe = dir.path("asan_probe");
+    let asan_compile = Command::new("cc")
+        .args(["-fsanitize=address,undefined", "-fno-sanitize-recover=all"])
+        .arg(dir.path("asan_probe.c"))
+        .arg("-o")
+        .arg(&asan_probe)
+        .output()
+        .expect("probe cc sanitizers");
+    let sanitizers_available = asan_compile.status.success()
+        && Command::new(&asan_probe)
+            .env("ASAN_OPTIONS", "detect_leaks=0:halt_on_error=1")
+            .env("UBSAN_OPTIONS", "halt_on_error=1")
+            .output()
+            .is_ok_and(|run| run.status.success());
+    if !sanitizers_available
+        && std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1")
+    {
+        panic!(
+            "C export sanitizer gate is required but unavailable: {}",
+            String::from_utf8_lossy(&asan_compile.stderr)
+        );
+    }
+
     let host_bin = dir.path("host");
-    let cc = Command::new("cc")
+    let mut cc = Command::new("cc");
+    if sanitizers_available {
+        cc.args([
+            "-fsanitize=address,undefined",
+            "-fno-sanitize-recover=all",
+            "-fno-omit-frame-pointer",
+        ]);
+    }
+    let cc = cc
         .arg("-o")
         .arg(&host_bin)
         .arg(dir.path("host.c"))
@@ -10365,7 +11311,15 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&cc.stderr)
     );
 
-    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    let run = Command::new(&host_bin)
+        .arg(&out_so)
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .unwrap();
     assert!(
         run.status.success(),
         "C host failed: stdout={:?} stderr={:?}",
@@ -10394,9 +11348,19 @@ struct Profile
     score: int
 end
 
+struct OtherProfile
+    name: string
+    score: int
+end
+
 @c_export
 public make_profile(name: string, score: int) -> Profile
     return Profile { name: "user:" + name, score: score }
+end
+
+@c_export
+public make_other_profile(name: string, score: int) -> OtherProfile
+    return OtherProfile { name: name, score: score }
 end
 
 @c_export
@@ -10431,6 +11395,34 @@ end
     let header = std::fs::read_to_string(dir.path("libmanagedexport.h"))
         .expect("read generated managed handle header");
     assert!(
+        header.contains("const char *ori_rt_version(void);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("const char *ori_rt_abi_version(void);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("void ori_host_clear_error(void);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("int32_t ori_host_error_code(void);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("const char *ori_host_error_message(void);"),
+        "{header}"
+    );
+    assert!(
+        header.contains("#define ORI_HOST_ERROR_INVALID_UTF8 1003"),
+        "{header}"
+    );
+    assert!(
+        header.contains("#define ORI_HOST_ERROR_THREAD_SPAWN 1004"),
+        "{header}"
+    );
+    assert!(
         header.contains("typedef struct OriProfileHandle OriProfileHandle;"),
         "{header}"
     );
@@ -10463,15 +11455,30 @@ int main(int argc, char **argv) {
         dlsym(handle, "profile_score");
     OriProfileHandle *(*same_profile_fn)(const OriProfileHandle *) =
         dlsym(handle, "same_profile");
+    void *(*make_other_profile_fn)(const char *, int64_t) =
+        dlsym(handle, "make_other_profile");
     void (*release_fn)(void *) = dlsym(handle, "ori_arc_release");
+    void *(*alloc_fn)(int64_t, void *) = dlsym(handle, "ori_alloc");
     int64_t (*live_allocations_fn)(void) = dlsym(handle, "ori_arc_live_allocations");
     if (!runtime_init_fn || !make_profile_fn || !profile_name_fn
         || !profile_score_fn || !same_profile_fn || !release_fn
-        || !live_allocations_fn) {
+        || !make_other_profile_fn || !alloc_fn || !live_allocations_fn) {
         fprintf(stderr, "dlsym\n");
         return 1;
     }
     if (runtime_init_fn() != 0) { fprintf(stderr, "runtime init\n"); return 1; }
+    if (argc > 2) {
+        if (strcmp(argv[2], "wrong-size") == 0) {
+            void *wrong_size = alloc_fn(8, NULL);
+            profile_score_fn((const OriProfileHandle *)wrong_size);
+        } else if (strcmp(argv[2], "wrong-type") == 0) {
+            void *wrong_type = make_other_profile_fn("other", 7);
+            profile_score_fn((const OriProfileHandle *)wrong_type);
+        } else {
+            profile_score_fn((const OriProfileHandle *)(uintptr_t)1);
+        }
+        return 0;
+    }
     int64_t allocations_before = live_allocations_fn();
 
     OriProfileHandle *profile = make_profile_fn("Ada", 42);
@@ -10508,8 +11515,40 @@ int main(int argc, char **argv) {
 "#,
     );
 
+    dir.write("asan_probe.c", "int main(void) { return 0; }\n");
+    let asan_probe = dir.path("asan_probe");
+    let asan_compile = Command::new("cc")
+        .args(["-fsanitize=address,undefined", "-fno-sanitize-recover=all"])
+        .arg(dir.path("asan_probe.c"))
+        .arg("-o")
+        .arg(&asan_probe)
+        .output()
+        .expect("probe cc sanitizers");
+    let sanitizers_available = asan_compile.status.success()
+        && Command::new(&asan_probe)
+            .env("ASAN_OPTIONS", "detect_leaks=0:halt_on_error=1")
+            .env("UBSAN_OPTIONS", "halt_on_error=1")
+            .output()
+            .is_ok_and(|run| run.status.success());
+    if !sanitizers_available
+        && std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1")
+    {
+        panic!(
+            "C export sanitizer gate is required but unavailable: {}",
+            String::from_utf8_lossy(&asan_compile.stderr)
+        );
+    }
+
     let host_bin = dir.path("host");
-    let cc = Command::new("cc")
+    let mut cc = Command::new("cc");
+    if sanitizers_available {
+        cc.args([
+            "-fsanitize=address,undefined",
+            "-fno-sanitize-recover=all",
+            "-fno-omit-frame-pointer",
+        ]);
+    }
+    let cc = cc
         .arg("-o")
         .arg(&host_bin)
         .arg(dir.path("host.c"))
@@ -10524,7 +11563,15 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&cc.stderr)
     );
 
-    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    let run = Command::new(&host_bin)
+        .arg(&out_so)
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .unwrap();
     assert!(
         run.status.success(),
         "C host failed: stdout={:?} stderr={:?}",
@@ -10532,6 +11579,69 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "ok");
+
+    let invalid = Command::new(&host_bin)
+        .args([out_so.as_os_str(), std::ffi::OsStr::new("invalid")])
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .expect("run invalid-handle C host");
+    assert!(
+        !invalid.status.success(),
+        "foreign handles must be rejected before user code: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&invalid.stdout),
+        String::from_utf8_lossy(&invalid.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&invalid.stderr).contains("foreign pointer"),
+        "invalid-handle diagnostic missing: stderr={:?}",
+        String::from_utf8_lossy(&invalid.stderr)
+    );
+
+    let wrong_size = Command::new(&host_bin)
+        .args([out_so.as_os_str(), std::ffi::OsStr::new("wrong-size")])
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .expect("run wrong-size-handle C host");
+    assert!(
+        !wrong_size.status.success(),
+        "wrong-size handles must be rejected before user code: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&wrong_size.stdout),
+        String::from_utf8_lossy(&wrong_size.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&wrong_size.stderr).contains("payload size"),
+        "wrong-size handle diagnostic missing: stderr={:?}",
+        String::from_utf8_lossy(&wrong_size.stderr)
+    );
+
+    let wrong_type = Command::new(&host_bin)
+        .args([out_so.as_os_str(), std::ffi::OsStr::new("wrong-type")])
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .expect("run wrong-type-handle C host");
+    assert!(
+        !wrong_type.status.success(),
+        "same-size wrong-type handles must be rejected before user code: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&wrong_type.stdout),
+        String::from_utf8_lossy(&wrong_type.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&wrong_type.stderr).contains("source type"),
+        "wrong-type handle diagnostic missing: stderr={:?}",
+        String::from_utf8_lossy(&wrong_type.stderr)
+    );
 }
 
 #[test]
@@ -10698,7 +11808,7 @@ int main(int argc, char **argv) {
     error = NULL;
     if (keep_profile_result_fn(
             ORI_RESULT_ERR, NULL, foreign_error, &profile, &error) != ORI_RESULT_ERR
-        || error != foreign_error) {
+        || error == foreign_error || strcmp(error, "foreign") != 0) {
         fprintf(stderr, "result parameter err\n");
         return 1;
     }
@@ -10746,10 +11856,18 @@ int main(int argc, char **argv) {
 #[test]
 fn compile_lib_c_export_string_round_trips_through_a_c_host() {
     if !cfg!(target_os = "linux") {
+        if std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1") {
+            panic!("C export sanitizer gate is required but its host fixture is Linux-only");
+        }
+        eprintln!("SKIP C export ASan host gate: dynamic host fixture is currently Linux-only");
         return;
     }
     // Skip rather than fail when the box has no C compiler.
     if Command::new("cc").arg("--version").output().is_err() {
+        if std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1") {
+            panic!("C export sanitizer gate is required but `cc` is unavailable");
+        }
+        eprintln!("SKIP C export ASan host gate: `cc` is unavailable");
         return;
     }
 
@@ -10768,6 +11886,16 @@ end
 @c_export
 public name_len(name: string) -> int
     return str.len(name)
+end
+
+@c_export
+public preserve_foreign_name(name: string) -> string
+    return name
+end
+
+@c_export
+public preserve_bytes(data: bytes) -> bytes
+    return data
 end
 "#,
     );
@@ -10788,6 +11916,7 @@ end
         "host.c",
         r#"#include "libstrexport.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <dlfcn.h>
 
@@ -10798,11 +11927,32 @@ int main(int argc, char **argv) {
     if (rt_init_fn && rt_init_fn() != 0) { fprintf(stderr, "runtime init\n"); return 1; }
     const char *(*shout_fn)(const char *) = dlsym(h, "shout");
     int64_t (*name_len_fn)(const char *) = dlsym(h, "name_len");
+    const char *(*preserve_foreign_name_fn)(const char *) =
+        dlsym(h, "preserve_foreign_name");
+    void (*preserve_bytes_fn)(const OriBytes *, OriBytes *) =
+        dlsym(h, "preserve_bytes");
     void (*release_fn)(void *) = dlsym(h, "ori_arc_release");
     int64_t (*live_allocations_fn)(void) = dlsym(h, "ori_arc_live_allocations");
-    if (!shout_fn || !name_len_fn || !release_fn || !live_allocations_fn) {
+    void (*clear_error_fn)(void) = dlsym(h, "ori_host_clear_error");
+    int32_t (*error_code_fn)(void) = dlsym(h, "ori_host_error_code");
+    if (!shout_fn || !name_len_fn || !preserve_foreign_name_fn || !preserve_bytes_fn
+        || !release_fn || !live_allocations_fn || !clear_error_fn || !error_code_fn) {
         fprintf(stderr, "dlsym\n");
         return 1;
+    }
+
+    if (argc == 3 && strcmp(argv[2], "null-bytes") == 0) {
+        OriBytes invalid = {NULL, 1};
+        OriBytes ignored = {NULL, 0};
+        preserve_bytes_fn(&invalid, &ignored);
+        return 91;
+    }
+    if (argc == 3 && strcmp(argv[2], "negative-bytes") == 0) {
+        const uint8_t byte = 0x41;
+        OriBytes invalid = {&byte, -1};
+        OriBytes ignored = {NULL, 0};
+        preserve_bytes_fn(&invalid, &ignored);
+        return 92;
     }
 
     if (name_len_fn("Ada") != 3) { fprintf(stderr, "len\n"); return 1; }
@@ -10821,14 +11971,106 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    char *input = malloc(32);
+    if (!input) { fprintf(stderr, "malloc input\n"); return 1; }
+    strcpy(input, "before");
+    const char *kept = preserve_foreign_name_fn(input);
+    if (kept == input) { fprintf(stderr, "foreign string was not copied\n"); return 1; }
+    free(input);
+    char *string_clobber = malloc(32);
+    if (!string_clobber) { fprintf(stderr, "malloc clobber\n"); return 1; }
+    memset(string_clobber, 'X', 31);
+    string_clobber[31] = '\0';
+    if (strcmp(kept, "before") != 0) {
+        fprintf(stderr, "foreign input escaped: %s\n", kept);
+        return 1;
+    }
+    free(string_clobber);
+    release_fn((void *) kept);
+
+    clear_error_fn();
+    const char invalid_utf8[2] = {(char)0xff, '\0'};
+    const char *invalid_result = preserve_foreign_name_fn(invalid_utf8);
+    if (error_code_fn() != ORI_HOST_ERROR_INVALID_UTF8
+        || strcmp(invalid_result, "") != 0) {
+        fprintf(stderr, "invalid UTF-8 was not rejected\n");
+        return 1;
+    }
+    release_fn((void *) invalid_result);
+    clear_error_fn();
+    const char *empty = preserve_foreign_name_fn(NULL);
+    if (error_code_fn() != 0 || strcmp(empty, "") != 0) {
+        fprintf(stderr, "null string contract\n");
+        return 1;
+    }
+    release_fn((void *) empty);
+
+    uint8_t *raw_bytes = malloc(3);
+    if (!raw_bytes) { fprintf(stderr, "malloc bytes\n"); return 1; }
+    raw_bytes[0] = 0x41;
+    raw_bytes[1] = 0x00;
+    raw_bytes[2] = 0x42;
+    OriBytes bytes_input = {raw_bytes, 3};
+    OriBytes output = {NULL, 0};
+    preserve_bytes_fn(&bytes_input, &output);
+    if (output.data == raw_bytes) {
+        fprintf(stderr, "foreign bytes were not copied\n");
+        return 1;
+    }
+    free(raw_bytes);
+    uint8_t *bytes_clobber = malloc(3);
+    if (!bytes_clobber) { fprintf(stderr, "malloc bytes clobber\n"); return 1; }
+    memset(bytes_clobber, 0xee, 3);
+    if (output.data == NULL || output.len != 3
+        || output.data[0] != 0x41 || output.data[1] != 0x00 || output.data[2] != 0x42) {
+        fprintf(stderr, "bytes payload was truncated\n");
+        return 1;
+    }
+    free(bytes_clobber);
+    release_fn((void *) output.data);
+    if (live_allocations_fn() != allocations_before) {
+        fprintf(stderr, "bytes ownership leak\n");
+        return 1;
+    }
+
     printf("ok\n");
     return 0;
 }
 "#,
     );
 
+    dir.write("asan_probe.c", "int main(void) { return 0; }\n");
+    let asan_probe = dir.path("asan_probe");
+    let asan_compile = Command::new("cc")
+        .arg("-fsanitize=address,undefined")
+        .arg("-fno-sanitize-recover=all")
+        .arg(dir.path("asan_probe.c"))
+        .arg("-o")
+        .arg(&asan_probe)
+        .output()
+        .expect("probe cc sanitizers");
+    let sanitizers_available = asan_compile.status.success()
+        && Command::new(&asan_probe)
+            .env("ASAN_OPTIONS", "detect_leaks=0:halt_on_error=1")
+            .env("UBSAN_OPTIONS", "halt_on_error=1")
+            .output()
+            .is_ok_and(|run| run.status.success());
+    if !sanitizers_available {
+        let reason = String::from_utf8_lossy(&asan_compile.stderr);
+        if std::env::var_os("ORI_REQUIRE_C_SANITIZERS").is_some_and(|value| value == "1") {
+            panic!("C export sanitizer gate is required but unavailable: {reason}");
+        }
+        eprintln!("SKIP C export ASan/UBSan instrumentation: {reason}");
+    }
+
     let host_bin = dir.path("host");
-    let cc = Command::new("cc")
+    let mut cc = Command::new("cc");
+    if sanitizers_available {
+        cc.arg("-fsanitize=address,undefined")
+            .arg("-fno-sanitize-recover=all")
+            .arg("-fno-omit-frame-pointer");
+    }
+    let cc = cc
         .arg("-o")
         .arg(&host_bin)
         .arg(dir.path("host.c"))
@@ -10843,7 +12085,15 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&cc.stderr)
     );
 
-    let run = Command::new(&host_bin).arg(&out_so).output().unwrap();
+    let run = Command::new(&host_bin)
+        .arg(&out_so)
+        .env(
+            "ASAN_OPTIONS",
+            "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+        )
+        .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+        .output()
+        .unwrap();
     assert!(
         run.status.success(),
         "C host failed: stdout={:?} stderr={:?}",
@@ -10851,6 +12101,34 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "ok");
+
+    for (case, expected) in [
+        ("null-bytes", "ori bytes input has a null data pointer"),
+        (
+            "negative-bytes",
+            "ori bytes input length cannot be negative",
+        ),
+    ] {
+        let rejected = Command::new(&host_bin)
+            .arg(&out_so)
+            .arg(case)
+            .env(
+                "ASAN_OPTIONS",
+                "detect_leaks=0:halt_on_error=1:abort_on_error=1",
+            )
+            .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+            .output()
+            .unwrap();
+        assert!(
+            !rejected.status.success(),
+            "invalid `{case}` view was accepted"
+        );
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains(expected),
+            "invalid `{case}` diagnostic: {:?}",
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+    }
 }
 
 #[test]
@@ -10968,6 +12246,55 @@ end
         "{:?}",
         out.diagnostics
     );
+}
+
+#[test]
+fn check_rejects_every_unsupported_repr_form() {
+    let dir = TestDir::new("invalid_repr_arguments");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+@repr
+struct Missing
+    value: int
+end
+
+@repr("packed")
+struct Unsupported
+    value: int
+end
+
+@repr(layout: C)
+struct Named
+    value: int
+end
+
+@repr("C", "packed")
+struct Additional
+    value: int
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "{:?}", out.diagnostics);
+    assert_eq!(
+        diagnostic_codes(&out)
+            .into_iter()
+            .filter(|code| *code == "attr.invalid_arg")
+            .count(),
+        4,
+        "{:?}",
+        out.diagnostics
+    );
+    assert!(out.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code != "attr.invalid_arg"
+            || diagnostic
+                .action
+                .as_deref()
+                .is_some_and(|action| action.contains("@repr(\"C\")"))
+    }));
 }
 
 #[test]
@@ -11772,6 +13099,468 @@ end
 }
 
 #[test]
+fn compile_runs_process_run_output_typed_native() {
+    let dir = TestDir::new("process_run_output_typed_native");
+    #[cfg(windows)]
+    let source = r#"module app.main
+
+import ori.bytes = bytes_mod
+import ori.io = io
+import ori.process = proc
+import ori.string = string_mod
+
+main()
+    var c_flag: string = "c"
+    match string_mod.from_bytes(bytes_mod.from_list([47, 99]))
+        case ok(flag):
+            c_flag = flag
+        case err(_):
+            c_flag = "c"
+    end
+    match proc.run_output("cmd", [c_flag, "echo", "typed-process-ok"])
+        case ok(output):
+            io.println(string(output.status == 0))
+            match proc.stdout_text(output)
+                case ok(text):
+                    io.println(string_mod.trim(text))
+                case err(_):
+                    io.println("decode error")
+            end
+        case err(e):
+            io.println("error: " + e)
+    end
+end
+"#;
+    #[cfg(not(windows))]
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.process = proc
+import ori.string = string_mod
+
+main()
+    match proc.run_output("echo", ["typed-process-ok"])
+        case ok(output):
+            io.println(string(output.status == 0))
+            match proc.stdout_text(output)
+                case ok(text):
+                    io.println(string_mod.trim(text))
+                case err(_):
+                    io.println("decode error")
+            end
+        case err(e):
+            io.println("error: " + e)
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "process_run_output_typed_native");
+    assert!(stdout.contains("true"), "stdout: {stdout}");
+    assert!(stdout.contains("typed-process-ok"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_process_run_output_binary_bytes_preservation_native() {
+    let dir = TestDir::new("process_run_output_binary_preservation");
+    let source = r#"module app.main
+
+import ori.bytes = bytes_mod
+import ori.io = io
+import ori.process = proc
+
+main()
+    match proc.run_output("python3", ["-c", "import sys; sys.stdout.buffer.write(bytes([65, 66, 67]))"])
+        case ok(output):
+            io.println(string(output.status == 0))
+            io.println(string(bytes_mod.len(output.stdout)))
+        case err(e):
+            io.println("error: " + e)
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "process_run_output_binary_preservation");
+    assert!(stdout.contains("true"), "stdout: {stdout}");
+    assert!(stdout.contains("3"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_crypto_typed_results_native() {
+    let dir = TestDir::new("crypto_typed_results_native");
+    let source = r#"module app.main
+
+import ori.crypto = crypto
+import ori.io = io
+
+main()
+    match crypto.try_hash_password("my-secret-pw")
+        case ok(h):
+            io.println(string(crypto.verify_password("my-secret-pw", h)))
+            io.println(string(crypto.verify_password("wrong-pw", h)))
+        case err(e):
+            io.println("error: " + e)
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "crypto_typed_results_native");
+    assert!(stdout.contains("true"), "stdout: {stdout}");
+    assert!(stdout.contains("false"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_fs_typed_error_native() {
+    let dir = TestDir::new("fs_typed_error_native");
+    let source = r#"module app.main
+
+import ori.fs = fs
+import ori.io = io
+
+main()
+    match fs.try_read_text("non_existent_file_xyz_12345.txt")
+        case ok(_):
+            io.println("UNEXPECTED_OK")
+        case err(e):
+            match e
+                case NotFound:
+                    io.println("NOT_FOUND_OK")
+                case PermissionDenied:
+                    io.println("PERMISSION_DENIED")
+                case AlreadyExists:
+                    io.println("ALREADY_EXISTS")
+                case InvalidPath:
+                    io.println("INVALID_PATH")
+                case Other(message):
+                    io.println("OTHER: " + message)
+            end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "fs_typed_error_native");
+    assert!(stdout.contains("NOT_FOUND_OK"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_net_typed_error_native() {
+    let dir = TestDir::new("net_typed_error_native");
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.net = net
+
+main()
+    match net.try_connect("127.0.0.1", 59999, 100)
+        case ok(_):
+            io.println("UNEXPECTED_OK")
+        case err(e):
+            match e
+                case ConnectionRefused:
+                    io.println("REFUSED_OR_TIMED_OUT")
+                case TimedOut:
+                    io.println("REFUSED_OR_TIMED_OUT")
+                case HostUnreachable:
+                    io.println("UNREACHABLE")
+                case AddressInUse:
+                    io.println("ADDR_IN_USE")
+                case Closed:
+                    io.println("CLOSED")
+                case Other(message):
+                    io.println("REFUSED_OR_TIMED_OUT")
+            end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "net_typed_error_native");
+    assert!(stdout.contains("REFUSED_OR_TIMED_OUT"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_json_typed_error_native() {
+    let dir = TestDir::new("json_typed_error_native");
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.json = json
+
+main()
+    match json.try_parse("invalid json text {")
+        case ok(_):
+            io.println("UNEXPECTED_OK")
+        case err(e):
+            match e
+                case ParseError(message):
+                    io.println("PARSE_ERROR_OK")
+                case IoError(message):
+                    io.println("IO_ERROR")
+            end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "json_typed_error_native");
+    assert!(stdout.contains("PARSE_ERROR_OK"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_err_trace_push_and_format_native() {
+    let dir = TestDir::new("err_trace_push_and_format");
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.err_trace = trace
+
+level2() -> result[int, string]
+    return err("connection reset")
+end
+
+level1() -> result[int, string]
+    match level2()
+        case ok(val):
+            return ok(val)
+        case err(msg):
+            const traced = trace.push("network.orl", 42, msg)
+            return err(traced)
+    end
+end
+
+main()
+    match level1()
+        case ok(_):
+            io.println("UNEXPECTED_OK")
+        case err(e):
+            const formatted = trace.format(e)
+            if formatted.contains("connection reset") and formatted.contains("at network.orl:42")
+                io.println("TRACE_SUCCESS")
+            else
+                io.println("TRACE_FAILED")
+            end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "err_trace_native");
+    assert!(stdout.contains("TRACE_SUCCESS"), "stdout: {stdout}");
+}
+
+#[test]
+fn build_c_backend_compiles_err_trace() {
+    let dir = TestDir::new("c_backend_err_trace");
+    let source = r#"module app.main
+
+import ori.err_trace = trace
+
+level1() -> string
+    return trace.push("main.orl", 10, "err")
+end
+
+main()
+    const s = level1()
+    const f = trace.format(s)
+end
+"#;
+    dir.write("main.orl", source);
+
+    let build = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build.has_errors, "{:?}", build.diagnostics);
+    assert!(build.c_source.contains("ori_err_trace_push"));
+    assert!(build.c_source.contains("ori_err_trace_format"));
+}
+
+#[test]
+fn compile_runs_inline_and_no_inline_attributes_native() {
+    let dir = TestDir::new("inline_no_inline_attrs");
+    let source = r#"module app.main
+
+import ori.io = io
+
+@inline
+add_fast(a: int, b: int) -> int
+    return a + b
+end
+
+@no_inline
+compute_slow(x: int) -> int
+    return x * 2
+end
+
+main()
+    const r1 = add_fast(10, 20)
+    const r2 = compute_slow(r1)
+    if r2 == 60
+        io.println("INLINE_SUCCESS")
+    else
+        io.println("FAILED")
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "inline_attrs_native");
+    assert!(stdout.contains("INLINE_SUCCESS"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_anon_struct_and_struct_update_option_def_id_native() {
+    let dir = TestDir::new("aud_front_2_option_def_id");
+    let source = r#"module app.main
+
+import ori.io = io
+
+struct Config
+    port: int
+    debug: bool
+end
+
+enum Status
+    Active
+    Pending(code: int)
+end
+
+update_config(c: Config) -> Config
+    return c with { port: 9000 } end
+end
+
+main()
+    -- Anonymous struct literal: def_id starts as None, gets typed as Config
+    const c: Config = { port: 8080, debug: true }
+    const c2 = update_config(c)
+
+    const s1: Status = Status.Active
+    const s2: Status = Status.Pending(code: 123)
+
+    if c2.port == 9000 and c2.debug
+        match s2
+            case Pending(code):
+                if code == 123
+                    io.println("OPTION_DEF_ID_SUCCESS")
+                end
+            case Active:
+                io.println("UNEXPECTED")
+        end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "aud_front_2_native");
+    assert!(stdout.contains("OPTION_DEF_ID_SUCCESS"), "stdout: {stdout}");
+}
+
+#[test]
+fn build_c_backend_compiles_anon_struct_and_struct_update_option_def_id() {
+    let dir = TestDir::new("c_backend_option_def_id");
+    let source = r#"module app.main
+
+struct Config
+    port: int
+    debug: bool
+end
+
+enum Status
+    Active
+    Pending(code: int)
+end
+
+update_config(c: Config) -> Config
+    return c with { port: 9000 } end
+end
+
+main()
+    const c: Config = { port: 8080, debug: true }
+    const c2 = update_config(c)
+    const s1: Status = Status.Active
+    const s2: Status = Status.Pending(code: 123)
+end
+"#;
+    dir.write("main.orl", source);
+
+    let build = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build.has_errors, "{:?}", build.diagnostics);
+}
+
+#[test]
+fn unicode_case_fold_conformance_native_and_c_backend() {
+    let dir = TestDir::new("unicode_case_fold_conformance");
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.string = str
+
+main()
+    -- 1. German sharp S (multi-char full fold: ß -> ss)
+    io.println(str.case_fold("STRAßE"))
+    io.println(str.case_fold("groß"))
+
+    -- 2. Umlauts and accented Latin
+    io.println(str.case_fold("GRÜSSEN"))
+    io.println(str.case_fold("CAFÉ"))
+    io.println(str.case_fold("MAÑANA"))
+    io.println(str.case_fold("ÉLÈVE"))
+
+    -- 3. Ligatures (multi-char full folds: ﬁ -> fi, ﬂ -> fl, ﬃ -> ffi)
+    io.println(str.case_fold("ﬁle"))
+    io.println(str.case_fold("ﬂow"))
+    io.println(str.case_fold("oﬃce"))
+
+    -- 4. Greek and Cyrillic
+    io.println(str.case_fold("ΟΔΥΣΣΕΥΣ"))
+    io.println(str.case_fold("ПРИВЕТ"))
+
+    -- 5. Fullwidth & emoji preservation
+    io.println(str.case_fold("ＨＥＬＬＯ"))
+    io.println(str.case_fold("Ori 🚀 2026"))
+end
+"#;
+    dir.write("main.orl", source);
+
+    // Run native Cranelift AOT
+    let native_stdout = compile_and_run(&dir, "casefold_native");
+    assert!(native_stdout.contains("strasse"), "native: {native_stdout}");
+    assert!(native_stdout.contains("gross"), "native: {native_stdout}");
+    assert!(native_stdout.contains("grüssen"), "native: {native_stdout}");
+    assert!(native_stdout.contains("café"), "native: {native_stdout}");
+    assert!(native_stdout.contains("mañana"), "native: {native_stdout}");
+    assert!(native_stdout.contains("élève"), "native: {native_stdout}");
+    assert!(native_stdout.contains("file"), "native: {native_stdout}");
+    assert!(native_stdout.contains("flow"), "native: {native_stdout}");
+    assert!(native_stdout.contains("office"), "native: {native_stdout}");
+    assert!(
+        native_stdout.contains("\u{03BF}\u{03B4}\u{03C5}\u{03C3}\u{03C3}\u{03B5}\u{03C5}\u{03C3}"),
+        "native: {native_stdout}"
+    );
+    assert!(native_stdout.contains("привет"), "native: {native_stdout}");
+    assert!(
+        native_stdout.contains("ｈｅｌｌｏ"),
+        "native: {native_stdout}"
+    );
+    assert!(
+        native_stdout.contains("ori 🚀 2026"),
+        "native: {native_stdout}"
+    );
+
+    // Run C backend and verify exact bit-for-bit parity
+    let out = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    if let Some(c_out) = compile_and_run_c_source(&dir, "casefold_c", &out.c_source, b"") {
+        let c_stdout = String::from_utf8_lossy(&c_out.stdout);
+        assert_eq!(
+            native_stdout.trim(),
+            c_stdout.trim(),
+            "Native and C backend case folding outputs must match identically"
+        );
+    }
+}
+
+#[test]
 fn check_accepts_stdlib_gap_parity_imports() {
     let dir = TestDir::new("stdlib_gap_parity_imports");
     dir.write(
@@ -12532,11 +14321,68 @@ end
 use_handle(h: handle[int]) -> handle[int]
     return h
 end
+
+same_handle(left: handle[int], right: handle[int]) -> bool
+    return left == right
+end
 "#,
     );
 
     let out = run_build(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_handle_null_probe_and_identity_accept_borrowed_ffi_handle() {
+    let dir = TestDir::new("handle_is_null");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.handle = handles
+
+extern c
+    raw_handle() -> handle[int]
+end
+
+check_handle(value: handle[int]) -> bool
+    const empty: handle[int] = handles.null()
+    return handles.is_null(value) == handles.is_null(empty)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn compile_runs_handle_null_constructor_native() {
+    let dir = TestDir::new("handle_null_constructor_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.handle = handles
+import ori.io = io
+
+main()
+    const empty: handle[int] = handles.null()
+    if handles.is_null(empty)
+        io.print("ok")
+    else
+        io.print("bad")
+    end
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "handle_null_constructor");
+    let out = run_compile(&dir.path("main.orl"), &exe).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
 }
 
 #[test]
@@ -12909,4 +14755,130 @@ end
         .expect("refreshed module records");
     assert_eq!(artifact_for(after_modules, "main.orl"), main_before);
     assert_ne!(artifact_for(after_modules, "helper.orl"), helper_before);
+}
+
+#[test]
+fn package_manifest_with_native_platform_libs_compiles_and_runs() {
+    let dir = TestDir::new("pkg_native_platform_libs");
+    dir.write(
+        "ori.pkg.toml",
+        r#"[package]
+name = "demo.native_pkg"
+version = "1.0.0"
+entry = "main.orl"
+ori_version = "0.3.8"
+
+[native.linux]
+libraries = ["m"]
+
+[native.windows]
+libraries = ["kernel32"]
+
+[native.macos]
+libraries = ["m"]
+
+[native]
+link_flags = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module demo.native_pkg
+
+main() -> int
+    return 42
+end
+"#,
+    );
+
+    let exe = dir.path("app.exe");
+    let out = run_compile(&dir.path("ori.pkg.toml"), &exe).expect("compile must succeed");
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let run_res = std::process::Command::new(&exe)
+        .output()
+        .expect("run binary");
+    assert!(run_res.status.success());
+}
+
+#[test]
+fn package_manifest_native_pkg_config_missing_dependency_fails_gracefully() {
+    let dir = TestDir::new("pkg_native_missing_pkg_config");
+    dir.write(
+        "ori.pkg.toml",
+        r#"[package]
+name = "demo.broken_native"
+version = "1.0.0"
+entry = "main.orl"
+ori_version = "0.3.8"
+
+[native.dependencies.nonexistent_pkg_xyz_999]
+pkg_config = "nonexistent_pkg_xyz_999"
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module demo.broken_native
+
+main()
+end
+"#,
+    );
+
+    let exe = dir.path("app.exe");
+    match run_compile(&dir.path("ori.pkg.toml"), &exe) {
+        Err(err) => {
+            assert!(
+                err.contains("package.native_dependency_missing")
+                    || err.contains("package.native_pkg_config_missing"),
+                "error should report native dependency issue: {err}"
+            );
+        }
+        Ok(_) => panic!("should fail with missing native dependency"),
+    }
+}
+
+#[test]
+fn compile_lib_emits_alignas_in_c_header() {
+    let dir = TestDir::new("align_c_header");
+    dir.write(
+        "lib.orl",
+        r#"module app.lib
+
+@repr("C")
+@align(16)
+public struct UniformData
+    matrix: int
+    offset: int
+end
+
+@c_export
+public compute_uniform(data: UniformData) -> int
+    return data.matrix + data.offset
+end
+
+main()
+end
+"#,
+    );
+
+    let out_so = dir.path("libuniform.so");
+    let out = run_compile_with_options(
+        &dir.path("lib.orl"),
+        &out_so,
+        CompileOptions {
+            native_raw: false,
+            lib: true,
+        },
+    )
+    .expect("compile --lib");
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let header_path = dir.path("libuniform.h");
+    assert!(header_path.is_file(), "header should exist");
+    let header = std::fs::read_to_string(&header_path).expect("read generated C header");
+    assert!(
+        header.contains("alignas(16)") || header.contains("__attribute__((aligned(16)))"),
+        "header must contain alignment directive: {header}"
+    );
 }

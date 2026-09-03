@@ -192,6 +192,7 @@ fn fold_expr(expr: &mut HirExpr, changed: &mut bool) {
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {

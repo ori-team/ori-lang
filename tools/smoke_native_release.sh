@@ -109,7 +109,7 @@ trap cleanup EXIT
 
 if [ "$skip_build" -eq 0 ]; then
     run_checked "cargo build -p ori-driver -p ori-lsp --release" \
-        sh -c "cd '$compiler_root' && cargo build -p ori-driver -p ori-lsp --release"
+        sh -c "cd '$compiler_root' && cargo build -p ori-driver -p ori-lsp --release --locked"
 fi
 
 if [ ! -f "$source_ori" ]; then
@@ -324,5 +324,11 @@ esac
     cd "$package_root"
     ORI_REQUIRE_PACKAGED_RUNTIME=1 "$package_ori" doctor
 ) >/dev/null
+
+# Verify that the packaged server speaks the real JSON-RPC protocol, not just
+# that an executable file exists. This catches broken dynamic loading and
+# startup regressions before an archive is published.
+run_checked "packaged ori-lsp protocol handshake" \
+    python3 "$repo_root/tools/qa/lsp_protocol_smoke.py" "$package_lsp"
 
 printf 'native release smoke passed: %s\n' "$package_root"

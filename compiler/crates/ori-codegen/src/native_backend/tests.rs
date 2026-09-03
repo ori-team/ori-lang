@@ -1,7 +1,8 @@
 use super::*;
 use ori_diagnostics::Span;
 use ori_types::{stdlib::stdlib_native_abi, DefId};
-use std::collections::{BTreeSet, HashSet};
+use smol_str::SmolStr;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 struct NativeHirCoverage {
     variant: &'static str,
@@ -214,6 +215,8 @@ fn simple_async_func(stmts: Vec<HirStmt>) -> HirFunc {
         is_public: false,
         is_async: true,
         is_mut: false,
+        is_inline: false,
+        is_no_inline: false,
         c_export_name: None,
         span: Span::DUMMY,
     }
@@ -357,6 +360,8 @@ fn simple_async_state_machine_plan_accepts_void_tail_expression() {
         is_public: false,
         is_async: true,
         is_mut: false,
+        is_inline: false,
+        is_no_inline: false,
         c_export_name: None,
         span: Span::DUMMY,
     };
@@ -416,6 +421,8 @@ fn simple_async_state_machine_plan_accepts_prefix_local_and_tail_control_flow() 
         is_public: false,
         is_async: true,
         is_mut: false,
+        is_inline: false,
+        is_no_inline: false,
         c_export_name: None,
         span: Span::DUMMY,
     };
@@ -500,6 +507,7 @@ fn simple_async_state_machine_plan_accepts_managed_param_and_binding() {
     let plan = simple_async_state_machine_plan(&func).expect("simple async state machine plan");
     assert_eq!(plan.params[0].ty, Ty::String);
     assert_eq!(plan.awaits[0].binding.as_ref().unwrap().ty, Ty::String);
+    verify_async_frame_ownership(&plan, types::I64).expect("verified async ownership layout");
 }
 
 #[test]
@@ -845,6 +853,20 @@ fn native_backend_declares_manifest_runtime_symbols() {
 }
 
 #[test]
+fn native_emission_map_order_is_stable_by_key() {
+    let mut values = HashMap::new();
+    values.insert(SmolStr::new("zeta"), 1_u8);
+    values.insert(SmolStr::new("alpha"), 2_u8);
+    values.insert(SmolStr::new("middle"), 3_u8);
+
+    let keys = super::sorted_smol_entries(&values)
+        .into_iter()
+        .map(|(key, _)| key.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(keys, ["alpha", "middle", "zeta"]);
+}
+
+#[test]
 fn direct_internal_runtime_imports_are_documented() {
     let source = include_str!("../native_backend.rs");
     let manifest_symbols: HashSet<_> = stdlib_runtime_functions()
@@ -1156,6 +1178,86 @@ fn missing_raw_native_linker_reports_native_linker_not_c_compiler() {
     assert!(err.contains("native linker"), "{err}");
     assert!(!err.contains("C compiler"), "{err}");
     assert!(!err.contains("C toolchain"), "{err}");
+}
+
+#[test]
+fn shared_link_filters_executable_only_inputs() {
+    assert!(is_executable_only_link_argument("-no-pie"));
+    assert!(is_executable_only_link_argument("-pie"));
+    assert!(is_executable_only_link_argument("-subsystem:console"));
+    assert!(is_executable_only_link_argument("/SUBSYSTEM:CONSOLE"));
+    assert!(!is_executable_only_link_argument("-shared"));
+    assert!(is_executable_crt_start(Path::new("/usr/lib/crt1.o")));
+    assert!(!is_executable_crt_start(Path::new("/usr/lib/crti.o")));
+    assert!(is_dynamic_library_path(Path::new(
+        "/runtime/libori_runtime.so"
+    )));
+    assert!(is_dynamic_library_path(Path::new(
+        "/runtime/libori_runtime.dylib"
+    )));
+    assert!(!is_dynamic_library_path(Path::new(
+        "/runtime/libori_runtime.a"
+    )));
+}
+
+#[cfg(unix)]
+#[test]
+fn raw_native_linker_receives_shared_flavor_without_pie_flag() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = std::env::temp_dir().join(format!(
+        "ori_raw_shared_link_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    let linker = directory.join("linker.sh");
+    let arguments = directory.join("arguments.txt");
+    std::fs::write(
+        &linker,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
+            arguments.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&linker, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    link_with_raw_native_command(
+        &linker,
+        &[directory.join("module.o")],
+        &directory.join("libmodule.so"),
+        &[
+            PathBuf::from("-no-pie"),
+            PathBuf::from("-lm"),
+            directory.join("libori_runtime.so"),
+        ],
+        NativeLinkOptions {
+            raw_diagnostics: false,
+            shared: true,
+        },
+    )
+    .expect("fake shared linker should succeed");
+    let arguments = std::fs::read_to_string(arguments).unwrap();
+    let expected_flavor = if cfg!(target_os = "macos") {
+        "-dylib"
+    } else {
+        "-shared"
+    };
+    assert!(arguments
+        .lines()
+        .any(|argument| argument == expected_flavor));
+    assert!(!arguments.lines().any(|argument| argument == "-no-pie"));
+    assert!(arguments.lines().any(|argument| argument == "-lm"));
+    assert!(arguments.lines().any(|argument| argument == "-rpath"));
+    assert!(arguments
+        .lines()
+        .any(|argument| argument == directory.to_string_lossy()));
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -2139,6 +2241,8 @@ fn module_with_body(stmts: Vec<HirStmt>) -> HirModule {
             is_public: true,
             is_async: false,
             is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
             c_export_name: None,
             span: Span::new(0, 30),
         }],

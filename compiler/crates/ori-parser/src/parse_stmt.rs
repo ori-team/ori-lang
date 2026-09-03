@@ -9,7 +9,6 @@ use ori_ast::stmt::{
 use ori_ast::ty::Type;
 use ori_diagnostics::Span;
 use ori_lexer::TokenKind;
-use smol_str::SmolStr;
 
 /// Tokens that terminate a block (without consuming them).
 const BLOCK_TERMINATORS: &[TokenKind] = &[
@@ -524,10 +523,33 @@ impl<'src> Parser<'src> {
             match self.peek_kind() {
                 Some(TokenKind::StrLit) => {
                     let tok = self.advance().unwrap();
-                    let raw = self.slice(tok.span);
-                    Some(SmolStr::new(&raw[1..raw.len() - 1]))
+                    let raw = self.slice(tok.span).to_owned();
+                    Some(self.unescape_string_content(
+                        &raw[1..raw.len() - 1],
+                        tok.span.start as usize + 1,
+                    ))
                 }
-                _ => None,
+                Some(_) => {
+                    let span = self.current_span();
+                    self.error(
+                        "parse.check_message_literal",
+                        "`check` messages must be string literals",
+                        span,
+                    );
+                    // Consume the invalid expression so its first token is
+                    // not reinterpreted as a second statement in the block.
+                    let _ = self.parse_expr();
+                    None
+                }
+                None => {
+                    let span = self.current_span();
+                    self.error(
+                        "parse.check_message_literal",
+                        "`check` messages must be string literals",
+                        span,
+                    );
+                    None
+                }
             }
         } else {
             None

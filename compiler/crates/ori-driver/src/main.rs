@@ -19,6 +19,22 @@ struct Cli {
     /// Disable ANSI colour output.
     #[arg(long, global = true)]
     no_color: bool,
+
+    /// Select the compilation target triple used by `@cfg` and native artifacts.
+    #[arg(long, global = true)]
+    target: Option<String>,
+
+    /// Select `standalone` or `embedded` conditional-compilation profile.
+    #[arg(long, global = true, value_parser = ["standalone", "embedded"])]
+    execution_profile: Option<String>,
+
+    /// Enable comma-separated features declared in the project manifest.
+    #[arg(long, global = true, value_delimiter = ',')]
+    features: Vec<String>,
+
+    /// Do not enable features listed by the manifest's `default` feature set.
+    #[arg(long, global = true)]
+    no_default_features: bool,
 }
 
 #[derive(Subcommand)]
@@ -94,6 +110,9 @@ enum Commands {
         /// Override the package cache root.
         #[arg(long)]
         cache: Option<PathBuf>,
+        /// Refuse network access and restore only verified entries already in cache.
+        #[arg(long)]
+        offline: bool,
     },
     /// Publish an Ori package to the configured registry (`ORI_REGISTRY`).
     ///
@@ -121,11 +140,30 @@ enum Commands {
         /// Run only tests whose fully-qualified or short name contains this text.
         #[arg(long)]
         filter: Option<String>,
+        /// Run tests embedded in documentation comments and .oridoc files.
+        #[arg(long)]
+        doc: bool,
     },
-    /// Format an Ori source file and print the result.
+    /// Format an Ori source file or directory.
     Fmt {
-        /// Path to the `.orl` source file.
-        file: PathBuf,
+        /// Path to the `.orl` source file or directory (default: current directory when omitted).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Write formatted content directly to file(s) in-place.
+        #[arg(short, long)]
+        write: bool,
+        /// Check if files are formatted without writing; exits with code 1 if unformatted.
+        #[arg(short, long)]
+        check: bool,
+    },
+    /// Check an Ori source file or project for lint warnings.
+    Lint {
+        /// Path to the `.orl` source file or project root (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Treat lint warnings as errors and exit with code 1.
+        #[arg(long)]
+        deny_warnings: bool,
     },
     /// Print the raw token stream (debug).
     Lex {
@@ -158,6 +196,9 @@ enum Commands {
         /// Print full native linker stdout/stderr when link fails.
         #[arg(long)]
         native_raw: bool,
+        /// Arguments forwarded to the Ori program.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Debug an Ori source file or serve the Debug Adapter Protocol over stdio.
     Debug {
@@ -226,6 +267,23 @@ enum Commands {
         #[arg(long, short = 'v')]
         verbose: bool,
     },
+    /// Generate low-level Ori FFI bindings from a C header file (FFI-BINDGEN-1).
+    Bindgen {
+        /// Path to the C header file (`.h`).
+        header: PathBuf,
+        /// Output `.orl` file path (default: stdout).
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Module name for the generated Ori file (default: derived from header name).
+        #[arg(short, long)]
+        module: Option<String>,
+    },
+    /// Start a persistent JSON-RPC background compilation service over stdio.
+    Daemon {
+        /// Keep process alive and accept requests on stdin.
+        #[arg(long)]
+        stdio: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -281,6 +339,10 @@ fn main() {
 
 fn run_cli() {
     let cli = Cli::parse();
+    if let Err(error) = configure_compilation_environment(&cli) {
+        eprintln!("ori: {error}");
+        process::exit(2);
+    }
     let color = !cli.no_color && std::env::var("NO_COLOR").is_err();
 
     match &cli.command {
@@ -474,10 +536,12 @@ fn run_cli() {
             path,
             locked,
             cache,
+            offline,
         } => match package::run_lock_package(package::LockPackageOptions {
             path: path.clone(),
             locked: *locked,
             cache_root: cache.clone(),
+            offline: *offline,
         }) {
             Err(e) => {
                 eprintln!("ori: {}", e);
@@ -514,10 +578,11 @@ fn run_cli() {
             }
         },
 
-        Commands::Test { file, filter } => match pipeline::run_test_with_options(
+        Commands::Test { file, filter, doc } => match pipeline::run_test_with_options(
             file,
             pipeline::TestOptions {
                 filter: filter.clone(),
+                doc: *doc,
             },
         ) {
             Err(e) => {
@@ -581,7 +646,68 @@ fn run_cli() {
             }
         },
 
-        Commands::Fmt { file } => match pipeline::run_fmt(file) {
+        Commands::Fmt { path, write, check } => {
+            match pipeline::run_fmt_path(
+                path,
+                pipeline::FmtOptions {
+                    write: *write,
+                    check: *check,
+                },
+            ) {
+                Err(e) => {
+                    eprintln!("ori: {}", e);
+                    process::exit(2);
+                }
+                Ok(batch) => {
+                    if let Some(single) = batch.single_output {
+                        let errors = single.diagnostics.iter().filter(|d| d.is_error()).count();
+                        let warnings = single.diagnostics.len() - errors;
+                        emit::render_all(&single.cache, &single.diagnostics, color);
+                        emit::print_summary(errors, warnings, color);
+                        if !single.has_errors {
+                            print!("{}", single.formatted);
+                        }
+                        process::exit(if single.has_errors { 1 } else { 0 });
+                    }
+
+                    for err in &batch.errors {
+                        eprintln!("error: {err}");
+                    }
+                    if *check {
+                        if !batch.unformatted_files.is_empty() {
+                            eprintln!(
+                                "fmt: {} of {} file(s) require formatting",
+                                batch.unformatted_files.len(),
+                                batch.total_files
+                            );
+                            for file in &batch.unformatted_files {
+                                eprintln!("  unformatted: {}", file.display());
+                            }
+                            process::exit(1);
+                        }
+                        eprintln!("fmt: all {} file(s) formatted cleanly", batch.total_files);
+                        process::exit(0);
+                    }
+                    if *write {
+                        eprintln!(
+                            "fmt: formatted {} of {} file(s)",
+                            batch.modified_files.len(),
+                            batch.total_files
+                        );
+                        for file in &batch.modified_files {
+                            eprintln!("  formatted: {}", file.display());
+                        }
+                        process::exit(if batch.errors.is_empty() { 0 } else { 1 });
+                    }
+                    process::exit(0);
+                }
+            }
+        }
+
+        Commands::Lint {
+            path,
+            deny_warnings,
+        } => match pipeline::run_lint(path) {
             Err(e) => {
                 eprintln!("ori: {}", e);
                 process::exit(2);
@@ -591,10 +717,10 @@ fn run_cli() {
                 let warnings = out.diagnostics.len() - errors;
                 emit::render_all(&out.cache, &out.diagnostics, color);
                 emit::print_summary(errors, warnings, color);
-                if !out.has_errors {
-                    print!("{}", out.formatted);
+                if out.has_errors || (*deny_warnings && warnings > 0) {
+                    process::exit(1);
                 }
-                process::exit(if out.has_errors { 1 } else { 0 });
+                process::exit(0);
             }
         },
 
@@ -669,9 +795,13 @@ fn run_cli() {
             }
         }
 
-        Commands::Run { file, native_raw } => {
+        Commands::Run {
+            file,
+            native_raw,
+            args,
+        } => {
             if pipeline::should_use_jit_for_run() {
-                match pipeline::run_jit(file) {
+                match pipeline::run_jit_with_args(file, args) {
                     Err(e) => {
                         eprintln!("ori: {}", e);
                         process::exit(2);
@@ -712,7 +842,9 @@ fn run_cli() {
                         let _ = std::fs::remove_file(&out.exe_path);
                         process::exit(1);
                     }
-                    let status = process::Command::new(&out.exe_path).status();
+                    let mut cmd = process::Command::new(&out.exe_path);
+                    cmd.args(args);
+                    let status = cmd.status();
                     let _ = std::fs::remove_file(&out.exe_path);
                     match status {
                         Err(e) => {
@@ -953,7 +1085,56 @@ fn run_cli() {
                 }
             }
         }
+
+        Commands::Bindgen {
+            header,
+            out,
+            module,
+        } => match ori_driver::bindgen::generate_bindings(header, module.as_deref()) {
+            Err(e) => {
+                eprintln!("ori: {e}");
+                process::exit(2);
+            }
+            Ok(generated) => {
+                if let Some(out_path) = out {
+                    if let Err(e) = std::fs::write(out_path, &generated) {
+                        eprintln!("ori: failed to write '{}': {e}", out_path.display());
+                        process::exit(2);
+                    }
+                } else {
+                    print!("{generated}");
+                }
+            }
+        },
+
+        Commands::Daemon { stdio: _ } => {
+            if let Err(e) = pipeline::run_daemon() {
+                eprintln!("ori: daemon error: {e}");
+                process::exit(2);
+            }
+            process::exit(0);
+        }
     }
+}
+
+fn configure_compilation_environment(cli: &Cli) -> Result<(), String> {
+    if let Some(target) = cli.target.as_deref() {
+        let target = target.trim();
+        if target.is_empty() || target.chars().any(char::is_whitespace) {
+            return Err("cfg.target_invalid: `--target` must be a non-empty target triple".into());
+        }
+        std::env::set_var("ORI_TARGET_TRIPLE", target);
+    }
+    if let Some(profile) = cli.execution_profile.as_deref() {
+        std::env::set_var("ORI_EXECUTION_PROFILE", profile);
+    }
+    if !cli.features.is_empty() {
+        std::env::set_var("ORI_FEATURES", cli.features.join(","));
+    }
+    if cli.no_default_features {
+        std::env::set_var("ORI_NO_DEFAULT_FEATURES", "1");
+    }
+    Ok(())
 }
 
 fn temp_run_exe_path(file: &std::path::Path) -> PathBuf {
@@ -1177,6 +1358,10 @@ mod tests {
             .to_string();
 
         assert!(help.contains("packaged native runtime"), "{help}");
+        assert!(help.contains("--target"), "{help}");
+        assert!(help.contains("--execution-profile"), "{help}");
+        assert!(help.contains("--features"), "{help}");
+        assert!(help.contains("--no-default-features"), "{help}");
         assert!(!help.contains("requires `cc`"), "{help}");
         assert!(!help.contains("C compiler"), "{help}");
         assert!(
@@ -1205,7 +1390,7 @@ mod tests {
         );
         assert!(help.contains("Run functions marked with `@test`"), "{help}");
         assert!(
-            help.contains("Format an Ori source file and print the result"),
+            help.contains("Format an Ori source file or directory"),
             "{help}"
         );
     }

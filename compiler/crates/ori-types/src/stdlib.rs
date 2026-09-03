@@ -1,7 +1,5 @@
 use crate::{DefId, OpaqueTy, Ty};
 
-pub const JSON_VALUE_PLACEHOLDER: DefId = DefId(9999);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StdlibRuntimeFunction {
     pub canonical_path: &'static str,
@@ -162,6 +160,8 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.io.println" => "ori_io_print", c_backend),
     stdlib!("ori.mem.string_as_ptr" => "ori_mem_string_as_ptr", c_backend),
     stdlib!("ori.mem.string_len" => "ori_mem_string_len", c_backend),
+    stdlib!("ori.handle.null" => "ori_handle_null"),
+    stdlib!("ori.handle.is_null" => "ori_handle_is_null", c_backend),
     stdlib!("ori.io.eprint" => "ori_io_eprint", c_backend),
     stdlib!("ori.io.eprintln" => "ori_io_eprint", c_backend),
     stdlib!("ori.io.read_line" => "ori_io_read_line", c_backend),
@@ -187,8 +187,12 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.string.trim_end" => "ori_string_trim_end", c_backend),
     stdlib!("ori.string.to_upper" => "ori_string_to_upper", c_backend),
     stdlib!("ori.string.to_lower" => "ori_string_to_lower", c_backend),
+    stdlib!("ori.string.is_ascii" => "ori_string_is_ascii", c_backend),
+    stdlib!("ori.string.case_fold" => "ori_string_case_fold", c_backend),
     stdlib!("ori.string.replace" => "ori_string_replace", c_backend),
     stdlib!("ori.string.chars" => "ori_string_chars", c_backend),
+    stdlib!("ori.err_trace.push", ["err_trace.push"] => "ori_err_trace_push", c_backend),
+    stdlib!("ori.err_trace.format", ["err_trace.format"] => "ori_err_trace_format", c_backend),
     stdlib!("string", [] => "ori_to_string", c_backend),
     stdlib!("int", [] => "ori_to_int", c_backend),
     stdlib!("float", [] => "ori_to_float", c_backend),
@@ -213,6 +217,19 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.list.to_list", ["list.to_list"] => "ori_list_to_list"),
     stdlib!("ori.list.from_list", ["list.from_list"] => "ori_list_from_list"),
     stdlib!("ori.list.free", ["list.free"] => "ori_list_free"),
+    stdlib!("ori.buffer.new", ["buffer.new"] => "ori_buffer_new"),
+    stdlib!("ori.buffer.len", ["buffer.len"] => "ori_buffer_len"),
+    stdlib!("ori.buffer.is_empty", ["buffer.is_empty"] => "ori_buffer_is_empty"),
+    stdlib!("ori.buffer.get", ["buffer.get"] => "ori_buffer_get"),
+    stdlib!("ori.buffer.set", ["buffer.set"] => "ori_buffer_set"),
+    stdlib!("ori.buffer.fill", ["buffer.fill"] => "ori_buffer_fill"),
+    stdlib!("ori.buffer.as_slice", ["buffer.as_slice"] => "ori_buffer_as_slice"),
+    stdlib!("ori.mem.region_new", ["mem.region_new"] => "ori_region_new"),
+    stdlib!("ori.mem.region_alloc", ["mem.region_alloc"] => "ori_region_alloc"),
+    stdlib!("ori.mem.region_reset", ["mem.region_reset"] => "ori_region_reset"),
+    stdlib!("ori.mem.region_free", ["mem.region_free"] => "ori_region_free"),
+    stdlib!("ori.mem.region_size", ["mem.region_size"] => "ori_region_size"),
+    stdlib!("ori.mem.region_count", ["mem.region_count"] => "ori_region_count"),
     stdlib!("ori.deque.new", ["deque.new"] => "ori_deque_new"),
     stdlib!("ori.deque.push_front", ["deque.push_front"] => "ori_deque_push_front"),
     stdlib!("ori.deque.push_back", ["deque.push_back"] => "ori_deque_push_back"),
@@ -484,7 +501,9 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.task.is_cancelled", ["task.is_cancelled"] => "ori_task_is_cancelled"),
     stdlib!("ori.task.associate", ["task.associate"] => "ori_task_associate"),
     stdlib!("ori.channel.create", ["channel.create"] => "ori_channel_create"),
+    stdlib!("ori.channel.create_bounded" => "ori_channel_create_bounded"),
     stdlib!("ori.channel.send", ["channel.send"] => "ori_channel_send"),
+    stdlib!("ori.channel.__send_managed" => "ori_channel_send_managed"),
     stdlib!("ori.channel.receive", ["channel.receive"] => "ori_channel_receive"),
     stdlib!("ori.channel.close", ["channel.close"] => "ori_channel_close"),
     stdlib!("ori.atomic.new", ["atomic.new"] => "ori_atomic_new"),
@@ -706,6 +725,10 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
         "ori.process.run_capture",
         ["process.run_capture"] => "ori_process_run_capture"
     ),
+    stdlib!(
+        "ori.process.run_output_raw",
+        ["process.run_output_raw"] => "ori_process_run_output"
+    ),
     stdlib!("ori.net.connect", ["net.connect"] => "ori_net_connect"),
     stdlib!("ori.net.connect_tls", ["net.connect_tls"] => "ori_net_connect_tls"),
     stdlib!(
@@ -811,7 +834,11 @@ pub fn stdlib_native_codegen_available(path: &str) -> bool {
     }
     matches!(
         canonical_stdlib_path(path).unwrap_or(path),
-        "ori.lazy.once" | "ori.lazy.force" | "ori.lazy.is_consumed"
+        "ori.lazy.once"
+            | "ori.lazy.force"
+            | "ori.lazy.is_consumed"
+            | "ori.mem.size_of"
+            | "ori.mem.align_of"
     )
 }
 
@@ -873,7 +900,11 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
         | "ori.string.trim_start"
         | "ori.string.trim_end"
         | "ori.string.to_upper"
-        | "ori.string.to_lower" => (vec![Ty::String], Ty::String),
+        | "ori.string.to_lower"
+        | "ori.string.case_fold" => (vec![Ty::String], Ty::String),
+        "ori.err_trace.push" => (vec![Ty::String, Ty::Int, Ty::String], Ty::String),
+        "ori.err_trace.format" => (vec![Ty::String], Ty::String),
+        "ori.string.is_ascii" => (vec![Ty::String], Ty::Bool),
         "ori.string.replace" => (vec![Ty::String, Ty::String, Ty::String], Ty::String),
         "ori.string.chars" => (vec![Ty::String], Ty::List(Box::new(Ty::String))),
         "ori.string.index_of" => (vec![Ty::String, Ty::String], Ty::Int),
@@ -910,6 +941,17 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
         "ori.bytes.get" => (vec![Ty::Bytes, Ty::Int], Ty::U8),
         "ori.mem.size_of" | "ori.mem.align_of" => (vec![Ty::Infer(0)], Ty::Int),
         "ori.mem.string_as_ptr" | "ori.mem.string_len" => (vec![Ty::String], Ty::Int),
+        "ori.mem.region_new" => (vec![], Ty::Handle(Box::new(Ty::Infer(0)))),
+        "ori.mem.region_alloc" => (
+            vec![Ty::Handle(Box::new(Ty::Infer(0))), Ty::Int, Ty::Int],
+            Ty::Handle(Box::new(Ty::U8)),
+        ),
+        "ori.mem.region_reset" => (vec![Ty::Handle(Box::new(Ty::Infer(0)))], Ty::Void),
+        "ori.mem.region_free" => (vec![Ty::Handle(Box::new(Ty::Infer(0)))], Ty::Void),
+        "ori.mem.region_size" => (vec![Ty::Handle(Box::new(Ty::Infer(0)))], Ty::Int),
+        "ori.mem.region_count" => (vec![Ty::Handle(Box::new(Ty::Infer(0)))], Ty::Int),
+        "ori.handle.null" => (vec![], Ty::Handle(Box::new(Ty::Infer(0)))),
+        "ori.handle.is_null" => (vec![Ty::Handle(Box::new(Ty::Infer(0)))], Ty::Bool),
         "ori.time.now" => (vec![], Ty::Int),
         "ori.time.sleep" => (vec![Ty::Int], Ty::Void),
         "ori.time.duration_ms" => (vec![Ty::Int, Ty::Int], Ty::Int),
@@ -977,7 +1019,15 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
             Ty::Void,
         ),
         "ori.channel.create" => (vec![], Ty::Channel(Box::new(Ty::Infer(0)))),
+        "ori.channel.create_bounded" => (
+            vec![Ty::Int],
+            Ty::Optional(Box::new(Ty::Channel(Box::new(Ty::Infer(0))))),
+        ),
         "ori.channel.send" => (
+            vec![Ty::Channel(Box::new(Ty::Infer(0))), Ty::Infer(0)],
+            Ty::Result(Box::new(Ty::Void), Box::new(Ty::ChannelSendError)),
+        ),
+        "ori.channel.__send_managed" => (
             vec![Ty::Channel(Box::new(Ty::Infer(0))), Ty::Infer(0)],
             Ty::Result(Box::new(Ty::Void), Box::new(Ty::ChannelSendError)),
         ),
@@ -1034,6 +1084,25 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
             Ty::List(Box::new(Ty::Infer(0))),
         ),
         "ori.list.free" => (vec![Ty::List(Box::new(Ty::Infer(0)))], Ty::Void),
+        "ori.buffer.new" => (vec![Ty::Int], Ty::Buffer(Box::new(Ty::Infer(0)))),
+        "ori.buffer.len" => (vec![Ty::Buffer(Box::new(Ty::Infer(0)))], Ty::Int),
+        "ori.buffer.is_empty" => (vec![Ty::Buffer(Box::new(Ty::Infer(0)))], Ty::Bool),
+        "ori.buffer.get" => (
+            vec![Ty::Buffer(Box::new(Ty::Infer(0))), Ty::Int],
+            Ty::Infer(0),
+        ),
+        "ori.buffer.set" => (
+            vec![Ty::Buffer(Box::new(Ty::Infer(0))), Ty::Int, Ty::Infer(0)],
+            Ty::Void,
+        ),
+        "ori.buffer.fill" => (
+            vec![Ty::Buffer(Box::new(Ty::Infer(0))), Ty::Infer(0)],
+            Ty::Void,
+        ),
+        "ori.buffer.as_slice" => (
+            vec![Ty::Buffer(Box::new(Ty::Infer(0)))],
+            Ty::Slice(Box::new(Ty::Infer(0))),
+        ),
         "ori.list.pop" => (vec![Ty::List(Box::new(Ty::Infer(0)))], Ty::Infer(0)),
         "ori.list.try_pop" => (
             vec![Ty::List(Box::new(Ty::Infer(0)))],
@@ -1211,16 +1280,16 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
         "ori.json.parse" => (
             vec![Ty::String],
             Ty::Result(
-                Box::new(Ty::Named(JSON_VALUE_PLACEHOLDER, Vec::new())),
+                Box::new(Ty::Named(DefId::SYNTHETIC_JSON_VALUE, Vec::new())),
                 Box::new(Ty::String),
             ),
         ),
         "ori.json.stringify" => (
-            vec![Ty::Named(JSON_VALUE_PLACEHOLDER, Vec::new())],
+            vec![Ty::Named(DefId::SYNTHETIC_JSON_VALUE, Vec::new())],
             Ty::String,
         ),
         "ori.json.stringify_pretty" => (
-            vec![Ty::Named(JSON_VALUE_PLACEHOLDER, Vec::new())],
+            vec![Ty::Named(DefId::SYNTHETIC_JSON_VALUE, Vec::new())],
             Ty::String,
         ),
         path if list_backed_collection_kind(path, &["new"]).is_some() => {
@@ -1698,6 +1767,13 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
                 Box::new(Ty::String),
             ),
         ),
+        "ori.process.run_output_raw" => (
+            vec![Ty::String, Ty::List(Box::new(Ty::String))],
+            Ty::Result(
+                Box::new(Ty::Tuple(vec![Ty::Int, Ty::Bytes, Ty::Bytes])),
+                Box::new(Ty::String),
+            ),
+        ),
         "ori.net.connect" => (
             vec![Ty::String, Ty::Int, Ty::Int],
             Ty::Result(Box::new(connection_ty()), Box::new(Ty::String)),
@@ -1810,16 +1886,20 @@ pub fn stdlib_native_abi(
         "ori_io_flush" => (vec![Ptr], Some(Ptr)),
         "ori_io_close_input" | "ori_io_close_output" => (vec![Ptr], None),
         "ori_string_len" | "ori_len" => (vec![Ptr], Some(I64)),
+        "ori_handle_null" => (vec![], Some(Ptr)),
+        "ori_handle_is_null" => (vec![Ptr], Some(I8)),
         "ori_string_concat" | "ori_string_split" => (vec![Ptr, Ptr], Some(Ptr)),
         "ori_string_slice" => (vec![Ptr, I64, I64], Some(Ptr)),
         "ori_string_contains" | "ori_string_starts_with" | "ori_string_ends_with" => {
             (vec![Ptr, Ptr], Some(I8))
         }
+        "ori_string_is_ascii" => (vec![Ptr], Some(I8)),
         "ori_string_trim"
         | "ori_string_trim_start"
         | "ori_string_trim_end"
         | "ori_string_to_upper"
         | "ori_string_to_lower"
+        | "ori_string_case_fold"
         | "ori_string_chars"
         | "ori_bytes_to_hex"
         | "ori_bytes_from_hex"
@@ -1834,7 +1914,9 @@ pub fn stdlib_native_abi(
         | "ori_files_read_text_async"
         | "ori_files_read_bytes"
         | "ori_files_read_all"
-        | "ori_files_list_dir" => (vec![Ptr], Some(Ptr)),
+        | "ori_files_list_dir"
+        | "ori_err_trace_format" => (vec![Ptr], Some(Ptr)),
+        "ori_err_trace_push" => (vec![Ptr, I64, Ptr], Some(Ptr)),
         "ori_bytes_len" => (vec![Ptr], Some(I64)),
         "ori_string_replace" => (vec![Ptr, Ptr, Ptr], Some(Ptr)),
         "ori_string_index_of" => (vec![Ptr, Ptr], Some(I64)),
@@ -1984,6 +2066,17 @@ pub fn stdlib_native_abi(
             }),
         ),
         "ori_list_slice" => (vec![Ptr, I64, I64], Some(Ptr)),
+        "ori_buffer_new" => (vec![I64], Some(Ptr)),
+        "ori_buffer_len" => (vec![Ptr], Some(I64)),
+        "ori_buffer_is_empty" => (vec![Ptr], Some(I8)),
+        "ori_buffer_get" => (vec![Ptr, I64], Some(I64)),
+        "ori_buffer_set" => (vec![Ptr, I64, I64], None),
+        "ori_buffer_fill" => (vec![Ptr, I64], None),
+        "ori_buffer_as_slice" => (vec![Ptr], Some(Ptr)),
+        "ori_region_new" => (vec![], Some(Ptr)),
+        "ori_region_alloc" => (vec![Ptr, I64, I64], Some(Ptr)),
+        "ori_region_reset" | "ori_region_free" => (vec![Ptr], None),
+        "ori_region_size" | "ori_region_count" => (vec![Ptr], Some(I64)),
         "ori_set_union" | "ori_set_intersection" | "ori_set_difference" => {
             (vec![Ptr, Ptr], Some(Ptr))
         }
@@ -2097,7 +2190,8 @@ pub fn stdlib_native_abi(
         "ori_task_is_cancelled" => (vec![Ptr], Some(I8)),
         "ori_task_associate" => (vec![Ptr, Ptr], None),
         "ori_channel_create" => (vec![], Some(Ptr)),
-        "ori_channel_send" => (vec![Ptr, I64], Some(Ptr)),
+        "ori_channel_create_bounded" => (vec![I64], Some(Ptr)),
+        "ori_channel_send" | "ori_channel_send_managed" => (vec![Ptr, I64], Some(Ptr)),
         "ori_channel_receive" => (vec![Ptr], Some(Ptr)),
         "ori_channel_close" => (vec![Ptr], None),
         "ori_atomic_new" => (vec![I64], Some(Ptr)),
@@ -2136,7 +2230,9 @@ pub fn stdlib_native_abi(
         "ori_test_skip" => (vec![Ptr], None),
         "ori_bytes_from_list" => (vec![Ptr], Some(Ptr)),
         "ori_bytes_to_list" => (vec![Ptr], Some(Ptr)),
-        "ori_process_run" | "ori_process_run_capture" => (vec![Ptr, Ptr], Some(Ptr)),
+        "ori_process_run" | "ori_process_run_capture" | "ori_process_run_output" => {
+            (vec![Ptr, Ptr], Some(Ptr))
+        }
         "ori_net_connect"
         | "ori_net_connect_tls"
         | "ori_net_connect_async"
@@ -2191,8 +2287,15 @@ const STDLIB_MODULE_ONLY_PATHS: &[&str] = &[
     "ori.core",
     "ori.Error",
     "ori.mem",
+    "ori.handle",
     "ori.concurrent",
     "ori.buffer",
+    "ori.span",
+    "ori.slotmap",
+    "ori.image",
+    "ori.string_view",
+    "ori.cancel",
+    "ori.err_trace",
 ];
 
 /// Extracts the module prefix from a canonical stdlib path.
@@ -2378,7 +2481,7 @@ mod tests {
         );
 
         // json.parse: (string) -> result[Value, string]
-        let json_value = Ty::Named(JSON_VALUE_PLACEHOLDER, Vec::new());
+        let json_value = Ty::Named(DefId::SYNTHETIC_JSON_VALUE, Vec::new());
         let (params, ret) = stdlib_func_sig("ori.json.parse").expect("json.parse sig");
         assert_eq!(params, vec![Ty::String], "json.parse params");
         assert_eq!(

@@ -1,8 +1,10 @@
+pub mod bindgen;
 pub mod debugger;
 pub mod doc_export;
 pub mod emit;
 pub mod explain;
 pub mod incremental;
+pub mod native_deps;
 pub mod oridoc;
 pub mod package;
 pub mod pipeline;

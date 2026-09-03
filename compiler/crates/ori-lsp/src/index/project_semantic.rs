@@ -23,10 +23,12 @@ use ori_ast::item::Item;
 use ori_ast::stmt::{Block, MatchCase, Stmt};
 use ori_ast::ty::Type;
 use ori_diagnostics::{SourceCache, Span};
+use ori_lexer::TokenKind;
 use ori_types::resolve::ResolvedModule;
-use ori_types::{Def, Ty};
-use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, Range};
+use ori_types::{Def, DefId, Ty};
+use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, Position, Range};
 
+use super::semantic::SemanticIndex;
 use crate::stdlib_catalog::stdlib_catalog;
 use crate::utils::position;
 
@@ -41,6 +43,31 @@ pub struct ProjectSemanticIndex {
     pub active_path: PathBuf,
 }
 
+struct FileResolutionContext {
+    file_id: ori_diagnostics::FileId,
+    tokens: Vec<ori_lexer::Token>,
+    ast: ori_ast::item::SourceFile,
+    local_index: SemanticIndex,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProjectSymbolIdentity {
+    Definition(DefId),
+    SelectiveImportAlias {
+        file_id: ori_diagnostics::FileId,
+        declaration_start: u32,
+        target: DefId,
+    },
+}
+
+impl ProjectSymbolIdentity {
+    fn target(self) -> DefId {
+        match self {
+            Self::Definition(target) | Self::SelectiveImportAlias { target, .. } => target,
+        }
+    }
+}
+
 impl ProjectSemanticIndex {
     pub fn new(resolved: ResolvedModule, cache: SourceCache, active_path: PathBuf) -> Self {
         Self {
@@ -52,58 +79,89 @@ impl ProjectSemanticIndex {
 
     // ── Cross-file go-to-definition (Etapa 6.1) ────────────────────────────
 
-    /// Resolve `symbol` to its defining location, which may live in an
-    /// imported file. Returns `(path, range)` ready to become an LSP
-    /// `Location`.
-    pub fn cross_file_definition(&self, symbol: &str) -> Option<(PathBuf, Range)> {
-        let def = self.find_def_by_name(symbol)?;
-        self.def_to_location(def)
+    /// Resolve the exact top-level identity under the cursor, then return its
+    /// defining file. Duplicate simple names in other modules cannot win.
+    pub fn cross_file_definition_at(
+        &self,
+        path: &std::path::Path,
+        source: &str,
+        cursor: Position,
+    ) -> Option<(PathBuf, Range)> {
+        let offset = position::byte_offset_for_position(source, cursor).ok()? as u32;
+        let def_id = self.def_id_at_offset(path, source, offset)?;
+        self.def_to_location(self.resolved.def_map.get(def_id))
     }
 
     // ── Cross-file hover (Etapa 6.1) ───────────────────────────────────────
 
-    /// Build a hover string for `symbol` from the resolved signatures.
-    /// Returns `None` when the symbol is not a known top-level definition.
-    pub fn cross_file_hover(&self, symbol: &str) -> Option<String> {
-        if let Some(s) = self.find_struct_by_name(symbol) {
-            let fields = s
+    pub fn cross_file_hover_at(
+        &self,
+        path: &std::path::Path,
+        source: &str,
+        cursor: Position,
+    ) -> Option<String> {
+        let offset = position::byte_offset_for_position(source, cursor).ok()? as u32;
+        let def_id = self.def_id_at_offset(path, source, offset)?;
+        let def = self.resolved.def_map.get(def_id);
+        let symbol = def.name.as_str();
+
+        if let Some(signature) = self
+            .resolved
+            .struct_sigs
+            .iter()
+            .find(|signature| signature.def_id == def_id)
+        {
+            let fields = signature
                 .fields
                 .iter()
-                .map(|(n, t)| format!("- `{n}`: {}", ty_to_str(t, &self.resolved)))
+                .map(|(name, ty)| format!("- `{name}`: {}", ty_to_str(ty, &self.resolved)))
                 .collect::<Vec<_>>()
                 .join("\n");
             return Some(format!("```ori\nstruct {symbol}\n```\n\nFields:\n{fields}"));
         }
-        if let Some(e) = self.find_enum_by_name(symbol) {
-            let variants = e
+        if let Some(signature) = self
+            .resolved
+            .enum_sigs
+            .iter()
+            .find(|signature| signature.def_id == def_id)
+        {
+            let variants = signature
                 .variants
                 .iter()
-                .map(|v| v.name.as_str())
+                .map(|variant| variant.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
             return Some(format!(
                 "```ori\nenum {symbol}\n```\n\nVariants: {variants}"
             ));
         }
-        if let Some(f) = self.find_func_by_name(symbol) {
-            let params = f
+        if let Some(signature) = self
+            .resolved
+            .func_sigs
+            .iter()
+            .find(|signature| signature.def_id == def_id)
+        {
+            let params = signature
                 .params
                 .iter()
-                .map(|t| ty_to_str(t, &self.resolved))
+                .map(|ty| ty_to_str(ty, &self.resolved))
                 .collect::<Vec<_>>()
                 .join(", ");
             return Some(format!(
                 "```ori\n{symbol}({params}) -> {}\n```\n\nTop-level function.",
-                ty_to_str(&f.return_ty, &self.resolved),
+                ty_to_str(&signature.return_ty, &self.resolved),
             ));
         }
-        if let Some(v) = self.find_value_by_name(symbol) {
-            return Some(format!(
-                "```ori\n{symbol}: {}\n```\n\nTop-level value.",
-                ty_to_str(&v.ty, &self.resolved),
-            ));
-        }
-        None
+        self.resolved
+            .value_sigs
+            .iter()
+            .find(|signature| signature.def_id == def_id)
+            .map(|signature| {
+                format!(
+                    "```ori\n{symbol}: {}\n```\n\nTop-level value.",
+                    ty_to_str(&signature.ty, &self.resolved),
+                )
+            })
     }
 
     // ── Type-aware dot completion (Etapa 6.2) ──────────────────────────────
@@ -172,41 +230,87 @@ impl ProjectSemanticIndex {
             }
         }
 
+        // Support dot-completion on traits directly (e.g. any[Trait] or Trait bounds)
+        for trait_sig in &self.resolved.trait_sigs {
+            let def = self.resolved.def_map.get(trait_sig.def_id);
+            let matches = def.path.as_str() == type_name
+                || def.name.as_str() == type_name
+                || type_name.ends_with(&format!(".{}", def.name))
+                || def.path.as_str().ends_with(&format!(".{type_name}"));
+            if matches {
+                for method in &trait_sig.methods {
+                    let ret = ty_to_str(&method.return_ty, &self.resolved);
+                    items.push(CompletionItem {
+                        label: method.name.to_string(),
+                        kind: Some(CompletionItemKind::METHOD),
+                        detail: Some(format!("trait method -> {ret}")),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
         items.extend(self.complete_opaque_methods(&type_name));
+        crate::handlers::completion::dedupe_completion_items(&mut items);
 
         items
     }
 
     // ── Cross-file find references (Etapa 6.2) ─────────────────────────────
 
-    /// Find every occurrence of `symbol` across all loaded sources (the
-    /// active file and its transitive imports). Returns `(path, range)`
-    /// pairs. Word boundaries are respected so that `User` does not match
-    /// `UserName`.
-    pub fn find_references_cross_file(&self, symbol: &str) -> Vec<(PathBuf, Range)> {
-        let mut out = Vec::new();
-        let needle = symbol.as_bytes();
-        if needle.is_empty() {
-            return out;
-        }
+    /// Find references by resolved `DefId`, not by spelling. Lexer tokens
+    /// exclude comments and string contents; per-file local indexes exclude
+    /// shadowing bindings before import/top-level resolution.
+    pub fn find_references_cross_file_at(
+        &self,
+        path: &std::path::Path,
+        source: &str,
+        cursor: Position,
+    ) -> Vec<(PathBuf, Range)> {
+        let Some(offset) = position::byte_offset_for_position(source, cursor)
+            .ok()
+            .map(|offset| offset as u32)
+        else {
+            return Vec::new();
+        };
+        let Some(target) = self.symbol_identity_at_offset(path, source, offset) else {
+            return Vec::new();
+        };
+
+        let mut references = Vec::new();
         for file in self.cache.all_files() {
-            let content = &file.content;
-            let bytes = content.as_bytes();
-            let mut i = 0usize;
-            while i + needle.len() <= bytes.len() {
-                if &bytes[i..i + needle.len()] == needle
-                    && is_word_boundary(bytes, i, i + needle.len())
+            let context = self.file_resolution_context(&file.path, &file.content, file.id);
+            for token in context
+                .tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::Ident)
+            {
+                if context
+                    .local_index
+                    .is_local_identifier_at_offset(token.span.start)
                 {
-                    let start = position::position_for_byte_offset(content, i);
-                    let end = position::position_for_byte_offset(content, i + needle.len());
-                    out.push((file.path.clone(), Range::new(start, end)));
-                    i += needle.len();
-                } else {
-                    i += 1;
+                    continue;
+                }
+                if self.symbol_identity_in_context(&file.content, token.span.start, &context)
+                    == Some(target)
+                {
+                    references.push((
+                        file.path.clone(),
+                        Range::new(
+                            position::position_for_byte_offset(
+                                &file.content,
+                                token.span.start as usize,
+                            ),
+                            position::position_for_byte_offset(
+                                &file.content,
+                                token.span.end as usize,
+                            ),
+                        ),
+                    ));
                 }
             }
         }
-        out
+        references
     }
 
     // ── helpers: def lookup ────────────────────────────────────────────────
@@ -217,6 +321,129 @@ impl ProjectSemanticIndex {
             .all_defs()
             .iter()
             .find(|d| d.name == name)
+    }
+
+    fn def_id_at_offset(&self, path: &std::path::Path, source: &str, offset: u32) -> Option<DefId> {
+        self.symbol_identity_at_offset(path, source, offset)
+            .map(ProjectSymbolIdentity::target)
+    }
+
+    fn symbol_identity_at_offset(
+        &self,
+        path: &std::path::Path,
+        source: &str,
+        offset: u32,
+    ) -> Option<ProjectSymbolIdentity> {
+        let file_id = self
+            .cache
+            .all_files()
+            .iter()
+            .find(|file| same_path(&file.path, path))
+            .map(|file| file.id)
+            .unwrap_or(ori_diagnostics::FileId(0));
+        let context = self.file_resolution_context(path, source, file_id);
+        self.symbol_identity_in_context(source, offset, &context)
+    }
+
+    fn file_resolution_context(
+        &self,
+        path: &std::path::Path,
+        source: &str,
+        file_id: ori_diagnostics::FileId,
+    ) -> FileResolutionContext {
+        let mut sink = ori_diagnostics::DiagnosticSink::default();
+        let tokens = ori_lexer::lex(source, file_id, &mut sink);
+        let mut parse_sink = ori_diagnostics::DiagnosticSink::default();
+        let ast = ori_parser::parse(&tokens, source, file_id, &mut parse_sink);
+        FileResolutionContext {
+            file_id,
+            tokens,
+            ast,
+            local_index: SemanticIndex::build(source, Some(path)),
+        }
+    }
+
+    fn symbol_identity_in_context(
+        &self,
+        source: &str,
+        offset: u32,
+        context: &FileResolutionContext,
+    ) -> Option<ProjectSymbolIdentity> {
+        if context.local_index.is_local_identifier_at_offset(offset) {
+            return None;
+        }
+        let token_index = context.tokens.iter().position(|token| {
+            token.kind == TokenKind::Ident && token.span.start <= offset && offset < token.span.end
+        })?;
+        let name = &source[context.tokens[token_index].span.start as usize
+            ..context.tokens[token_index].span.end as usize];
+        let namespace = context.ast.namespace.name.to_string();
+
+        if let Some(qualified) = qualified_token_path(source, &context.tokens, token_index) {
+            if let Some((head, tail)) = qualified.split_once('.') {
+                for import in &context.ast.imports {
+                    if import
+                        .alias
+                        .as_ref()
+                        .is_some_and(|alias| alias.text == head)
+                    {
+                        let candidate = format!("{}.{}", import.path, tail);
+                        if let Some(def_id) = self.resolved.def_map.lookup(&candidate) {
+                            return Some(ProjectSymbolIdentity::Definition(def_id));
+                        }
+                    }
+                }
+            }
+            if let Some(def_id) = self.resolved.def_map.lookup(&qualified) {
+                return Some(ProjectSymbolIdentity::Definition(def_id));
+            }
+            if let Some(def_id) = self
+                .resolved
+                .def_map
+                .lookup(&format!("{namespace}.{qualified}"))
+            {
+                return Some(ProjectSymbolIdentity::Definition(def_id));
+            }
+            return None;
+        }
+
+        if let Some(def_id) = self.resolved.def_map.lookup(&format!("{namespace}.{name}")) {
+            return Some(ProjectSymbolIdentity::Definition(def_id));
+        }
+        for import in &context.ast.imports {
+            for selected in &import.selected {
+                let local_name = selected
+                    .alias
+                    .as_ref()
+                    .map_or(selected.name.text.as_str(), |alias| alias.text.as_str());
+                if local_name == name {
+                    let candidate = format!("{}.{}", import.path, selected.name.text);
+                    if let Some(def_id) = self.resolved.def_map.lookup(&candidate) {
+                        if let Some(alias) = &selected.alias {
+                            return Some(ProjectSymbolIdentity::SelectiveImportAlias {
+                                file_id: context.file_id,
+                                declaration_start: alias.span.start,
+                                target: def_id,
+                            });
+                        }
+                        return Some(ProjectSymbolIdentity::Definition(def_id));
+                    }
+                }
+            }
+        }
+
+        let mut matching = self
+            .resolved
+            .def_map
+            .all_defs()
+            .iter()
+            .filter(|definition| definition.name == name);
+        let only = matching.next()?;
+        if matching.next().is_none() {
+            Some(ProjectSymbolIdentity::Definition(only.id))
+        } else {
+            None
+        }
     }
 
     fn find_struct_by_name(&self, name: &str) -> Option<&ori_types::resolve::StructSig> {
@@ -230,11 +457,6 @@ impl ProjectSemanticIndex {
     fn find_enum_by_name(&self, name: &str) -> Option<&ori_types::resolve::EnumSig> {
         let def = self.find_def_by_name(name)?;
         self.resolved.enum_sigs.iter().find(|e| e.def_id == def.id)
-    }
-
-    fn find_func_by_name(&self, name: &str) -> Option<&ori_types::resolve::FuncSig> {
-        let def = self.find_def_by_name(name)?;
-        self.resolved.func_sigs.iter().find(|f| f.def_id == def.id)
     }
 
     fn find_value_by_name(&self, name: &str) -> Option<&ori_types::resolve::ValueSig> {
@@ -252,7 +474,19 @@ impl ProjectSemanticIndex {
         let file_id = ori_diagnostics::FileId(0);
         let mut sink = ori_diagnostics::DiagnosticSink::default();
         let tokens = ori_lexer::lex(source, file_id, &mut sink);
-        let source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        let mut source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        if let Err(error) = ori_driver::pipeline::filter_source_for_current_configuration(
+            &self.active_path,
+            &mut source_file,
+            file_id,
+            &mut sink,
+        ) {
+            eprintln!(
+                "ori-lsp: cannot inspect `{}`: {error}",
+                self.active_path.display()
+            );
+            return None;
+        }
 
         for item in &source_file.items {
             if let Item::Var(v) = &item.item {
@@ -287,30 +521,9 @@ impl ProjectSemanticIndex {
     // ── helpers: span → location ───────────────────────────────────────────
 
     fn def_to_location(&self, def: &Def) -> Option<(PathBuf, Range)> {
-        // `DefMap` does not currently tag each `Def` with its origin `FileId`,
-        // so we scan every loaded source for an occurrence of `def.name` at
-        // the byte range `def.span`. This is unambiguous in practice because
-        // `def.span` is the exact byte range of the defining identifier
-        // within its own file.
-        if let Some(active_file) = self
-            .cache
-            .all_files()
-            .iter()
-            .find(|candidate| candidate.path == self.active_path)
-        {
-            if let Some(name_range) = locate_name_span(&active_file.content, &def.name, def.span) {
-                return Some((active_file.path.clone(), name_range));
-            }
-        }
-        for candidate in self.cache.all_files() {
-            if candidate.path == self.active_path {
-                continue;
-            }
-            if let Some(name_range) = locate_name_span(&candidate.content, &def.name, def.span) {
-                return Some((candidate.path.clone(), name_range));
-            }
-        }
-        None
+        let file = self.cache.get(def.file_id)?;
+        let range = locate_name_span(&file.content, &def.name, def.span)?;
+        Some((file.path.clone(), range))
     }
 
     // ── helpers: receiver type inference ───────────────────────────────────
@@ -322,7 +535,19 @@ impl ProjectSemanticIndex {
         let file_id = ori_diagnostics::FileId(0);
         let mut sink = ori_diagnostics::DiagnosticSink::default();
         let tokens = ori_lexer::lex(source, file_id, &mut sink);
-        let source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        let mut source_file = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        if let Err(error) = ori_driver::pipeline::filter_source_for_current_configuration(
+            &self.active_path,
+            &mut source_file,
+            file_id,
+            &mut sink,
+        ) {
+            eprintln!(
+                "ori-lsp: cannot inspect `{}`: {error}",
+                self.active_path.display()
+            );
+            return None;
+        }
 
         let mut bindings: HashMap<String, String> = HashMap::new();
 
@@ -527,7 +752,7 @@ fn ty_to_str(ty: &Ty, resolved: &ResolvedModule) -> String {
         Ty::Void => "void".into(),
         Ty::Never => "never".into(),
         Ty::Error => "?".into(),
-        Ty::Optional(inner) => format!("{}?", ty_to_str(inner, resolved)),
+        Ty::Optional(inner) => format!("optional[{}]", ty_to_str(inner, resolved)),
         Ty::Result(ok, err) => {
             format!(
                 "result[{}, {}]",
@@ -536,12 +761,14 @@ fn ty_to_str(ty: &Ty, resolved: &ResolvedModule) -> String {
             )
         }
         Ty::List(inner) => format!("list[{}]", ty_to_str(inner, resolved)),
+        Ty::Buffer(inner) => format!("buffer[{}]", ty_to_str(inner, resolved)),
         Ty::Slice(inner) => format!("slice[{}]", ty_to_str(inner, resolved)),
         Ty::Array(inner, len) => format!(
             "array[{}, size: {}]",
             ty_to_str(inner, resolved),
             ty_to_str(len, resolved)
         ),
+        Ty::Simd(inner, lanes) => format!("simd[{}, {lanes}]", ty_to_str(inner, resolved)),
         Ty::Map(k, v) => format!(
             "map[{}, {}]",
             ty_to_str(k, resolved),
@@ -553,7 +780,7 @@ fn ty_to_str(ty: &Ty, resolved: &ResolvedModule) -> String {
         Ty::Handle(inner) => format!("handle[{}]", ty_to_str(inner, resolved)),
         Ty::Future(inner) => format!("future[{}]", ty_to_str(inner, resolved)),
         Ty::TaskJob(inner) => format!("task.Job[{}]", ty_to_str(inner, resolved)),
-        Ty::Channel(inner) => format!("channel<{}>", ty_to_str(inner, resolved)),
+        Ty::Channel(inner) => format!("channel.Channel[{}]", ty_to_str(inner, resolved)),
         Ty::AtomicInt => "atomic_int".into(),
         Ty::TaskJoinError => "task.JoinError".into(),
         Ty::ChannelSendError => "channel.SendError".into(),
@@ -589,7 +816,7 @@ fn ty_to_str(ty: &Ty, resolved: &ResolvedModule) -> String {
                     .map(|t| ty_to_str(t, resolved))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{name}<{inner}>")
+                format!("{name}[{inner}]")
             }
         }
         Ty::Param { name, .. } => name.to_string(),
@@ -597,42 +824,63 @@ fn ty_to_str(ty: &Ty, resolved: &ResolvedModule) -> String {
     }
 }
 
-/// Check whether `[start, end)` in `bytes` is bounded by non-identifier
-/// characters on both sides, so that searching for `User` does not match
-/// `UserName` or `myUser`.
-fn is_word_boundary(bytes: &[u8], start: usize, end: usize) -> bool {
-    let is_ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    let left_ok = start == 0 || !is_ident(bytes[start - 1]);
-    let right_ok = end >= bytes.len() || !is_ident(bytes[end]);
-    left_ok && right_ok
+fn same_path(left: &std::path::Path, right: &std::path::Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
-/// `DefMap` does not currently record which `FileId` a def was registered
-/// against, so cross-file go-to-definition scans each loaded source for the
-/// defining name occurrence. The resolver registers each top-level def with
-/// the span of its whole declaration (e.g. the entire `struct Point … end`
-/// block), not the span of the identifier alone, so we search for `name` as a
-/// word-boundary occurrence WITHIN `[span.start, span.end)` and return its
-/// position. This yields the identifier location regardless of whether the
-/// registered span is a name span or a declaration span.
-fn locate_name_span(content: &str, name: &str, span: Span) -> Option<Range> {
-    let bytes = content.as_bytes();
-    let s = (span.start as usize).min(bytes.len());
-    let e = (span.end as usize).min(bytes.len());
-    if s > e || e > bytes.len() || name.is_empty() {
+fn qualified_token_path(source: &str, tokens: &[ori_lexer::Token], index: usize) -> Option<String> {
+    let mut start = index;
+    while start >= 2
+        && tokens[start - 1].kind == TokenKind::Dot
+        && tokens[start - 2].kind == TokenKind::Ident
+    {
+        start -= 2;
+    }
+
+    let mut end = index;
+    while end + 2 < tokens.len()
+        && tokens[end + 1].kind == TokenKind::Dot
+        && tokens[end + 2].kind == TokenKind::Ident
+    {
+        end += 2;
+    }
+    if start == end {
         return None;
     }
-    let needle = name.as_bytes();
-    let mut i = s;
-    while i + needle.len() <= e {
-        if &bytes[i..i + needle.len()] == needle && is_word_boundary(bytes, i, i + needle.len()) {
-            let start = position::position_for_byte_offset(content, i);
-            let end = position::position_for_byte_offset(content, i + needle.len());
-            return Some(Range::new(start, end));
-        }
-        i += 1;
-    }
-    None
+
+    Some(
+        (start..=end)
+            .step_by(2)
+            .map(|token_index| {
+                let span = tokens[token_index].span;
+                &source[span.start as usize..span.end as usize]
+            })
+            .collect::<Vec<_>>()
+            .join("."),
+    )
+}
+
+/// The resolver keeps the whole declaration span. Locate the identifier token
+/// inside it without treating comments or strings as candidate definitions.
+fn locate_name_span(content: &str, name: &str, span: Span) -> Option<Range> {
+    let mut sink = ori_diagnostics::DiagnosticSink::default();
+    let tokens = ori_lexer::lex(content, ori_diagnostics::FileId(0), &mut sink);
+    let token = tokens.iter().find(|token| {
+        token.kind == TokenKind::Ident
+            && span.start <= token.span.start
+            && token.span.end <= span.end
+            && &content[token.span.start as usize..token.span.end as usize] == name
+    })?;
+    Some(Range::new(
+        position::position_for_byte_offset(content, token.span.start as usize),
+        position::position_for_byte_offset(content, token.span.end as usize),
+    ))
 }
 
 #[cfg(test)]
@@ -640,13 +888,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn word_boundary_rejects_substring_identifiers() {
-        let bytes = b"UserName User myUser";
-        // "User" appears at byte 9..13 only as a standalone word.
-        assert!(is_word_boundary(bytes, 9, 13));
-        // "User" substring inside "UserName" (0..4) is NOT a word boundary.
-        assert!(!is_word_boundary(bytes, 0, 4));
-        // "User" substring inside "myUser" (14..18) is NOT a word boundary.
-        assert!(!is_word_boundary(bytes, 14, 18));
+    fn qualified_token_path_keeps_unicode_segments() {
+        let source = "café.東京.valor";
+        let mut sink = ori_diagnostics::DiagnosticSink::default();
+        let tokens = ori_lexer::lex(source, ori_diagnostics::FileId(0), &mut sink);
+        assert_eq!(
+            qualified_token_path(source, &tokens, 2).as_deref(),
+            Some("café.東京.valor")
+        );
+    }
+
+    #[test]
+    fn trait_methods_are_offered_on_dot_completion() {
+        let source = "module app.dot\n\ntrait Drawable\n    draw(self) -> void\nend\npublic render(d: app.Drawable)\nend\n";
+        let path = std::path::PathBuf::from("dot.orl");
+        let output = ori_driver::pipeline::run_check_source(&path, source.into())
+            .expect("valid semantic fixture");
+        let proj = ProjectSemanticIndex::new(output.resolved, output.cache, path);
+        let source2 = "module app.dot\n\ntrait Drawable\n    draw(self) -> void\nend\npublic render(d: app.Drawable)\nend\n";
+        let items = proj.complete_after_dot("d", source2);
+        assert!(items.iter().any(|i| i.label == "draw"));
     }
 }

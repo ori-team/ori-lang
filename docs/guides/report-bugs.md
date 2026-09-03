@@ -1,8 +1,7 @@
 # How to report bugs
 
-> Status: practical policy for Ori **0.3.8 / S3**  
-> **Portuguese:** [report-bugs.pt-BR.md](report-bugs.pt-BR.md)  
-> Security vulnerabilities: follow [`../../SECURITY.md`](../../SECURITY.md), not a public issue
+> Status: practical policy for Ori **S3 + inference B / workspace 0.3.8-dev**
+> **Portuguese:** [report-bugs.pt-BR.md](report-bugs.pt-BR.md)
 
 A good report lets someone reproduce the issue with a few commands.
 
@@ -10,55 +9,30 @@ A good report lets someone reproduce the issue with a few commands.
 
 Include:
 
-- `ori --version`;
-- OS and target architecture;
-- minimal `.orl` file;
-- exact command, such as `ori check main.orl`;
-- complete diagnostic output;
-- whether the behavior also appears in `ori run`, `ori compile`, or the editor.
+- `ori --version`
+- OS (Windows / Linux / macOS)
+- minimal `.orl` file
+- command, e.g. `ori check main.orl`
+- full diagnostic output
 
-Use this category for lexer, parser, name resolution, type checker, imports, generics, traits, matching, `try`, formatter, and language diagnostics.
+Use this for parser, checker, imports, generics, traits, matching, `try`, ARC.
 
 ## Stdlib / runtime
 
 Also include:
 
-- module or operation (`ori.fs`, `ori.json`, and so on);
-- whether it fails under JIT `ori run`, AOT `ori compile`, or both;
-- target triple when known;
-- runtime/staticlib/cdylib staging information when developing from the repository;
-- for memory issues, relevant leak/ARC output such as `ORI_TEST_LEAK_CHECK=1`;
-- whether cleanup, aliasing, concurrency, I/O, or platform behavior is involved.
+- module (`ori.fs`, `ori.json`, …)
+- whether it fails under `ori run`, `ori compile`, or both
+- for memory issues: `ORI_TEST_LEAK_CHECK=1` if relevant
 
-## Tooling, projects, and packages
+## Tooling
 
-This includes `ori fmt`, `ori doc`, `ori new`, REPL, LSP, VS Code/Zed integrations, manifests, lockfiles, dependencies, installers, updater, and release packages.
+`ori fmt`, `ori doc`, `ori new`, REPL, LSP, VS Code / Zed extensions, release
+packages.
 
-Include:
-
-- exact command or editor action;
-- minimal project layout;
-- relevant manifest/lockfile without secrets;
-- whether it fails outside the repository checkout;
-- editor language-server logs when applicable;
-- package source and resolved revision/version when dependencies are involved.
-
-Remove registry tokens, credentials, private paths, and unrelated personal data.
-
-## Performance reports
-
-Include:
-
-- workload and input;
-- debug/release mode;
-- AOT/JIT and optimization settings;
-- target, OS, CPU, and memory;
-- sample count and statistic;
-- baseline version/commit;
-- reproduction script;
-- evidence that the benchmark still performs the intended work.
-
-See [`../quality/performance-policy.md`](../quality/performance-policy.md).
+Include exact command, minimal project, and whether it fails outside the repo
+checkout. For VS Code, include Output channel logs; for Zed, language server logs
+if available.
 
 ## Suggested template
 
@@ -66,11 +40,9 @@ See [`../quality/performance-policy.md`](../quality/performance-policy.md).
 Title: short description
 
 Environment:
-- Ori version/commit:
-- OS and architecture:
-- Target triple:
-- Route: check / AOT / JIT / LSP / package
-- Relevant environment variables:
+- Ori:
+- OS:
+- Command:
 
 Reproduction:
 1. ...
@@ -80,16 +52,11 @@ Expected:
 
 Actual:
 
-Diagnostics/output:
-
-Minimal file or project:
+Minimal file:
 module app.main
 
 main()
 end
-
-Regression:
-- Last known working version/commit, if known:
 ```
 
-Start with the smallest source or project that preserves the problem. Link larger evidence only when the minimized case cannot reproduce it.
+Start with the smallest file that shows the problem.

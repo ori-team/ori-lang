@@ -10,6 +10,7 @@ ori-diagnostics = { workspace = true }
 ori-ast         = { workspace = true }
 ori-hir         = { workspace = true }
 ori-types       = { workspace = true }
+ori-runtime     = { workspace = true }
 smol_str           = { workspace = true }
 cranelift-codegen  = { workspace = true }
 cranelift-frontend = { workspace = true }
@@ -21,3 +22,4 @@ libloading         = { workspace = true }
 gimli              = { workspace = true }
 object             = { workspace = true }
 serde_json         = { workspace = true }
+sha2               = { workspace = true }

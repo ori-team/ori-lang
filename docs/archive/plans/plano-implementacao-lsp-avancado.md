@@ -1,5 +1,5 @@
 > **Histórico — não usar como backlog ativo.**  
-> Para o roadmap atual, veja [`docs/planning/PLANO-MATURIDADE-COMPLETO.md`](../../planning/historico/planning/PLANO-MATURIDADE-COMPLETO.md) Etapa 6.
+> Para o roadmap atual, veja [`docs/planning/historico/PLANO-MATURIDADE-COMPLETO.md`](../../planning/historico/PLANO-MATURIDADE-COMPLETO.md) Etapa 6.
 
 # Plano de Implementação Avançada do Ori LSP
 

@@ -1,5 +1,10 @@
 # Ori — extensão para VS Code / Cursor
 
+O artefato da extensão é **0.3.5**. A superfície atual da linguagem é S3 +
+inferência B; o workspace do compilador é `0.3.8-dev` (última release
+`v0.3.7`). As versões do artefato e do compilador são acompanhadas
+separadamente até a próxima reconstrução da extensão.
+
 > Suporte de linguagem para Ori (`.orl` e `.oridoc`). A versão em inglês é a
 > referência completa de instalação e desenvolvimento: [README.md](README.md).
 
@@ -22,3 +27,11 @@ Buffers estáticos ou estrangeiros exigem um comprimento exato registrado.
 
 Se o compilador não estiver no `PATH`, configure `ori.compiler.path`. A
 extensão procura também `compiler/target/{debug,release}/` no workspace.
+
+Para manter diagnósticos, completion e execução na mesma configuração de
+`@cfg`, use `ori.cfg.target`, `ori.cfg.executionProfile`, `ori.cfg.features` e
+`ori.cfg.noDefaultFeatures`. A extensão repassa esses valores ao compilador e
+ao LSP pelos mesmos contratos `ORI_*` usados pela CLI.
+Alterar qualquer configuração `ori.cfg.*` reinicia automaticamente o servidor
+de linguagem, mantendo diagnósticos, completion, terminais e debug no mesmo
+programa ativo.

@@ -9,11 +9,14 @@
 use std::path::{Path, PathBuf};
 
 mod compile;
+mod daemon;
 mod debug;
 mod doc_html;
 mod docs;
+mod doctest;
 mod fmt;
 mod frontend;
+mod lint;
 mod lowering;
 mod migrate_syntax;
 mod native;
@@ -25,18 +28,27 @@ mod timing;
 pub use compile::{
     run_build, run_compile_with_options, run_emit_c, BuildOutput, CompileOptions, CompileOutput,
 };
+pub use daemon::run_daemon;
 pub use docs::{
     oridoc_hover_for_symbol, run_doc, run_doc_check, run_doc_with_options, stdlib_doc_signature,
 };
 pub use docs::{DocCheckOutput, DocFormat, DocOptions, DocOutput};
-pub use fmt::{format_source_text, run_fmt, FmtOutput};
+pub use doctest::{extract_doctests, run_doctests, DocTestCase};
+pub use fmt::{format_source_text, run_fmt, run_fmt_path, FmtBatchOutput, FmtOptions, FmtOutput};
 pub use frontend::{
-    run_check, run_check_source, run_lex, run_parse, CheckOutput, LexOutput, ParseOutput,
+    run_check, run_check_source, run_check_source_with_options, run_lex, run_parse, CheckOptions,
+    CheckOutput, LexOutput, ParseOutput,
 };
+pub use lint::{run_lint, run_lint_source, LintOutput};
 pub use native::{
-    run_jit, run_test, run_test_with_options, JitRunOutput, TestOptions, TestOutput, TestResult,
+    compile_jit_source_with_options, lower_jit_source_with_options, run_jit, run_jit_with_args,
+    run_test, run_test_with_options, JitCompileOutput, JitLowerOutput, JitRunOutput, TestOptions,
+    TestOutput, TestResult,
 };
-pub use project::{find_stdlib_root, stdlib_source_path};
+pub use project::{
+    filter_intrinsic_source_for_current_configuration, filter_source_for_current_configuration,
+    find_stdlib_root, stdlib_source_path,
+};
 pub use project::{run_new_project, NewProjectKind, NewProjectOptions, NewProjectOutput};
 pub use report::{
     format_summary_text, run_doctor, run_summary, DoctorCheck, DoctorReport, DoctorStatus,

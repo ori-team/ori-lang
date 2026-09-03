@@ -6,10 +6,12 @@
 use ori_ast::item::SourceFile;
 use ori_diagnostics::{Diagnostic, DiagnosticSink, FileId, Label, SourceCache};
 use ori_lexer::Token;
+use ori_types::conditional::{CfgContext, ExecutionProfile};
 use ori_types::resolve::ResolvedModule;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+use super::runtime::{env_flag, native_target_triple};
 use super::timing::report_internal_pipeline_timing;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,6 +139,8 @@ pub(super) struct ProjectConfig {
     source_root: Option<PathBuf>,
     root_namespace: Option<String>,
     dependencies: Vec<ProjectDependency>,
+    declared_features: BTreeSet<String>,
+    default_features: BTreeSet<String>,
     pub(super) doc_paths: Vec<PathBuf>,
     pub(super) doc_mode: ProjectDocMode,
     pub(super) require_public_docs: DocRequirement,
@@ -154,11 +158,19 @@ struct ProjectDependency {
 pub(super) struct ImportContext {
     dependencies: Vec<ImportDependency>,
     pub(super) native_libs: Vec<NativeLibContext>,
+    pub(super) native_configs: Vec<PackageNativeConfigContext>,
+    cfg: CfgContext,
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct NativeLibContext {
     pub(super) name: String,
+    pub(super) package_root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PackageNativeConfigContext {
+    pub(super) config: crate::package::NativeConfig,
     pub(super) package_root: PathBuf,
 }
 
@@ -234,6 +246,8 @@ fn read_project_config(manifest: &Path) -> Result<ProjectConfig, String> {
     let mut source_root = None;
     let mut root_namespace = None;
     let mut dependencies = Vec::new();
+    let mut declared_features = BTreeSet::new();
+    let mut default_features = BTreeSet::new();
     let mut doc_paths = Vec::new();
     let mut doc_mode = ProjectDocMode::SidecarFirst;
     let mut require_public_docs = DocRequirement::Off;
@@ -248,6 +262,7 @@ fn read_project_config(manifest: &Path) -> Result<ProjectConfig, String> {
             section = match &line[1..line.len() - 1] {
                 "source" => ManifestSection::Source,
                 "dependencies" => ManifestSection::Dependencies,
+                "features" => ManifestSection::Features,
                 "docs" => ManifestSection::Docs,
                 _ => ManifestSection::Other,
             };
@@ -290,6 +305,29 @@ fn read_project_config(manifest: &Path) -> Result<ProjectConfig, String> {
             (ManifestSection::Dependencies, name) => {
                 dependencies.push(parse_project_dependency(name, value, manifest, root)?);
             }
+            (ManifestSection::Features, "default") => {
+                default_features =
+                    parse_manifest_string_array(value, "features.default", manifest)?
+                        .into_iter()
+                        .collect();
+            }
+            (ManifestSection::Features, name) => {
+                validate_feature_name(name, manifest)?;
+                let dependencies =
+                    parse_manifest_string_array(value, &format!("features.{name}"), manifest)?;
+                if !dependencies.is_empty() {
+                    return Err(format!(
+                        "project manifest `{}` feature `{name}` must use an empty array in cfg v1",
+                        manifest.display()
+                    ));
+                }
+                if !declared_features.insert(name.to_string()) {
+                    return Err(format!(
+                        "project manifest `{}` declares feature `{name}` more than once",
+                        manifest.display()
+                    ));
+                }
+            }
             (ManifestSection::Docs, "paths") => {
                 doc_paths = parse_manifest_string_array(value, "docs.paths", manifest)?
                     .into_iter()
@@ -324,6 +362,7 @@ fn read_project_config(manifest: &Path) -> Result<ProjectConfig, String> {
             entry.display()
         ));
     }
+    validate_default_features(&declared_features, &default_features, manifest, "project")?;
     Ok(ProjectConfig {
         manifest_path: manifest.to_path_buf(),
         root: root.to_path_buf(),
@@ -334,6 +373,8 @@ fn read_project_config(manifest: &Path) -> Result<ProjectConfig, String> {
         source_root,
         root_namespace,
         dependencies,
+        declared_features,
+        default_features,
         doc_paths,
         doc_mode,
         require_public_docs,
@@ -345,6 +386,7 @@ enum ManifestSection {
     Root,
     Source,
     Dependencies,
+    Features,
     Docs,
     Other,
 }
@@ -527,6 +569,36 @@ fn validate_project_dependency_name(name: &str, manifest: &Path) -> Result<(), S
     Ok(())
 }
 
+fn validate_feature_name(name: &str, manifest: &Path) -> Result<(), String> {
+    let mut chars = name.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+    if valid && name != "default" {
+        return Ok(());
+    }
+    Err(format!(
+        "project manifest `{}` has invalid feature name `{name}`; use an ASCII identifier other than `default`",
+        manifest.display()
+    ))
+}
+
+fn validate_default_features(
+    declared: &BTreeSet<String>,
+    defaults: &BTreeSet<String>,
+    manifest: &Path,
+    kind: &str,
+) -> Result<(), String> {
+    if let Some(unknown) = defaults.iter().find(|feature| !declared.contains(*feature)) {
+        return Err(format!(
+            "{kind} manifest `{}` enables undeclared default feature `{unknown}`",
+            manifest.display()
+        ));
+    }
+    Ok(())
+}
+
 fn parse_manifest_inline_table(
     value: &str,
     manifest: &Path,
@@ -638,6 +710,13 @@ pub(super) fn project_config_for_docs(path: &Path) -> Result<Option<ProjectConfi
 }
 
 fn import_context_for_entry(entry: &Path) -> Result<ImportContext, String> {
+    import_context_for_entry_with_cfg(entry, None)
+}
+
+fn import_context_for_entry_with_cfg(
+    entry: &Path,
+    cfg_override: Option<CfgContext>,
+) -> Result<ImportContext, String> {
     let mut context = ImportContext::default();
     let start = entry.parent().unwrap_or_else(|| Path::new("."));
 
@@ -656,7 +735,135 @@ fn import_context_for_entry(entry: &Path) -> Result<ImportContext, String> {
         add_package_manifest_dependencies(&package_manifest, &mut context)?;
     }
 
+    context.cfg = match cfg_override {
+        Some(cfg) => cfg,
+        None => cfg_context_for_entry(entry)?,
+    };
+
     Ok(context)
+}
+
+fn cfg_context_for_entry(entry: &Path) -> Result<CfgContext, String> {
+    let start = entry.parent().unwrap_or_else(|| Path::new("."));
+    let mut declared = BTreeSet::new();
+    let mut defaults = BTreeSet::new();
+
+    if let Some(root) = find_project_root(start) {
+        let project = read_project_config(&root.join("ori.proj"))?;
+        declared.extend(project.declared_features);
+        defaults.extend(project.default_features);
+        let package_path = root.join("ori.pkg.toml");
+        if package_path.is_file() {
+            let package = crate::package::load_package_manifest(&package_path)?;
+            declared.extend(package.declared_features);
+            defaults.extend(package.default_features);
+        }
+    } else if let Some(package_path) = find_package_manifest(start) {
+        let package = crate::package::load_package_manifest(&package_path)?;
+        declared.extend(package.declared_features);
+        defaults.extend(package.default_features);
+    }
+
+    let profile = execution_profile_from_environment()?;
+    let mut enabled = if env_flag("ORI_NO_DEFAULT_FEATURES") {
+        BTreeSet::new()
+    } else {
+        defaults
+    };
+    for feature in requested_features()? {
+        if !declared.contains(&feature) {
+            return Err(format!(
+                "cfg.feature_not_declared: feature `{feature}` is not declared under `[features]`"
+            ));
+        }
+        enabled.insert(feature);
+    }
+
+    Ok(CfgContext::new(
+        selected_target_triple()?,
+        profile,
+        declared,
+        enabled,
+    ))
+}
+
+pub fn filter_source_for_current_configuration(
+    path: &Path,
+    source_file: &mut SourceFile,
+    file_id: FileId,
+    sink: &mut DiagnosticSink,
+) -> Result<(), String> {
+    let context = cfg_context_for_entry(path)?;
+    ori_types::conditional::filter_source_file(source_file, file_id, &context, sink);
+    Ok(())
+}
+
+/// Filter compiler-owned source such as the standard library without making
+/// it inherit application feature flags. Target and execution profile remain
+/// relevant, while project features belong only to the root application
+/// namespace in cfg v1.
+pub fn filter_intrinsic_source_for_current_configuration(
+    source_file: &mut SourceFile,
+    file_id: FileId,
+    sink: &mut DiagnosticSink,
+) -> Result<(), String> {
+    let context = CfgContext::new(
+        selected_target_triple()?,
+        execution_profile_from_environment()?,
+        BTreeSet::new(),
+        BTreeSet::new(),
+    );
+    ori_types::conditional::filter_source_file(source_file, file_id, &context, sink);
+    Ok(())
+}
+
+fn execution_profile_from_environment() -> Result<ExecutionProfile, String> {
+    let profile_name =
+        std::env::var("ORI_EXECUTION_PROFILE").unwrap_or_else(|_| "standalone".to_string());
+    ExecutionProfile::parse(profile_name.trim()).ok_or_else(|| {
+        format!(
+            "cfg.execution_profile_invalid: expected `standalone` or `embedded`, got `{}`",
+            profile_name.trim()
+        )
+    })
+}
+
+fn selected_target_triple() -> Result<String, String> {
+    let target = native_target_triple();
+    if target.is_empty()
+        || target.chars().any(char::is_whitespace)
+        || !ori_types::conditional::is_supported_target_triple(&target)
+    {
+        return Err(
+            format!(
+                "cfg.target_invalid: target `{target}` cannot be represented by the closed cfg v1 target set"
+            ),
+        );
+    }
+    Ok(target)
+}
+
+fn requested_features() -> Result<BTreeSet<String>, String> {
+    let raw = std::env::var("ORI_FEATURES").unwrap_or_default();
+    let mut features = BTreeSet::new();
+    for feature in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let mut chars = feature.chars();
+        let valid = chars
+            .next()
+            .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+        if !valid || feature == "default" {
+            return Err(format!(
+                "cfg.feature_invalid: `{feature}` is not a valid feature identifier"
+            ));
+        }
+        features.insert(feature.to_string());
+    }
+    Ok(features)
 }
 
 fn add_project_dependencies(
@@ -764,10 +971,11 @@ fn add_package_manifest_dependencies(
     for lib in manifest.native_libs {
         push_native_lib(context, lib, manifest.root.clone());
     }
+    push_package_native_config(context, manifest.native_config, manifest.root);
     Ok(())
 }
 
-/// Register `native_libs` from a dependency package (and its nested package deps once).
+/// Register `native_libs` and `native_config` from a dependency package (and its nested package deps once).
 fn push_package_native_libs(
     context: &mut ImportContext,
     package_root: &Path,
@@ -780,6 +988,11 @@ fn push_package_native_libs(
     for lib in &manifest.native_libs {
         push_native_lib(context, lib.clone(), manifest.root.clone());
     }
+    push_package_native_config(
+        context,
+        manifest.native_config.clone(),
+        manifest.root.clone(),
+    );
     // One level of nested package deps (adapter → sqlite).
     for dependency in &manifest.dependencies {
         if let crate::package::DependencyRequirement::Path { path, .. } = &dependency.requirement {
@@ -790,10 +1003,46 @@ fn push_package_native_libs(
                 for lib in nested_manifest.native_libs {
                     push_native_lib(context, lib, nested_manifest.root.clone());
                 }
+                push_package_native_config(
+                    context,
+                    nested_manifest.native_config,
+                    nested_manifest.root.clone(),
+                );
             }
         }
     }
     Ok(())
+}
+
+fn push_package_native_config(
+    context: &mut ImportContext,
+    config: crate::package::NativeConfig,
+    package_root: PathBuf,
+) {
+    if config.dependencies.is_empty()
+        && config.platforms.linux.libraries.is_empty()
+        && config.platforms.linux.frameworks.is_empty()
+        && config.platforms.linux.library_dirs.is_empty()
+        && config.platforms.linux.link_flags.is_empty()
+        && config.platforms.windows.libraries.is_empty()
+        && config.platforms.windows.frameworks.is_empty()
+        && config.platforms.windows.library_dirs.is_empty()
+        && config.platforms.windows.link_flags.is_empty()
+        && config.platforms.macos.libraries.is_empty()
+        && config.platforms.macos.frameworks.is_empty()
+        && config.platforms.macos.library_dirs.is_empty()
+        && config.platforms.macos.link_flags.is_empty()
+        && config.platforms.all.libraries.is_empty()
+        && config.platforms.all.frameworks.is_empty()
+        && config.platforms.all.library_dirs.is_empty()
+        && config.platforms.all.link_flags.is_empty()
+    {
+        return;
+    }
+    context.native_configs.push(PackageNativeConfigContext {
+        config,
+        package_root,
+    });
 }
 
 fn push_native_lib(context: &mut ImportContext, name: String, package_root: PathBuf) {
@@ -899,15 +1148,16 @@ pub(super) fn load_and_resolve(
     })
 }
 
-pub(super) fn load_and_resolve_with_entry_source(
+pub(super) fn load_and_resolve_with_entry_source_and_cfg(
     path: &Path,
     source: String,
+    cfg: Option<CfgContext>,
     cache: &mut SourceCache,
     sink: &mut DiagnosticSink,
 ) -> Result<ResolvedSources, String> {
     let entry = resolve_entry_path(path)?;
     let entry = std::fs::canonicalize(entry).unwrap_or_else(|_| path.to_owned());
-    let context = import_context_for_entry(&entry)?;
+    let context = import_context_for_entry_with_cfg(&entry, cfg)?;
     let (loaded, resolved) =
         load_and_resolve_entry(&entry, Some((&entry, &source)), &context, cache, sink)?;
     Ok(ResolvedSources {
@@ -965,7 +1215,8 @@ fn load_source_recursive(
     };
     let file_id = cache.add(&path, source.clone());
     let tokens = ori_lexer::lex(&source, file_id, sink);
-    let ast = ori_parser::parse(&tokens, &source, file_id, sink);
+    let mut ast = ori_parser::parse(&tokens, &source, file_id, sink);
+    ori_types::conditional::filter_source_file(&mut ast, file_id, &context.cfg, sink);
     let imports: Vec<_> = ast
         .imports
         .iter()

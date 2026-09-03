@@ -2,6 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ori_diagnostics::Severity;
+use ori_driver::pipeline::run_check_source;
+
 const DIAGNOSTIC_CATEGORIES: &[&str] = &[
     "async",
     "attr",
@@ -15,11 +18,13 @@ const DIAGNOSTIC_CATEGORIES: &[&str] = &[
     "generic",
     "impl",
     "lex",
+    "lint",
     "match",
     "mut",
     "name",
     "native",
     "parse",
+    "perf",
     "project",
     "type",
     "using",
@@ -81,6 +86,121 @@ fn diagnostic_catalog_matches_emitted_codes() {
         reintroduced.is_empty(),
         "diagnostic codes removed in Etapa 7 audit reappeared as planned: {reintroduced:#?}"
     );
+}
+
+#[test]
+fn representative_diagnostics_have_catalog_shapes_across_phases() {
+    use ori_driver::pipeline::run_lint_source;
+
+    // 1. Parser diagnostic: parse.module_missing
+    let parse_out = run_check_source(Path::new("missing_module.orl"), "main()\nend\n".to_owned())
+        .expect("in-memory fixture should be checkable");
+    let parse_diag = parse_out
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "parse.module_missing")
+        .expect("missing module must emit parse.module_missing");
+    assert_eq!(parse_diag.severity, Severity::Error);
+    assert!(!parse_diag.message.trim().is_empty());
+    let primary = parse_diag.labels.first().expect("primary label");
+    assert!(primary.span.start <= primary.span.end);
+
+    // 2. Resolver diagnostic: name.undefined
+    let resolve_out = run_check_source(
+        Path::new("unresolved.orl"),
+        "module app.main\n\nmain()\n    unknown_function_call()\nend\n".to_owned(),
+    )
+    .expect("in-memory fixture should be checkable");
+    let resolve_diag = resolve_out
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "name.undefined")
+        .expect("undefined symbol must emit name.undefined");
+    assert_eq!(resolve_diag.severity, Severity::Error);
+    assert!(!resolve_diag.message.trim().is_empty());
+    assert!(!resolve_diag.labels.is_empty());
+
+    // 3. Type checker diagnostic: type.type_mismatch
+    let type_out = run_check_source(
+        Path::new("type_mismatch.orl"),
+        "module app.main\n\nmain()\n    const x: int = \"hello\"\nend\n".to_owned(),
+    )
+    .expect("in-memory fixture should be checkable");
+    let type_diag = type_out
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "type.type_mismatch")
+        .expect("mismatched type must emit type.type_mismatch");
+    assert_eq!(type_diag.severity, Severity::Error);
+    assert!(!type_diag.message.trim().is_empty());
+
+    // 4. Attribute diagnostic: attr.c_export_not_public
+    let attr_out = run_check_source(
+        Path::new("attr_check.orl"),
+        "module app.main\n\n@c_export\ninternal_func() -> void\nend\n\nmain()\nend\n".to_owned(),
+    )
+    .expect("in-memory fixture should be checkable");
+    let attr_diag = attr_out
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "attr.c_export_not_public")
+        .expect("non-public c_export must emit attr.c_export_not_public");
+    assert_eq!(attr_diag.severity, Severity::Error);
+    assert!(!attr_diag.message.trim().is_empty());
+
+    // 5. Semantic linter diagnostic: lint.unused_variable
+    let lint_out = run_lint_source(
+        Path::new("unused_var.orl"),
+        "module app.main\n\nmain()\n    const unused_value: int = 100\nend\n".to_owned(),
+    )
+    .expect("in-memory fixture should be lintable");
+    let lint_diag = lint_out
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "lint.unused_variable")
+        .expect("unused variable must emit lint.unused_variable");
+    assert_eq!(lint_diag.severity, Severity::Warning);
+    assert!(!lint_diag.message.trim().is_empty());
+    assert!(
+        lint_diag.action.is_some(),
+        "linter diagnostics must provide actionable suggestions"
+    );
+}
+
+#[test]
+fn emitted_catalog_rows_have_valid_severity_and_description() {
+    let text = fs::read_to_string(repo_root().join("docs/spec/13-error-catalog.md"))
+        .expect("diagnostic catalog should be readable");
+    let mut in_emitted = false;
+    let mut rows = 0;
+    for line in text.lines() {
+        if line.starts_with("## Emitted Diagnostics") {
+            in_emitted = true;
+            continue;
+        }
+        if in_emitted && line.starts_with("## ") {
+            break;
+        }
+        if !in_emitted || table_code(line).is_none() {
+            continue;
+        }
+        let cells: Vec<_> = line.split('|').map(str::trim).collect();
+        assert!(
+            matches!(
+                cells.get(2),
+                Some(&"error") | Some(&"warning") | Some(&"warning/error") | Some(&"runtime abort")
+            ),
+            "invalid severity row: {line}"
+        );
+        assert!(
+            cells
+                .get(3)
+                .is_some_and(|description| !description.is_empty()),
+            "emitted catalog rows need a description: {line}"
+        );
+        rows += 1;
+    }
+    assert!(rows > 0, "emitted diagnostic catalog must contain rows");
 }
 
 fn repo_root() -> PathBuf {

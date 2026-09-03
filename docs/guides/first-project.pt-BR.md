@@ -1,6 +1,6 @@
 # Primeiro projeto e pacotes locais
 
-> Status: guia prático Ori **S3 / 0.3.2**  
+> Status: guia prático Ori **S3 + inferência B / workspace 0.3.8-dev**
 > **English:** [first-project.md](first-project.md)  
 > Layout: raiz-first (`ori.proj` + `main.orl`) — [spec/17](../spec/17-project-and-docs.md)
 
@@ -67,7 +67,7 @@ ori publish . --registry /caminho/registry
 ori install outro.pkg@0.1.0
 ```
 
-Contrato: [registry-v1.md](../archive/plans/registry-v1.md) (planejamento; sem push
+Contrato: [registry-v1.md](../planning/registry-v1.md) (planejamento; sem push
 de loja).
 
 ## Após atualizar o Ori

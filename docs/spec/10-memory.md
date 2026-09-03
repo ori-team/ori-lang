@@ -238,10 +238,10 @@ async continuation can use them again.
 
 Current native status:
 
-- `await` is accepted only inside `async func`.
+- `await` is accepted only inside an `async` function.
 - The runtime has pollable `future[T]` values, continuation registration, a FIFO
   executor queue, failed/cancelled internal states, and non-blocking timers.
-- The current backend creates a `future[T]` immediately when an `async func` is
+- The current backend creates a `future[T]` immediately when an `async` function is
   called, allocates a native async frame, and schedules the generated `step`
   function on the native executor.
 - Supported source-level `await` shapes suspend through `ori_future_poll` and
@@ -249,9 +249,13 @@ Current native status:
 - Managed params, pre-await locals and await bindings stored in the frame have
   ARC edges. The state machine calculates liveness after each `await`, releases
   dead managed frame values after resumption, and still runs terminal cleanup.
+  Before emission, a frame ownership verifier checks native slot bounds,
+  alignment/range overlap, and layout availability; managed await-binding slots
+  are zero-initialized so failure/cancellation cleanup never inspects garbage.
+  The verifier does not yet prove full HIR data-flow ownership.
 - Failed/cancelled future states observed by the state machine are propagated by
   the generated async wrapper.
-- `using` inside `async func` is **allowed**. The async frame stores the
+- `using` inside an `async` function is **allowed**. The async frame stores the
   managed resource and injects `dispose()` on normal return, `try`
   propagation, cancellation, failure, and loop exit. These paths are covered
   by the native async regression suite.
@@ -430,7 +434,7 @@ See the FFI documentation for detailed ABI shapes.
 
 ## `ori.mem`
 
-`ori.mem` provides explicit memory inspection utilities:
+`ori.mem` provides memory inspection utilities and scoped bump-arena regions (`MEM-REGION-1`):
 
 ```ori
 import ori.mem = mem
@@ -442,6 +446,23 @@ mem.align_of(value)        -- alignment in bytes of value's static type
 These are compile-time constants. The argument is used as a type witness and
 is not needed in ordinary code.
 
-Current status: `ori.mem` is importable. The current parser does not support
-type-argument call syntax such as `size_of<T>()`, so code should use the
-expression-based form above.
+### Scoped Arenas (`mem.region`)
+
+`mem.region()` creates a high-performance scoped bump-arena (`Region`) designed for frame-temporary
+allocations (game tick loops, physics updates, visibility lists, and intermediate transformations).
+Allocations bump a cursor in O(1) without touching the global ARC lock or registry.
+
+```ori
+import ori.mem = mem
+
+main()
+    using r: mem.Region = mem.region()
+    -- perform frame allocations...
+    mem.reset(r)           -- O(1) bulk reset: bumps discarded, chunks preserved for next tick
+end                        -- deterministic cleanup via core.Disposable upon block exit
+```
+
+**Escape Analysis Guarantees:**
+1. A `Region` cannot escape its declaring block via `return` (enforced by `using.escape`).
+2. A `Region` cannot cross threads or tasks (it is not `Transferable`, preventing `task.spawn` capture).
+3. Reset is instant O(1) without traversing object pointer graphs.

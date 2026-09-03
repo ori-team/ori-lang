@@ -23,3 +23,27 @@ end
 public totp_verify(secret_b32: string, code: string, unix_secs: int, window: int) -> bool
     return ori.crypto.totp_verify(secret_b32, code, unix_secs, window)
 end
+
+public try_hash_password(password: string) -> result[string, string]
+    const h: string = ori.crypto.password_hash(password)
+    if h == ""
+        return err("failed to hash password")
+    end
+    return ok(h)
+end
+
+public try_totp_generate_secret() -> result[string, string]
+    const s: string = ori.crypto.totp_generate_secret()
+    if s == ""
+        return err("failed to generate TOTP secret")
+    end
+    return ok(s)
+end
+
+public try_totp_code(secret_b32: string, unix_secs: int) -> result[string, string]
+    const c: string = ori.crypto.totp_code(secret_b32, unix_secs)
+    if c == ""
+        return err("failed to generate TOTP code")
+    end
+    return ok(c)
+end

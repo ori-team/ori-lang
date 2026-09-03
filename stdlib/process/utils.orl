@@ -1,27 +1,29 @@
 module ori.process.utils
 
-import ori.convert = conv
-import ori.map = maps
+-- Compatibility module. Keep the implementation in the canonical parent
+-- (`ori.process`) and forward the legacy path so the two APIs cannot drift.
+import ori.process = base
 
 public exit_code(capture: map[string, string]) -> int
-    if some(raw) = maps.try_get(capture, "status")
-        if some(code) = conv.string_to_int(raw)
-            return code
-        end
-    end
-    return -1
+    return base.exit_code(capture)
 end
 
 public stdout(capture: map[string, string]) -> string
-    if some(out) = maps.try_get(capture, "stdout")
-        return out
-    end
-    return ""
+    return base.stdout(capture)
 end
 
 public stderr(capture: map[string, string]) -> string
-    if some(out) = maps.try_get(capture, "stderr")
-        return out
-    end
-    return ""
+    return base.stderr(capture)
+end
+
+public run_output(program: string, args: list[string]) -> result[base.ProcessOutput, string]
+    return base.run_output(program, args)
+end
+
+public stdout_text(output: base.ProcessOutput) -> result[string, string]
+    return base.stdout_text(output)
+end
+
+public stderr_text(output: base.ProcessOutput) -> result[string, string]
+    return base.stderr_text(output)
 end

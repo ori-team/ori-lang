@@ -1,14 +1,25 @@
 module ori.buffer
 
-public struct Buffer[T]
-    _ptr: handle[T]
-    _len: int
+-- Contiguous, fixed-length, indexed numeric buffer for high-performance CPU graphics and FFI (GFX-BUFFER-1).
+
+public alias Buffer[T] = buffer[T]
+
+public from_list[T](items: list[T]) -> buffer[T]
+    const n: int = ori.list.len(items)
+    var b: buffer[T] = ori.buffer.new(n)
+    var i: int = 0
+    while i < n
+        if some(v) = ori.list.try_get(items, i)
+            ori.buffer.set(b, i, v)
+        end
+        i = i + 1
+    end
+    return b
 end
 
-public buffer_len[T](buf: Buffer[T]) -> int
-    return buf._len
-end
-
-public buffer_is_empty[T](buf: Buffer[T]) -> bool
-    return buf._len == 0
+public get_or[T](buf: buffer[T], index: int, fallback: T) -> T
+    if index >= 0 and index < ori.buffer.len(buf)
+        return ori.buffer.get(buf, index)
+    end
+    return fallback
 end

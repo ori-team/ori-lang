@@ -57,7 +57,7 @@ const ENTRIES: &[ExplainEntry] = &[
         severity: "warning",
         summary: "A `result` value is computed but discarded.",
         cause: "Calling a function returning `result[T, E]` without `try`, `match`, or explicit handling.",
-        fix: "Use `const _ = expr`, propagate with `try expr`, or handle `success`/`error` explicitly.",
+        fix: "Use `const _ = expr`, propagate with `try expr`, or handle `ok`/`err` explicitly.",
     },
     ExplainEntry {
         code: "project.circular_import",
@@ -69,9 +69,9 @@ const ENTRIES: &[ExplainEntry] = &[
     ExplainEntry {
         code: "project.namespace_file_mismatch",
         severity: "error",
-        summary: "File namespace does not match its import path.",
-        cause: "The `namespace` declaration in the file differs from the path implied by the import.",
-        fix: "Align `namespace` with the directory layout or fix the import path.",
+        summary: "File module does not match its import path.",
+        cause: "The `module` declaration in the file differs from the path implied by the import.",
+        fix: "Align `module` with the directory layout or fix the import path.",
     },
     ExplainEntry {
         code: "project.entry_not_found",
@@ -171,6 +171,41 @@ const ENTRIES: &[ExplainEntry] = &[
         cause: "A type argument does not implement a required trait (`for T: Trait`).",
         fix: "Implement the trait for your type or use a type that already satisfies the constraint.",
     },
+    ExplainEntry {
+        code: "cfg.execution_profile_invalid",
+        severity: "error",
+        summary: "The selected execution profile is not supported.",
+        cause: "`--execution-profile` or `ORI_EXECUTION_PROFILE` contains a value other than `standalone` or `embedded`.",
+        fix: "Select `standalone` for normal applications or `embedded` for hosted configuration selection.",
+    },
+    ExplainEntry {
+        code: "cfg.feature_invalid",
+        severity: "error",
+        summary: "A requested feature name is not a valid Ori feature identifier.",
+        cause: "A value passed through `--features` or `ORI_FEATURES` is empty, reserved, or contains characters outside ASCII letters, digits, and `_`.",
+        fix: "Use a declared ASCII identifier such as `telemetry` or `fast_math`.",
+    },
+    ExplainEntry {
+        code: "cfg.feature_not_declared",
+        severity: "error",
+        summary: "A requested feature is not declared by the project.",
+        cause: "`--features`, `ORI_FEATURES`, or editor configuration names a feature absent from the root manifest's `[features]` section.",
+        fix: "Declare the feature with an empty array under `[features]`, or remove it from the requested feature list.",
+    },
+    ExplainEntry {
+        code: "cfg.target_invalid",
+        severity: "error",
+        summary: "The selected compilation target is malformed or unsupported by cfg v1.",
+        cause: "The target is empty, contains whitespace, or has architecture/OS facts outside the closed cfg v1 value set.",
+        fix: "Pass a supported target triple such as `x86_64-unknown-linux-gnu` or `wasm32-unknown-unknown`; unknown OS names never mean `target_os: none`.",
+    },
+    ExplainEntry {
+        code: "concurrency.global_mutable_capture",
+        severity: "error",
+        summary: "A task closure directly accesses a mutable module-level variable.",
+        cause: "Top-level `var` values are shared by all spawned threads and have no implicit synchronization.",
+        fix: "Pass state explicitly, or use `atomic.AtomicInt`/a channel for shared mutation. Calls through another function are checked in a later analysis wave.",
+    },
 ];
 
 /// Lookup explanation for a diagnostic code (exact match).
@@ -201,6 +236,7 @@ mod tests {
             "name.undefined",
             "project.circular_import",
             "type.type_mismatch",
+            "concurrency.global_mutable_capture",
         ] {
             assert!(
                 explain_code(code).is_some(),

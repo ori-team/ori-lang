@@ -4,123 +4,501 @@
 
 # Ori
 
-Ori é uma linguagem de programação com foco em leitura, tipagem explícita e compilação para código nativo. O compilador é escrito em Rust e oferece compilação AOT nativa, além de uma rota JIT em processo para `ori run` quando a biblioteca dinâmica do runtime está disponível.
+**Superfície S3 (`0.3.0`):** sintaxe inspirada na Auk9 sobre o motor Ori. Propósito (estudo, IA, legibilidade ND — **não** competição de mercado): [manifesto](docs/spec/00-manifesto.md). Auk9 lab **aposentada como produto**.
 
-**Versão atual: `0.3.8`**  
-**Superfície da linguagem: S3**  
-**ABI nativa: `ori-native-abi-1`**  
-**Maturidade: pré-1.0, em desenvolvimento ativo**
+Ori é uma linguagem de programação compilada para código nativo, com tipagem
+explícita e foco em leitura. O compilador é escrito em Rust e foi criado com um
+objetivo direto: tornar programas mais fáceis de ler, inspecionar, diagnosticar
+e manter.
 
-A Ori existe para estudo de compiladores, programação assistida por IA e desenvolvimento de uma linguagem e documentação com menor carga cognitiva. É um projeto técnico sério, mas ainda não reivindica a maturidade de uma linguagem industrial.
+Ori ainda é pre-1.0. O projeto já é útil para trabalho em compilador, design de
+linguagem, ferramentas e runtime, mas a linguagem ainda pode mudar antes de um
+contrato estável 1.0.
 
-**Idiomas:** [English](README.md) · Português · [日本語](README.ja.md)
+**Idiomas:** [English](README.md) (primário no GitHub) | Português | [日本語](README.ja.md)
 
-## Comece aqui
+**Documentação:** [Índice de docs](docs/README.pt-BR.md) · [Instalação](docs/install.pt-BR.md) ·
+[Tour da linguagem](docs/language/tour.pt-BR.md) · [Guias](docs/guides/README.md) ·
+[Performance](docs/guides/performance.pt-BR.md) ·
+[Especificação](docs/spec/README.md) (normativa em inglês) ·
+[Planejamento](docs/planning/README.md)
 
-| Objetivo | Documento |
+**Também:** [Manifesto](docs/spec/00-manifesto.md) · [Stdlib](stdlib/README.md) ·
+[Runtime](runtime/README.md) · [Exemplos](examples/) · [Changelog](CHANGELOG.md) ·
+[Contribuição](CONTRIBUTING.md)
+
+## Conteúdo
+
+- [O que é Ori](#o-que-é-ori)
+- [Por que Ori existe](#por-que-ori-existe)
+- [Status atual](#status-atual)
+- [Snapshot de performance](#snapshot-de-performance)
+- [Primeiros passos](#primeiros-passos)
+- [Primeiro programa](#primeiro-programa)
+- [Visão geral da CLI](#visão-geral-da-cli)
+- [Visão geral da linguagem](#visão-geral-da-linguagem)
+- [Arquitetura do compilador](#arquitetura-do-compilador)
+- [Biblioteca padrão](#biblioteca-padrão)
+- [Ferramentas de editor](#ferramentas-de-editor)
+- [Layout do repositório](#layout-do-repositório)
+- [Fluxo de desenvolvimento](#fluxo-de-desenvolvimento)
+- [Layout de release](#layout-de-release)
+- [Limitações conhecidas](#limitações-conhecidas)
+- [Roadmap](#roadmap)
+- [Licença](#licença)
+
+## O que é Ori
+
+Ori é uma linguagem estaticamente tipada com módulos explícitos (`module`),
+tipos explícitos (`optional[T]`, `result[T, E]`), erros estruturados (`try`),
+traits via `apply`/`use`, limpeza determinística (`using`) e geração de código
+nativo.
+
+Pipeline atual do compilador:
+
+```text
+fonte .orl
+  -> lexer
+  -> parser
+  -> resolvedor de nomes
+  -> type checker
+  -> HIR
+  -> backend nativo Cranelift
+  -> binário com runtime ou execução JIT
+```
+
+O repositório contém compilador, runtime, fontes da biblioteca padrão,
+especificação da linguagem, extensão VS Code, exemplos e ferramentas de release.
+
+## Por que Ori existe
+
+Ori otimiza leitura antes de escrita.
+
+O código deve deixar informações importantes visíveis no ponto em que o leitor
+precisa delas:
+
+| Pergunta | Ori deixa visível por meio de |
 |---|---|
-| Instalar a Ori | [Instalação](docs/install.pt-BR.md) |
-| Aprender a linguagem | [Tour da linguagem](docs/language/tour.pt-BR.md) |
-| Criar um projeto | [Primeiro projeto](docs/guides/first-project.pt-BR.md) |
-| Consultar a CLI | [Referência da CLI](docs/guides/cli-reference.pt-BR.md) |
-| Ler o contrato da linguagem | [Especificação](docs/spec/README.md) |
-| Entender o repositório | [Início do projeto](PROJECT_START.md) |
-| Navegar por toda a documentação | [ATLAS da documentação](docs/ATLAS.md) |
-| Contribuir | [Contribuindo](CONTRIBUTING.md) |
-| Reportar uma vulnerabilidade | [Política de segurança](SECURITY.md) |
+| Onde este arquivo pertence? | `module` no topo de cada arquivo |
+| Qual é o tipo deste valor? | anotações de tipo explícitas |
+| Este valor pode estar ausente? | `optional[T]` |
+| Esta operação pode falhar? | `result[T, E]` |
+| Quando um recurso é liberado? | `using` |
+| De onde vem este comportamento? | `trait` e `apply` / `use` |
+| O que deu errado? | códigos de diagnóstico estruturados |
 
-## Exemplo da linguagem
+Esse design reduz carga cognitiva: menos regras escondidas, cadeias de
+inferência menores e mensagens de erro mais claras.
+
+## Status atual
+
+| Área | Status |
+|---|---|
+| Versão | **S3 `0.3.0`** · inferência B **`0.3.1`** · workspace **`0.3.8-dev`** (release mais recente `v0.3.7`) |
+| Estabilidade | pre-1.0; S3 quebra sintaxe pré-0.3 |
+| Compilador | workspace Rust em `compiler/` |
+| Backend nativo | Cranelift AOT + `ori-runtime`; ABI `ori-native-abi-1` |
+| `ori run` | JIT por padrão com cdylib |
+| `ori compile` / `ori test` | AOT; `rust-lld` empacotado primeiro, depois linker do SO |
+| Biblioteca padrão | Layer 1 + `.orl`; API canônica `ori.X` |
+| Docs | inglês primário + português paralelo · [examples/](examples/) |
+| Foco agora | Linguagem, docs/exemplos, performance — não marketing multi-OS |
+| Editores | VS Code + Zed **locais** (sem loja) |
+
+> **Status da release de desenvolvimento:** a auditoria de 2026-08-24
+> encontrou defeitos P0/P1 de semântica, memória, empacotamento e ciclo de vida
+> no baseline `0.3.8-dev`. A onda atual fechou canais limitados, o pool
+> compartilhado de I/O bloqueante, attributes fail-closed e o construtor de
+> handle nulo tipado. Ainda faltam na linguagem: isolamento completo de tasks,
+> chaves recursivas de collections, lifetime/afinidade de handles, prova total
+> de ownership async no HIR e a matriz FFI hostil em várias plataformas.
+> Ordem e evidências: [auditoria de implementação](docs/planning/roadmap-code-audit-performance-architecture.md).
+
+S3: [CHANGELOG.md](CHANGELOG.md) `[0.3.0]`. Inferência: `[0.3.1]`. Package sem
+Rust: `[0.3.2]`. Migrar: `ori migrate-syntax`.
+
+## Snapshot de performance
+
+Microbench polyglot local de **Ori AOT** contra Python, Rust, C, Go,
+JavaScript, TypeScript, Ruby e Nim nos mesmos formatos de `while`
+(2026-07-14, Linux x86_64, mediana de **5** runs — fix do GC em loops +
+strength reduction no mid-end). Texto completo e ressalvas:
+**[docs/guides/performance.pt-BR.md](docs/guides/performance.pt-BR.md)**
+([EN](docs/guides/performance.md)).
+
+| Workload | Ori | Python | Rust | C | Go | JS | TS | Ruby | Nim |
+|----------|-----|--------|------|---|-----|----|----|------|-----|
+| soma `0..10⁷` | **0.002 s**\* | 2.93 s | 0.002 s\* | 0.001 s\* | 0.009 s | 0.081 s | 0.077 s | 0.41 s | 0.007 s |
+| fib 2·10⁷ passos | **0.016 s** | 7.05 s | 0.011 s | 0.015 s | 0.020 s | 1.17 s | 1.22 s | 5.99 s | 0.024 s |
+| lista 10⁶ | **0.011 s** | 0.53 s | 0.009 s | 0.010 s | 0.010 s | 0.095 s | 0.093 s | 0.20 s | 0.032 s |
+| nested 2000² | **0.002 s**\* | 0.97 s | 0.002 s | 0.002 s | 0.004 s | 0.061 s | 0.060 s | 0.21 s | 0.002 s |
+
+\* Soma/nested puros podem ir para forma fechada (mid-end Default da Ori;
+Rust/C também). Prefira **`fib_iter`** / **`list_sum`** para custo de loop.
+
+**Leitura (pre-1.0):** Ori **~30–1400×** à frente do CPython; **ganha de Go e
+Nim no fib**; cerca de **~1.5× Rust no fib** e **~1.25× na lista** (push/get
+escalar inline + `with_capacity`; era ~50× Rust antes do fix do GC). Mid-end:
+`ORI_OPT=none|default|aggressive`. Reproduzir:
+
+```bash
+SAMPLES=5 ./tools/bench/polyglot/run_polyglot_bench.sh
+```
+
+## Primeiros passos
+
+### Usuários finais (sem Rust)
+
+Guia completo: [docs/install.pt-BR.md](docs/install.pt-BR.md) · [EN](docs/install.md).
+
+**Windows** (estilo Scoop — instala em `%LOCALAPPDATA%\Programs\Ori` + PATH do usuário):
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser   # opcional, uma vez
+irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
+ori --version
+ori doctor
+```
+
+**Linux** — baixe em [Releases](https://github.com/raillen/ori-lang/releases), ou:
+
+```bash
+tar -xzf ori-v0.3.5-x86_64-unknown-linux-gnu.tar.gz
+export PATH="$PWD/ori-v0.3.5-x86_64-unknown-linux-gnu:$PATH"
+# ou: sudo dpkg -i ori_0.3.5_amd64.deb
+ori doctor
+```
+
+AOT (`ori compile`) ainda precisa do linker do SO. `ori run` (JIT) só do runtime.
+
+### Desenvolvimento do compilador
+
+Pré-requisitos:
+
+- Rust `1.95.0`, definido em `rust-toolchain.toml`
+- Um linker da plataforma ou uma das estratégias explícitas de link do Ori
+- PowerShell no Windows para scripts de smoke de release
+- Toolchain C no Linux/macOS quando usar rotas de descoberta do sistema
+
+O workspace Cargo fica em `compiler/` (ver
+`docs/planning/repo-and-project-layout.md`):
+
+```bash
+cd compiler
+cargo check --workspace
+cargo test --workspace
+cargo run -p ori-driver -- check ../examples/hello
+cargo run -p ori-driver -- run ../examples/hello
+```
+
+No Windows, valide um pacote em formato de release com:
+
+```powershell
+.\tools\smoke_native_release.ps1
+```
+
+No Linux ou macOS:
+
+```sh
+sh tools/smoke_native_release.sh
+```
+
+## Primeiro programa
 
 ```ori
 module app.hello
 
 import ori.io = io
 
+main()
+    io.print("Hello, Ori!")
+
+    const answer: int = 21 * 2
+    io.print(f"The answer is {answer}")
+end
+```
+
+Execute pelo repositório:
+
+```bash
+cargo run -p ori-driver -- run ../examples/hello
+```
+
+Ori usa blocos delimitados por `end`, declarações separadas por linha, imports
+explícitos e tipos explícitos em bindings e contratos públicos.
+
+## Visão geral da CLI
+
+A CLI `ori` é implementada em `compiler/crates/ori-driver`.
+
+| Comando | Função |
+|---|---|
+| `ori check <file.orl>` | faz parse, resolução e checagem de tipos |
+| `ori run <file.orl>` | compila e executa por JIT ou AOT, conforme runtime e variáveis de ambiente |
+| `ori compile <file.orl>` | emite executável nativo pelo backend Cranelift |
+| `ori test <file.orl>` | executa funções marcadas com `@test` |
+| `ori fmt <file.orl>` | formata fonte e imprime o resultado |
+| `ori doc file <file.orl>` | extrai comentários de documentação como Markdown ou HTML |
+| `ori doc export` | exporta símbolos stdlib, diagnósticos e keywords como JSON |
+| `ori doctor` | reporta saúde da stdlib, runtime, linker, target e JIT |
+| `ori explain <code>` | explica um código de diagnóstico |
+| `ori summary [path]` | imprime entry file, módulos, imports e contagem de diagnósticos |
+| `ori debug <file.orl>` | executa o debugger cooperativo; `--dap` serve DAP via stdio |
+| `ori build <file.orl>` | compila pelo backend nativo |
+| `ori emit c <file.orl>` | emite C pelo backend parcial de debug |
+| `ori lex <file.orl>` | imprime tokens para debug do compilador |
+| `ori parse <file.orl>` | imprime AST para debug do compilador |
+| `ori install <name> --path <dir>` | instala pacote local no cache |
+| `ori install name[@ver]` | instala de `ORI_REGISTRY` |
+| `ori install github.com/org/repo` | clona e instala um pacote Git no cache |
+| `ori get [path]` | busca deps git/path do manifesto |
+| `ori lock [path]` | resolve dependências e grava um snapshot em `ori.lock` (`--locked` detecta divergência da resolução atual; digests de conteúdo e restauração dirigida pelo lock continuam abertos em `AUD-PKG-2`) |
+| `ori publish <path>` | publica em `ORI_REGISTRY` (árvore de arquivos ou HTTP) |
+| `ori migrate-syntax <paths…>` | reescreve sintaxe pré-S3 → S3 |
+
+O consumo remoto de packages é experimental. `AUD-PKG-1/2` agora impõem digest,
+contenção da extração e identidade de fontes no lock; use HTTPS e confira a
+origem do registry. Testes herméticos do registry HTTP e estresse de release
+multiplataforma continuam como QA P2.
+
+Variáveis úteis:
+
+| Variável | Função |
+|---|---|
+| `ORI_STDLIB_ROOT` | sobrescreve a raiz `stdlib/` |
+| `ORI_RUNTIME_LIB` | sobrescreve a biblioteca estática do runtime nativo |
+| `ORI_RUNTIME_CDYLIB` | sobrescreve a cdylib do runtime usada pelo JIT |
+| `ORI_USE_JIT=1` | força JIT em `ori run` |
+| `ORI_USE_AOT=1` | força AOT em `ori run` |
+| `ORI_USE_BUNDLED_RUST_LLD=1` | linka por `rust-lld` empacotado sem o driver `rustc` |
+| `ORI_USE_SYSTEM_LINKER=1` | linka diretamente pelo linker da plataforma |
+| `ORI_DISABLE_INCREMENTAL=1` | desativa a reutilização de saídas nativas em `.ori/incremental.json` |
+| `ORI_OBJCOPY` | escolhe o executável `objcopy`/`llvm-objcopy` usado para as seções DWARF no Linux |
+| `ORI_REQUIRE_PACKAGED_RUNTIME=1` | rejeita fallback para runtime do workspace durante validação de pacote |
+
+A matriz completa de ambiente está em [AGENTS.md](AGENTS.md).
+
+Os pacotes mantêm namespaces isolados. Imports locais ficam dentro do pacote
+que os declara; módulos de dependências usam o prefixo qualificado do pacote,
+como `math.format`. Assim, duas dependências podem ter um módulo `format` sem
+colisão. `ori lock` registra um snapshot do caminho, da versão do registry ou da
+revisão Git resolvida. O resolver atual ainda resolve as fontes novamente antes
+de validar o lock; restauração dirigida pelo lock e digests de conteúdo estão
+abertos em `AUD-PKG-2`.
+
+## Visão geral da linguagem
+
+O modelo central de Ori é pequeno:
+
+- todo arquivo começa com `module`;
+- imports: `import path (A)`, `import path = alias`, ou `import path` nu;
+- declarações top-level são privadas, exceto quando marcadas como `public`;
+- `struct` e `enum` definem dados;
+- `trait` e `apply` / `use` definem comportamento;
+- `optional[T]` modela ausência;
+- `result[T, E]` modela falha recuperável;
+- só `try expr` propaga (postfix `?` removido no S3);
+- `using` deixa limpeza determinística explícita (ex: `using r: mem.Region = mem.region()`);
+- recursos de sistemas de alta performance: checagem estática `@noalloc`, alinhamento explícito `@align(N)`, arenas de bump allocation (`mem.region`) e vetores SIMD portáteis de largura fixa (`simd[float32, 4]`);
+- dependências nativas e integração declarativa com `pkg-config` via `[native.dependencies]` no `ori.pkg.toml`;
+- diagnósticos usam códigos estáveis como `name.undefined` e `perf.allocation_in_noalloc`.
+
+Exemplo com `result`:
+
+```ori
+module app.errors
+
+import ori.io = io
+
 divide(a: int, b: int) -> result[int, string]
     if b == 0
-        return err("divisão por zero")
+        return err("division by zero")
     end
 
     return ok(a / b)
 end
 
 main() -> result[void, string]
-    const answer: int = try divide(84, 2)
-    io.print(f"resultado: {answer}")
+    const value: int = try divide(84, 2)
+    io.print(f"value: {value}")
     return ok()
 end
 ```
 
-Ideias centrais:
+Para o contrato normativo da linguagem, comece por
+[docs/spec/01-overview.md](docs/spec/01-overview.md).
 
-- cabeçalhos `module` explícitos que identificam cada arquivo-fonte;
-- identidade de módulo e imports explícitos;
-- contratos públicos e tipos visíveis;
-- `optional[T]` para ausência;
-- `result[T, E]` e `try` para falhas recuperáveis;
-- structs, enums, traits, generics e pattern matching;
-- limpeza determinística com `using`;
-- geração de código nativo e ABI versionada;
-- diagnósticos estáveis e acionáveis.
+## Arquitetura do compilador
 
-## Instalar e executar
+O compilador é dividido em crates focadas:
 
-Guia completo: [docs/install.pt-BR.md](docs/install.pt-BR.md).
+| Crate | Papel |
+|---|---|
+| `ori-lexer` | tokenização |
+| `ori-ast` | definições dos nós da AST |
+| `ori-parser` | parser recursive descent |
+| `ori-hir` | resolução de nomes e HIR |
+| `ori-types` | sistema de tipos, manifesto stdlib e contratos do checker |
+| `ori-codegen` | backend nativo Cranelift, JIT e backend C de debug |
+| `ori-runtime` | biblioteca nativa de runtime e ABI |
+| `ori-diagnostics` | códigos de diagnóstico e apoio de renderização |
+| `ori-lsp` | implementação Language Server Protocol |
+| `ori-driver` | CLI, orquestração do pipeline e testes de integração |
 
-Após instalar um pacote de release:
+O runtime nativo é a referência semântica para `ori compile`, `ori run` e
+`ori test`. O backend C é uma rota de debug e não deve ser tratado como fonte de
+verdade para async, ARC, coleções ou runtime.
+
+## Biblioteca padrão
+
+A stdlib vive no module `ori.*`.
+
+Forma atual:
+
+| Camada | Local | Função |
+|---|---|---|
+| Layer 1 | `compiler/crates/ori-types/src/stdlib.rs` e `compiler/crates/ori-runtime/src/lib.rs` | manifesto, ABI e primitivas de runtime |
+| Layer 2 | `stdlib/**/*.orl` | wrappers seguros sobre primitivas de runtime |
+| Layer 3 | `stdlib/**/*.orl` | algoritmos puros escritos em Ori |
+
+Áreas disponíveis:
+
+- `ori.io`, `ori.fs`, `ori.path`
+- `ori.string`, `ori.bytes`, `ori.convert`
+- `ori.list`, `ori.map`, `ori.set`
+- `ori.math`, `ori.random`, `ori.time`
+- `ori.json`, `ori.net`, `ori.process`
+- `ori.task`, `ori.channel`, `ori.concurrent`
+- `ori.test` e helpers de teste
+
+Veja [stdlib/README.md](stdlib/README.md) para o inventário atual e
+[docs/spec/12-stdlib.md](docs/spec/12-stdlib.md) para os contratos normativos.
+
+## Ferramentas de editor
+
+`ori-lsp` + extensões **locais** (sem Marketplace / loja por agora):
+
+| Editor | Caminho | Instalação |
+|--------|---------|------------|
+| VS Code / Cursor | [extensions/vscode-orl](extensions/vscode-orl/) | `.vsix` local |
+| Zed | [extensions/zed-ori](extensions/zed-ori/) | dev extension |
 
 ```bash
-ori --version
-ori doctor
-ori new hello
-ori run hello/main.orl
+cd compiler && cargo build -p ori-lsp -p ori-driver
+cd ../extensions/vscode-orl && npm install && npm run compile
+# coloque compiler/target/debug no PATH para ori-lsp
 ```
 
-Para desenvolver o compilador:
-
-```bash
-cargo --manifest-path compiler/Cargo.toml check --workspace
-cargo --manifest-path compiler/Cargo.toml test --workspace
-cargo --manifest-path compiler/Cargo.toml run -p ori-driver -- run examples/hello/main.orl
-```
-
-O workspace Cargo fica dentro de `compiler/`.
-
-## Estrutura do repositório
+## Layout do repositório
 
 ```text
-compiler/       compilador, código-fonte do runtime, LSP e CLI
-stdlib/         módulos Ori e documentação sidecar
-runtime/        artefatos nativos preparados por plataforma
-examples/       projetos executáveis e exemplos de integração
-docs/           produto, arquitetura, especificação, implementação e operações
-extensions/     integrações locais com editores
-tools/          QA, benchmarks, pacotes, releases e ferramentas de documentação
+ori-lang/
+  compiler/crates/        workspace Rust do compilador, LSP, runtime e driver
+  docs/spec/              contratos normativos da linguagem e implementação
+  docs/planning/          roadmap, backlog e planos de implementação
+  stdlib/                 módulos fonte da biblioteca padrão
+  runtime/                artefatos de runtime por target triple
+  examples/               programas Ori de exemplo (S3)
+  tests/                  fixtures E2E e documentação de testes
+  extensions/             DX local (vscode-orl, zed-ori)
+  tools/                  scripts de staging, smoke, export e validação
+  tools/bench/polyglot/   microbench runtime Ori / Python / Rust
+  branding/               assets de marca
+  docs/archive/           auditorias históricas de engenharia reversa
 ```
 
-A arquitetura atual está em [docs/architecture/overview.md](docs/architecture/overview.md).
+## Fluxo de desenvolvimento
 
-## Modelo de documentação
+Gates comuns:
 
-O repositório usa uma fonte canônica por assunto:
+```bash
+cargo check --workspace
+cargo test --workspace
+cargo test -p ori-driver --test diagnostic_catalog
+cargo test -p ori-lsp
+```
 
-- produto e estado atual: `docs/product/`;
-- arquitetura atual: `docs/architecture/`;
-- contratos normativos: `docs/spec/`;
-- padrões de implementação: `docs/implementation/`;
-- qualidade e conformidade: `docs/quality/`;
-- segurança: `docs/security/`;
-- decisões e propostas: `docs/decisions/` e `docs/rfcs/`;
-- planos complexos ativos: `docs/plans/`;
-- operações: `docs/operations/`;
-- evidências históricas: `docs/archive/`.
+Para mudanças na stdlib:
 
-Use [docs/ATLAS.md](docs/ATLAS.md) como mapa principal.
+```bash
+cargo test -p ori-types --lib stdlib
+cargo test -p ori-driver --test multifile_imports
+```
 
-## Estado e limitações
+Para mudanças no runtime ou backend nativo, re-stage o runtime antes dos testes
+de compile/run:
 
-A Ori ainda está antes da versão 1.0. O estado atual, as rotas suportadas, as prioridades e as melhorias estruturais estão em [docs/product/status.md](docs/product/status.md). As regras de compatibilidade estão na [Spec 18](docs/spec/18-stability-and-compatibility.md), e a ABI nativa está na [Spec 19](docs/spec/19-abi.md).
+```powershell
+.\tools\stage_native_runtime.ps1
+```
+
+Unix:
+
+```sh
+./tools/stage_native_runtime.sh
+```
+
+Regras do projeto:
+
+- bugfix precisa de teste de regressão em `compiler/crates/ori-driver/tests/`;
+- comportamento novo deve atualizar docs e `CHANGELOG.md`;
+- códigos de diagnóstico novos devem entrar em
+  [docs/spec/13-error-catalog.md](docs/spec/13-error-catalog.md);
+- mudanças no runtime da stdlib devem manter manifesto, lowering, ABI, testes e
+  docs em sincronia.
+
+## Layout de release
+
+Um pacote em formato de release deve seguir esta forma:
+
+```text
+ori.exe                         # ou `ori` no Unix
+runtime/
+  bin/
+    rust-lld[.exe]              # linker empacotado opcional
+  {target-triple}/
+    ori_runtime.lib             # runtime estático Windows MSVC
+    libori_runtime.a            # runtime estático Unix
+    ori_runtime.dll             # cdylib Windows para JIT
+    libori_runtime.so           # cdylib Linux para JIT
+    libori_runtime.dylib        # cdylib macOS para JIT
+    runtime-link.json
+examples/
+README.md
+```
+
+O workflow `native-route` cobre Windows MSVC, Windows GNU, Linux GNU,
+macOS x86_64 e macOS aarch64. Detalhes de staging ficam em
+[runtime/README.md](runtime/README.md).
+
+## Limitações conhecidas
+
+- Ori ainda não é self-hosting (M4 adiado).
+- `ori compile` (AOT) precisa do linker do SO; `ori run` usa JIT por padrão.
+- Compilar Ori a partir do fonte exige Rust; package **Linux** de release não.
+- Backend C é parcial (debug); sem async em C.
+- Protocolo de pacotes/registry existe; marketplace público **não** é meta agora.
+- Lojas de extensão (VS Code / Zed) **shelved** — use install local / dev.
+- `ori repl` é deliberadamente pequeno.
+- Contratos públicos ainda podem mudar antes de 1.0.
+
+**Lista única do que falta:** [docs/planning/BACKLOG.md](docs/planning/BACKLOG.md).
+
+## Roadmap
+
+**Agora:** linguagem + docs/exemplos honestos + performance.
+
+**Já entregue nos critérios de 1.0:** stdlib pais (M2), ABI `ori-native-abi-1`
+(M3), caminho sem Rust no instalador Linux (M1).
+
+**Depois (shelved):** multi-OS packages, publish em lojas, demos externos,
+self-host (M4 por último).
 
 ## Licença
 
-A Ori é disponibilizada sob licença dupla Apache-2.0 OR MIT. Consulte [LICENSE](LICENSE), [LICENSE-APACHE](LICENSE-APACHE) e [LICENSE-MIT](LICENSE-MIT).
+Ori é licenciado sob uma das duas opções:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+à sua escolha.

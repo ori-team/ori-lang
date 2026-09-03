@@ -4,12 +4,12 @@ use ori_hir::{HirArg, HirBlock, HirExpr, HirExprKind, HirFunc, HirModule, HirStm
 use ori_types::{DefId, Ty};
 use std::path::{Path, PathBuf};
 
-use super::frontend::check_loaded_sources;
+use super::frontend::{check_loaded_sources, CheckOptions};
 use super::lowering::lower_loaded_sources;
 use super::project::{load_and_resolve, namespace_of, LoadedSource};
 use super::runtime::{
-    find_native_runtime_cdylib, find_native_runtime_link, native_lib_cdylib_name,
-    native_target_triple,
+    ensure_native_codegen_target, find_native_runtime_cdylib, find_native_runtime_link,
+    native_lib_cdylib_name, native_target_triple,
 };
 
 pub struct TestOutput {
@@ -22,6 +22,7 @@ pub struct TestOutput {
     pub filter: Option<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct TestResult {
     pub name: String,
     pub passed: bool,
@@ -34,6 +35,7 @@ pub struct TestResult {
 #[derive(Debug, Clone, Default)]
 pub struct TestOptions {
     pub filter: Option<String>,
+    pub doc: bool,
 }
 
 /// Output of a JIT `run` (Rust removal Phase 3). When `has_errors` is false,
@@ -48,6 +50,28 @@ pub struct JitRunOutput {
     pub exit_code: i32,
 }
 
+/// Result of compiling an in-memory source graph into a persistent JIT module.
+///
+/// The module owns its finalized Cranelift code and must remain alive for any
+/// host function handle derived from it. Source diagnostics are returned in the
+/// same shape as the check pipeline; backend/runtime failures remain `Err`.
+pub struct JitCompileOutput {
+    pub cache: SourceCache,
+    pub diagnostics: Vec<Diagnostic>,
+    pub has_errors: bool,
+    pub module: Option<ori_codegen::CompiledJitModule>,
+}
+
+/// Result of lowering an in-memory source graph into optimized HIR without backend codegen.
+pub struct JitLowerOutput {
+    pub cache: SourceCache,
+    pub diagnostics: Vec<Diagnostic>,
+    pub has_errors: bool,
+    pub hir: Option<ori_hir::HirModule>,
+    pub cdylib: Option<PathBuf>,
+    pub native_libs: Vec<PathBuf>,
+}
+
 #[derive(Clone)]
 pub(super) struct TestCase {
     name: String,
@@ -55,7 +79,10 @@ pub(super) struct TestCase {
     is_async: bool,
 }
 
-/// Discover, filter, lower, and execute `@test` functions through the native
+/// Check and run native tests declared in `path` through the native backend.
+///
+/// Discovers all `@test` functions across the project tree, checks the source,
+/// lowers to HIR, and executes each test through Cranelift JIT or the staged
 /// backend. Keeping this orchestration beside the native harness makes the
 /// pipeline facade responsible only for the public command contract.
 pub fn run_test(path: &Path) -> Result<TestOutput, String> {
@@ -63,12 +90,32 @@ pub fn run_test(path: &Path) -> Result<TestOutput, String> {
 }
 
 pub fn run_test_with_options(path: &Path, options: TestOptions) -> Result<TestOutput, String> {
-    let mut cache = SourceCache::default();
-    let mut sink = DiagnosticSink::default();
     let filter = options
         .filter
         .map(|filter| filter.trim().to_string())
         .filter(|filter| !filter.is_empty());
+
+    if options.doc {
+        let cases = crate::pipeline::extract_doctests(path)?;
+        let discovered = cases.len();
+        let (results, cache) = crate::pipeline::run_doctests(&cases, filter.as_deref());
+        let selected = results.len();
+        let has_errors = results.iter().any(|r| !r.passed);
+        return Ok(TestOutput {
+            cache,
+            diagnostics: Vec::new(),
+            has_errors,
+            results,
+            discovered,
+            selected,
+            filter,
+        });
+    }
+
+    ensure_native_codegen_target()?;
+
+    let mut cache = SourceCache::default();
+    let mut sink = DiagnosticSink::default();
     let sources = load_and_resolve(path, &mut cache, &mut sink)?;
     let loaded = sources.loaded;
     let resolved = sources.resolved;
@@ -180,6 +227,12 @@ fn filter_test_cases(tests: Vec<TestCase>, filter: Option<&str>) -> Vec<TestCase
 /// subprocess. The runtime `ori_*` symbols are resolved from the staged
 /// cdylib via `libloading`.
 pub fn run_jit(source_path: &Path) -> Result<JitRunOutput, String> {
+    run_jit_with_args(source_path, &[])
+}
+
+/// Run JIT with custom arguments forwarded to `ori.os.args` / `ori.args`.
+pub fn run_jit_with_args(source_path: &Path, args: &[String]) -> Result<JitRunOutput, String> {
+    ensure_native_codegen_target()?;
     let mut cache = ori_diagnostics::SourceCache::default();
     let mut sink = ori_diagnostics::DiagnosticSink::default();
     let sources = load_and_resolve(source_path, &mut cache, &mut sink)?;
@@ -206,7 +259,13 @@ pub fn run_jit(source_path: &Path) -> Result<JitRunOutput, String> {
                 native_libs.push(lib_path);
             }
 
-            exit_code = ori_codegen::run_jit(&hir, &cdylib, &native_libs)?;
+            let full_args: Vec<String> = std::iter::once(source_path.display().to_string())
+                .chain(args.iter().cloned())
+                .collect();
+            ori_runtime::set_custom_args(Some(full_args.clone()));
+            let result = ori_codegen::run_jit_with_args(&hir, &cdylib, &native_libs, &full_args);
+            ori_runtime::set_custom_args(None);
+            exit_code = result?;
         }
     }
 
@@ -220,58 +279,237 @@ pub fn run_jit(source_path: &Path) -> Result<JitRunOutput, String> {
     })
 }
 
+/// Compile an in-memory source graph into a finalized persistent JIT module.
+///
+/// This is the compiler-side foundation for hosted sessions. It intentionally
+/// does not execute `main`; callers choose whether to keep the module and
+/// invoke an explicitly supported function or use the legacy `run_jit` path.
+pub fn compile_jit_source_with_options(
+    path: &Path,
+    source: String,
+    options: CheckOptions,
+) -> Result<JitCompileOutput, String> {
+    ensure_native_codegen_target()?;
+    let lowered = lower_jit_source_with_options(path, source, options)?;
+    let JitLowerOutput {
+        cache,
+        diagnostics,
+        has_errors,
+        hir,
+        cdylib,
+        native_libs,
+    } = lowered;
+    let module = match (has_errors, hir, cdylib) {
+        (false, Some(hir), Some(cdylib)) => Some(ori_codegen::CompiledJitModule::compile(
+            &hir,
+            &cdylib,
+            &native_libs,
+        )?),
+        _ => None,
+    };
+    Ok(JitCompileOutput {
+        cache,
+        diagnostics,
+        has_errors,
+        module,
+    })
+}
+
+/// Check and lower an in-memory source graph without transferring JIT code
+/// across the compiler's large-stack worker boundary.
+pub fn lower_jit_source_with_options(
+    path: &Path,
+    source: String,
+    options: CheckOptions,
+) -> Result<JitLowerOutput, String> {
+    let mut cache = SourceCache::default();
+    let mut sink = DiagnosticSink::default();
+    let sources = super::project::load_and_resolve_with_entry_source_and_cfg(
+        path,
+        source,
+        options.cfg,
+        &mut cache,
+        &mut sink,
+    )?;
+    let loaded = sources.loaded;
+    let resolved = sources.resolved;
+    let import_context = sources.imports;
+
+    if !sink.has_errors() {
+        check_loaded_sources(&loaded, &resolved, &mut sink);
+    }
+
+    let (hir, cdylib, native_libs) = if !sink.has_errors() {
+        let mut hir = lower_loaded_sources(&loaded, &resolved, &mut sink);
+        if sink.has_errors() {
+            (None, None, Vec::new())
+        } else {
+            ori_hir::optimize_module(&mut hir, ori_hir::OptLevel::from_env());
+            let cdylib = find_native_runtime_cdylib()?;
+            let target = native_target_triple();
+            let native_libs = import_context
+                .native_libs
+                .iter()
+                .map(|lib| {
+                    lib.package_root
+                        .join("lib")
+                        .join(&target)
+                        .join(native_lib_cdylib_name(&target, &lib.name))
+                })
+                .collect::<Vec<_>>();
+            (Some(hir), Some(cdylib), native_libs)
+        }
+    } else {
+        (None, None, Vec::new())
+    };
+
+    let has_errors = sink.has_errors();
+    let diagnostics = sink.into_diagnostics();
+    Ok(JitLowerOutput {
+        cache,
+        diagnostics,
+        has_errors,
+        hir,
+        cdylib,
+        native_libs,
+    })
+}
+
 pub(super) fn run_native_tests(
     hir: &HirModule,
     tests: &[TestCase],
 ) -> Result<Vec<TestResult>, String> {
+    ensure_native_codegen_target()?;
     let runtime_link = find_native_runtime_link()?;
     let mut results = Vec::new();
 
-    for test in tests {
-        let (obj_path, exe_path) = temp_test_paths();
-        let mut test_hir = hir.clone();
-        inject_test_harness(&mut test_hir, test);
+    if tests.is_empty() {
+        return Ok(results);
+    }
 
-        let run_result = (|| {
-            ori_codegen::emit_native(&test_hir, &obj_path)?;
-            let extra = runtime_link.link_args();
-            ori_codegen::link(&obj_path, &exe_path, &extra)?;
-            let output = std::process::Command::new(&exe_path)
-                .output()
-                .map_err(|e| format!("failed to run test `{}`: {e}", test.name))?;
-            Ok::<TestResult, String>(TestResult {
+    // Build and link the complete test suite exactly once. Each test still
+    // runs in a fresh process below, so an abort/exit from one case cannot
+    // corrupt the result of another case.
+    let (obj_path, exe_path) = temp_test_paths();
+    let mut suite_hir = hir.clone();
+    inject_test_harness(&mut suite_hir, tests);
+    let build_result = (|| {
+        ori_codegen::emit_native(&suite_hir, &obj_path)?;
+        let extra = runtime_link.link_args();
+        ori_codegen::link(&obj_path, &exe_path, &extra)
+    })();
+
+    if let Err(error) = build_result {
+        let _ = std::fs::remove_file(&obj_path);
+        let _ = std::fs::remove_file(&exe_path);
+        return Ok(tests
+            .iter()
+            .map(|test| TestResult {
+                name: test.name.clone(),
+                passed: false,
+                skipped: false,
+                stdout: String::new(),
+                stderr: error.to_string(),
+                status: Some(1),
+            })
+            .collect());
+    }
+
+    for (index, test) in tests.iter().enumerate() {
+        let run_result = std::process::Command::new(&exe_path)
+            .env("ORI_TEST_INDEX", index.to_string())
+            .output()
+            .map_err(|e| format!("failed to run test `{}`: {e}", test.name));
+        match run_result {
+            Ok(output) => results.push(TestResult {
                 name: test.name.clone(),
                 passed: output.status.success() || output.status.code() == Some(77),
                 skipped: output.status.code() == Some(77),
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
                 stderr: String::from_utf8_lossy(&output.stderr).to_string(),
                 status: output.status.code(),
-            })
-        })();
-
-        let _ = std::fs::remove_file(&obj_path);
-        let _ = std::fs::remove_file(&exe_path);
-
-        match run_result {
-            Ok(result) => results.push(result),
-            Err(error) => {
-                results.push(TestResult {
-                    name: test.name.clone(),
-                    passed: false,
-                    skipped: false,
-                    stdout: String::new(),
-                    stderr: error,
-                    status: Some(1),
-                });
-            }
+            }),
+            Err(error) => results.push(TestResult {
+                name: test.name.clone(),
+                passed: false,
+                skipped: false,
+                stdout: String::new(),
+                stderr: error,
+                status: Some(1),
+            }),
         }
     }
+
+    let _ = std::fs::remove_file(&obj_path);
+    let _ = std::fs::remove_file(&exe_path);
 
     Ok(results)
 }
 
-fn inject_test_harness(module: &mut HirModule, test: &TestCase) {
-    let span = test.span;
+fn inject_test_harness(module: &mut HirModule, tests: &[TestCase]) {
+    let span = tests
+        .first()
+        .map_or(ori_diagnostics::Span::DUMMY, |test| test.span);
+    let mut stmts = Vec::with_capacity(tests.len());
+    for (index, test) in tests.iter().enumerate() {
+        let selector = HirExpr {
+            kind: HirExprKind::Call {
+                callee: Box::new(HirExpr {
+                    kind: HirExprKind::Var("ori_test_selected".into()),
+                    ty: Ty::Func {
+                        params: vec![Ty::Int],
+                        ret: Box::new(Ty::Bool),
+                    },
+                    span,
+                }),
+                args: vec![HirArg {
+                    label: None,
+                    spread: false,
+                    value: HirExpr {
+                        kind: HirExprKind::IntLit(index as i64),
+                        ty: Ty::Int,
+                        span,
+                    },
+                }],
+            },
+            ty: Ty::Bool,
+            span,
+        };
+        stmts.push(HirStmt::If {
+            cond: selector,
+            then: HirBlock {
+                stmts: vec![HirStmt::Expr(test_call(test, span))],
+                span,
+            },
+            else_ifs: Vec::new(),
+            else_: None,
+            span,
+        });
+    }
+    let harness_name = if module.namespace.is_empty() {
+        "main".to_string()
+    } else {
+        format!("{}.main", module.namespace)
+    };
+    let harness = HirFunc {
+        def_id: DefId::SYNTHETIC_MAIN,
+        name: harness_name.into(),
+        params: Vec::new(),
+        return_ty: Ty::Void,
+        body: HirBlock { stmts, span },
+        closure_captures: Vec::new(),
+        is_public: false,
+        is_async: false,
+        is_mut: false,
+        is_inline: false,
+        is_no_inline: false,
+        c_export_name: None,
+        span,
+    };
+    module.funcs.insert(0, harness);
+}
+
+fn test_call(test: &TestCase, span: ori_diagnostics::Span) -> HirExpr {
     let test_ret_ty = if test.is_async {
         Ty::Future(Box::new(Ty::Void))
     } else {
@@ -293,7 +531,7 @@ fn inject_test_harness(module: &mut HirModule, test: &TestCase) {
         ty: test_ret_ty.clone(),
         span,
     };
-    let test_expr = if test.is_async {
+    if test.is_async {
         HirExpr {
             kind: HirExprKind::Call {
                 callee: Box::new(HirExpr {
@@ -315,29 +553,7 @@ fn inject_test_harness(module: &mut HirModule, test: &TestCase) {
         }
     } else {
         call
-    };
-    let harness_name = if module.namespace.is_empty() {
-        "main".to_string()
-    } else {
-        format!("{}.main", module.namespace)
-    };
-    let harness = HirFunc {
-        def_id: DefId(u32::MAX - 1),
-        name: harness_name.into(),
-        params: Vec::new(),
-        return_ty: Ty::Void,
-        body: HirBlock {
-            stmts: vec![HirStmt::Expr(test_expr)],
-            span,
-        },
-        closure_captures: Vec::new(),
-        is_public: false,
-        is_async: false,
-        is_mut: false,
-        c_export_name: None,
-        span,
-    };
-    module.funcs.insert(0, harness);
+    }
 }
 
 fn temp_test_paths() -> (PathBuf, PathBuf) {

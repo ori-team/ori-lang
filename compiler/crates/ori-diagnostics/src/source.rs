@@ -98,6 +98,18 @@ impl SourceCache {
     pub fn all_files(&self) -> &[SourceFile] {
         &self.files
     }
+
+    /// Append the files from another cache, assigning fresh session-local IDs.
+    ///
+    /// Pipelines that validate several independent in-memory sources (for
+    /// example, documentation snippets) can retain one cache for diagnostics
+    /// without exposing the private `SourceFile` representation.
+    pub fn append(&mut self, other: Self) {
+        for mut file in other.files {
+            file.id = FileId(self.files.len() as u32);
+            self.files.push(file);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -123,5 +135,25 @@ mod tests {
 
         assert_eq!(file.line_col("aa\u{1f642}".len() as u32), (1, 4));
         assert_eq!(file.line_col(offset), (2, 7));
+    }
+
+    #[test]
+    fn append_assigns_session_local_file_ids() {
+        let mut first = SourceCache::default();
+        let first_id = first.add("first.orl", "module first".into());
+        let mut second = SourceCache::default();
+        let second_id = second.add("second.orl", "module second".into());
+
+        assert_eq!(first_id, FileId(0));
+        assert_eq!(second_id, FileId(0));
+        first.append(second);
+
+        assert_eq!(first.all_files().len(), 2);
+        assert_eq!(first.all_files()[0].id, FileId(0));
+        assert_eq!(first.all_files()[1].id, FileId(1));
+        assert_eq!(
+            first.get(FileId(1)).unwrap().path,
+            PathBuf::from("second.orl")
+        );
     }
 }

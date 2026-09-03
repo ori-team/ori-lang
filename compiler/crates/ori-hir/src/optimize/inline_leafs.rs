@@ -16,10 +16,15 @@ pub(super) fn inline_leafs_module(module: &mut HirModule) {
     // Collect leaf candidates: name -> (params, body stmts clone, return_ty)
     let mut leaves: HashMap<SmolStr, LeafFn> = HashMap::new();
     for f in &module.funcs {
-        if f.is_async || f.name.as_str() == "main" {
+        if f.is_async || f.name.as_str() == "main" || f.is_no_inline {
             continue;
         }
-        if f.body.stmts.len() > MAX_INLINE_STMTS {
+        // Parameter contracts run at the call boundary. Substitution would
+        // erase that boundary and silently skip the contract check.
+        if f.params.iter().any(|param| param.contract.is_some()) {
+            continue;
+        }
+        if !f.is_inline && f.body.stmts.len() > MAX_INLINE_STMTS {
             continue;
         }
         if func_calls_name(&f.body, f.name.as_str()) {
@@ -163,7 +168,6 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
                     if args.len() == leaf.params.len() && args.iter().all(|a| !a.spread) {
                         if let Some(inlined) = try_inline_return_expr(leaf, args) {
                             *expr = inlined;
-                            return;
                         }
                     }
                 }
@@ -196,6 +200,7 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {
@@ -244,11 +249,257 @@ fn try_inline_return_expr(leaf: &LeafFn, args: &[HirArg]) -> Option<HirExpr> {
     let HirStmt::Return(Some(ret), _) = &leaf.body.stmts[0] else {
         return None;
     };
+
+    // Substitution has no temporary-binding representation yet. Restrict
+    // arguments to expressions whose evaluation is repeatable and cannot
+    // trap, allocate, call user code, or observe an evaluation-order change.
+    // This is intentionally conservative: a missed inline is safe, while an
+    // omitted or duplicated argument is a language-semantics bug.
+    if args.iter().any(|arg| !is_pure_inline_argument(&arg.value)) {
+        return None;
+    }
+
+    // Even a pure expression should not be cloned into multiple parameter
+    // uses until the HIR can materialize one argument binding. Reading a
+    // parameter once keeps this pass correct for managed values and future
+    // effect annotations alike.
+    if leaf
+        .params
+        .iter()
+        .any(|param| count_var_uses(ret, param.as_str()) > 1)
+    {
+        return None;
+    }
+    // Closures store capture names, `match` introduces textual bindings, and
+    // propagation/await carry control flow tied to the callee. None can be
+    // moved safely by textual substitution.
+    if expr_has_inline_barrier(ret) {
+        return None;
+    }
+
     let mut out = ret.clone();
     for (param, arg) in leaf.params.iter().zip(args.iter()) {
         subst_var(&mut out, param.as_str(), &arg.value);
     }
     Some(out)
+}
+
+fn is_pure_inline_argument(expr: &HirExpr) -> bool {
+    use ori_ast::expr::BinaryOp;
+
+    // A call boundary currently performs the retain/release bookkeeping for
+    // runtime-managed values. Substituting a managed variable directly would
+    // remove that ownership boundary without an equivalent HIR temporary.
+    // Keep this pass scalar-only until ownership-aware temporaries exist.
+    if expr.ty.is_runtime_managed() {
+        return false;
+    }
+
+    match &expr.kind {
+        HirExprKind::BoolLit(_)
+        | HirExprKind::IntLit(_)
+        | HirExprKind::FloatLit(_)
+        | HirExprKind::StrLit(_)
+        | HirExprKind::Unit
+        | HirExprKind::None_ => true,
+        // A scalar read is not a stable value across the inlined body. For
+        // example, another call in the return expression may mutate a global
+        // after arguments were supposed to have been evaluated. An explicit
+        // HIR temporary is required before variable arguments are safe here.
+        HirExprKind::Var(_) => false,
+        HirExprKind::Binary { op, lhs, rhs } => {
+            !matches!(
+                op,
+                BinaryOp::Div | BinaryOp::Rem | BinaryOp::Shl | BinaryOp::Shr
+            ) && !matches!(expr.ty, ori_types::Ty::String | ori_types::Ty::Bytes)
+                && is_pure_inline_argument(lhs)
+                && is_pure_inline_argument(rhs)
+        }
+        HirExprKind::Unary { operand, .. }
+        | HirExprKind::Field {
+            object: operand, ..
+        }
+        | HirExprKind::TupleIndex {
+            object: operand, ..
+        }
+        | HirExprKind::IsCheck { value: operand, .. } => is_pure_inline_argument(operand),
+        _ => false,
+    }
+}
+
+fn count_var_uses(expr: &HirExpr, name: &str) -> usize {
+    match &expr.kind {
+        HirExprKind::Var(candidate) => usize::from(candidate.as_str() == name),
+        HirExprKind::Binary { lhs, rhs, .. } => {
+            count_var_uses(lhs, name).saturating_add(count_var_uses(rhs, name))
+        }
+        HirExprKind::Unary { operand, .. }
+        | HirExprKind::Field {
+            object: operand, ..
+        }
+        | HirExprKind::Some_(operand)
+        | HirExprKind::Ok_(operand)
+        | HirExprKind::Err_(operand)
+        | HirExprKind::Propagate(operand)
+        | HirExprKind::Await(operand)
+        | HirExprKind::IsCheck { value: operand, .. }
+        | HirExprKind::TupleIndex {
+            object: operand, ..
+        } => count_var_uses(operand, name),
+        HirExprKind::Index { object, index } => {
+            count_var_uses(object, name).saturating_add(count_var_uses(index, name))
+        }
+        HirExprKind::Call { callee, args } => args
+            .iter()
+            .fold(count_var_uses(callee, name), |count, arg| {
+                count.saturating_add(count_var_uses(&arg.value, name))
+            }),
+        HirExprKind::MethodCall { receiver, args, .. } => args
+            .iter()
+            .fold(count_var_uses(receiver, name), |count, arg| {
+                count.saturating_add(count_var_uses(arg, name))
+            }),
+        HirExprKind::AssociatedCall { args, .. } => args.iter().fold(0, |count, arg| {
+            count.saturating_add(count_var_uses(arg, name))
+        }),
+        HirExprKind::IfExpr { cond, then, else_ } => [cond, then, else_]
+            .into_iter()
+            .map(|branch| count_var_uses(branch, name))
+            .fold(0, usize::saturating_add),
+        HirExprKind::MatchExpr { scrutinee, arms } => {
+            let arm_uses = arms.iter().fold(0usize, |count, arm| {
+                let guard_uses = arm
+                    .guard
+                    .as_ref()
+                    .map_or(0, |guard| count_var_uses(guard, name));
+                count
+                    .saturating_add(guard_uses)
+                    .saturating_add(count_var_uses(&arm.body, name))
+            });
+            count_var_uses(scrutinee, name).saturating_add(arm_uses)
+        }
+        HirExprKind::StructLit { fields, .. } | HirExprKind::EnumVariant { fields, .. } => fields
+            .iter()
+            .map(|(_, value)| count_var_uses(value, name))
+            .fold(0, usize::saturating_add),
+        HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
+        | HirExprKind::TupleLit(elements)
+        | HirExprKind::SetLit { elements, .. } => elements
+            .iter()
+            .map(|element| count_var_uses(element, name))
+            .fold(0, usize::saturating_add),
+        HirExprKind::ListSpreadLit { elements, .. } => elements
+            .iter()
+            .map(|element| count_var_uses(&element.value, name))
+            .fold(0, usize::saturating_add),
+        HirExprKind::MapLit { entries, .. } => entries
+            .iter()
+            .map(|(key, value)| {
+                count_var_uses(key, name).saturating_add(count_var_uses(value, name))
+            })
+            .fold(0, usize::saturating_add),
+        HirExprKind::Range { start, end } => {
+            count_var_uses(start, name).saturating_add(count_var_uses(end, name))
+        }
+        HirExprKind::StructUpdate { base, updates, .. } => updates
+            .iter()
+            .map(|(_, value)| count_var_uses(value, name))
+            .fold(count_var_uses(base, name), usize::saturating_add),
+        HirExprKind::InterpolatedStr(parts) => parts
+            .iter()
+            .filter_map(|part| match part {
+                HirStrPart::Expr(value) => Some(count_var_uses(value, name)),
+                HirStrPart::Literal(_) => None,
+            })
+            .fold(0, usize::saturating_add),
+        HirExprKind::Closure { captures, .. } => captures
+            .iter()
+            .filter(|capture| capture.name.as_str() == name)
+            .count(),
+        HirExprKind::None_
+        | HirExprKind::BoolLit(_)
+        | HirExprKind::IntLit(_)
+        | HirExprKind::FloatLit(_)
+        | HirExprKind::StrLit(_)
+        | HirExprKind::BytesLit(_)
+        | HirExprKind::Unit => 0,
+    }
+}
+
+fn expr_has_inline_barrier(expr: &HirExpr) -> bool {
+    match &expr.kind {
+        HirExprKind::Closure { .. }
+        | HirExprKind::Propagate(_)
+        | HirExprKind::Await(_)
+        | HirExprKind::MatchExpr { .. } => true,
+        HirExprKind::Binary { lhs, rhs, .. } => {
+            expr_has_inline_barrier(lhs) || expr_has_inline_barrier(rhs)
+        }
+        HirExprKind::Unary { operand, .. }
+        | HirExprKind::Field {
+            object: operand, ..
+        }
+        | HirExprKind::Some_(operand)
+        | HirExprKind::Ok_(operand)
+        | HirExprKind::Err_(operand)
+        | HirExprKind::IsCheck { value: operand, .. }
+        | HirExprKind::TupleIndex {
+            object: operand, ..
+        } => expr_has_inline_barrier(operand),
+        HirExprKind::Index { object, index } => {
+            expr_has_inline_barrier(object) || expr_has_inline_barrier(index)
+        }
+        HirExprKind::Call { callee, args } => {
+            expr_has_inline_barrier(callee)
+                || args.iter().any(|arg| expr_has_inline_barrier(&arg.value))
+        }
+        HirExprKind::MethodCall { receiver, args, .. } => {
+            expr_has_inline_barrier(receiver) || args.iter().any(expr_has_inline_barrier)
+        }
+        HirExprKind::AssociatedCall { args, .. } => args.iter().any(expr_has_inline_barrier),
+        HirExprKind::IfExpr { cond, then, else_ } => {
+            expr_has_inline_barrier(cond)
+                || expr_has_inline_barrier(then)
+                || expr_has_inline_barrier(else_)
+        }
+        HirExprKind::StructLit { fields, .. } | HirExprKind::EnumVariant { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_has_inline_barrier(value)),
+        HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
+        | HirExprKind::TupleLit(elements)
+        | HirExprKind::SetLit { elements, .. } => elements.iter().any(expr_has_inline_barrier),
+        HirExprKind::ListSpreadLit { elements, .. } => elements
+            .iter()
+            .any(|element| expr_has_inline_barrier(&element.value)),
+        HirExprKind::MapLit { entries, .. } => entries
+            .iter()
+            .any(|(key, value)| expr_has_inline_barrier(key) || expr_has_inline_barrier(value)),
+        HirExprKind::Range { start, end } => {
+            expr_has_inline_barrier(start) || expr_has_inline_barrier(end)
+        }
+        HirExprKind::StructUpdate { base, updates, .. } => {
+            expr_has_inline_barrier(base)
+                || updates
+                    .iter()
+                    .any(|(_, value)| expr_has_inline_barrier(value))
+        }
+        HirExprKind::InterpolatedStr(parts) => parts.iter().any(|part| match part {
+            HirStrPart::Expr(value) => expr_has_inline_barrier(value),
+            HirStrPart::Literal(_) => false,
+        }),
+        HirExprKind::None_
+        | HirExprKind::BoolLit(_)
+        | HirExprKind::IntLit(_)
+        | HirExprKind::FloatLit(_)
+        | HirExprKind::StrLit(_)
+        | HirExprKind::BytesLit(_)
+        | HirExprKind::Unit
+        | HirExprKind::Var(_) => false,
+    }
 }
 
 fn subst_var(expr: &mut HirExpr, name: &str, replacement: &HirExpr) {
@@ -291,6 +542,11 @@ fn subst_var(expr: &mut HirExpr, name: &str, replacement: &HirExpr) {
                 subst_var(a, name, replacement);
             }
         }
+        HirExprKind::AssociatedCall { args, .. } => {
+            for arg in args {
+                subst_var(arg, name, replacement);
+            }
+        }
         HirExprKind::IfExpr { cond, then, else_ } => {
             subst_var(cond, name, replacement);
             subst_var(then, name, replacement);
@@ -312,6 +568,7 @@ fn subst_var(expr: &mut HirExpr, name: &str, replacement: &HirExpr) {
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {
@@ -440,4 +697,80 @@ fn block_has_using_or_await(block: &HirBlock) -> bool {
 
 fn expr_has_await(expr: &HirExpr) -> bool {
     matches!(expr.kind, HirExprKind::Await(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ori_diagnostics::Span;
+    use ori_types::Ty;
+
+    fn int_lit(value: i64) -> HirExpr {
+        HirExpr {
+            kind: HirExprKind::IntLit(value),
+            ty: Ty::Int,
+            span: Span::DUMMY,
+        }
+    }
+
+    fn leaf_returning(expr: HirExpr, params: &[&str]) -> LeafFn {
+        LeafFn {
+            params: params.iter().map(|name| SmolStr::new(*name)).collect(),
+            body: HirBlock {
+                stmts: vec![HirStmt::Return(Some(expr), Span::DUMMY)],
+                span: Span::DUMMY,
+            },
+        }
+    }
+
+    #[test]
+    fn match_binding_scope_blocks_textual_substitution() {
+        let match_expr = HirExpr {
+            kind: HirExprKind::MatchExpr {
+                scrutinee: Box::new(int_lit(7)),
+                arms: vec![HirExprArm {
+                    pattern: HirPattern::Binding(SmolStr::new("value"), Ty::Int),
+                    guard: None,
+                    body: HirExpr {
+                        kind: HirExprKind::Var(SmolStr::new("value")),
+                        ty: Ty::Int,
+                        span: Span::DUMMY,
+                    },
+                    span: Span::DUMMY,
+                }],
+            },
+            ty: Ty::Int,
+            span: Span::DUMMY,
+        };
+        let leaf = leaf_returning(match_expr, &["value"]);
+        let args = [HirArg {
+            label: None,
+            value: int_lit(99),
+            spread: false,
+        }];
+
+        assert!(
+            try_inline_return_expr(&leaf, &args).is_none(),
+            "a match binding can shadow a parameter and must block textual substitution"
+        );
+    }
+
+    #[test]
+    fn propagation_control_flow_blocks_inlining() {
+        let propagated = HirExpr {
+            kind: HirExprKind::Propagate(Box::new(HirExpr {
+                kind: HirExprKind::Ok_(Box::new(int_lit(1))),
+                ty: Ty::Result(Box::new(Ty::Int), Box::new(Ty::String)),
+                span: Span::DUMMY,
+            })),
+            ty: Ty::Int,
+            span: Span::DUMMY,
+        };
+        let leaf = leaf_returning(propagated, &[]);
+
+        assert!(
+            try_inline_return_expr(&leaf, &[]).is_none(),
+            "propagation must remain scoped to the callee"
+        );
+    }
 }

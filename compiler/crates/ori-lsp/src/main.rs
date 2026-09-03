@@ -49,17 +49,41 @@ impl Backend {
     }
 
     async fn validate_uri(&self, uri: Url) {
-        let source = {
+        // Generation-safe snapshot: capture version/content before heavy CPU work.
+        let (source, version, path) = {
             let project = self.project.read().await;
-            project.document_content(&uri)
+            let content = project.document_content(&uri);
+            let ver = project.document_version(&uri);
+            let p = utils::uri::document_path_from_uri(&uri);
+            (content, ver, p)
         };
-        let path = utils::uri::document_path_from_uri(&uri);
-        let result = match (path.as_deref(), source.clone()) {
-            (Some(path), Some(source)) => ori_driver::pipeline::run_check_source(path, source),
-            (Some(path), None) => ori_driver::pipeline::run_check(path),
-            _ => return,
+        let path_clone = path.clone();
+        let source_clone = source.clone();
+        // CPU-bound `run_check*` must not block Tokio workers.
+        let blocking =
+            tokio::task::spawn_blocking(move || match (path_clone.as_deref(), source_clone) {
+                (Some(path), Some(source)) => {
+                    Some(ori_driver::pipeline::run_check_source(path, source))
+                }
+                (Some(path), None) => Some(ori_driver::pipeline::run_check(path)),
+                _ => None,
+            })
+            .await;
+        let Some(result_opt) = blocking.unwrap_or(None) else {
+            return;
         };
-        let mut diagnostics = match result {
+        // Second freshness check immediately before commit — discard stale result.
+        let still_current = {
+            let project = self.project.read().await;
+            match version {
+                Some(captured) => project.document_version(&uri) == Some(captured),
+                None => project.document_version(&uri).is_none(),
+            }
+        };
+        if !still_current {
+            return;
+        }
+        let mut diagnostics = match result_opt {
             Ok(output) => {
                 let diags = if let Some(target) = &path {
                     let mut d = handlers::diagnostics::diagnostics_for_path(
@@ -67,9 +91,6 @@ impl Backend {
                         &output.diagnostics,
                         target,
                     );
-                    // Etapa 6.5: surface project-level diagnostics (e.g.
-                    // circular imports) whose label sits on another file so
-                    // the user sees them on the file they are editing.
                     d.extend(handlers::diagnostics::project_diagnostics_for_path(
                         &output.cache,
                         &output.diagnostics,
@@ -79,27 +100,23 @@ impl Backend {
                 } else {
                     Vec::new()
                 };
-                // Capture the cross-file semantic index (Etapa 6.1) so that
-                // hover / go-to-definition / completion / find-references can
-                // resolve symbols across imports. The index is rebuilt on
-                // every successful `run_check_source`, which is debounced for
-                // `didChange` and immediate for `didOpen` / `didSave`.
                 if let Some(target) = &path {
                     let active_path =
                         std::fs::canonicalize(target).unwrap_or_else(|_| target.to_owned());
                     let index =
                         ProjectSemanticIndex::new(output.resolved, output.cache, active_path);
-                    self.project
-                        .write()
-                        .await
-                        .upsert_semantic_index(uri.clone(), index);
+                    // Check the version and publish while holding the same
+                    // write lock. An edit cannot slip between these actions
+                    // and leave a stale semantic index behind.
+                    self.project.write().await.upsert_semantic_index_if_current(
+                        uri.clone(),
+                        version,
+                        index,
+                    );
                 }
                 diags
             }
             Err(message) => {
-                // Etapa 6.5: surface known project-configuration failures
-                // under structured `project.*` codes; fall back to a generic
-                // file error for anything else.
                 if let Some(diag) = handlers::diagnostics::project_error_diagnostic(&message) {
                     vec![diag]
                 } else {
@@ -109,16 +126,21 @@ impl Backend {
         };
         if let Some(ref src) = source {
             let config = handlers::lint::LintConfig::default();
-            let lint_diags = handlers::lint::lint(src, &config);
+            let lint_diags = handlers::lint::lint(path.as_deref(), src, &config);
             diagnostics.extend(lint_diags);
         }
+        // Publish with version so client can discard outdated diagnostics.
         self.client
-            .publish_diagnostics(uri, diagnostics, None)
+            .publish_diagnostics(uri, diagnostics, version)
             .await;
     }
 
     async fn schedule_debounced_validate(&self, uri: Url) {
         let now = Instant::now();
+        let captured_version = {
+            let project = self.project.read().await;
+            project.document_version(&uri)
+        };
         {
             let mut last = self.last_change.write().await;
             last.insert(uri.clone(), now);
@@ -131,25 +153,55 @@ impl Backend {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(300)).await;
 
+            // First freshness check before heavy work (debounce).
             let should_run = {
                 let last = last_change.read().await;
-                last.get(&uri).map(|t| *t <= now).unwrap_or(false)
+                last.get(&uri).map(|t| *t == now).unwrap_or(false)
             };
             if !should_run {
                 return;
             }
-
-            let source = {
+            // Immutable snapshot for generation check.
+            let (source, path, snapshot_version) = {
                 let proj = project.read().await;
-                proj.document_content(&uri)
+                let ver = proj.document_version(&uri);
+                // Also ensure debounce instant still matches captured_version instant.
+                if ver != captured_version {
+                    return;
+                }
+                let src = proj.document_content(&uri);
+                let p = utils::uri::document_path_from_uri(&uri);
+                (src, p, ver)
             };
-            let path = utils::uri::document_path_from_uri(&uri);
-            let result = match (path.as_deref(), source) {
-                (Some(path), Some(source)) => ori_driver::pipeline::run_check_source(path, source),
-                (Some(path), None) => ori_driver::pipeline::run_check(path),
-                _ => return,
+            let path_clone = path.clone();
+            let source_clone = source.clone();
+            let blocking =
+                tokio::task::spawn_blocking(move || match (path_clone.as_deref(), source_clone) {
+                    (Some(path), Some(source)) => {
+                        Some(ori_driver::pipeline::run_check_source(path, source))
+                    }
+                    (Some(path), None) => Some(ori_driver::pipeline::run_check(path)),
+                    _ => None,
+                })
+                .await;
+            let Some(result_opt) = blocking.unwrap_or(None) else {
+                return;
             };
-            let diagnostics = match result {
+            // Second freshness check immediately before commit — prevents stale publish.
+            let still_current = {
+                let last = last_change.read().await;
+                let debounce_current = last.get(&uri).map(|t| *t == now).unwrap_or(false);
+                if !debounce_current {
+                    false
+                } else {
+                    let proj = project.read().await;
+                    proj.document_version(&uri) == snapshot_version
+                }
+            };
+            if !still_current {
+                return;
+            }
+            let mut diagnostics = match result_opt {
                 Ok(output) => {
                     let diags = if let Some(target) = &path {
                         let mut d = handlers::diagnostics::diagnostics_for_path(
@@ -166,21 +218,35 @@ impl Backend {
                     } else {
                         Vec::new()
                     };
-                    // Capture the cross-file semantic index (Etapa 6.1).
                     if let Some(target) = &path {
-                        let active_path =
-                            std::fs::canonicalize(target).unwrap_or_else(|_| target.to_owned());
-                        let index =
-                            ProjectSemanticIndex::new(output.resolved, output.cache, active_path);
-                        project
-                            .write()
-                            .await
-                            .upsert_semantic_index(uri.clone(), index);
+                        let fresh = {
+                            let last = last_change.read().await;
+                            let debounce_current =
+                                last.get(&uri).map(|t| *t == now).unwrap_or(false);
+                            if !debounce_current {
+                                false
+                            } else {
+                                let proj = project.read().await;
+                                proj.document_version(&uri) == snapshot_version
+                            }
+                        };
+                        if fresh {
+                            let active_path =
+                                std::fs::canonicalize(target).unwrap_or_else(|_| target.to_owned());
+                            let index = ProjectSemanticIndex::new(
+                                output.resolved,
+                                output.cache,
+                                active_path,
+                            );
+                            project
+                                .write()
+                                .await
+                                .upsert_semantic_index(uri.clone(), index);
+                        }
                     }
                     diags
                 }
                 Err(message) => {
-                    // Etapa 6.5: map known project failures to `project.*`.
                     if let Some(diag) = handlers::diagnostics::project_error_diagnostic(&message) {
                         vec![diag]
                     } else {
@@ -188,7 +254,14 @@ impl Backend {
                     }
                 }
             };
-            client.publish_diagnostics(uri, diagnostics, None).await;
+            if let Some(ref src) = source {
+                let config = handlers::lint::LintConfig::default();
+                let lint_diags = handlers::lint::lint(path.as_deref(), src, &config);
+                diagnostics.extend(lint_diags);
+            }
+            client
+                .publish_diagnostics(uri, diagnostics, snapshot_version)
+                .await;
         });
     }
 
@@ -199,10 +272,10 @@ impl Backend {
         }?;
         let index = {
             let project = self.project.read().await;
-            project
-                .document_index(uri)
-                .cloned()
-                .unwrap_or_else(|| SemanticIndex::build(&source))
+            project.document_index(uri).cloned().unwrap_or_else(|| {
+                let path = uri.to_file_path().ok();
+                SemanticIndex::build(&source, path.as_deref())
+            })
         };
         Some((source, index))
     }
@@ -220,12 +293,14 @@ impl Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        if let Some(root_uri) = params.root_uri {
-            let root = root_uri.to_file_path().ok();
-            self.project.write().await.set_workspace_root(root);
-        }
+        let client_encodings = params
+            .capabilities
+            .general
+            .as_ref()
+            .and_then(|general| general.position_encodings.as_deref());
+        let position_encoding = utils::position::PositionEncoding::negotiate(client_encodings);
         Ok(InitializeResult {
-            capabilities: server_capabilities(),
+            capabilities: server_capabilities(position_encoding.as_lsp_kind()),
             server_info: Some(ServerInfo {
                 name: "ori-lsp".to_string(),
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -256,15 +331,26 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         let version = params.text_document.version;
+        let mut invalid_positions = Vec::new();
         {
             let mut project = self.project.write().await;
             for change in params.content_changes {
                 if let Some(range) = change.range {
-                    project.apply_change(&uri, range, &change.text, version);
+                    if let Err(error) = project.apply_change(&uri, range, &change.text, version) {
+                        invalid_positions.push(error);
+                    }
                 } else {
                     project.upsert_document(uri.clone(), change.text, version);
                 }
             }
+        }
+        for error in invalid_positions {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("ignored invalid incremental edit position: {error:?}"),
+                )
+                .await;
         }
         self.schedule_debounced_validate(uri).await;
     }
@@ -318,7 +404,10 @@ impl LanguageServer for Backend {
                 return Ok(Some(handlers::hover::markdown_hover(hover_text)));
             }
         }
-        if let Some(local_symbol) = index.symbol_at(&source, position) {
+        if let Some(local_symbol) = index
+            .local_symbol_at(&source, position)
+            .or_else(|| index.symbol_at(&source, position))
+        {
             return Ok(Some(handlers::hover::markdown_hover(
                 local_symbol.hover.clone(),
             )));
@@ -329,7 +418,11 @@ impl LanguageServer for Backend {
         // Etapa 6.1: fall back to the cross-file project semantic index for
         // symbols resolved by `run_check` (e.g. imported structs/enums/funcs).
         if let Some(psi) = self.get_semantic_index(&uri).await {
-            if let Some(hover_text) = psi.cross_file_hover(&symbol) {
+            let semantic_hover = uri
+                .to_file_path()
+                .ok()
+                .and_then(|path| psi.cross_file_hover_at(&path, &source, position));
+            if let Some(hover_text) = semantic_hover {
                 return Ok(Some(handlers::hover::markdown_hover(hover_text)));
             }
         }
@@ -361,14 +454,15 @@ impl LanguageServer for Backend {
         let Some(symbol) = utils::uri::word_at_position(&source, position) else {
             return Ok(None);
         };
-        if let Some(range) = index.definition(&symbol) {
+        if let Some(range) = index.definition_at(&source, position) {
             return Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
                 uri, range,
             ))));
         }
         if let Some(target_uri) = self.resolve_import_target(&index, &symbol).await {
             if let Some((target_source, _)) = self.get_source_and_index(&target_uri).await {
-                let target_index = SemanticIndex::build(&target_source);
+                let target_path = target_uri.to_file_path().ok();
+                let target_index = SemanticIndex::build(&target_source, target_path.as_deref());
                 if let Some(range) = target_index.definition(&symbol) {
                     return Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
                         target_uri, range,
@@ -380,7 +474,11 @@ impl LanguageServer for Backend {
         // Resolves symbols defined in transitively imported files without
         // needing the import target to be open in the workspace.
         if let Some(psi) = self.get_semantic_index(&uri).await {
-            if let Some((path, range)) = psi.cross_file_definition(&symbol) {
+            let exact_definition = uri
+                .to_file_path()
+                .ok()
+                .and_then(|path| psi.cross_file_definition_at(&path, &source, position));
+            if let Some((path, range)) = exact_definition {
                 if let Ok(target_uri) = Url::from_file_path(&path) {
                     return Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
                         target_uri, range,
@@ -402,8 +500,9 @@ impl LanguageServer for Backend {
         let Some(symbol) = utils::uri::word_at_position(&source, position) else {
             return Ok(None);
         };
-        let mut locations: Vec<Location> = index
-            .find_references(&source, &symbol)
+        let local_references = index.find_local_references_at(&source, position);
+        let is_local = !local_references.is_empty();
+        let mut locations: Vec<Location> = local_references
             .into_iter()
             .map(|range| Location::new(uri.clone(), range))
             .collect();
@@ -411,11 +510,25 @@ impl LanguageServer for Backend {
         // Etapa 6.2: cross-file find-references via the driver's
         // `SourceCache`, scanning every loaded source (entry + transitive
         // imports) for word-boundary occurrences of the symbol.
-        if let Some(psi) = self.get_semantic_index(&uri).await {
-            for (path, range) in psi.find_references_cross_file(&symbol) {
-                if let Ok(ref_uri) = Url::from_file_path(&path) {
-                    locations.push(Location::new(ref_uri, range));
+        if !is_local {
+            if let Some(psi) = self.get_semantic_index(&uri).await {
+                let semantic_references = uri
+                    .to_file_path()
+                    .ok()
+                    .map(|path| psi.find_references_cross_file_at(&path, &source, position))
+                    .unwrap_or_default();
+                for (path, range) in semantic_references {
+                    if let Ok(ref_uri) = Url::from_file_path(&path) {
+                        locations.push(Location::new(ref_uri, range));
+                    }
                 }
+            } else {
+                locations.extend(
+                    index
+                        .find_references(&source, &symbol)
+                        .into_iter()
+                        .map(|range| Location::new(uri.clone(), range)),
+                );
             }
         }
 
@@ -733,7 +846,7 @@ impl LanguageServer for Backend {
             Vec::new();
 
         for sym in index.all_symbols() {
-            let (token_type, modifiers) = classify_semantic_token(&sym);
+            let (token_type, modifiers) = classify_semantic_token(sym);
             let line = sym.range.start.line;
             let start_char = sym.range.start.character;
             let length = sym.name.len() as u32;
@@ -749,11 +862,11 @@ impl LanguageServer for Backend {
                     || source
                         .as_bytes()
                         .get(abs_pos - 1)
-                        .map_or(true, |b| !b.is_ascii_alphanumeric() && *b != b'_');
+                        .is_none_or(|b| !b.is_ascii_alphanumeric() && *b != b'_');
                 let after = source
                     .as_bytes()
                     .get(abs_pos + kw.len())
-                    .map_or(true, |b| !b.is_ascii_alphanumeric() && *b != b'_');
+                    .is_none_or(|b| !b.is_ascii_alphanumeric() && *b != b'_');
                 if before && after {
                     let pos = utils::position::position_for_byte_offset(&source, abs_pos);
                     raw_tokens.push((
@@ -798,7 +911,8 @@ impl LanguageServer for Backend {
         let open_docs: Vec<(Url, String)> = project.all_open_documents();
 
         for (uri, source) in &open_docs {
-            let index = SemanticIndex::build(source);
+            let path = uri.to_file_path().ok();
+            let index = SemanticIndex::build(source, path.as_deref());
             for sym in index.all_symbols() {
                 if sym.name.to_lowercase().contains(&query) || query.is_empty() {
                     results.push(SymbolInformation {
@@ -840,18 +954,12 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        let refs = index.find_references(&source, &old_name);
+        let refs = index.find_local_references_at(&source, position);
+        let is_local = !refs.is_empty();
         let mut edits = Vec::new();
         for range in &refs {
             edits.push(TextEdit {
                 range: *range,
-                new_text: new_name.clone(),
-            });
-        }
-
-        if let Some(range) = index.definition(&old_name) {
-            edits.push(TextEdit {
-                range,
                 new_text: new_name.clone(),
             });
         }
@@ -864,24 +972,16 @@ impl LanguageServer for Backend {
         // Etapa 6.2: cross-file rename. Include occurrences in transitively
         // imported files via the project semantic index. The active file is
         // already covered above; imported files get their own edit buckets.
-        if let Some(psi) = self.get_semantic_index(&uri).await {
-            for (path, range) in psi.find_references_cross_file(&old_name) {
-                if let Ok(ref_uri) = Url::from_file_path(&path) {
-                    if ref_uri == uri {
-                        continue;
-                    }
-                    changes.entry(ref_uri).or_default().push(TextEdit {
-                        range,
-                        new_text: new_name.clone(),
-                    });
-                }
-            }
-            // Also jump to the cross-file definition site when it lives in an
-            // imported file, so the binding itself is renamed.
-            if let Some((path, range)) = psi.cross_file_definition(&old_name) {
-                if let Ok(def_uri) = Url::from_file_path(&path) {
-                    if def_uri != uri {
-                        changes.entry(def_uri).or_default().push(TextEdit {
+        if !is_local {
+            if let Some(psi) = self.get_semantic_index(&uri).await {
+                let semantic_references = uri
+                    .to_file_path()
+                    .ok()
+                    .map(|path| psi.find_references_cross_file_at(&path, &source, position))
+                    .unwrap_or_default();
+                for (path, range) in semantic_references {
+                    if let Ok(ref_uri) = Url::from_file_path(&path) {
+                        changes.entry(ref_uri).or_default().push(TextEdit {
                             range,
                             new_text: new_name.clone(),
                         });
@@ -918,32 +1018,26 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        let range = index.definition(&word).unwrap_or_else(|| {
-            let line = position.line as usize;
-            if let Some(line_str) = source.lines().nth(line) {
-                if let Some(col) = line_str.find(&word) {
-                    Range {
-                        start: Position {
-                            line: position.line,
-                            character: col as u32,
-                        },
-                        end: Position {
-                            line: position.line,
-                            character: (col + word.len()) as u32,
-                        },
-                    }
-                } else {
-                    Range {
-                        start: position,
-                        end: position,
-                    }
-                }
-            } else {
-                Range {
-                    start: position,
-                    end: position,
-                }
-            }
+        let range = index.definition_at(&source, position).unwrap_or_else(|| {
+            let Some(cursor_offset) =
+                utils::position::byte_offset_for_position(&source, position).ok()
+            else {
+                return Range::new(position, position);
+            };
+            let line_start = source[..cursor_offset]
+                .rfind('\n')
+                .map_or(0, |offset| offset + 1);
+            let line_end = source[cursor_offset..]
+                .find('\n')
+                .map_or(source.len(), |offset| cursor_offset + offset);
+            let Some(relative_start) = source[line_start..line_end].find(&word) else {
+                return Range::new(position, position);
+            };
+            let start = line_start + relative_start;
+            Range::new(
+                utils::position::position_for_byte_offset(&source, start),
+                utils::position::position_for_byte_offset(&source, start + word.len()),
+            )
         });
 
         Ok(Some(PrepareRenameResponse::Range(range)))
@@ -1126,6 +1220,7 @@ impl LanguageServer for Backend {
                         &std::path::PathBuf::from(file_path),
                         ori_driver::pipeline::TestOptions {
                             filter: test_filter.map(str::to_string),
+                            ..Default::default()
                         },
                     )
                 }));
@@ -1189,9 +1284,18 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
-    async fn resolve_import_target(&self, index: &SemanticIndex, _name: &str) -> Option<Url> {
+    async fn resolve_import_target(&self, index: &SemanticIndex, name: &str) -> Option<Url> {
         let imports = index.imports();
         for import in imports {
+            if import.alias != name
+                && import
+                    .namespace
+                    .rsplit('.')
+                    .next()
+                    .is_none_or(|item| item != name)
+            {
+                continue;
+            }
             if let Some(file_path) = &import.file_path {
                 if file_path.exists() {
                     if let Ok(url) = Url::from_file_path(file_path) {
@@ -1234,7 +1338,9 @@ fn resolve_stdlib_definition(source: &str, qualified: &str) -> Option<(std::path
 }
 
 fn import_prefix_at_position(source: &str, position: Position) -> String {
-    let offset = utils::position::byte_offset_for_position(source, position);
+    let Ok(offset) = utils::position::byte_offset_for_position(source, position) else {
+        return String::new();
+    };
     let before = &source[..offset.min(source.len())];
     let Some(import_pos) = before.rfind("import ") else {
         return String::new();
@@ -1510,11 +1616,9 @@ fn parse_params_from_signature(sig: &str) -> Vec<String> {
 
 /// Build a Range covering the entire document.
 fn range_for_whole_document(source: &str) -> Range {
-    let lines = source.lines().count().saturating_sub(1);
-    let last_len = source.lines().last().map(|l| l.len()).unwrap_or(0);
     Range {
         start: Position::new(0, 0),
-        end: Position::new(lines as u32, last_len as u32),
+        end: utils::position::position_for_byte_offset(source, source.len()),
     }
 }
 
@@ -1526,8 +1630,11 @@ fn position_is_before(left: Position, right: Position) -> bool {
     left.line < right.line || (left.line == right.line && left.character < right.character)
 }
 
-fn server_capabilities() -> ServerCapabilities {
+fn server_capabilities(
+    position_encoding: tower_lsp::lsp_types::PositionEncodingKind,
+) -> ServerCapabilities {
     ServerCapabilities {
+        position_encoding: Some(position_encoding),
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
                 open_close: Some(true),

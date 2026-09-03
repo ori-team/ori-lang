@@ -55,10 +55,18 @@ impl<'src> Parser<'src> {
         if self.at_contextual("array") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
             return self.parse_array_type(span);
         }
+        if self.at_contextual("buffer") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
+            self.advance();
+            let (inner, end) = self.parse_single_type_arg()?;
+            return Some(Type::Buffer(Box::new(inner), span.cover(end)));
+        }
         if self.at_contextual("slice") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
             self.advance();
             let (inner, end) = self.parse_single_type_arg()?;
             return Some(Type::Slice(Box::new(inner), span.cover(end)));
+        }
+        if self.at_contextual("simd") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
+            return self.parse_simd_type(span);
         }
 
         match self.peek_kind()? {
@@ -116,6 +124,13 @@ impl<'src> Parser<'src> {
                     return Some(Type::Result(Box::new(ok), Box::new(err), span.cover(end)));
                 }
                 let (args, end) = self.parse_type_arg_list(2)?;
+                if args.len() != 2 {
+                    // `parse_type_arg_list` emits the arity diagnostic, but
+                    // callers must still recover without indexing a short
+                    // vector. Returning no type lets the enclosing parser
+                    // synchronize at the next statement boundary.
+                    return None;
+                }
                 Some(Type::Result(
                     Box::new(args[0].clone()),
                     Box::new(args[1].clone()),
@@ -142,6 +157,9 @@ impl<'src> Parser<'src> {
                     return Some(Type::Map(Box::new(key), Box::new(val), span.cover(end)));
                 }
                 let (args, end) = self.parse_type_arg_list(2)?;
+                if args.len() != 2 {
+                    return None;
+                }
                 Some(Type::Map(
                     Box::new(args[0].clone()),
                     Box::new(args[1].clone()),
@@ -388,6 +406,49 @@ impl<'src> Parser<'src> {
         Some(Type::Array {
             elem: Box::new(elem),
             size: value,
+            span: start.cover(end),
+        })
+    }
+
+    fn parse_simd_type(&mut self, start: ori_diagnostics::Span) -> Option<Type> {
+        self.advance(); // contextual `simd`
+        self.expect(&TokenKind::LBracket)?;
+        let elem = self.parse_type()?;
+        self.expect(&TokenKind::Comma)?;
+
+        let lanes_span = self.current_span();
+        let lanes = if self.at(&TokenKind::IntLit) {
+            let tok = self.advance().unwrap().span;
+            let raw = self.slice(tok);
+            raw.parse::<u16>().ok()?
+        } else if self.peek_nth_kind(1) == Some(&TokenKind::Colon) {
+            let key = self.parse_name()?;
+            self.expect(&TokenKind::Colon)?;
+            if key.text.as_str() != "lanes" {
+                self.error(
+                    "parse.expected_simd_lanes",
+                    format!("`simd` names its lane count `lanes`, not `{}`", key.text),
+                    key.span,
+                );
+                return None;
+            }
+            let tok = self.expect(&TokenKind::IntLit)?;
+            let raw = self.slice(tok);
+            raw.parse::<u16>().ok()?
+        } else {
+            self.error(
+                "parse.expected_simd_lanes",
+                "expected lane count in `simd[T, N]` or `simd[T, lanes: N]`",
+                lanes_span,
+            );
+            return None;
+        };
+
+        let end = self.current_span();
+        self.expect(&TokenKind::RBracket)?;
+        Some(Type::Simd {
+            elem: Box::new(elem),
+            lanes,
             span: start.cover(end),
         })
     }

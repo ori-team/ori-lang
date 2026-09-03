@@ -189,6 +189,19 @@ json_array_from_words() {
     printf ']'
 }
 
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{ print $1 }'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{ print $1 }'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$1" | awk '{ print $NF }'
+    else
+        echo "staging requires sha256sum, shasum, or openssl to bind runtime metadata to artifacts" >&2
+        return 1
+    fi
+}
+
 if [ -z "$target" ]; then
     target=$(host_triple)
 fi
@@ -224,6 +237,7 @@ source="$target_root/$target/$profile/$artifact"
 if [ ! -f "$source" ]; then
     source="$target_root/$profile/$artifact"
 fi
+
 # Host-triple builds without --target land under profile/ only.
 if [ ! -f "$source" ]; then
     source="$target_root/$profile/$artifact"
@@ -231,6 +245,13 @@ fi
 if [ ! -f "$source" ]; then
     echo "Runtime artifact $artifact was not found after build under $target_root." >&2
     exit 1
+fi
+if [ "$skip_build" -eq 1 ]; then
+    newer_source=$(find "$repo_root/compiler/crates/ori-runtime" -type f -newer "$source" -print -quit)
+    if [ -n "$newer_source" ]; then
+        echo "--skip-build refused: runtime source $newer_source is newer than $source; rebuild before staging." >&2
+        exit 1
+    fi
 fi
 
 cdylib_source="$target_root/$target/$profile/$cdylib_artifact"
@@ -240,6 +261,13 @@ fi
 cdylib_found=0
 if [ -f "$cdylib_source" ]; then
     cdylib_found=1
+fi
+if [ "$skip_build" -eq 1 ] && [ "$cdylib_found" -eq 1 ]; then
+    newer_cdylib_source=$(find "$repo_root/compiler/crates/ori-runtime" -type f -newer "$cdylib_source" -print -quit)
+    if [ -n "$newer_cdylib_source" ]; then
+        echo "--skip-build refused: runtime source $newer_cdylib_source is newer than $cdylib_source; rebuild before staging." >&2
+        exit 1
+    fi
 fi
 
 if [ -z "$output_root" ]; then
@@ -252,12 +280,15 @@ mkdir -p "$target_dir"
 
 dest="$target_dir/$artifact"
 cp "$source" "$dest"
+runtime_sha256=$(sha256_file "$dest")
 
 if [ "$cdylib_found" -eq 1 ]; then
     cdylib_dest="$target_dir/$cdylib_artifact"
     cp "$cdylib_source" "$cdylib_dest"
+    runtime_cdylib_sha256=$(sha256_file "$cdylib_dest")
     printf 'staged runtime cdylib: %s\n' "$cdylib_dest"
 else
+    runtime_cdylib_sha256=""
     echo "warning: runtime cdylib $cdylib_artifact was not found after build; JIT mode (ORI_USE_JIT=1) will not be available." >&2
 fi
 
@@ -274,6 +305,8 @@ cat > "$metadata_path" <<JSON
   "target": "$target",
   "runtime": "$artifact",
   "runtime_cdylib": "$cdylib_value",
+  "runtime_sha256": "$runtime_sha256",
+  "runtime_cdylib_sha256": "$runtime_cdylib_sha256",
   "ori_version": "$ori_version",
   "abi_version": "$abi_version",
   "profile": "$profile",

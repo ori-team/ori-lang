@@ -281,15 +281,20 @@ pub fn module_artifact_path(
     digest.update(module_fingerprint.as_bytes());
     digest.update(interface_fingerprint.as_bytes());
     digest.update([u8::from(options.shared)]);
+    update_cfg_manifest_fingerprint(&mut digest, &root);
     for variable in [
         "ORI_OPT",
         "ORI_NATIVE_LINKER",
         "ORI_USE_SYSTEM_LINKER",
         "ORI_USE_BUNDLED_RUST_LLD",
+        "ORI_TARGET_TRIPLE",
+        "ORI_EXECUTION_PROFILE",
+        "ORI_FEATURES",
+        "ORI_NO_DEFAULT_FEATURES",
     ] {
         digest.update(variable.as_bytes());
         digest.update([0]);
-        digest.update(std::env::var(variable).unwrap_or_default().as_bytes());
+        digest.update(compilation_environment_value(variable).as_bytes());
         digest.update([0xff]);
     }
     digest.update(std::env::consts::ARCH.as_bytes());
@@ -298,6 +303,23 @@ pub fn module_artifact_path(
     root.join(".ori")
         .join("modules")
         .join(format!("{:x}.{extension}", digest.finalize()))
+}
+
+/// Include the root feature declarations and defaults in every module object
+/// key. The project-level cache already hashes manifests, but a project miss
+/// can still reuse module objects; hashing both supported root manifests keeps
+/// that reuse correct when only `[features]` changes.
+fn update_cfg_manifest_fingerprint(digest: &mut Sha256, root: &Path) {
+    for name in ["ori.proj", "ori.pkg.toml"] {
+        let path = root.join(name);
+        digest.update(name.as_bytes());
+        digest.update([0]);
+        if let Ok(bytes) = fs::read(path) {
+            digest.update((bytes.len() as u64).to_le_bytes());
+            digest.update(bytes);
+        }
+        digest.update([0xff]);
+    }
 }
 
 /// Fingerprint declarations that affect another module's generated code.
@@ -491,10 +513,14 @@ fn fingerprint(source_path: &Path, options: BuildOptions) -> Result<String, Stri
         "ORI_USE_SYSTEM_LINKER",
         "ORI_USE_BUNDLED_RUST_LLD",
         "ORI_RUNTIME_LIB",
+        "ORI_TARGET_TRIPLE",
+        "ORI_EXECUTION_PROFILE",
+        "ORI_FEATURES",
+        "ORI_NO_DEFAULT_FEATURES",
     ] {
         digest.update(variable.as_bytes());
         digest.update([0]);
-        digest.update(std::env::var(variable).unwrap_or_default().as_bytes());
+        digest.update(compilation_environment_value(variable).as_bytes());
         digest.update([0xff]);
     }
     digest.update(std::env::consts::ARCH.as_bytes());
@@ -512,6 +538,34 @@ fn fingerprint(source_path: &Path, options: BuildOptions) -> Result<String, Stri
         digest.update(bytes);
     }
     Ok(format!("{:x}", digest.finalize()))
+}
+
+fn compilation_environment_value(variable: &str) -> String {
+    let value = std::env::var(variable).unwrap_or_default();
+    normalize_compilation_environment_value(variable, &value)
+}
+
+fn normalize_compilation_environment_value(variable: &str, value: &str) -> String {
+    match variable {
+        "ORI_NO_DEFAULT_FEATURES" => {
+            return if matches!(value, "1" | "true" | "TRUE" | "yes" | "YES") {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            };
+        }
+        "ORI_TARGET_TRIPLE" | "ORI_EXECUTION_PROFILE" => return value.trim().to_string(),
+        "ORI_FEATURES" => {}
+        _ => return value.to_string(),
+    }
+    let mut features: Vec<_> = value
+        .split(',')
+        .map(str::trim)
+        .filter(|feature| !feature.is_empty())
+        .collect();
+    features.sort_unstable();
+    features.dedup();
+    features.join(",")
 }
 
 /// Include materialised path/registry/Git dependencies in the graph
@@ -696,5 +750,28 @@ mod tests {
             .expect("read changed cache")
             .is_none());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cfg_environment_fingerprint_is_semantically_normalized() {
+        assert_eq!(
+            normalize_compilation_environment_value("ORI_FEATURES", "zeta, alpha,zeta"),
+            "alpha,zeta"
+        );
+        assert_eq!(
+            normalize_compilation_environment_value("ORI_NO_DEFAULT_FEATURES", "yes"),
+            "1"
+        );
+        assert_eq!(
+            normalize_compilation_environment_value("ORI_NO_DEFAULT_FEATURES", "0"),
+            "0"
+        );
+        assert_eq!(
+            normalize_compilation_environment_value(
+                "ORI_TARGET_TRIPLE",
+                " x86_64-unknown-linux-gnu ",
+            ),
+            "x86_64-unknown-linux-gnu"
+        );
     }
 }

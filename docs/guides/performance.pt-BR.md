@@ -7,6 +7,10 @@
 > **Harness:** [`tools/bench/polyglot/`](../../tools/bench/polyglot/)  
 > **Relatório da máquina:** [`tools/bench/polyglot/results/LATEST.md`](../../tools/bench/polyglot/results/LATEST.md)
 
+Esta página preserva a **medição histórica de 14/07/2026**. Ela não representa
+automaticamente o workspace atual `0.3.8-dev`; rode o harness novamente antes
+de usar os números em uma decisão atual.
+
 ## Snapshot (2026-07-14, fix GC em loops + mid-end)
 
 | Item | Valor |
@@ -14,7 +18,7 @@
 | Host | Linux x86_64 · Intel Core i7-3632QM @ 2.20 GHz |
 | Amostras | **5** (mediana de wall time) |
 | Timer | `time.perf_counter` em torno do processo (µs) |
-| Ori | **0.3.4** AOT (`ori compile`, mid-end **Default**) |
+| Ori | **0.3.4** AOT (`ori compile`, mid-end **Default**, histórico) |
 | Python | CPython **3.12.3** |
 | Rust | **1.95.0** release |
 | C | **gcc 13.3** `-O2` |
@@ -103,6 +107,19 @@ batem em todas as linguagens em todos os kernels.
 8. Host é notebook; **razões importam mais que ms absolutos**.
 9. **Não** mede I/O, async, FFI ou apps reais.
 
+## Hot paths sem alocação (`@noalloc` + `mem.region` + `simd`)
+
+A onda de alta performance (2026-09-03) adiciona primitivas zero-allocation de propósito
+geral para loops de 60/120 FPS:
+
+- `@noalloc` em funções verifica estaticamente que não há alocações heap (proíbe `list`/`map`/`set`,
+  interpolação, closures, `await`, `using` e chamadas a funções que alocam).
+- `using r: mem.Region = mem.region()` cria arenas com reset instantâneo em O(1) (`mem.reset`),
+  sem custo de contagem de referência por objeto.
+- `simd[float32, 4]` baixa diretamente para vetores de CPU (x86_64 SSE/AVX e ARM NEON) com
+  operadores paralelos (`+`, `-`, `*`, `/`).
+- `@align(N)` força alinhamento de structs para GPU uniform buffers (`alignas(N)`).
+
 ## Como reproduzir
 
 ```bash
@@ -119,5 +136,5 @@ Fontes em `tools/bench/polyglot/{ori,python,rust_*,c,go,javascript,typescript,ru
 | [tools/bench/polyglot/README.md](../../tools/bench/polyglot/README.md) | Layout do harness |
 | [results/LATEST.md](../../tools/bench/polyglot/results/LATEST.md) | Relatório completo |
 | [language-comparison.md](language-comparison.md) | Suite PowerShell antiga (histórico) |
-| [../planning/perf-baseline-2026-07-13.md](../archive/audits/perf-baseline-2026-07-13.md) | Baseline LANG-PERF do compilador |
-| [../planning/historico/perf-runtime-midend-plan.md](../archive/plans/perf-runtime-midend-plan.md) | Plano mid-end LANG-PERF-2 |
+| [../planning/perf-baseline-2026-07-13.md](../planning/perf-baseline-2026-07-13.md) | Baseline LANG-PERF do compilador |
+| [../planning/historico/perf-runtime-midend-plan.md](../planning/historico/perf-runtime-midend-plan.md) | Plano mid-end LANG-PERF-2 |

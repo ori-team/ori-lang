@@ -1,4 +1,4 @@
-use crate::def::{CompileTimeValue, ConstEvalFailure, ConstEvalFailureKind, DefMap};
+use crate::def::{CompileTimeValue, ConstEvalFailure, ConstEvalFailureKind, DefId, DefMap};
 use crate::ty::{OpaqueTy, Ty};
 use ori_ast::common::QualifiedName;
 use ori_ast::ty::{ConstExpr, Type as AstType};
@@ -51,6 +51,7 @@ pub fn lower_type_with_aliases(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn lower_type_with_local_aliases(
     ast_ty: &AstType,
     module_path: &str,
@@ -61,9 +62,36 @@ pub fn lower_type_with_local_aliases(
     aliases: &HashMap<SmolStr, SmolStr>,
     local_aliases: &HashMap<SmolStr, AstType>,
 ) -> Ty {
+    lower_type_with_local_aliases_and_structs(
+        ast_ty,
+        module_path,
+        type_params,
+        def_map,
+        file_id,
+        sink,
+        aliases,
+        local_aliases,
+        &[],
+    )
+}
+
+/// Full lowering entry: `struct_sigs` enables the struct-aware `Inline(T)`
+/// classification used by the checker for `array[InlineStruct, size: N]`.
+#[allow(clippy::too_many_arguments)]
+pub fn lower_type_with_local_aliases_and_structs(
+    ast_ty: &AstType,
+    module_path: &str,
+    type_params: &[SmolStr],
+    def_map: &DefMap,
+    file_id: FileId,
+    sink: &mut DiagnosticSink,
+    aliases: &HashMap<SmolStr, SmolStr>,
+    local_aliases: &HashMap<SmolStr, AstType>,
+    struct_sigs: &[crate::resolve::StructSig],
+) -> Ty {
     macro_rules! rec {
         ($t:expr) => {
-            lower_type_with_local_aliases(
+            lower_type_with_local_aliases_and_structs(
                 $t,
                 module_path,
                 type_params,
@@ -72,10 +100,46 @@ pub fn lower_type_with_local_aliases(
                 sink,
                 aliases,
                 local_aliases,
+                struct_sigs,
             )
         };
     }
     match ast_ty {
+        AstType::Buffer(inner, span) => {
+            let elem_ty = rec!(inner);
+            // Buffer[T] requires Inline(T) == true (no ARC, contiguous, FFI).
+            if !is_inline_ty_with_structs(&elem_ty, struct_sigs) && !elem_ty.is_error() {
+                let elem_display = elem_ty.display_in(def_map);
+                let (why, action) =
+                    match non_inline_reason_with_structs(&elem_ty, struct_sigs) {
+                        Some(field) => (
+                            format!(
+                                "inline storage has no reference counting, and field `{field}` of `{elem_display}` is reference counted"
+                            ),
+                            format!(
+                                "make every field of `{elem_display}` a scalar, an inline array, or an inline struct — or use `list[{elem_display}]` for managed values"
+                            ),
+                        ),
+                        None => (
+                            "inline storage has no reference counting, and this type is reference counted".to_string(),
+                            "use a scalar element (`int`, `float`, `bool`, `u8`, …), or `list[T]` for managed values".to_string(),
+                        ),
+                    };
+                sink.emit(
+                    Diagnostic::error(
+                        "type.array_element_not_inline",
+                        format!(
+                            "`buffer` elements are stored inline, so `{elem_display}` cannot be an element type"
+                        ),
+                    )
+                    .with_label(Label::primary(file_id, *span, "element type"))
+                    .with_why(&why)
+                    .with_action(&action),
+                );
+                return Ty::Error;
+            }
+            Ty::Buffer(Box::new(elem_ty))
+        }
         AstType::Slice(inner, _) => Ty::Slice(Box::new(rec!(inner))),
         // Concrete CT-0 expressions become ConstInt. A direct `size: cap`
         // remains a parameter for substitution at the use site.
@@ -125,22 +189,74 @@ pub fn lower_type_with_local_aliases(
             // element would be stored without a retain and released by nobody.
             // Reject that instead of producing a program that leaks or
             // double-frees depending on the path.
-            if elem_ty.is_runtime_managed() && !elem_ty.is_error() {
+            //
+            // Since 0.3.8 (GFX-INLINE-1), a struct whose fields are all
+            // inline (`Inline(T)`) is itself inline and therefore allowed:
+            // `array[Vec3, size: 8]` works. Structs holding a managed field
+            // stay rejected, with a diagnostic naming the offending field.
+            //
+            // During signature building (`struct_sigs` empty) the inline
+            // classification is not yet known, so validation is deferred to
+            // the checker, which re-lowers with the full signature table.
+            if !struct_sigs.is_empty()
+                && !is_inline_ty_with_structs(&elem_ty, struct_sigs)
+                && !elem_ty.is_error()
+            {
+                let elem_display = elem_ty.display_in(def_map);
+                let (why, action) =
+                    match non_inline_reason_with_structs(&elem_ty, struct_sigs) {
+                        Some(field) => (
+                            format!(
+                                "inline storage has no reference counting, and field `{field}` of `{elem_display}` is reference counted"
+                            ),
+                            format!(
+                                "make every field of `{elem_display}` a scalar, an inline array, or an inline struct — or use `list[{elem_display}]` for managed values"
+                            ),
+                        ),
+                        None => (
+                            "inline storage has no reference counting, and this type is reference counted".to_string(),
+                            "use a scalar element (`int`, `float`, `bool`, `u8`, …), or `list[T]` for managed values".to_string(),
+                        ),
+                    };
                 sink.emit(
                     Diagnostic::error(
                         "type.array_element_not_inline",
                         format!(
-                            "`array` elements are stored inline, so `{}` cannot be an element type",
-                            elem_ty.display()
+                            "`array` elements are stored inline, so `{elem_display}` cannot be an element type"
                         ),
                     )
                     .with_label(Label::primary(file_id, *span, "element type"))
-                    .with_why("inline storage has no reference counting, and this type is reference counted")
-                    .with_action("use a scalar element (`int`, `float`, `bool`, `u8`, …), or `list[T]` for managed values"),
+                    .with_why(&why)
+                    .with_action(&action),
                 );
                 return Ty::Error;
             }
             Ty::Array(Box::new(elem_ty), Box::new(size_ty))
+        }
+        AstType::Simd { elem, lanes, span } => {
+            let elem_ty = rec!(elem);
+            let valid = match &elem_ty {
+                Ty::Float32 | Ty::Int32 => matches!(*lanes, 2 | 4 | 8 | 16),
+                Ty::Float64 | Ty::Int64 => matches!(*lanes, 2 | 4),
+                Ty::Int16 | Ty::U16 => matches!(*lanes, 4 | 8 | 16),
+                Ty::Int8 | Ty::U8 => matches!(*lanes, 8 | 16),
+                _ => false,
+            };
+            if !valid && !elem_ty.is_error() {
+                sink.emit(
+                    Diagnostic::error(
+                        "type.invalid_simd_type",
+                        format!(
+                            "invalid SIMD type `simd[{}, {lanes}]`: supported combinations are float32/int32 x 2,4,8,16; float64/int64 x 2,4; int16/u16 x 4,8,16; int8/u8 x 8,16",
+                            elem_ty.display_in(def_map),
+                        ),
+                    )
+                    .with_label(Label::primary(file_id, *span, "invalid SIMD type specification"))
+                    .with_action("use a supported scalar element type and lane count for simd"),
+                );
+                return Ty::Error;
+            }
+            Ty::Simd(Box::new(elem_ty), *lanes)
         }
         // Check local type aliases (e.g. associated types in implement blocks)
         AstType::Named(name)
@@ -194,7 +310,10 @@ pub fn lower_type_with_local_aliases(
                 sink,
                 aliases,
             );
-            Ty::Any(id.unwrap_or(crate::def::DefId(u32::MAX)))
+            // Do not manufacture a trait identity after name resolution
+            // failed. `Ty::Error` keeps recovery fail-closed and prevents an
+            // invalid `any` type from reaching HIR or backend layout code.
+            id.map(Ty::Any).unwrap_or(Ty::Error)
         }
 
         // ── Callable type ─────────────────────────────────────────────────────
@@ -429,6 +548,7 @@ fn emit_const_eval_failure(
     sink.emit(diagnostic.with_action(action));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_named(
     name: &QualifiedName,
     args: &[Ty],
@@ -449,7 +569,10 @@ fn lower_named(
                     name: SmolStr::new(n),
                 };
             } else {
-                return Ty::Named(crate::def::DefId(0x4000_0000 | (idx as u32)), args.to_vec());
+                return Ty::Named(
+                    crate::def::DefId::synthetic_type_param(idx as u32),
+                    args.to_vec(),
+                );
             }
         }
     }
@@ -526,7 +649,7 @@ fn lower_builtin_concurrency_type(path: &str, args: &[Ty]) -> Option<Ty> {
             kind: OpaqueTy::File,
             args: vec![],
         }),
-        "ori.task.CancelToken" => Some(Ty::Opaque {
+        "ori.task.CancelToken" | "task.CancelToken" | "CancelToken" => Some(Ty::Opaque {
             kind: OpaqueTy::CancelToken,
             args: vec![],
         }),
@@ -574,13 +697,15 @@ fn resolve_name(
     if let Some(id) = def_map.lookup(&local) {
         return Some(id);
     }
-    // Return a dummy DefId for numeric and boolean constants so they resolve without error
+    // Keep numeric and boolean type-name recovery deterministic without
+    // colliding with real definitions. The checker will reject the resulting
+    // synthetic type if it is used beyond parser recovery.
     if name.is_single() {
         let text = name.last().as_str();
         if text
             .chars()
             .next()
-            .map_or(false, |c| c.is_ascii_digit() || c == '-')
+            .is_some_and(|c| c.is_ascii_digit() || c == '-')
             || text == "true"
             || text == "false"
         {
@@ -589,8 +714,7 @@ fn resolve_name(
             let mut hasher = DefaultHasher::new();
             text.hash(&mut hasher);
             let hash = hasher.finish() as u32;
-            let dummy_id = 0x2000_0000 | (hash & 0x1FFF_FFFF);
-            return Some(crate::def::DefId(dummy_id));
+            return Some(crate::def::DefId::synthetic_literal(hash));
         }
     }
     sink.emit(
@@ -622,4 +746,184 @@ fn expand_alias(name: &str, aliases: &HashMap<SmolStr, SmolStr>) -> String {
         }
     }
     name.to_string()
+}
+
+/// GFX-INLINE-1: `Inline(T)` classification for `array` element storage.
+///
+/// A type is inline when it can live inside an `array[T, size: N]` block
+/// without ARC ownership:
+///
+/// ```text
+/// Inline(bool)      = true
+/// Inline(integer)   = true
+/// Inline(float)     = true
+/// Inline(array[T])  = Inline(T)
+/// Inline(struct S)  = all fields of S are Inline
+/// Inline(rest)      = false
+/// ```
+///
+/// User structs (`Ty::Named`) are resolved through the resolver's `StructSig`
+/// table. The free-standing `lower_type` path (used while building signatures
+/// in the resolver, before struct signatures are complete) has no table, so it
+/// treats every `Named` as non-inline — the checker performs the precise
+/// validation later with the full table.
+pub fn is_inline_ty(ty: &Ty) -> bool {
+    match ty {
+        Ty::Bool
+        | Ty::Int
+        | Ty::Int8
+        | Ty::Int16
+        | Ty::Int32
+        | Ty::Int64
+        | Ty::U8
+        | Ty::U16
+        | Ty::U32
+        | Ty::U64
+        | Ty::Float
+        | Ty::Float32
+        | Ty::Float64
+        | Ty::Void
+        | Ty::Never => true,
+        // A handle is a borrowed unmanaged pointer with no ARC ownership; it
+        // was already allowed as an array element before GFX-INLINE-1.
+        Ty::Handle(_) => true,
+        // A generic parameter or an unsolved inference variable is resolved
+        // later; the concrete element is validated after instantiation.
+        Ty::Param { .. } | Ty::Infer(_) => true,
+        Ty::ConstInt(_, _) => true,
+        // `NodeId` is a plain 64-bit handle, not a managed allocation.
+        Ty::Opaque {
+            kind: OpaqueTy::NodeId,
+            ..
+        } => true,
+        Ty::Array(elem, _) => is_inline_ty(elem),
+        Ty::Simd(elem, _) => is_inline_ty(elem),
+        _ => false,
+    }
+}
+
+/// Like [`is_inline_ty`], but honors the resolver's `StructSig` table so a
+/// struct whose fields are all inline qualifies (`array[Vec3, size: 8]`).
+pub fn is_inline_ty_with_structs(ty: &Ty, struct_sigs: &[crate::resolve::StructSig]) -> bool {
+    is_inline_ty_with_structs_visiting(ty, struct_sigs, &mut Vec::new())
+}
+
+/// Cycle-safe core of [`is_inline_ty_with_structs`]. A recursive inline struct
+/// (A contains B contains A) has no finite size, so it is treated as
+/// non-inline and rejected by the array element check.
+pub fn is_inline_ty_with_structs_visiting(
+    ty: &Ty,
+    struct_sigs: &[crate::resolve::StructSig],
+    visiting: &mut Vec<DefId>,
+) -> bool {
+    match ty {
+        Ty::Named(def_id, args) => {
+            if visiting.contains(def_id) {
+                return false;
+            }
+            let Some(sig) = struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
+                return false;
+            };
+            visiting.push(*def_id);
+            let result = !sig.fields.is_empty()
+                && sig.fields.iter().all(|(_, field_ty)| {
+                    let substituted = crate::ty::substitute_ty_params(field_ty, args);
+                    is_inline_ty_with_structs_visiting(&substituted, struct_sigs, visiting)
+                });
+            visiting.pop();
+            result
+        }
+        other => is_inline_ty(other),
+    }
+}
+
+/// When `ty` is a non-inline type, name the first offending field (the one
+/// that makes `Inline(ty)` false) for an actionable diagnostic. `None` means
+/// the offender is not a struct field (a builtin managed type, a pointer, …).
+pub fn non_inline_reason_with_structs(
+    ty: &Ty,
+    struct_sigs: &[crate::resolve::StructSig],
+) -> Option<SmolStr> {
+    non_inline_reason_with_structs_visiting(ty, struct_sigs, &mut Vec::new())
+}
+
+/// Cycle-safe core of [`non_inline_reason_with_structs`].
+pub fn non_inline_reason_with_structs_visiting(
+    ty: &Ty,
+    struct_sigs: &[crate::resolve::StructSig],
+    visiting: &mut Vec<DefId>,
+) -> Option<SmolStr> {
+    match ty {
+        Ty::Array(elem, _) => non_inline_reason_with_structs_visiting(elem, struct_sigs, visiting),
+        Ty::Named(def_id, args) => {
+            if visiting.contains(def_id) {
+                return None;
+            }
+            let sig = struct_sigs.iter().find(|sig| sig.def_id == *def_id)?;
+            visiting.push(*def_id);
+            for (field_name, field_ty) in &sig.fields {
+                let substituted = crate::ty::substitute_ty_params(field_ty, args);
+                if !is_inline_ty_with_structs_visiting(&substituted, struct_sigs, visiting) {
+                    if let Some(inner) =
+                        non_inline_reason_with_structs_visiting(&substituted, struct_sigs, visiting)
+                    {
+                        visiting.pop();
+                        return Some(inner);
+                    }
+                    visiting.pop();
+                    return Some(field_name.clone());
+                }
+            }
+            visiting.pop();
+            None
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod inline_ty_tests {
+    use super::*;
+    use crate::def::DefId;
+
+    #[test]
+    fn inline_struct_detected() {
+        let vec3 = crate::resolve::StructSig {
+            def_id: DefId(1),
+            fields: vec![
+                (SmolStr::new("x"), Ty::Float32),
+                (SmolStr::new("y"), Ty::Float32),
+                (SmolStr::new("z"), Ty::Float32),
+            ],
+        };
+        let sigs = vec![vec3];
+        assert!(is_inline_ty_with_structs(
+            &Ty::Named(DefId(1), vec![]),
+            &sigs
+        ));
+        assert_eq!(
+            non_inline_reason_with_structs(&Ty::Named(DefId(1), vec![]), &sigs),
+            None
+        );
+    }
+
+    #[test]
+    fn managed_field_rejected_with_reason() {
+        let labeled = crate::resolve::StructSig {
+            def_id: DefId(2),
+            fields: vec![
+                (SmolStr::new("name"), Ty::String),
+                (SmolStr::new("v"), Ty::Int),
+            ],
+        };
+        let sigs = vec![labeled];
+        assert!(!is_inline_ty_with_structs(
+            &Ty::Named(DefId(2), vec![]),
+            &sigs
+        ));
+        assert_eq!(
+            non_inline_reason_with_structs(&Ty::Named(DefId(2), vec![]), &sigs),
+            Some(SmolStr::new("name"))
+        );
+    }
 }

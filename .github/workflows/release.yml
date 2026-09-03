@@ -1,8 +1,8 @@
 name: release
 
-# Builds native packages for Linux, Windows, and macOS and publishes a GitHub
-# Release on tag `v*`. Also runnable via workflow_dispatch for dry packaging.
-
+# Every supported native package is a required artifact. Tag releases are
+# published only after package smoke, checksums, SBOM generation, and SLSA
+# build-provenance attestation succeed.
 on:
   push:
     tags:
@@ -10,194 +10,145 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (must already exist on the branch tip, e.g. v0.3.5)"
+        description: "Existing tag at the selected commit (for example v0.3.8)"
         required: false
         type: string
       publish:
-        description: "Create/update GitHub Release (needs a tag)"
+        description: "Publish the existing tag after all package gates pass"
         required: false
         type: boolean
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   package:
     name: package-${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    # Windows packaging is still flaky on GHA; do not block Linux/macOS publish.
-    continue-on-error: ${{ matrix.soft_fail == '1' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            smoke: sh
+            shell: sh
             archive_ext: tar.gz
-            skip_deb: "0"
-            soft_fail: "0"
+            build_deb: "1"
           - name: x86_64-pc-windows-msvc
             os: windows-latest
-            smoke: powershell
+            shell: powershell
             archive_ext: zip
-            skip_deb: "1"
-            soft_fail: "1"
+            build_deb: "0"
           - name: aarch64-apple-darwin
             os: macos-15
-            smoke: sh
+            shell: sh
             archive_ext: tar.gz
-            skip_deb: "1"
-            # Soft-fail until Apple Silicon package smoke is stable on GHA.
-            soft_fail: "1"
+            build_deb: "0"
           - name: x86_64-apple-darwin
             os: macos-15-intel
-            smoke: sh
+            shell: sh
             archive_ext: tar.gz
-            skip_deb: "1"
-            soft_fail: "0"
+            build_deb: "0"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Install Rust (repo rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.95.0"
-
-      - name: Show toolchain
+      - name: Install pinned Rust toolchain
         shell: bash
         run: |
+          set -eu
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
           rustc -Vv
           cargo -V
-          uname -a || true
 
-      - name: Install Linux packaging deps
-        if: matrix.smoke == 'sh' && runner.os == 'Linux'
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             build-essential dpkg-dev binutils libc6-dev gcc g++
 
-      - name: Package (Windows)
-        if: matrix.smoke == 'powershell'
+      - name: Package and smoke (Windows JIT + AOT)
+        if: matrix.shell == 'powershell'
         shell: pwsh
         env:
-          ORI_PACKAGE_SMOKE_JIT_ONLY: "1"
           ORI_USE_SYSTEM_LINKER: "1"
           CARGO_TERM_COLOR: always
         run: |
           $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $false
-          $repo = $env:GITHUB_WORKSPACE
-          if (-not $repo) { $repo = (Get-Location).Path }
-          Set-Location $repo
-          $dist = Join-Path $repo "compiler\target\dist"
-          New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          $log = Join-Path $dist "package-windows.log"
           $tag = "${{ github.ref_name }}"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $inputTag = "${{ inputs.tag }}"
-            if ($inputTag -and $inputTag.Trim().Length -gt 0) { $tag = $inputTag.Trim() }
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.tag }}") {
+            $tag = "${{ inputs.tag }}".Trim()
           }
-          # Branch dispatch (e.g. master) is not a version tag — use workspace version.
-          if ($tag -notmatch '^v?\d+\.\d+') {
-            $cargoToml = Join-Path $repo "compiler\Cargo.toml"
-            $verLine = Select-String -Path $cargoToml -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1
-            if ($verLine -and $verLine.Matches.Count -gt 0) {
-              $tag = "v" + $verLine.Matches[0].Groups[1].Value
-            } else {
-              $tag = "v0.0.0-dev"
-            }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+') {
+            $version = Select-String -Path compiler\Cargo.toml -Pattern '^version = "([^"]+)"' |
+              Select-Object -First 1
+            $tag = "v" + $version.Matches[0].Groups[1].Value
           }
           if ($tag -notmatch '^v') { $tag = "v$tag" }
-          Write-Host "repo=$repo tag=$tag"
-          Start-Transcript -Path $log -Force
-          try {
-            rustc -Vv
-            cargo -V
-            Get-ChildItem (Join-Path $repo "tools") | Select-Object -First 20 Name
-            $root = Join-Path $dist "ori-${{ matrix.name }}"
-            $archive = Join-Path $dist "ori-$tag-${{ matrix.name }}.zip"
-            $pack = Join-Path $repo "tools\package_native_release.ps1"
-            Write-Host "pack=$pack root=$root archive=$archive"
-            if (-not (Test-Path -LiteralPath $pack)) { throw "missing $pack" }
-            & $pack -PackageRoot $root -ArchivePath $archive -Force
-            if (-not (Test-Path -LiteralPath $archive)) { throw "archive missing: $archive" }
-            Get-ChildItem $dist | Format-Table Name, Length
-          } catch {
-            Write-Host "ERROR: $($_.Exception.Message)"
-            Write-Host $_.ScriptStackTrace
-            throw
-          } finally {
-            Stop-Transcript
-            if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | Select-Object -Last 80 }
+          $dist = Join-Path $env:GITHUB_WORKSPACE "compiler\target\dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $root = Join-Path $dist "ori-${{ matrix.name }}"
+          $archive = Join-Path $dist "ori-$tag-${{ matrix.name }}.zip"
+          & "$env:GITHUB_WORKSPACE\tools\package_native_release.ps1" `
+            -PackageRoot $root -ArchivePath $archive -Overwrite
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw "required archive missing: $archive"
           }
 
-      - name: Package (Unix)
-        if: matrix.smoke == 'sh'
+      - name: Package and smoke (Unix JIT + AOT)
+        if: matrix.shell == 'sh'
         shell: bash
         env:
-          # CI package smoke is JIT-only on some runners (see Linux note in history).
-          ORI_PACKAGE_SMOKE_JIT_ONLY: "1"
           ORI_USE_SYSTEM_LINKER: "1"
           CARGO_TERM_COLOR: always
         run: |
           set -eu
           set -o pipefail
-          unset LIBRARY_PATH || true
-          unset LIBPATH || true
           tag="${{ github.ref_name }}"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
             tag="${{ inputs.tag }}"
           fi
-          case "$tag" in v*) ;; *) tag="v$tag" ;; esac
-          version=$(printf '%s' "$tag" | sed 's/^v//')
-          echo "tag=$tag version=$version target=${{ matrix.name }}"
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) tag="v$(awk '/^version = / { gsub(/\"/, "", $3); print $3; exit }' compiler/Cargo.toml)" ;;
+          esac
+          version=${tag#v}
           mkdir -p compiler/target/dist
           root="compiler/target/dist/ori-${{ matrix.name }}"
           archive="compiler/target/dist/ori-${tag}-${{ matrix.name }}.tar.gz"
-          deb_args=""
-          if [ "${{ matrix.skip_deb }}" = "0" ]; then
-            deb_args="--deb compiler/target/dist/ori_${version}_amd64.deb"
-          else
-            deb_args="--skip-deb"
-          fi
-          if ! env -u LIBRARY_PATH -u LIBPATH \
-            ORI_PACKAGE_SMOKE_JIT_ONLY=1 ORI_USE_SYSTEM_LINKER=1 \
+          if [ "${{ matrix.build_deb }}" = "1" ]; then
             bash tools/package_native_release.sh \
-            --package-root "$root" \
-            --archive "$archive" \
-            $deb_args \
-            --force 2>&1 | tee "compiler/target/dist/package-${{ matrix.name }}.log"
-          then
-            echo "package failed; last 100 log lines:" >&2
-            tail -n 100 "compiler/target/dist/package-${{ matrix.name }}.log" >&2 || true
-            exit 1
-          fi
-          ls -la compiler/target/dist/ || true
-          test -f "$archive"
-          if [ "${{ matrix.skip_deb }}" = "0" ]; then
+              --package-root "$root" \
+              --archive "$archive" \
+              --deb "compiler/target/dist/ori_${version}_amd64.deb" \
+              --force
             test -f "compiler/target/dist/ori_${version}_amd64.deb"
+          else
+            bash tools/package_native_release.sh \
+              --package-root "$root" \
+              --archive "$archive" \
+              --skip-deb \
+              --force
           fi
+          test -f "$archive"
 
-      - name: Upload package log on failure
+      - name: Upload package diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: package-log-${{ matrix.name }}
-          path: |
-            compiler/target/dist/package-*.log
-            compiler/target/dist/**
+          name: package-diagnostics-${{ matrix.name }}
+          path: compiler/target/dist
           if-no-files-found: ignore
-      - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+
+      - name: Upload required package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ori-${{ matrix.name }}
           path: |
-            compiler/target/dist/ori-*-${{ matrix.name }}.tar.gz
-            compiler/target/dist/ori-*-${{ matrix.name }}.zip
+            compiler/target/dist/ori-*-${{ matrix.name }}.${{ matrix.archive_ext }}
             compiler/target/dist/ori_*_amd64.deb
           if-no-files-found: error
 
@@ -205,91 +156,97 @@ jobs:
     name: publish-release
     needs: package
     runs-on: ubuntu-latest
-    # Always attempt publish on tag pushes (even when soft-fail matrix legs fail).
-    # IMPORTANT: do not reference `inputs.*` here on tag push — it can skip the job.
-    if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
 
-      - name: Download all package artifacts
-        uses: actions/download-artifact@v4
+      - name: Resolve and validate immutable tag
+        id: tag
+        shell: bash
+        run: |
+          set -eu
+          tag="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          fi
+          case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "invalid release tag: $tag" >&2; exit 2 ;; esac
+          tagged_commit=$(git rev-list -n 1 "$tag")
+          test "$tagged_commit" = "${{ github.sha }}"
+          commit_epoch=$(git show -s --format=%ct "$tagged_commit")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "commit_epoch=$commit_epoch" >> "$GITHUB_OUTPUT"
+
+      - name: Download every required platform artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           pattern: ori-*
           merge-multiple: true
-          # Soft-fail legs may leave some platforms missing.
-        continue-on-error: true
 
-      - name: List assets
-        run: find dist -type f -ls || true
-
-      - name: Require available assets (Linux required)
+      - name: Require the complete release matrix
+        shell: bash
         run: |
           set -eu
-          tar_count=$(find dist -type f -name '*.tar.gz' | wc -l)
-          zip_count=$(find dist -type f -name '*.zip' | wc -l)
-          deb_count=$(find dist -type f -name '*.deb' | wc -l)
-          echo "tar_count=$tar_count zip_count=$zip_count deb_count=$deb_count"
-          find dist -type f -ls || true
-          # Linux portable is required. Deb preferred but not if packaging skipped it.
-          test "$tar_count" -ge 1
-          if [ "$deb_count" -lt 1 ]; then
-            echo "::warning::Linux .deb missing"
-          fi
-          if [ "$zip_count" -lt 1 ]; then
-            echo "::warning::Windows zip missing (soft-fail leg); publishing without it"
-          fi
-          if [ "$tar_count" -lt 2 ]; then
-            echo "::warning::Fewer than 2 tarballs (some macOS targets may be missing)"
-          fi
+          tag="${{ steps.tag.outputs.tag }}"
+          version="${{ steps.tag.outputs.version }}"
+          test -f "dist/ori-${tag}-x86_64-unknown-linux-gnu.tar.gz"
+          test -f "dist/ori-${tag}-x86_64-pc-windows-msvc.zip"
+          test -f "dist/ori-${tag}-aarch64-apple-darwin.tar.gz"
+          test -f "dist/ori-${tag}-x86_64-apple-darwin.tar.gz"
+          test -f "dist/ori_${version}_amd64.deb"
 
-      - name: Resolve tag
-        id: tag
+      - name: Generate SPDX SBOM and SHA-256 manifest
+        shell: bash
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.tag.outputs.commit_epoch }}
         run: |
-          tag="${{ github.ref_name }}"
-          case "$tag" in v*) ;; *) tag="v$tag" ;; esac
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          set -eu
+          tag="${{ steps.tag.outputs.tag }}"
+          python3 tools/release/generate_sbom.py \
+            --lock compiler/Cargo.lock \
+            --output "dist/ori-${tag}.spdx.json" \
+            --name "Ori ${tag} Cargo dependency SBOM"
+          cd dist
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's#  \./#  #' > SHA256SUMS
+          test -s SHA256SUMS
 
-      - name: Create or update GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Ori ${{ steps.tag.outputs.tag }}
-          body: |
-            Ori **${{ steps.tag.outputs.tag }}** native packages.
-
-            ### Assets
-            | Platform | File |
-            |----------|------|
-            | Linux x86_64 | `ori-${{ steps.tag.outputs.tag }}-x86_64-unknown-linux-gnu.tar.gz` |
-            | Linux deb | `ori_*_amd64.deb` |
-            | Windows MSVC x86_64 | `ori-${{ steps.tag.outputs.tag }}-x86_64-pc-windows-msvc.zip` |
-            | macOS Apple Silicon | `ori-${{ steps.tag.outputs.tag }}-aarch64-apple-darwin.tar.gz` |
-            | macOS Intel | `ori-${{ steps.tag.outputs.tag }}-x86_64-apple-darwin.tar.gz` |
-
-            ### Install
-            See [`docs/install.md`](https://github.com/raillen/ori-lang/blob/master/docs/install.md).
-
-            **Windows (recommended — Scoop-style one-liner):**
-            ```powershell
-            irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
-            ```
-            Or extract the zip and run `install.cmd` / `install.ps1`
-            (`%LOCALAPPDATA%\Programs\Ori` + User **PATH**).
-
-            - **AOT** needs the OS linker (VS Build Tools / build-essential / Xcode CLT).
-            - **JIT** (`ori run`) needs only the packaged runtime cdylib.
-
-            ABI: `ori-native-abi-1` · FREEZE-1 on 0.3.x.
-          prerelease: true
-          fail_on_unmatched_files: false
-          make_latest: true
-          files: |
-            dist/**/*.tar.gz
-            dist/**/*.zip
-            dist/**/*.deb
+          subject-path: |
             dist/*.tar.gz
             dist/*.zip
             dist/*.deb
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            dist/*.spdx.json
+            dist/SHA256SUMS
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2.4.2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Ori ${{ steps.tag.outputs.tag }}
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true
+          body: |
+            Native packages for all supported desktop targets. Every release
+            includes `SHA256SUMS`, an SPDX SBOM, and GitHub build provenance.
+
+            AOT (`ori compile` and `ori test`) requires the platform linker.
+            JIT (`ori run`) uses the packaged runtime without Rust.
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+            dist/*.spdx.json
+            dist/SHA256SUMS

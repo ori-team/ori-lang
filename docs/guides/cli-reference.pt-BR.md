@@ -20,7 +20,7 @@ ori --version
 | `ori new <path>` | Cria um projeto novo (`--lib` para biblioteca) |
 | `ori check <arquivo>` | Checa tipos e mostra diagnósticos — não gera binário |
 | `ori run <arquivo>` | Compila e roda pelo runtime nativo |
-| `ori test <arquivo>` | Roda as funções marcadas com `@test` |
+| `ori test <arquivo> [--doc]` | Roda as funções marcadas com `@test` (ou `--doc` para testar blocos markdown) |
 | `ori explain <código>` | Explica um código de erro, ex.: `ori explain type.type_mismatch` |
 
 ```bash
@@ -32,6 +32,23 @@ ori run main.orl
 
 `ori check .` sobe as pastas até achar o `ori.proj`, então funciona de qualquer
 subpasta do projeto. `ori check ori.proj` é equivalente.
+
+Todos os comandos de compilação aceitam a mesma seleção condicional:
+
+```bash
+ori check . --features tls,telemetry
+ori run . --no-default-features
+ori check . --execution-profile embedded
+ori check . --target x86_64-unknown-linux-gnu
+```
+
+As features precisam estar declaradas em `[features]` no manifesto do projeto
+ou package. Essas flags também participam do fingerprint do cache AOT.
+`--target` seleciona fatos de cfg e artefatos de runtime; sozinho, ele não
+promete cross-compilation nativa completa. Um triple cuja arquitetura ou OS
+esteja fora de cfg v1 é rejeitado, em vez de ser tratado como alvo sem OS.
+Da mesma forma, `--execution-profile embedded` seleciona ramos de cfg; ele
+ainda não transforma o runtime desktop em um runtime freestanding ou isolado.
 
 ---
 
@@ -54,10 +71,12 @@ Para gerar biblioteca compartilhada em vez de executável:
 ori compile main.orl --lib -o libmeu_app.so
 ```
 
-Só funções marcadas com `@c_export` ficam visíveis para C. A superfície cobre
-escalares (`int`, `float`, `bool`, …) e **`string`**, que atravessa como
-`const char *` terminado em NUL. Agregados — structs, `list`, `map`, `optional`,
-`result` — ainda não são exportáveis.
+Só funções marcadas com `@c_export` ficam visíveis para C. A ABI cobre escalares,
+`string`, structs escalares não vazias e não genéricas, structs gerenciadas por
+handles ARC opacos e bridges diretos de `optional`/`result`. `list`, `map`,
+`set`, `tuple`, unions aninhadas, structs genéricas e structs vazias diretas
+continuam rejeitadas. O header gerado é a declaração canônica para o host; veja
+[ABI-1](../spec/19-abi.md#83b-c_export--the-host-facing-surface).
 
 Uma string **retornada** ao host pertence ao host: libere com
 `ori_arc_release`, ou ela vaza. Uma string **passada** continua sendo do host;
@@ -74,8 +93,9 @@ Ori nunca a libera. Veja [../spec/19-abi.md](../spec/19-abi.md) §8.3b.
 | `ori summary` | Mostra entry, namespaces e imports do projeto |
 | `ori install <nome> --path .` | Instala um pacote no cache local |
 | `ori get` | Baixa dependências git/path para o cache local |
-| `ori lock [path]` | Resolve dependências e grava `ori.lock`; `--locked` apenas valida |
-| `ori publish` | Publica um pacote no registry de `ORI_REGISTRY` |
+| `ori lock [path]` | Resolve dependências e grava atomicamente `ori.lock` v2 com digests |
+| `ori lock [path] --locked --offline` | Restaura o lock exato do cache/path verificado, sem rede |
+| `ori publish` | Publica imutavelmente pacote e digest SHA-256 no `ORI_REGISTRY` |
 | `ori update` | Atualiza a toolchain para a última release publicada |
 
 Os campos do manifesto estão em
@@ -93,11 +113,14 @@ Os campos do manifesto estão em
 
 ---
 
-## Formatação e migração
+## Formatação, linting e ferramentas
 
 | Comando | O que faz |
 |---|---|
-| `ori fmt <arquivo>` | Formata um arquivo e imprime o resultado |
+| `ori fmt <path> [-w / --write] [-c / --check]` | Formata um arquivo ou pasta recursivamente (`-w` in-place, `-c` check) |
+| `ori lint <path>` | Executa linter semântico de código para variáveis não usadas e redundâncias |
+| `ori daemon [--stdio]` | Executa o protótipo experimental persistente por processo; ele recria pipelines e ainda não é um serviço JSON-RPC completo/com cache |
+| `ori bindgen <header.h> [--module <nome>]` | Gera bindings `extern "c"` e structs `@repr("C")` a partir de cabeçalho C |
 | `ori migrate-syntax <path>` | Reescreve sintaxe pré-S3 em arquivos `.orl` |
 
 O `ori migrate-syntax` cuida da parte mecânica do corte S3. Ele reescreve:
@@ -166,6 +189,20 @@ O backend C é auxílio de depuração, não referência semântica — a refer�
 backend nativo
 ([../spec/14-backend-support.md](../spec/14-backend-support.md)).
 
+Mantenedores podem compilar e executar uma mensagem `check` hostil no C gerado
+com AddressSanitizer e UndefinedBehaviorSanitizer:
+
+```sh
+cd compiler
+cargo test -p ori-driver --test c_backend_sanitizers -- --nocapture
+```
+
+O teste procura `clang` e depois `cc`. Ele imprime um `SKIP` explícito quando
+nenhum compilador consegue compilar e executar com os dois sanitizers. Defina
+`ORI_C_SANITIZER_CC` para escolher um executável ou
+`ORI_REQUIRE_C_SANITIZERS=1` para transformar a falta de suporte em falha do
+gate (recomendado na CI).
+
 ## Depuração de programas
 
 Use o debugger nativo cooperativo para programas nativos, inclusive funções
@@ -208,8 +245,10 @@ variáveis locais, bindings de padrões e capturas de closures com suas linhas.
 | Variável | Efeito |
 |---|---|
 | `ORI_PACKAGE_CACHE` | Onde os pacotes são instalados (padrão `~/.ori/packages`) |
-| `ORI_REGISTRY` | URL do registry usada por `ori publish` / `ori install` |
+| `ORI_REGISTRY` | Caminho ou URL HTTPS do registry usada por `ori publish` / `ori install` |
 | `ORI_REGISTRY_TOKEN` | Token de autenticação do registry |
+| `ORI_OFFLINE` | Recusa rede de pacotes e exige entradas verificadas no cache |
+| `ORI_ALLOW_INSECURE_REGISTRY` | Permite HTTP simples só para registry local de desenvolvimento explicitamente confiável |
 | `ORI_STDLIB_ROOT` | Sobrescreve o local da stdlib |
 | `ORI_RUNTIME_LIB` / `ORI_RUNTIME_CDYLIB` | Aponta para um runtime nativo específico |
 | `ORI_REQUIRE_PACKAGED_RUNTIME` | Falha em vez de cair no build do runtime via Cargo |

@@ -3,7 +3,7 @@
 > Status: normativo (identidade e propósito)  
 > Audience: mantenedores, contribuidores, leitores da linguagem  
 > Superfície canônica: **S3** (Auk9-inspired) a partir de `0.3.0`  
-> Registro de decisões: [`docs/archive/legacy/ori-surface-s3-auk9.md`](../archive/legacy/ori-surface-s3-auk9.md)  
+> Registro de decisões: [`docs/planning/ori-surface-s3-auk9.md`](../planning/ori-surface-s3-auk9.md)  
 > ADR: [`docs/planning/adr-ori-surface-s3-auk9.md`](../planning/adr-ori-surface-s3-auk9.md)
 
 ---
@@ -118,8 +118,8 @@ Uma forma canônica por conceito é **norma** (superfície S3 + reforma document
 | **Este manifesto** | Identidade, propósito, norte de superfície S3 |
 | `01-overview.md` … | Contrato de linguagem (superfície **S3** em `0.3.0`) |
 | `13-error-catalog.md` | Códigos **emitidos** (incl. rejeições de forma pré-S3) |
-| `docs/archive/legacy/ori-surface-s3-auk9.md` | Tabela completa de decisões 0–9 |
-| `docs/archive/plans/pr-plan-ori-surface-s3.md` | DAG de implementação (PRs 1–10 = 0.3.0; PR 11 = 0.3.1; opção B pós-PR11) |
+| `docs/planning/ori-surface-s3-auk9.md` | Tabela completa de decisões 0–9 |
+| `docs/planning/historico/pr-plan-ori-surface-s3.md` | DAG de implementação (PRs 1–10 = 0.3.0; PR 11 = 0.3.1; opção B pós-PR11) |
 
 Em conflito de **propósito / identidade**, prevalece este manifesto + o registro S3 + o ADR.
 Em conflito de **sintaxe canônica**, prevalecem os capítulos `01`–`11` alinhados ao S3 e o compilador.

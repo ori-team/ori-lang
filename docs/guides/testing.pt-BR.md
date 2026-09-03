@@ -25,6 +25,24 @@ ori test main.orl
 ori test main.orl --filter adds
 ```
 
+Testes assíncronos usam `async` e `await` no backend nativo. O `@test` fica
+na linha anterior à função:
+
+```ori
+module app.async_tests
+
+imports
+    ori.task = task
+    ori.test = test
+end
+
+@test
+async async_check()
+    await task.sleep(1)
+    test.assert(true, "teste async deve passar")
+end
+```
+
 ## Como contribuinte do compilador
 
 Use a raiz do repositorio e o workspace em `compiler/`:

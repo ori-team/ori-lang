@@ -11,6 +11,7 @@ import ori.io = io
 import ori.list = lists
 import ori.map = maps
 import ori.set = sets
+import ori.hash_table = hash_table
 
 main()
     var values: list[int] = [3, 1, 2]
@@ -969,6 +970,237 @@ end
 }
 
 #[test]
+fn compile_runs_graph_user_defined_equatable_node_native() {
+    let dir = TestDir::new("graph_user_defined_equatable_node_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.graph = graph
+import ori.io = io
+import ori.map = maps
+import ori.set = sets
+
+struct Resource
+    id: int
+    label: string
+end
+
+apply Resource use core.Hashable
+end
+
+apply Resource use core.Equatable
+    equals(self, other: Resource) -> bool
+        return self.id == other.id
+    end
+end
+
+main()
+    const network: graph.Graph[Resource] = graph.new(false)
+    const first: Resource = Resource { id: 7, label: "first" }
+    const equivalent: Resource = Resource { id: 7, label: "second" }
+    graph.add_node(network, first)
+    io.println(string(graph.has_node(network, equivalent)))
+    graph.add_edge(network, first, equivalent)
+    io.println(string(graph.has_edge(network, equivalent, first)))
+    const cloned: graph.Graph[Resource] = graph.clone(network)
+    io.println(string(graph.has_node(cloned, equivalent)))
+    const closure: graph.Graph[Resource] = graph.transitive_closure(network)
+    io.println(string(graph.has_node(closure, equivalent)))
+end
+"#,
+    );
+
+    let exe = dir.path(if cfg!(windows) {
+        "graph_user_defined_equatable.exe"
+    } else {
+        "graph_user_defined_equatable"
+    });
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "true\ntrue\ntrue\ntrue\n"
+    );
+}
+
+#[test]
+fn compile_runs_graph_nested_struct_node_equatable_native() {
+    let dir = TestDir::new("graph_nested_struct_node_equatable_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.graph = graph
+import ori.io = io
+
+struct Meta
+    tag: string
+end
+
+struct Node
+    id: int
+    meta: Meta
+end
+
+apply Meta use core.Hashable
+end
+
+apply Meta use core.Equatable
+    equals(self, other: Meta) -> bool
+        return self.tag == other.tag
+    end
+end
+
+apply Node use core.Hashable
+end
+
+apply Node use core.Equatable
+    equals(self, other: Node) -> bool
+        return self.id == other.id and self.meta == other.meta
+    end
+end
+
+main()
+    const network: graph.Graph[Node] = graph.new(false)
+    const n1: Node = Node { id: 10, meta: Meta { tag: "alpha" } }
+    const n2: Node = Node { id: 10, meta: Meta { tag: "alpha" } }
+    const n3: Node = Node { id: 20, meta: Meta { tag: "beta" } }
+    graph.add_node(network, n1)
+    io.println(string(graph.has_node(network, n2)))
+    graph.add_edge(network, n1, n3)
+    io.println(string(graph.has_edge(network, n2, n3)))
+end
+"#,
+    );
+
+    let exe = dir.path(if cfg!(windows) {
+        "graph_nested_node.exe"
+    } else {
+        "graph_nested_node"
+    });
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "true\ntrue\n"
+    );
+}
+
+#[test]
+fn compile_runs_graph_enum_node_structural_equality_native() {
+    let dir = TestDir::new("graph_enum_node_structural_equality_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.graph = graph
+import ori.io = io
+import ori.map = maps
+import ori.set = sets
+
+enum Key
+    Empty
+    Value(id: int)
+end
+
+enum Plain
+    A
+    B(code: int)
+    Text(label: string)
+end
+
+apply Plain use core.Hashable
+end
+
+apply Key use core.Hashable
+end
+
+apply Key use core.Equatable
+    equals(self, other: Key) -> bool
+        match self
+        case Empty:
+            match other
+            case Empty: return true
+            case Value(id: _): return false
+            end
+        case Value(id):
+            match other
+            case Empty: return false
+            case Value(id: other_id): return id == other_id
+            end
+        end
+    end
+end
+
+main()
+    const plain_a: Plain = Plain.B(code: 3)
+    const plain_b: Plain = Plain.B(code: 3)
+    const plain_c: Plain = Plain.B(code: 4)
+    const plain_text_a: Plain = Plain.Text(label: "same")
+    const plain_text_b: Plain = Plain.Text(label: "same")
+    io.println(string(plain_a == plain_b))
+    io.println(string(plain_a != plain_c))
+    io.println(string(plain_text_a == plain_text_b))
+    const structural_graph: graph.Graph[Plain] = graph.new(false)
+    graph.add_node(structural_graph, plain_a)
+    io.println(string(graph.has_node(structural_graph, plain_b)))
+    const enum_values: map[Plain, int] = maps.new()
+    maps.set(enum_values, plain_a, 11)
+    io.println(string(maps.get(enum_values, plain_b)))
+    const enum_seen: set[Plain] = sets.new()
+    sets.add(enum_seen, plain_a)
+    sets.add(enum_seen, plain_b)
+    io.println(string(sets.len(enum_seen)))
+
+    const network: graph.Graph[Key] = graph.new(false)
+    const first: Key = Key.Value(id: 7)
+    const equivalent: Key = Key.Value(id: 7)
+    const different: Key = Key.Value(id: 8)
+    const empty: Key = Key.Empty
+    graph.add_node(network, first)
+    io.println(string(graph.has_node(network, equivalent)))
+    io.println(string(graph.has_node(network, different)))
+    graph.add_edge(network, first, empty)
+    io.println(string(graph.has_edge(network, equivalent, empty)))
+    const cloned: graph.Graph[Key] = graph.clone(network)
+    io.println(string(graph.has_node(cloned, equivalent)))
+end
+"#,
+    );
+
+    let exe = dir.path(if cfg!(windows) {
+        "graph_enum_node.exe"
+    } else {
+        "graph_enum_node"
+    });
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "true\ntrue\ntrue\ntrue\n11\n1\ntrue\nfalse\ntrue\ntrue\n"
+    );
+}
+
+#[test]
 fn compile_runs_heap_stdlib_native() {
     let dir = TestDir::new("compile_heap_stdlib_native");
     dir.write(
@@ -1776,6 +2008,141 @@ end
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.replace("\r\n", "\n"), "42\nyes\n0\n");
+}
+
+#[test]
+fn compile_runs_user_defined_equatable_keys_by_value_native() {
+    let dir = TestDir::new("user_defined_equatable_keys_by_value");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+import ori.map = maps
+import ori.set = sets
+
+struct Resource
+    id: int
+    label: string
+end
+
+apply Resource use core.Hashable
+end
+
+apply Resource use core.Equatable
+    equals(self, other: Resource) -> bool
+        return self.id == other.id
+    end
+end
+
+main()
+    const first: Resource = Resource { id: 7, label: "first" }
+    const equivalent: Resource = Resource { id: 7, label: "second" }
+    const different: Resource = Resource { id: 8, label: "other" }
+
+    const values: map[Resource, int] = maps.new()
+    maps.set(values, first, 42)
+    io.print(string(maps.get(values, equivalent)))
+    io.print(string(maps.contains(values, equivalent)))
+    io.print(string(maps.contains(values, different)))
+
+    const table: ori.hash_table.HashTable[Resource, int] = hash_table.new()
+    hash_table.set(table, first, 99)
+    io.print(string(hash_table.contains(table, equivalent)))
+    if some(table_value) = hash_table.get(table, equivalent)
+        io.print(string(table_value))
+    end
+
+    const seen: set[Resource] = sets.new()
+    sets.add(seen, first)
+    sets.add(seen, equivalent)
+    io.print(string(sets.len(seen)))
+    io.print(string(first == equivalent))
+    io.print(string(first != different))
+end
+"#,
+    );
+
+    let exe = dir.path(if cfg!(windows) {
+        "user_defined_equatable_keys_by_value.exe"
+    } else {
+        "user_defined_equatable_keys_by_value"
+    });
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout.replace("\r\n", "\n"),
+        "42\ntrue\nfalse\ntrue\n99\n1\ntrue\ntrue\n"
+    );
+}
+
+#[test]
+fn compile_runs_user_defined_hashable_method_with_custom_equatable_native() {
+    let dir = TestDir::new("user_defined_hashable_method");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.io = io
+import ori.map = maps
+import ori.set = sets
+
+struct Key
+    id: int
+end
+
+apply Key use core.Hashable
+    hash(self) -> int
+        return self.id % 2
+    end
+end
+
+apply Key use core.Equatable
+    equals(self, other: Key) -> bool
+        return self.id % 2 == other.id % 2
+    end
+end
+
+main()
+    const first: Key = Key { id: 2 }
+    const equivalent: Key = Key { id: 4 }
+    const different: Key = Key { id: 3 }
+
+    const values: map[Key, int] = maps.new()
+    maps.set(values, first, 42)
+    io.print(string(maps.get(values, equivalent)))
+    io.print(string(maps.contains(values, different)))
+
+    const seen: set[Key] = sets.new()
+    sets.add(seen, first)
+    sets.add(seen, equivalent)
+    io.print(string(sets.len(seen)))
+end
+"#,
+    );
+
+    let exe = dir.path(if cfg!(windows) {
+        "user_defined_hashable_method.exe"
+    } else {
+        "user_defined_hashable_method"
+    });
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "42\nfalse\n1\n"
+    );
 }
 
 #[test]

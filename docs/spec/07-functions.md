@@ -188,7 +188,7 @@ See Chapter 09.
 struct Counter
     value: int
 
-    mut increment()
+    mut increment(self)
         self.value = self.value + 1
     end
 
@@ -215,11 +215,11 @@ struct Rectangle
     width: float
     height: float
 
-    area() -> float
+    area(self) -> float
         return self.width * self.height
     end
 
-    scale(factor: float) -> Rectangle
+    scale(self, factor: float) -> Rectangle
         return Rectangle {
             width: self.width * factor,
             height: self.height * factor

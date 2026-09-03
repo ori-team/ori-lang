@@ -4,6 +4,7 @@
 //! Cargo fallback used by AOT and JIT routes. The parent pipeline re-exports
 //! the small public policy functions so existing CLI/LSP callers keep working.
 
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 pub(super) const ORI_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -34,6 +35,13 @@ impl NativeRuntimeLink {
             let cdylib = runtime_cdylib_beside_static(&self.runtime_lib);
             if let Some(so) = cdylib {
                 args.push(so);
+            } else if cfg!(windows) {
+                // MSVC link.exe/rust-lld cannot consume a DLL directly. The
+                // staged `.lib` is the static runtime (an import library, if
+                // a separate DLL import archive is available, is not part of
+                // the stable package contract), so link it into the generated
+                // library and keep the runtime DLL for hosted JIT loading.
+                args.push(self.runtime_lib.clone());
             } else {
                 // Fallback: staticlib without whole-archive (may miss unused symbols).
                 args.push(self.runtime_lib.clone());
@@ -269,6 +277,24 @@ pub(super) fn native_runtime_link_for(
                 ORI_DRIVER_ABI_VERSION
             ));
         }
+        match metadata.runtime_sha256.as_deref() {
+            Some(expected) => {
+                let actual = sha256_file(&runtime_lib)?;
+                if !actual.eq_ignore_ascii_case(expected) {
+                    return Err(format!(
+                        "{NATIVE_ABI_MISMATCH}: runtime static library `{}` digest mismatch (metadata {}, actual {})",
+                        runtime_lib.display(), expected, actual
+                    ));
+                }
+            }
+            None if env_flag("ORI_REQUIRE_PACKAGED_RUNTIME") => {
+                return Err(format!(
+                    "{NATIVE_ABI_MISMATCH}: runtime metadata `{}` is missing runtime_sha256",
+                    metadata_path.display()
+                ));
+            }
+            None => {}
+        }
         metadata.native_static_libs
     } else {
         native_static_libs_for_target(target)
@@ -288,6 +314,7 @@ pub(super) struct RuntimeLinkMetadata {
     pub(super) target: String,
     pub(super) runtime: String,
     pub(super) runtime_cdylib: Option<String>,
+    pub(super) runtime_sha256: Option<String>,
     pub(super) ori_version: String,
     pub(super) abi_version: String,
     pub(super) native_static_libs: Vec<String>,
@@ -314,6 +341,8 @@ pub(super) fn read_runtime_link_metadata(path: &Path) -> Result<RuntimeLinkMetad
     })?;
     let runtime_cdylib =
         json_string_field(&source, "runtime_cdylib").filter(|value| !value.is_empty());
+    let runtime_sha256 =
+        json_string_field(&source, "runtime_sha256").filter(|value| !value.is_empty());
     let ori_version = json_string_field(&source, "ori_version").ok_or_else(|| {
         format!(
             "{NATIVE_RUNTIME_METADATA_INVALID}: runtime metadata `{}` is missing string field `ori_version`",
@@ -337,10 +366,35 @@ pub(super) fn read_runtime_link_metadata(path: &Path) -> Result<RuntimeLinkMetad
         target,
         runtime,
         runtime_cdylib,
+        runtime_sha256,
         ori_version,
         abi_version,
         native_static_libs,
     })
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = std::fs::File::open(path).map_err(|error| {
+        format!(
+            "{NATIVE_RUNTIME_METADATA_INVALID}: cannot read runtime artifact `{}`: {error}",
+            path.display()
+        )
+    })?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut file, &mut buffer).map_err(|error| {
+            format!(
+                "{NATIVE_RUNTIME_METADATA_INVALID}: cannot hash runtime artifact `{}`: {error}",
+                path.display()
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn json_string_field(source: &str, field: &str) -> Option<String> {
@@ -414,7 +468,31 @@ pub(crate) fn native_target_triple() -> String {
     std::env::var("ORI_TARGET_TRIPLE")
         .ok()
         .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
         .unwrap_or_else(default_native_target_triple)
+}
+
+/// Native Cranelift and the staged runtime currently target the host triple.
+///
+/// `ORI_TARGET_TRIPLE` is still used by the front-end for conditional
+/// compilation, but accepting a different triple here would silently emit
+/// host machine code and then link it with the wrong runtime artifact. Fail
+/// before code generation until a real cross-target backend and runtime matrix
+/// exists.
+pub(crate) fn ensure_native_codegen_target() -> Result<(), String> {
+    let requested = native_target_triple();
+    let host = default_native_target_triple();
+    validate_native_codegen_target(&requested, &host)
+}
+
+fn validate_native_codegen_target(requested: &str, host: &str) -> Result<(), String> {
+    if requested == host {
+        Ok(())
+    } else {
+        Err(format!(
+            "native.target_unsupported: requested target `{requested}` differs from host `{host}`; native code generation is host-only until a cross-target runtime is available"
+        ))
+    }
 }
 
 fn default_native_target_triple() -> String {
@@ -619,6 +697,20 @@ mod tests {
             target.starts_with(&format!("{expected_arch}-")),
             "target `{target}` does not match host architecture `{expected_arch}`"
         );
+    }
+
+    #[test]
+    fn native_codegen_rejects_cross_target_requests() {
+        assert!(validate_native_codegen_target(
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu"
+        )
+        .is_ok());
+        let error =
+            validate_native_codegen_target("wasm32-unknown-unknown", "x86_64-unknown-linux-gnu")
+                .expect_err("cross-target native codegen must fail closed");
+        assert!(error.contains("native.target_unsupported"));
+        assert!(error.contains("wasm32-unknown-unknown"));
     }
 
     #[test]

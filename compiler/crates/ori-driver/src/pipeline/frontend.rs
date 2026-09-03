@@ -4,13 +4,12 @@
 //! Project loading stays in `project.rs`; HIR lowering stays in `lowering.rs`.
 
 use ori_diagnostics::{Diagnostic, DiagnosticSink, SourceCache};
+use ori_types::conditional::CfgContext;
 use ori_types::resolve::ResolvedModule;
 use std::path::Path;
 
 use super::docs::validate_doc_tags;
-use super::project::{
-    load_and_resolve, load_and_resolve_with_entry_source, namespace_of, read_file, LoadedSource,
-};
+use super::project::{load_and_resolve, namespace_of, read_file, LoadedSource};
 use super::timing::report_internal_pipeline_timing;
 
 pub struct LexOutput {
@@ -31,6 +30,13 @@ pub struct CheckOutput {
     pub resolved: ResolvedModule,
     pub diagnostics: Vec<Diagnostic>,
     pub has_errors: bool,
+}
+
+/// Options for checking an in-memory source module.
+#[derive(Clone, Debug, Default)]
+pub struct CheckOptions {
+    /// Override manifest/environment cfg selection for hosted callers.
+    pub cfg: Option<CfgContext>,
 }
 
 /// Read `path` from disk, lex it and return the token stream.
@@ -92,9 +98,24 @@ pub fn run_check(path: &Path) -> Result<CheckOutput, String> {
 }
 
 pub fn run_check_source(path: &Path, source: String) -> Result<CheckOutput, String> {
+    run_check_source_with_options(path, source, CheckOptions::default())
+}
+
+/// Check an in-memory source module with explicit hosted configuration.
+pub fn run_check_source_with_options(
+    path: &Path,
+    source: String,
+    options: CheckOptions,
+) -> Result<CheckOutput, String> {
     let mut cache = SourceCache::default();
     let mut sink = DiagnosticSink::default();
-    let sources = load_and_resolve_with_entry_source(path, source, &mut cache, &mut sink)?;
+    let sources = super::project::load_and_resolve_with_entry_source_and_cfg(
+        path,
+        source,
+        options.cfg,
+        &mut cache,
+        &mut sink,
+    )?;
     let loaded = sources.loaded;
     let resolved = sources.resolved;
 
@@ -117,25 +138,37 @@ pub(super) fn check_loaded_sources(
     resolved: &ResolvedModule,
     sink: &mut DiagnosticSink,
 ) {
-    for source in loaded {
-        validate_doc_tags(source, sink);
-        let namespace = namespace_of(&source.ast);
-        let mut checker = ori_types::check::Checker::new(
-            &resolved.def_map,
-            &resolved.func_sigs,
-            &resolved.value_sigs,
-            &resolved.struct_sigs,
-            &resolved.enum_sigs,
-            &resolved.trait_sigs,
-            &resolved.impl_sigs,
-            &resolved.type_alias_sigs,
-            &resolved.newtype_sigs,
-            &resolved.deprecated_sigs,
-            &resolved.reexports,
-            &namespace,
-            source.file_id,
-            sink,
-        );
-        checker.check_file(&source.ast);
+    if loaded.len() > 1 {
+        use rayon::prelude::*;
+        let per_source_diags: Vec<Vec<Diagnostic>> = loaded
+            .par_iter()
+            .map(|source| {
+                let mut local_sink = DiagnosticSink::default();
+                validate_doc_tags(source, &mut local_sink);
+                let namespace = namespace_of(&source.ast);
+                let mut checker = ori_types::check::Checker::new(
+                    resolved,
+                    &namespace,
+                    source.file_id,
+                    &mut local_sink,
+                );
+                checker.check_file(&source.ast);
+                local_sink.into_diagnostics()
+            })
+            .collect();
+
+        for diags in per_source_diags {
+            for diag in diags {
+                sink.emit(diag);
+            }
+        }
+    } else {
+        for source in loaded {
+            validate_doc_tags(source, sink);
+            let namespace = namespace_of(&source.ast);
+            let mut checker =
+                ori_types::check::Checker::new(resolved, &namespace, source.file_id, sink);
+            checker.check_file(&source.ast);
+        }
     }
 }

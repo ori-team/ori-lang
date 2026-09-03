@@ -6,8 +6,10 @@ doc module self
     summary:
         Compositional helpers over the native `ori.map` runtime surface.
     details:
-        Concrete-key (`string`/`int`) wrappers until the `Hashable` +
-        `Equatable` trait gate ships. Import with
+        Built-in and user-defined keys that satisfy the `Hashable` +
+        `Equatable` trait gate. A user `hash(self) -> int` method supplies the
+        native hash callback; marker-only structural keys use generated hashes.
+        Import with
         `import ori.map only (get_or, has_key)` for helper-only names.
 end
 

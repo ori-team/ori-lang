@@ -124,7 +124,7 @@ try {
     $targetRoot = if ($env:CARGO_TARGET_DIR) {
         [System.IO.Path]::GetFullPath($env:CARGO_TARGET_DIR)
     } else {
-        Join-Path $repoRoot "target"
+        Join-Path $repoRoot "compiler/target"
     }
     $candidates = @(
         (Join-Path $targetRoot (Join-Path $Target (Join-Path $Profile $artifact))),
@@ -141,11 +141,35 @@ try {
         throw "Runtime artifact $artifact was not found. Run tools/stage_native_runtime or build ori-runtime first."
     }
 
+    $sharedName = if ($Target -like "*windows*") {
+        "ori_runtime.dll"
+    } elseif ($Target -like "*apple-darwin*") {
+        "libori_runtime.dylib"
+    } else {
+        "libori_runtime.so"
+    }
+    $sharedCandidate = Join-Path $runtimeArtifact.DirectoryName $sharedName
+    $sharedArtifact = if (Test-Path -LiteralPath $sharedCandidate -PathType Leaf) {
+        Resolve-Path -LiteralPath $sharedCandidate
+    } else {
+        $null
+    }
+
     $symbolTool = Resolve-SymbolTool
     $manifestSymbols = Get-ManifestNativeSymbols $repoRoot
     $backendSymbols = Get-BackendDirectOriImports $repoRoot
     $backendDeclaresManifestLoop = Test-BackendDeclaresManifestLoop $repoRoot
     $exportedSymbols = Get-ExportedSymbols $symbolTool $runtimeArtifact
+    if ($null -ne $sharedArtifact) {
+        $sharedExportedSymbols = Get-ExportedSymbols $symbolTool $sharedArtifact
+        foreach ($symbol in @("ori_rt_init", "ori_rt_shutdown", "ori_host_error_code")) {
+            if (-not $sharedExportedSymbols.Contains($symbol)) {
+                throw "shared runtime is missing required ABI symbol ${symbol}: $sharedArtifact"
+            }
+        }
+    } else {
+        Write-Warning "Shared runtime artifact not found beside $runtimeArtifact; static export checks continue."
+    }
 
     $missingManifestExports = @($manifestSymbols | Where-Object { -not $exportedSymbols.Contains($_) } | Sort-Object)
     $missingBackendExports = @($backendSymbols | Where-Object { -not $exportedSymbols.Contains($_) } | Sort-Object)

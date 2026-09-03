@@ -3,18 +3,21 @@
 > **Audience:** end users who want to write Ori programs **without** cloning this
 > repository and **without** a Rust toolchain.  
 > **Portuguese:** [install.pt-BR.md](install.pt-BR.md)  
-> **Surface:** S3 · package **v0.3.4** · M1 (Rust-free install path) complete · FREEZE-1 on 0.3.x
+> **Surface:** S3 + inference B · latest release **v0.3.8** · M1 complete
 
 ## System prerequisites
 
-Ori uses the **OS native linker** for AOT (`ori compile`, `ori test`).  
-For JIT (`ori run`), no linker is required — only the packaged runtime next to
-the `ori` binary (`runtime/<triple>/`).
+Ori uses a packaged `rust-lld` when available and otherwise discovers the OS
+native linker for AOT (`ori compile`, `ori test`). The package does not require
+`rustc` or `cargo`. For JIT (`ori run`), no linker is required — only the
+packaged runtime next to the `ori` binary (`runtime/<triple>/`).
 
 ### Windows (10/11)
 
-**Requirement:** Visual Studio Build Tools or Visual Studio Community with the
-**"Desktop development with C++"** workload.
+**Fallback requirement:** Visual Studio Build Tools or Visual Studio Community
+with the **"Desktop development with C++"** workload. Release packages normally
+bundle `rust-lld`; install this only when `ori doctor` reports the system-linker
+fallback.
 
 ```powershell
 winget install Microsoft.VisualStudio.2022.BuildTools
@@ -22,13 +25,17 @@ winget install Microsoft.VisualStudio.2022.BuildTools
 
 Or the installer at [visualstudio.microsoft.com/downloads](https://visualstudio.microsoft.com/downloads/).
 
-**Why:** AOT uses MSVC `link.exe`.
+**Why:** AOT falls back to MSVC `link.exe` when the packaged `rust-lld` is not
+available.
 
-**Not required:** Rust (`rustc`, `cargo`), or `rust-lld` (SystemLinker is the default).
+**Not required:** Rust (`rustc`, `cargo`). A packaged `rust-lld`, when present,
+is an implementation detail of the release package.
 
 ### Linux
 
-**Requirement:** `build-essential` (or `gcc` + `ld` + libc headers).
+**Fallback requirement:** `build-essential` (or `gcc` + `ld` + libc headers).
+Release packages normally bundle `rust-lld`; install this only when `ori doctor`
+reports the system-linker fallback.
 
 ```bash
 # Debian / Ubuntu
@@ -41,11 +48,13 @@ sudo dnf install gcc gcc-c++ make glibc-devel
 sudo pacman -S base-devel
 ```
 
-**Not required:** Rust.
+**Not required:** Rust. The packaged `rust-lld` is not the Rust compiler.
 
 ### macOS
 
-**Requirement:** Xcode Command Line Tools.
+**Fallback requirement:** Xcode Command Line Tools. Release packages normally
+bundle `rust-lld`; install these tools only when `ori doctor` reports the
+system-linker fallback.
 
 ```bash
 xcode-select --install
@@ -65,15 +74,25 @@ xcode-select --install
 > [GitHub Releases](https://github.com/raillen/ori-lang/releases) after a `v*` tag.
 
 1. Download from [GitHub Releases](https://github.com/raillen/ori-lang/releases).
-   Example names for **v0.3.5** (version matches the tag):
+   Example names for tag **`vX.Y.Z`**:
 
    | Platform | Asset |
    |----------|--------|
-   | Linux x86_64 | `ori-v0.3.5-x86_64-unknown-linux-gnu.tar.gz` |
-   | Linux deb | `ori_0.3.5_amd64.deb` |
-   | Windows MSVC x86_64 | `ori-v0.3.5-x86_64-pc-windows-msvc.zip` |
-   | macOS Apple Silicon | `ori-v0.3.5-aarch64-apple-darwin.tar.gz` |
-   | macOS Intel | `ori-v0.3.5-x86_64-apple-darwin.tar.gz` |
+   | Linux x86_64 | `ori-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+   | Linux deb | `ori_X.Y.Z_amd64.deb` |
+   | Windows MSVC x86_64 | `ori-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
+   | macOS Apple Silicon | `ori-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
+   | macOS Intel | `ori-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
+
+   Releases produced by the current workflow also contain `SHA256SUMS`,
+   `ori-vX.Y.Z.spdx.json`, and
+   GitHub build-provenance attestations. Verify the downloaded bytes from the
+   directory containing the assets:
+
+   ```bash
+   sha256sum --check SHA256SUMS
+   gh attestation verify ori-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz --repo raillen/ori-lang
+   ```
 
 #### Option A — Windows one-liner (recommended, Scoop-style)
 
@@ -88,7 +107,7 @@ irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.
 Pin version / reinstall:
 
 ```powershell
-$env:ORI_VERSION = "0.3.5"
+$env:ORI_VERSION = "0.3.7"
 $env:ORI_FORCE = "1"
 irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
 ```
@@ -137,9 +156,9 @@ Full details: [`tools/windows/README.md`](../tools/windows/README.md).
 #### Option C — `.deb` (Debian / Ubuntu)
 
 ```bash
-sudo dpkg -i ori_0.3.5_amd64.deb
+sudo dpkg -i ori_0.3.7_amd64.deb
 # installs /usr/lib/ori + /usr/bin/ori + /usr/bin/ori-lsp
-# AOT still needs: sudo apt install build-essential
+# AOT fallback only: sudo apt install build-essential
 ```
 
 ### Verify
@@ -189,8 +208,8 @@ From the same [GitHub Release](https://github.com/raillen/ori-lang/releases) as 
 
 | Editor | Asset | Install |
 |--------|--------|---------|
-| VS Code / Cursor | `ori-vscode-orl-0.3.5.vsix` | `code --install-extension ori-vscode-orl-0.3.5.vsix` |
-| Zed | `ori-zed-0.3.5.zip` | extract → **zed: install dev extension** |
+| VS Code / Cursor | `ori-vscode-orl-0.3.5.vsix` (release) or `vscode-orl-0.3.5.vsix` (local) | `code --install-extension <file>.vsix` |
+| Zed | `ori-zed-0.3.5.zip` (current dev extension artifact) | extract → **zed: install dev extension** |
 
 Requires `ori-lsp` on `PATH` (from the language install above).  
 Details: [`extensions/README.md`](../extensions/README.md).

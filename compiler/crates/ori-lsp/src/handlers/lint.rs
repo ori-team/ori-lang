@@ -3,8 +3,13 @@
 /// The compiler already reports parse errors, type errors, etc. This module
 /// adds best-effort lint warnings: style and correctness hints that are not
 /// compilation errors but are useful while editing Ori code.
-use std::collections::HashMap;
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
+use std::path::Path;
+use tower_lsp::lsp_types::Diagnostic;
+
+/// Upper bound for editor linting. Full semantic linting reparses and checks
+/// the buffer; refusing pathological buffers keeps diagnostics responsive and
+/// leaves compilation itself unrestricted.
+pub const MAX_LINT_SOURCE_BYTES: usize = 1 << 20;
 
 /// Configuration for which lints are enabled.
 #[derive(Debug, Clone)]
@@ -24,152 +29,33 @@ impl Default for LintConfig {
     }
 }
 
-/// Run all enabled lint checks on source code and return LSP diagnostics.
-pub fn lint(source: &str, config: &LintConfig) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
-    let lines: Vec<&str> = source.lines().collect();
-    let mut seen_bindings: HashMap<String, usize> = HashMap::new();
-
-    for (line_index, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let binding_name = extract_binding_name(trimmed).or_else(|| extract_var_binding(trimmed));
-
-        if config.shadowed_variable {
-            if let Some(name) = binding_name.as_deref() {
-                if !name.starts_with('_') {
-                    if let Some(previous_line) = seen_bindings.get(name) {
-                        diagnostics.push(lint_diagnostic(
-                            range_for_word_on_line(line, name, line_index),
-                            DiagnosticSeverity::WARNING,
-                            "lint.shadowed_variable",
-                            format!(
-                                "Binding `{name}` shadows a previous binding on line {}.",
-                                previous_line + 1
-                            ),
-                        ));
-                    }
-                }
-            }
-        }
-
-        if let Some(name) = binding_name.as_deref() {
-            seen_bindings.entry(name.to_string()).or_insert(line_index);
-        }
-
-        if config.unused_variable {
-            if let Some(name) = binding_name.as_deref() {
-                let mut ref_count = 0;
-                for (other_index, other) in lines.iter().enumerate() {
-                    if line_index == other_index {
-                        continue;
-                    }
-                    ref_count += other.matches(name).count();
-                }
-                if ref_count == 0 && !name.starts_with('_') {
-                    diagnostics.push(lint_diagnostic(
-                        range_for_word_on_line(line, name, line_index),
-                        DiagnosticSeverity::WARNING,
-                        "lint.unused_variable",
-                        format!("Variable `{name}` is never used. Prefix with `_` to suppress."),
-                    ));
-                }
-            }
-        }
-
-        if config.prefer_const {
-            if let Some(name) = extract_var_binding(trimmed) {
-                if !name.starts_with('_') {
-                    let is_mutated = lines.iter().any(|line| {
-                        line.contains(&format!("{name} :=")) || line.contains(&format!("{name} ="))
-                    });
-                    if !is_mutated {
-                        diagnostics.push(lint_diagnostic(
-                            range_for_word_on_line(line, &name, line_index),
-                            DiagnosticSeverity::HINT,
-                            "lint.prefer_const",
-                            format!("`{name}` is never mutated; consider using `const`."),
-                        ));
-                    }
-                }
-            }
-        }
+/// Run the compiler's AST-based linter on an in-memory editor buffer.
+///
+/// `run_lint_source` already resolves scopes and ignores comments/strings. We
+/// retain the small config surface here by filtering only the optional LSP
+/// warning families before converting their source spans to LSP ranges.
+pub fn lint(path: Option<&Path>, source: &str, config: &LintConfig) -> Vec<Diagnostic> {
+    if source.len() > MAX_LINT_SOURCE_BYTES {
+        return Vec::new();
     }
+    let fallback = Path::new("<lsp-buffer>.orl");
+    let target = path.unwrap_or(fallback);
+    let Ok(output) = ori_driver::pipeline::run_lint_source(target, source.to_owned()) else {
+        return Vec::new();
+    };
 
-    diagnostics
-}
+    let filtered: Vec<_> = output
+        .diagnostics
+        .into_iter()
+        .filter(|diagnostic| match diagnostic.code {
+            "lint.unused_variable" => config.unused_variable,
+            "lint.shadowed_variable" => config.shadowed_variable,
+            "lint.prefer_const" => config.prefer_const,
+            _ => false,
+        })
+        .collect();
 
-fn lint_diagnostic(
-    range: Range,
-    severity: DiagnosticSeverity,
-    code: &str,
-    message: String,
-) -> Diagnostic {
-    Diagnostic {
-        range,
-        severity: Some(severity),
-        code: Some(tower_lsp::lsp_types::NumberOrString::String(code.into())),
-        source: Some("ori-lint".into()),
-        message,
-        ..Default::default()
-    }
-}
-
-fn extract_binding_name(line: &str) -> Option<String> {
-    let line = line.trim_start();
-    if let Some(rest) = line.strip_prefix("const ") {
-        let name = rest
-            .split(|c: char| c.is_whitespace() || c == ':' || c == '=')
-            .next()?
-            .to_string();
-        if is_valid_binding_name(&name) {
-            return Some(name);
-        }
-    }
-    if let Some((name, _)) = line.split_once(" :=") {
-        let name = name.trim().to_string();
-        if is_valid_binding_name(&name) && !name.contains(' ') {
-            return Some(name);
-        }
-    }
-    None
-}
-
-fn extract_var_binding(line: &str) -> Option<String> {
-    let line = line.trim_start();
-    if let Some(rest) = line.strip_prefix("var ") {
-        let name = rest
-            .split(|c: char| c.is_whitespace() || c == ':' || c == '=')
-            .next()?
-            .to_string();
-        if is_valid_binding_name(&name) {
-            return Some(name);
-        }
-    }
-    None
-}
-
-fn is_valid_binding_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .next()
-            .map(|c| c.is_alphabetic() || c == '_')
-            .unwrap_or(false)
-}
-
-fn range_for_word_on_line(line: &str, word: &str, line_index: usize) -> Range {
-    let column = line.find(word).unwrap_or(0);
-    let line = line_index as u32;
-    Range {
-        start: Position {
-            line,
-            character: column as u32,
-        },
-        end: Position {
-            line,
-            character: (column + word.len()) as u32,
-        },
-    }
+    crate::handlers::diagnostics::diagnostics_for_path(&output.cache, &filtered, target)
 }
 
 #[cfg(test)]
@@ -178,7 +64,7 @@ mod tests {
     use tower_lsp::lsp_types::NumberOrString;
 
     fn diagnostic_codes(source: &str, config: &LintConfig) -> Vec<String> {
-        lint(source, config)
+        lint(None, source, config)
             .into_iter()
             .filter_map(|diagnostic| match diagnostic.code {
                 Some(NumberOrString::String(code)) => Some(code),
@@ -194,7 +80,10 @@ mod tests {
             shadowed_variable: false,
             prefer_const: false,
         };
-        let codes = diagnostic_codes("main()\n    const value = 1\nend\n", &config);
+        let codes = diagnostic_codes(
+            "module app.main\n\nmain()\n    const value = 1\nend\n",
+            &config,
+        );
         assert!(!codes.iter().any(|code| code == "lint.unused_variable"));
     }
 
@@ -205,7 +94,10 @@ mod tests {
             shadowed_variable: false,
             prefer_const: false,
         };
-        let codes = diagnostic_codes("main()\n    var value: int = 1\nend\n", &config);
+        let codes = diagnostic_codes(
+            "module app.main\n\nmain()\n    var value: int = 1\nend\n",
+            &config,
+        );
         assert!(!codes.iter().any(|code| code == "lint.prefer_const"));
     }
 
@@ -217,9 +109,130 @@ mod tests {
             prefer_const: false,
         };
         let codes = diagnostic_codes(
-            "main()\n    const value = 1\n    const value = 2\nend\n",
+            "module app.main\n\nmain()\n    const value = 1\n    if true\n        const value = 2\n    end\nend\n",
             &config,
         );
         assert!(codes.iter().any(|code| code == "lint.shadowed_variable"));
+    }
+
+    #[test]
+    fn ast_lint_ignores_comments_and_string_contents() {
+        let config = LintConfig {
+            unused_variable: true,
+            shadowed_variable: false,
+            prefer_const: false,
+        };
+        let codes = diagnostic_codes(
+            "module app.main\n\nmain()\n    const café = 1\n    check true, \"café is mentioned here\"\n    -- café is mentioned in a comment too\nend\n",
+            &config,
+        );
+        assert!(
+            codes.iter().any(|code| code == "lint.unused_variable"),
+            "a binding mentioned only in comments/strings remains unused"
+        );
+    }
+
+    #[test]
+    fn ast_lint_tracks_nested_scope_shadowing() {
+        let config = LintConfig {
+            unused_variable: true,
+            shadowed_variable: true,
+            prefer_const: false,
+        };
+        let codes = diagnostic_codes(
+            "module app.main\n\nmain()\n    const value = 1\n    if true\n        const value = 2\n        value\n    end\n    value\nend\n",
+            &config,
+        );
+        assert!(
+            codes.iter().any(|code| code == "lint.shadowed_variable"),
+            "nested binding must be diagnosed as shadowing"
+        );
+        assert!(
+            !codes.iter().any(|code| code == "lint.unused_variable"),
+            "both bindings are read in their respective lexical scopes"
+        );
+    }
+
+    #[test]
+    fn ast_lint_keeps_outer_binding_unused_after_inner_shadowing() {
+        let config = LintConfig {
+            unused_variable: true,
+            shadowed_variable: true,
+            prefer_const: false,
+        };
+        let codes = diagnostic_codes(
+            "module app.main\n\nmain()\n    const value = 1\n    if true\n        const value = 2\n        value\n    end\nend\n",
+            &config,
+        );
+        assert_eq!(
+            codes
+                .iter()
+                .filter(|code| code.as_str() == "lint.unused_variable")
+                .count(),
+            1,
+            "the outer binding remains unused; the inner binding is read"
+        );
+        assert!(codes.iter().any(|code| code == "lint.shadowed_variable"));
+    }
+
+    #[test]
+    fn large_buffers_skip_linting_within_the_editor_budget() {
+        let config = LintConfig::default();
+        let source = "x".repeat(MAX_LINT_SOURCE_BYTES + 1);
+        assert!(lint(None, &source, &config).is_empty());
+    }
+
+    #[test]
+    fn ast_lint_recognizes_uses_in_match_expressions_and_closures() {
+        let config = LintConfig::default();
+        let source = r#"
+module app.main
+
+fetch() -> result[int, string]
+    return ok(42)
+end
+
+main()
+    const code: int = 42
+    const outcome = match fetch()
+        case ok(val): val + code
+        case else: 0
+    end
+    const add = (x: int) -> x + outcome
+    check add(1) == 85
+end
+"#;
+        let codes = diagnostic_codes(source, &config);
+        assert!(
+            !codes.iter().any(|code| code == "lint.unused_variable"),
+            "bindings read in match expressions, arms, and closures must be recognized as used: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ast_lint_recognizes_uses_in_struct_updates_and_try() {
+        let config = LintConfig::default();
+        let source = r#"
+module app.main
+
+type Point = { x: int, y: int }
+
+compute() -> result[Point, string]
+    const p = Point { x: 10, y: 20 }
+    const delta = 5
+    const updated = p with { x: delta } end
+    return ok(updated)
+end
+
+main()
+    const res = try compute()
+    check res.x == 5
+end
+"#;
+        let codes = diagnostic_codes(source, &config);
+        assert!(
+            !codes.iter().any(|code| code == "lint.unused_variable"),
+            "bindings read in struct updates and try must be recognized as used: {codes:?}"
+        );
     }
 }

@@ -1,0 +1,141 @@
+module ori.image
+
+-- PPM & BMP image export helpers for software rendering (GFX-ECO-1).
+
+public encode_ppm(width: int, height: int, pixels: list[int]) -> string
+    var out: string = "P3\n"
+    out = ori.string.concat(out, string(width))
+    out = ori.string.concat(out, " ")
+    out = ori.string.concat(out, string(height))
+    out = ori.string.concat(out, "\n255\n")
+
+    var i: int = 0
+    const total: int = width * height
+    const pixel_count: int = ori.list.len(pixels)
+    while i < total
+        if i < pixel_count
+            const color: int = ori.list.get(pixels, i)
+            const r: int = (color >> 16) & 255
+            const g: int = (color >> 8) & 255
+            const b: int = color & 255
+            out = ori.string.concat(out, string(r))
+            out = ori.string.concat(out, " ")
+            out = ori.string.concat(out, string(g))
+            out = ori.string.concat(out, " ")
+            out = ori.string.concat(out, string(b))
+            out = ori.string.concat(out, "\n")
+        else
+            out = ori.string.concat(out, "0 0 0\n")
+        end
+        i = i + 1
+    end
+    return out
+end
+
+public write_ppm(path: string, width: int, height: int, pixels: list[int]) -> result[string, string]
+    const content: string = encode_ppm(width, height, pixels)
+    return ori.fs.write_text(path, content)
+end
+
+public encode_bmp(width: int, height: int, pixels: list[int]) -> bytes
+    const row_bytes: int = width * 3
+    const padding: int = (4 - (row_bytes % 4)) % 4
+    const row_stride: int = row_bytes + padding
+    const image_size: int = row_stride * height
+    const file_size: int = 54 + image_size
+
+    var byte_list: list[int] = []
+
+    -- BMP File Header (14 bytes)
+    ori.list.push(byte_list, 66) -- 'B'
+    ori.list.push(byte_list, 77) -- 'M'
+    ori.list.push(byte_list, file_size & 255)
+    ori.list.push(byte_list, (file_size >> 8) & 255)
+    ori.list.push(byte_list, (file_size >> 16) & 255)
+    ori.list.push(byte_list, (file_size >> 24) & 255)
+    ori.list.push(byte_list, 0) -- reserved 1
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0) -- reserved 2
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 54) -- pixel data offset (54)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+
+    -- DIB Header (BITMAPINFOHEADER - 40 bytes)
+    ori.list.push(byte_list, 40) -- header size
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, width & 255)
+    ori.list.push(byte_list, (width >> 8) & 255)
+    ori.list.push(byte_list, (width >> 16) & 255)
+    ori.list.push(byte_list, (width >> 24) & 255)
+    ori.list.push(byte_list, height & 255)
+    ori.list.push(byte_list, (height >> 8) & 255)
+    ori.list.push(byte_list, (height >> 16) & 255)
+    ori.list.push(byte_list, (height >> 24) & 255)
+    ori.list.push(byte_list, 1) -- color planes (1)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 24) -- bits per pixel (24-bit BGR)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0) -- compression (BI_RGB = 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, image_size & 255)
+    ori.list.push(byte_list, (image_size >> 8) & 255)
+    ori.list.push(byte_list, (image_size >> 16) & 255)
+    ori.list.push(byte_list, (image_size >> 24) & 255)
+    ori.list.push(byte_list, 0) -- h-res
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0) -- v-res
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0) -- palette colors
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0) -- important colors
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+    ori.list.push(byte_list, 0)
+
+    -- BMP rows are stored bottom-to-top
+    var y: int = height - 1
+    const pixel_count: int = ori.list.len(pixels)
+    while y >= 0
+        var x: int = 0
+        while x < width
+            const idx: int = y * width + x
+            var color: int = 0
+            if idx < pixel_count
+                color = ori.list.get(pixels, idx)
+            end
+            const r: int = (color >> 16) & 255
+            const g: int = (color >> 8) & 255
+            const b: int = color & 255
+            -- BGR order
+            ori.list.push(byte_list, b)
+            ori.list.push(byte_list, g)
+            ori.list.push(byte_list, r)
+            x = x + 1
+        end
+        var p: int = 0
+        while p < padding
+            ori.list.push(byte_list, 0)
+            p = p + 1
+        end
+        y = y - 1
+    end
+
+    return ori.bytes.from_list(byte_list)
+end
+
+public write_bmp(path: string, width: int, height: int, pixels: list[int]) -> result[string, string]
+    const content: bytes = encode_bmp(width, height, pixels)
+    return ori.fs.write_bytes(path, content)
+end

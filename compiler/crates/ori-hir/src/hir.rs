@@ -27,6 +27,7 @@ pub struct HirStruct {
     pub fields: Vec<HirField>,
     pub is_public: bool,
     pub repr_c: bool,
+    pub explicit_align: Option<u32>,
     pub span: Span,
 }
 
@@ -94,6 +95,8 @@ pub struct HirFunc {
     pub is_public: bool,
     pub is_async: bool,
     pub is_mut: bool,
+    pub is_inline: bool,
+    pub is_no_inline: bool,
     /// When set (`@c_export` / `@c_export("name")`), the native backend emits an
     /// additional C ABI export with this unmangled symbol name (cdylib / `--lib`).
     pub c_export_name: Option<SmolStr>,
@@ -366,11 +369,11 @@ pub enum HirExprKind {
 
     // Construction
     StructLit {
-        def_id: DefId,
+        def_id: Option<DefId>,
         fields: Vec<(SmolStr, HirExpr)>,
     },
     EnumVariant {
-        def_id: DefId,
+        def_id: Option<DefId>,
         variant: SmolStr,
         fields: Vec<(SmolStr, HirExpr)>,
     },
@@ -385,6 +388,15 @@ pub enum HirExprKind {
     /// heap block, no length field, and no reference counting.
     ArrayLit {
         elem_ty: Ty,
+        elements: Vec<HirExpr>,
+    },
+    /// `[1.0, 2.0, 3.0, 4.0]` where the context expects `simd[T, N]` (LANG-SIMD-1).
+    ///
+    /// Distinct from `ArrayLit`: a SIMD vector maps directly to a CPU vector
+    /// register (`F32X4`, `I32X4`) in the Cranelift and JIT backends.
+    SimdLit {
+        elem_ty: Ty,
+        lanes: u16,
         elements: Vec<HirExpr>,
     },
     ListSpreadLit {
@@ -437,7 +449,7 @@ pub enum HirExprKind {
     },
     // Struct update `base with { field: value } end`
     StructUpdate {
-        def_id: DefId,
+        def_id: Option<DefId>,
         base: Box<HirExpr>,
         updates: Vec<(SmolStr, HirExpr)>,
     },

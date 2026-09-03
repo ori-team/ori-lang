@@ -320,6 +320,8 @@ yield a range of exactly one element. Current ranges use `int` endpoints only.
 +   -   *   /   %
 +=  -=  *=  /=
 ==  !=  <   <=  >   >=
+<<  >>
+&   |   ^   ~
 =
 |>
 (   )   [   ]   {   }
@@ -337,6 +339,12 @@ The `?` token is **removed** as postfix propagation on S3
 an expression. It has no precedence level and appears nowhere in the grammar.
 The `@` token is the attribute prefix: `@test`, `@deprecated("message")`.
 The `--|` / `|--` tokens delimit block and documentation comments.
+
+Bitwise/shift operators (GFX-BITWISE-1): `&` bitwise AND, `|` bitwise OR,
+`^` bitwise XOR, `~` bitwise complement (unary), `<<` left shift, `>>` right
+shift. They are distinct from the logical keywords `and` / `or` / `not` and
+from the pipe `|>`. Precedence (high to low): `~` unary > `<<` `>>` >
+`&` > `^` > `|` > `and` > `or`.
 
 ### Tuple Field Access
 
@@ -359,7 +367,7 @@ Current implementation status:
 - Built-in attribute names, targets, duplicate uses, and argument shapes are validated.
 - `@deprecated("message")` emits `attr.deprecated` warnings at use sites.
 - `@test` marks concrete no-arg/no-return test functions for `ori test`.
-- `@inline`, `@no_inline`, and `@cfg` are validated but not acted on by the compiler yet.
+- `@cfg` filters inactive declarations before name resolution; `@inline` and `@no_inline` are validated but not yet acted on by the optimizer.
 - Unknown attributes are rejected with `attr.unknown`.
 - The emitted attribute diagnostics are listed in `docs/spec/13-error-catalog.md`.
 
@@ -382,16 +390,83 @@ end
 
 Built-in attributes:
 
-| Attribute | Applies to | Current validation | Planned effect |
+| Attribute | Applies to | Current validation | Current effect |
 |---|---|---|---|
-| `@test` | `func` | no arguments; function must have no type parameters, no value parameters, and no return value | Runs through `ori test` |
+| `@test` | function declaration | no arguments; function must have no type parameters, no value parameters, and no return value | Runs through `ori test` |
 | `@deprecated("msg")` | any declaration | exactly one string argument | Emits `attr.deprecated` warning at use sites |
-| `@inline` | `func` | no arguments | Hint to inline at call sites |
-| `@no_inline` | `func` | no arguments | Prohibit inlining |
-| `@cfg("condition")` or `@cfg(key: value)` | any declaration | exactly one string or named argument | Conditionally include based on build config |
+| `@inline` | function declaration | no arguments | Validated and stored; not acted on by the current backend |
+| `@no_inline` | function declaration | no arguments | Validated and stored; not acted on by the current backend |
+| `@noalloc` | function declaration | no arguments | Statically verified: rejects heap allocations, collection literals, string formatting, closures, `await`, `using`, dynamic collection iteration, and calls to functions not marked `@noalloc`; violation emits `perf.allocation_in_noalloc` |
+| `@align(N)` | struct declaration | power-of-two integer between 1 and 64 (1, 2, 4, 8, 16, 32, 64) | Forces struct alignment and padding to at least `N` bytes in Cranelift layout and C export headers (`alignas(N)`); reflected in `ori.mem.align_of` and `ori.mem.size_of` |
+| `@cfg(predicate)` | any top-level declaration | exactly one structured predicate; one `@cfg` per declaration | Removes an inactive declaration before name resolution and type checking |
+| `@repr("C")` | struct declaration | supported form is exactly the string `"C"` | Selects the C-compatible struct layout path |
+| `@c_export` / `@c_export("name")` | public function | no argument or one C identifier | Emits the host-facing ABI export; see [19-abi.md](19-abi.md) |
 
 Custom attributes are not part of the planned v1 contract. They are rejected
 with `attr.unknown`.
+
+`@repr` accepts only exact `@repr("C")`. Missing arguments, named arguments,
+additional arguments, and other representation strings emit
+`attr.invalid_arg`.
+
+### Conditional compilation
+
+`@cfg` has a closed, structured grammar. Free-form strings are rejected.
+
+```ori
+@cfg(target_os: linux)
+linux_api()
+end
+
+@cfg(all(target_family: unix, feature: tls))
+secure_unix_api()
+end
+
+@cfg(any(target_os: linux, target_os: macos))
+desktop_unix_api()
+end
+
+@cfg(not(execution_profile: embedded))
+standalone_only()
+end
+```
+
+The v1 keys are `target_os`, `target_arch`, `target_family`,
+`execution_profile`, and `feature`. `execution_profile` accepts only
+`standalone` and `embedded`. Feature names are ASCII identifiers and must be
+declared under `[features]` in `ori.proj` or `ori.pkg.toml`. `all` and `any`
+require at least one nested predicate; `not` requires exactly one.
+
+Target values are also closed and typo-checked:
+
+- `target_family`: `unix`, `windows`, `wasm`, `none`;
+- `target_os`: `linux`, `windows`, `macos`, `android`, `ios`, `freebsd`,
+  `netbsd`, `openbsd`, `dragonfly`, `solaris`, `illumos`, `haiku`, `aix`,
+  `emscripten`, `wasi`, `visionos`, `tvos`, `watchos`, `none`;
+- `target_arch`: `x86`, `x86_64`, `arm`, `aarch64`, `mips`, `mips64`,
+  `powerpc`, `powerpc64`, `riscv32`, `riscv64`, `s390x`, `sparc`, `sparc64`,
+  `wasm32`, `wasm64`, `loongarch64`, `bpf`, `csky`, `hexagon`, `m68k`,
+  `nvptx64`, `avr`, `msp430`, `xtensa`.
+
+A known value that does not describe the selected target evaluates to false.
+An unknown key, value, feature, or composition operator is an error.
+Likewise, selecting a target triple whose architecture or operating system
+cannot be represented by the closed cfg v1 value set emits
+`cfg.target_invalid`; an unknown OS never falls back to `target_os: none`.
+
+The compiler lexes and parses the complete file first, so syntax errors in an
+inactive declaration are still errors. It then removes inactive declarations
+before name resolution. Consequently, inactive declarations do not define
+symbols, do not conflict with active declarations, do not enter HIR or
+generated documentation, and are absent from every backend. An invalid cfg
+predicate is diagnosed and never silently hides its declaration.
+
+Conditional compilation is limited to top-level declarations in cfg v1.
+Imports, fields, parameters, statements, and expressions cannot carry `@cfg`.
+Configuration is a build-selection mechanism, not a capability or security
+boundary. Selecting `execution_profile: embedded` currently changes cfg
+selection only; the freestanding runtime/capability profile remains separate
+planned work.
 
 ---
 

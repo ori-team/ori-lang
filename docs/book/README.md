@@ -14,8 +14,9 @@
 
 ## PDF
 
-- **Arquivo:** [`dist/ori-livro.pdf`](dist/ori-livro.pdf) (A4, syntax highlight Ori/bash/text)
-- **Pré-visualização HTML:** [`dist/ori-livro.html`](dist/ori-livro.html)
+Os artefatos `dist/ori-livro.pdf` e `dist/ori-livro.html` são gerados localmente
+e não ficam versionados. Depois de executar o comando abaixo, eles aparecerão
+em `docs/book/dist/` (A4, syntax highlight Ori/bash/text).
 
 Regenerar:
 

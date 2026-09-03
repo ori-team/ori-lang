@@ -8,8 +8,8 @@ use ori_ast::stmt::{
 use ori_diagnostics::{DiagnosticSink, FileId, Span};
 use ori_types::literal::{parse_float_literal, parse_int_literal};
 use ori_types::{
-    expand_ty_aliases, DefId, DefKind, DefMap, EnumSig, FuncSig, ImplSig, OpaqueTy, ReExport,
-    StructSig, TraitSig, Ty, TypeAliasSig, ValueSig,
+    expand_ty_aliases, replace_json_placeholder, substitute_ty_params, DefId, DefKind, DefMap,
+    EnumSig, FuncSig, ImplSig, OpaqueTy, ReExport, StructSig, TraitSig, Ty, TypeAliasSig, ValueSig,
 };
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
@@ -70,10 +70,12 @@ fn ori_mem_size_of_ty(ty: &Ty) -> i64 {
             Ty::ConstInt(_, n) if *n >= 0 => ori_mem_size_of_ty(elem) * n,
             _ => 0,
         },
+        Ty::Simd(elem, lanes) => ori_mem_size_of_ty(elem) * (*lanes as i64),
         Ty::Error => 0,
         Ty::Infer(_) | Ty::Param { .. } => 8,
         // A slice is a small `(owner, start, len)` block behind a pointer.
-        Ty::Slice(_) => 8,
+        // A buffer is a heap-allocated contiguous block (header + payload).
+        Ty::Buffer(_) | Ty::Slice(_) => 8,
         Ty::String
         | Ty::Bytes
         | Ty::Optional(_)
@@ -120,59 +122,10 @@ fn expr_to_qualified_path(expr: &Expr) -> Option<String> {
     }
 }
 
-fn replace_json_placeholder_in_ty(ty: Ty, def_map: &DefMap) -> Ty {
-    let json_val_def_id = def_map.lookup("ori.json.Value");
-    fn recurse(t: Ty, json_val_def_id: Option<DefId>) -> Ty {
-        match t {
-            Ty::Named(id, _) if id == ori_types::stdlib::JSON_VALUE_PLACEHOLDER => {
-                if let Some(concrete_id) = json_val_def_id {
-                    Ty::Named(concrete_id, vec![])
-                } else {
-                    Ty::Named(id, vec![])
-                }
-            }
-            Ty::Named(id, args) => {
-                let new_args = args
-                    .into_iter()
-                    .map(|arg| recurse(arg, json_val_def_id))
-                    .collect();
-                Ty::Named(id, new_args)
-            }
-            Ty::Optional(inner) => Ty::Optional(Box::new(recurse(*inner, json_val_def_id))),
-            Ty::Result(ok, err) => Ty::Result(
-                Box::new(recurse(*ok, json_val_def_id)),
-                Box::new(recurse(*err, json_val_def_id)),
-            ),
-            Ty::List(inner) => Ty::List(Box::new(recurse(*inner, json_val_def_id))),
-            Ty::Map(k, v) => Ty::Map(
-                Box::new(recurse(*k, json_val_def_id)),
-                Box::new(recurse(*v, json_val_def_id)),
-            ),
-            Ty::Set(inner) => Ty::Set(Box::new(recurse(*inner, json_val_def_id))),
-            Ty::Range(inner) => Ty::Range(Box::new(recurse(*inner, json_val_def_id))),
-            Ty::Tuple(elems) => Ty::Tuple(
-                elems
-                    .into_iter()
-                    .map(|e| recurse(e, json_val_def_id))
-                    .collect(),
-            ),
-            Ty::Func { params, ret } => Ty::Func {
-                params: params
-                    .into_iter()
-                    .map(|p| recurse(p, json_val_def_id))
-                    .collect(),
-                ret: Box::new(recurse(*ret, json_val_def_id)),
-            },
-            _ => t,
-        }
-    }
-    recurse(ty, json_val_def_id)
-}
-
 fn stdlib_c_func_ty(c_name: &str, def_map: Option<&DefMap>) -> Ty {
     let raw = stdlib_c_func_ty_raw(c_name);
     if let Some(def_map) = def_map {
-        replace_json_placeholder_in_ty(raw, def_map)
+        replace_json_placeholder(raw, def_map)
     } else {
         raw
     }
@@ -552,6 +505,13 @@ fn specialized_stdlib_call_ret_ty(c_name: &str, args: &[HirArg], fallback: Ty) -
             .first()
             .and_then(|arg| match &arg.value.ty {
                 Ty::Slice(elem) => Some((**elem).clone()),
+                _ => None,
+            })
+            .unwrap_or(fallback),
+        "ori.buffer.as_slice" => args
+            .first()
+            .and_then(|arg| match &arg.value.ty {
+                Ty::Buffer(elem) => Some(Ty::Slice(elem.clone())),
                 _ => None,
             })
             .unwrap_or(fallback),
@@ -944,6 +904,21 @@ fn specialized_stdlib_call_ret_ty(c_name: &str, args: &[HirArg], fallback: Ty) -
     }
 }
 
+/// Select an ownership-specific runtime entry point when the type checker has
+/// already established that an otherwise scalar ABI slot carries a managed
+/// value. This keeps raw pointer classification out of the runtime boundary.
+fn specialized_stdlib_runtime_symbol(c_name: &'static str, args: &[HirArg]) -> &'static str {
+    if c_name == "ori_channel_send"
+        && args
+            .get(1)
+            .is_some_and(|arg| arg.value.ty.is_runtime_managed())
+    {
+        "ori_channel_send_managed"
+    } else {
+        c_name
+    }
+}
+
 // ── Scope stack ───────────────────────────────────────────────────────────────
 
 #[derive(Default)]
@@ -988,9 +963,12 @@ struct Lowerer<'a> {
     /// Iterators currently being inlined, to reject (mutual) recursion.
     iter_inline_stack: Vec<SmolStr>,
     current_where_constraints: Vec<ori_types::WhereConstraintSig>,
+    /// `DefId` -> explicit minimum alignment from `@align(N)` (`LANG-ALIGN-1`).
+    struct_explicit_aligns: HashMap<DefId, u32>,
 }
 
 impl<'a> Lowerer<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         def_map: &'a DefMap,
         func_sigs: &'a [FuncSig],
@@ -1046,6 +1024,7 @@ impl<'a> Lowerer<'a> {
             iter_inline_counter: 0,
             iter_inline_stack: Vec::new(),
             current_where_constraints: Vec::new(),
+            struct_explicit_aligns: HashMap::new(),
         }
     }
 
@@ -1080,6 +1059,108 @@ impl<'a> Lowerer<'a> {
             .find(|sig| sig.def_id == def_id)
             .and_then(|sig| sig.fields.iter().find(|(name, _)| name == field))
             .map(|(_, ty)| ty.clone())
+    }
+
+    /// GFX-INLINE-1: `ori.mem.size_of` with inline-struct awareness. An inline
+    /// struct (all fields inline) reports its real byte size; managed structs
+    /// and other managed types report the pointer size.
+    fn size_of_ty(&self, ty: &Ty) -> i64 {
+        match ty {
+            Ty::Array(elem, size) => match &**size {
+                Ty::ConstInt(_, n) if *n >= 0 => self.size_of_ty(elem) * n,
+                _ => 0,
+            },
+            Ty::Simd(elem, lanes) => self.size_of_ty(elem) * (*lanes as i64),
+            Ty::Named(def_id, args) => {
+                let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
+                    return 8;
+                };
+                if !self.ty_is_inline(sig, args, &mut Vec::new()) {
+                    return 8;
+                }
+                // Sum of aligned field sizes, matching the native layout.
+                let mut offset: i64 = 0;
+                let mut max_align: i64 = self
+                    .struct_explicit_aligns
+                    .get(def_id)
+                    .map(|&a| a as i64)
+                    .unwrap_or(1);
+                for (_, field_ty) in &sig.fields {
+                    let substituted = substitute_ty_params(field_ty, args);
+                    let size = self.size_of_ty(&substituted);
+                    let align = self.align_of_ty(&substituted);
+                    offset = (offset + align - 1) & !(align - 1);
+                    offset += size;
+                    if align > max_align {
+                        max_align = align;
+                    }
+                }
+                ((offset + max_align - 1) & !(max_align - 1)).max(1)
+            }
+            other => ori_mem_size_of_ty(other),
+        }
+    }
+
+    /// Alignment of `ty`, recursing through inline structs (the free
+    /// `ori_mem_align_of_ty` treats every `Named` as a pointer).
+    fn align_of_ty(&self, ty: &Ty) -> i64 {
+        match ty {
+            Ty::Array(elem, _) => self.align_of_ty(elem),
+            Ty::Simd(elem, lanes) => (self.size_of_ty(elem) * (*lanes as i64))
+                .min(16)
+                .max(self.align_of_ty(elem)),
+            Ty::Named(def_id, args) => {
+                let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
+                    return 8;
+                };
+                if !self.ty_is_inline(sig, args, &mut Vec::new()) {
+                    return 8;
+                }
+                let base_align = sig
+                    .fields
+                    .iter()
+                    .map(|(_, field_ty)| {
+                        let substituted = substitute_ty_params(field_ty, args);
+                        self.align_of_ty(&substituted)
+                    })
+                    .max()
+                    .unwrap_or(1);
+                if let Some(&explicit) = self.struct_explicit_aligns.get(def_id) {
+                    base_align.max(explicit as i64)
+                } else {
+                    base_align
+                }
+            }
+            other => ori_mem_align_of_ty(other),
+        }
+    }
+
+    /// Cycle-safe `Inline(T)` check for a struct signature, mirroring the
+    /// checker's classification (scalars, inline arrays, inline structs).
+    fn ty_is_inline(&self, sig: &StructSig, args: &[Ty], visiting: &mut Vec<DefId>) -> bool {
+        if sig.fields.is_empty() {
+            return false;
+        }
+        sig.fields.iter().all(|(_, field_ty)| {
+            let substituted = substitute_ty_params(field_ty, args);
+            match &substituted {
+                Ty::Named(inner_id, inner_args) => {
+                    if visiting.contains(inner_id) {
+                        return false;
+                    }
+                    self.struct_sigs
+                        .iter()
+                        .find(|s| s.def_id == *inner_id)
+                        .is_some_and(|inner_sig| {
+                            visiting.push(*inner_id);
+                            let ok = self.ty_is_inline(inner_sig, inner_args, visiting);
+                            visiting.pop();
+                            ok
+                        })
+                }
+                other => ori_types::is_inline_ty(other),
+            }
+        })
     }
 
     fn lower_math_overload_call(
@@ -1584,7 +1665,7 @@ impl<'a> Lowerer<'a> {
         }
     }
     fn lower_ast_ty(&mut self, t: &ori_ast::ty::Type, tp: &[SmolStr]) -> Ty {
-        let raw = ori_types::lower_type_with_local_aliases(
+        let raw = ori_types::lower_type_with_local_aliases_and_structs(
             t,
             self.namespace,
             tp,
@@ -1593,6 +1674,7 @@ impl<'a> Lowerer<'a> {
             self.sink,
             &self.aliases,
             &self.local_type_aliases,
+            self.struct_sigs,
         );
         let expanded = expand_ty_aliases(raw, self.def_map, &self.type_alias_map);
         // `expand_ty_aliases` only substitutes `DefKind::TypeAlias`, so
@@ -1792,6 +1874,7 @@ fn lower_impl_sigs(def_map: &DefMap, impl_sigs: &[ImplSig]) -> Vec<HirTraitImpl>
 }
 
 /// Lower an inline method from `apply Type` (free or inside `use Trait`).
+#[allow(clippy::too_many_arguments)]
 fn lower_apply_method(
     l: &mut Lowerer<'_>,
     m: &ori_ast::item::FuncDecl,
@@ -1827,7 +1910,9 @@ fn lower_apply_method(
         Some(trait_name) => format!("{}.{}.{}.{}", namespace, type_name, trait_name, m.name.text),
         None => format!("{}.{}.{}", namespace, type_name, m.name.text),
     };
-    let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
+    let def_id = def_map
+        .lookup(&path)
+        .unwrap_or_else(|| panic!("top-level method `{path}` missing from DefMap"));
     funcs.push(HirFunc {
         def_id,
         name: SmolStr::new(&path),
@@ -1838,6 +1923,8 @@ fn lower_apply_method(
         is_public: m.visibility == Visibility::Public,
         is_async: m.is_async,
         is_mut: m.is_mut,
+        is_inline: false,
+        is_no_inline: false,
         c_export_name: None,
         span: m.span,
     });
@@ -1877,10 +1964,12 @@ fn builtin_stdlib_structs(def_map: &DefMap) -> Vec<HirStruct> {
         ],
         is_public: true,
         repr_c: false,
+        explicit_align: None,
         span: Span::DUMMY,
     }]
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn lower(
     file: &SourceFile,
     def_map: &DefMap,
@@ -2012,19 +2101,33 @@ pub fn lower(
                     })
                     .collect();
                 let path = format!("{}.{}", namespace, s.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("struct `{path}` missing from DefMap"));
                 let repr_c = item.attrs.iter().any(|a| {
                     a.name.text == "repr"
                         && a.args
                             .iter()
                             .any(|arg| matches!(arg, ori_ast::common::AttrArg::String(s, _) if *s == "C"))
                 });
+                let explicit_align = item.attrs.iter().find_map(|a| {
+                    if a.name.text == "align" {
+                        if let Some(ori_ast::common::AttrArg::Int(raw, _)) = a.args.first() {
+                            return raw.parse::<u32>().ok();
+                        }
+                    }
+                    None
+                });
+                if let Some(align) = explicit_align {
+                    l.struct_explicit_aligns.insert(def_id, align);
+                }
                 structs.push(HirStruct {
                     def_id,
                     name: SmolStr::new(&path),
                     fields,
                     is_public: s.visibility == Visibility::Public,
                     repr_c,
+                    explicit_align,
                     span: s.span,
                 });
 
@@ -2051,7 +2154,9 @@ pub fn lower(
                     l.async_inner_ret_ty = None;
                     l.pop();
                     let path = format!("{}.{}.{}", namespace, s.name.text, m.name.text);
-                    let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
+                    let def_id = def_map
+                        .lookup(&path)
+                        .unwrap_or_else(|| panic!("struct method `{path}` missing from DefMap"));
                     funcs.push(HirFunc {
                         def_id,
                         name: SmolStr::new(&path),
@@ -2062,6 +2167,8 @@ pub fn lower(
                         is_public: m.visibility == Visibility::Public,
                         is_async: m.is_async,
                         is_mut: m.is_mut,
+                        is_inline: false,
+                        is_no_inline: false,
                         c_export_name: None,
                         span: m.span,
                     });
@@ -2069,7 +2176,9 @@ pub fn lower(
             }
             Item::Enum(e) => {
                 let path = format!("{}.{}", namespace, e.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("enum `{path}` missing from DefMap"));
                 let tp: Vec<SmolStr> = e.type_params.iter().map(|p| p.name.text.clone()).collect();
                 let variants = e
                     .variants
@@ -2116,7 +2225,7 @@ pub fn lower(
                         lower_apply_method(
                             &mut l,
                             m,
-                            &namespace,
+                            namespace,
                             &type_name,
                             None,
                             &tp,
@@ -2138,7 +2247,7 @@ pub fn lower(
                             lower_apply_method(
                                 &mut l,
                                 m,
-                                &namespace,
+                                namespace,
                                 &type_name,
                                 Some(use_sec.trait_name.last().text.as_str()),
                                 &tp,
@@ -2193,7 +2302,9 @@ pub fn lower(
                         l.async_inner_ret_ty = None;
                         l.pop();
                         let path = format!("{}.{}.{}", namespace, t.name.text, func.name.text);
-                        let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
+                        let def_id = def_map
+                            .lookup(&path)
+                            .unwrap_or_else(|| panic!("trait method `{path}` missing from DefMap"));
                         funcs.push(HirFunc {
                             def_id,
                             name: SmolStr::new(&path),
@@ -2204,6 +2315,8 @@ pub fn lower(
                             is_public: func.visibility == Visibility::Public,
                             is_async: func.is_async,
                             is_mut: func.is_mut,
+                            is_inline: false,
+                            is_no_inline: false,
                             c_export_name: None,
                             span: func.span,
                         });
@@ -2217,7 +2330,9 @@ pub fn lower(
                     continue;
                 }
                 let path = format!("{}.{}", namespace, f.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("function `{path}` missing from DefMap"));
                 let previous_where_constraints = std::mem::take(&mut l.current_where_constraints);
                 l.current_where_constraints = l
                     .func_sig(def_id)
@@ -2242,6 +2357,8 @@ pub fn lower(
                 l.current_where_constraints = previous_where_constraints;
                 l.pop();
                 let c_export_name = c_export_name_from_attrs(&item.attrs, f.name.text.as_str());
+                let is_inline = item.attrs.iter().any(|a| a.name.text == "inline");
+                let is_no_inline = item.attrs.iter().any(|a| a.name.text == "no_inline");
                 funcs.push(HirFunc {
                     def_id,
                     name: SmolStr::new(&path),
@@ -2252,6 +2369,8 @@ pub fn lower(
                     is_public: f.visibility == Visibility::Public,
                     is_async: f.is_async,
                     is_mut: f.is_mut,
+                    is_inline,
+                    is_no_inline,
                     c_export_name,
                     span: f.span,
                 });
@@ -2261,7 +2380,9 @@ pub fn lower(
                 let mut value = l.lower_expr(&c.value, &[]);
                 apply_expected_expr_ty(&mut value, &ty);
                 let path = format!("{}.{}", namespace, c.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("const `{path}` missing from DefMap"));
                 consts.push(HirConst {
                     def_id,
                     name: SmolStr::new(&path),
@@ -2277,7 +2398,9 @@ pub fn lower(
                 let mut value = l.lower_expr(&v.value, &[]);
                 apply_expected_expr_ty(&mut value, &ty);
                 let path = format!("{}.{}", namespace, v.name.text);
-                let def_id = def_map.lookup(&path).unwrap_or(ori_types::DefId(u32::MAX));
+                let def_id = def_map
+                    .lookup(&path)
+                    .unwrap_or_else(|| panic!("var `{path}` missing from DefMap"));
                 consts.push(HirConst {
                     def_id,
                     name: SmolStr::new(&path),
@@ -2730,6 +2853,7 @@ fn insert_default_arguments_expr(
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::SetLit { elements, .. }
         | HirExprKind::TupleLit(elements) => {
             for elem in elements {
@@ -3175,7 +3299,7 @@ impl<'a> Lowerer<'a> {
                 body,
                 span,
             } => {
-                let resolved_scr_ty = replace_json_placeholder_in_ty(scr_ty.clone(), self.def_map);
+                let resolved_scr_ty = replace_json_placeholder(scr_ty.clone(), self.def_map);
                 let pat = lower_pattern(pattern, &resolved_scr_ty, self.enum_sigs);
                 self.push();
                 bind_hir_pattern_scope(self, &pat);
@@ -3362,7 +3486,7 @@ impl<'a> Lowerer<'a> {
                 if let Some((def_id, variant)) = self.resolve_enum_variant(q) {
                     return HirExpr {
                         kind: HirExprKind::EnumVariant {
-                            def_id,
+                            def_id: Some(def_id),
                             variant,
                             fields: Vec::new(),
                         },
@@ -3632,8 +3756,9 @@ impl<'a> Lowerer<'a> {
                             }
                         }
                         if let Some(c_name) = self.resolve_stdlib(&path) {
-                            let sig_ty = stdlib_c_func_ty(c_name, Some(self.def_map));
                             let args_h = self.lower_call_args(args, tp);
+                            let c_name = specialized_stdlib_runtime_symbol(c_name, &args_h);
+                            let sig_ty = stdlib_c_func_ty(c_name, Some(self.def_map));
                             let fallback_ret_ty = if let Ty::Func { ret, .. } = &sig_ty {
                                 *ret.clone()
                             } else {
@@ -3718,7 +3843,7 @@ impl<'a> Lowerer<'a> {
                             .map(|arg| arg.value.ty.clone())
                             .unwrap_or(Ty::Error);
                         let value = match intrinsic {
-                            MemIntrinsic::SizeOf => ori_mem_size_of_ty(&value_ty),
+                            MemIntrinsic::SizeOf => self.size_of_ty(&value_ty),
                             MemIntrinsic::AlignOf => ori_mem_align_of_ty(&value_ty),
                         };
                         return HirExpr {
@@ -4016,7 +4141,10 @@ impl<'a> Lowerer<'a> {
                     if let Some(def_id) = self.resolve_def_id_with_kind(&name, DefKind::Struct) {
                         let fields = self.lower_named_args(args, tp);
                         return HirExpr {
-                            kind: HirExprKind::StructLit { def_id, fields },
+                            kind: HirExprKind::StructLit {
+                                def_id: Some(def_id),
+                                fields,
+                            },
                             ty: Ty::Named(def_id, Vec::new()),
                             span: *span,
                         };
@@ -4025,7 +4153,7 @@ impl<'a> Lowerer<'a> {
                         let fields = self.lower_named_args(args, tp);
                         return HirExpr {
                             kind: HirExprKind::EnumVariant {
-                                def_id,
+                                def_id: Some(def_id),
                                 variant,
                                 fields,
                             },
@@ -4256,8 +4384,6 @@ impl<'a> Lowerer<'a> {
                 let else_ = self.lower_expr(else_expr, tp);
                 let ty = if then.ty.is_never() {
                     else_.ty.clone()
-                } else if else_.ty.is_never() {
-                    then.ty.clone()
                 } else {
                     then.ty.clone()
                 };
@@ -4275,7 +4401,7 @@ impl<'a> Lowerer<'a> {
                 scrutinee, arms, ..
             } => {
                 let scr = self.lower_expr(scrutinee, tp);
-                let resolved_scr_ty = replace_json_placeholder_in_ty(scr.ty.clone(), self.def_map);
+                let resolved_scr_ty = replace_json_placeholder(scr.ty.clone(), self.def_map);
                 let mut hir_arms = Vec::with_capacity(arms.len());
                 for arm in arms {
                     let pat = match &arm.pattern {
@@ -4317,10 +4443,10 @@ impl<'a> Lowerer<'a> {
                 fields,
                 ..
             } => {
-                let def_id = self
-                    .resolve_def_id_with_kind(&type_name.to_string(), DefKind::Struct)
-                    .unwrap_or(ori_types::DefId(u32::MAX));
-                let ty = Ty::Named(def_id, Vec::new());
+                let def_id = self.resolve_def_id_with_kind(&type_name.to_string(), DefKind::Struct);
+                let ty = def_id
+                    .map(|id| Ty::Named(id, Vec::new()))
+                    .unwrap_or(Ty::Infer(0));
                 // Each field value is lowered against its declared type. It
                 // matters for forms whose storage depends on context: `[1, 2]`
                 // is a heap list by default but must become an inline array
@@ -4328,7 +4454,8 @@ impl<'a> Lowerer<'a> {
                 let hfields: Vec<(SmolStr, HirExpr)> = fields
                     .iter()
                     .map(|f| {
-                        let declared = self.struct_field_ty(def_id, f.name.text.as_str());
+                        let declared =
+                            def_id.and_then(|id| self.struct_field_ty(id, f.name.text.as_str()));
                         (
                             f.name.text.clone(),
                             self.lower_expr_expecting(&f.value, tp, declared.as_ref()),
@@ -4351,7 +4478,7 @@ impl<'a> Lowerer<'a> {
                     .collect();
                 HirExpr {
                     kind: HirExprKind::StructLit {
-                        def_id: ori_types::DefId(u32::MAX),
+                        def_id: None,
                         fields: hfields,
                     },
                     ty: Ty::Infer(0),
@@ -4367,16 +4494,17 @@ impl<'a> Lowerer<'a> {
                     .as_ref()
                     .map(|t| t.to_string())
                     .unwrap_or_default();
-                let def_id = self
-                    .resolve_def_id_with_kind(&def_path, DefKind::Enum)
-                    .unwrap_or(ori_types::DefId(u32::MAX));
+                let def_id = self.resolve_def_id_with_kind(&def_path, DefKind::Enum);
+                let ty = def_id
+                    .map(|id| Ty::Named(id, Vec::new()))
+                    .unwrap_or(Ty::Infer(0));
                 HirExpr {
                     kind: HirExprKind::EnumVariant {
                         def_id,
                         variant: variant.text.clone(),
                         fields: Vec::new(),
                     },
-                    ty: Ty::Named(def_id, Vec::new()),
+                    ty,
                     span,
                 }
             }
@@ -4390,9 +4518,10 @@ impl<'a> Lowerer<'a> {
                     .as_ref()
                     .map(|t| t.to_string())
                     .unwrap_or_default();
-                let def_id = self
-                    .resolve_def_id_with_kind(&def_path, DefKind::Enum)
-                    .unwrap_or(ori_types::DefId(u32::MAX));
+                let def_id = self.resolve_def_id_with_kind(&def_path, DefKind::Enum);
+                let ty = def_id
+                    .map(|id| Ty::Named(id, Vec::new()))
+                    .unwrap_or(Ty::Infer(0));
                 let hfields: Vec<(SmolStr, HirExpr)> = fields
                     .iter()
                     .map(|f| (f.name.text.clone(), self.lower_expr(&f.value, tp)))
@@ -4403,7 +4532,7 @@ impl<'a> Lowerer<'a> {
                         variant: variant.text.clone(),
                         fields: hfields,
                     },
-                    ty: Ty::Named(def_id, Vec::new()),
+                    ty,
                     span,
                 }
             }
@@ -4474,9 +4603,9 @@ impl<'a> Lowerer<'a> {
             Expr::StructUpdate { base, updates, .. } => {
                 let base_h = self.lower_expr(base, tp);
                 let def_id = if let Ty::Named(id, _) = &base_h.ty {
-                    *id
+                    Some(*id)
                 } else {
-                    ori_types::DefId(u32::MAX)
+                    None
                 };
                 let hupdates: Vec<(SmolStr, HirExpr)> = updates
                     .iter()
@@ -4550,6 +4679,24 @@ impl<'a> Lowerer<'a> {
                         elements: elems,
                     },
                     ty: array_ty.clone(),
+                    span: expr.span(),
+                }
+            }
+            Expr::List { elements, .. } if matches!(expected, Some(Ty::Simd(_, _))) => {
+                let Some(simd_ty @ Ty::Simd(elem_ty, lanes)) = expected else {
+                    unreachable!("guarded by the match arm")
+                };
+                let elems: Vec<HirExpr> = elements
+                    .iter()
+                    .map(|e| self.lower_expr_expecting(e, tp, Some(elem_ty)))
+                    .collect();
+                HirExpr {
+                    kind: HirExprKind::SimdLit {
+                        elem_ty: (**elem_ty).clone(),
+                        lanes: *lanes,
+                        elements: elems,
+                    },
+                    ty: simd_ty.clone(),
                     span: expr.span(),
                 }
             }
@@ -4652,9 +4799,9 @@ impl<'a> Lowerer<'a> {
         });
         synthetic_params.extend(user_params.clone());
 
-        let def_seed = u32::MAX.saturating_sub(self.closure_counter as u32);
+        let def_seed = DefId::synthetic_closure(self.closure_counter as u32);
         self.generated_funcs.push(HirFunc {
-            def_id: ori_types::DefId(def_seed),
+            def_id: def_seed,
             name: func_name.clone(),
             params: synthetic_params,
             return_ty: return_ty.clone(),
@@ -4663,6 +4810,8 @@ impl<'a> Lowerer<'a> {
             is_public: false,
             is_async: false,
             is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
             c_export_name: None,
             span,
         });
@@ -4716,11 +4865,11 @@ fn build_iter_inline_construct(
     n: usize,
 ) -> Stmt {
     let sp = f.span;
-    let done = Name::new(&format!("__iter_done_{n}"), sp);
+    let done = Name::new(format!("__iter_done_{n}"), sp);
     let idx = f
         .second_binding
         .as_ref()
-        .map(|_| Name::new(&format!("__iter_idx_{n}"), sp));
+        .map(|_| Name::new(format!("__iter_idx_{n}"), sp));
 
     let mut body = bind_iter_params(decl, args, sp);
     body.push(Stmt::Var(LocalVar {
@@ -4774,7 +4923,7 @@ fn bind_iter_params(decl: &ori_ast::item::FuncDecl, args: &[Arg], sp: Span) -> V
                 }
             }
         } else if let Some(d) = iter_param_default(p) {
-            (**d).clone()
+            d.clone()
         } else {
             continue; // checker reported the missing argument already
         };
@@ -4798,7 +4947,7 @@ fn bind_iter_params(decl: &ori_ast::item::FuncDecl, args: &[Arg], sp: Span) -> V
                             span: sp,
                         }),
                         Stmt::Check(ori_ast::stmt::CheckStmt {
-                            condition: Box::new((**contract).clone()),
+                            condition: Box::new(contract.clone()),
                             message: Some(SmolStr::new(format!(
                                 "iterator parameter `{}` violates its contract",
                                 p.name.text
@@ -4816,18 +4965,18 @@ fn bind_iter_params(decl: &ori_ast::item::FuncDecl, args: &[Arg], sp: Span) -> V
     out
 }
 
-fn iter_param_default(p: &ori_ast::item::Param) -> Option<&Box<Expr>> {
+fn iter_param_default(p: &ori_ast::item::Param) -> Option<&Expr> {
     match &p.kind {
         ori_ast::item::ParamKind::Default(e)
-        | ori_ast::item::ParamKind::DefaultAndContract(e, _) => Some(e),
+        | ori_ast::item::ParamKind::DefaultAndContract(e, _) => Some(e.as_ref()),
         _ => None,
     }
 }
 
-fn iter_param_contract(p: &ori_ast::item::Param) -> Option<&Box<Expr>> {
+fn iter_param_contract(p: &ori_ast::item::Param) -> Option<&Expr> {
     match &p.kind {
         ori_ast::item::ParamKind::Contract(e)
-        | ori_ast::item::ParamKind::DefaultAndContract(_, e) => Some(e),
+        | ori_ast::item::ParamKind::DefaultAndContract(_, e) => Some(e.as_ref()),
         _ => None,
     }
 }
@@ -5640,7 +5789,7 @@ fn for_second_binding_ty(ty: &Ty) -> Ty {
 
 fn index_result_ty(ty: &Ty) -> Ty {
     match ty {
-        Ty::List(t) | Ty::Set(t) | Ty::Array(t, _) => *t.clone(),
+        Ty::List(t) | Ty::Set(t) | Ty::Array(t, _) | Ty::Simd(t, _) => *t.clone(),
         Ty::Map(_, v) => *v.clone(),
         Ty::String => Ty::String,
         Ty::Tuple(elems) => elems.first().cloned().unwrap_or(Ty::Infer(0)),
@@ -5657,9 +5806,9 @@ fn apply_expected_expr_ty(expr: &mut HirExpr, expected: &Ty) {
             expr.ty = expected.clone();
         }
         (HirExprKind::StructLit { def_id, .. }, Ty::Named(expected_def_id, _))
-            if *def_id == DefId(u32::MAX) =>
+            if def_id.is_none() =>
         {
-            *def_id = *expected_def_id;
+            *def_id = Some(*expected_def_id);
             expr.ty = expected.clone();
         }
         _ => {}
@@ -5702,6 +5851,8 @@ fn binary_result_ty(op: ori_ast::expr::BinaryOp, lty: &Ty, _rty: &Ty) -> Ty {
     match op {
         Add | Sub | Mul | Div | Rem => lty.clone(),
         Eq | Ne | Lt | Le | Gt | Ge | And | Or => Ty::Bool,
+        // GFX-BITWISE-1: result keeps the LHS width (shifts too).
+        Band | Bor | Bxor | Shl | Shr => lty.clone(),
     }
 }
 
@@ -5915,5 +6066,34 @@ mod tests {
                 entry.runtime_symbol
             );
         }
+    }
+
+    #[test]
+    fn channel_send_runtime_symbol_uses_static_element_ownership() {
+        let argument = |ty| HirArg {
+            label: None,
+            spread: false,
+            value: HirExpr {
+                kind: HirExprKind::IntLit(0),
+                ty,
+                span: Span::DUMMY,
+            },
+        };
+        let channel = argument(Ty::Channel(Box::new(Ty::Infer(0))));
+
+        assert_eq!(
+            specialized_stdlib_runtime_symbol(
+                "ori_channel_send",
+                &[channel.clone(), argument(Ty::Int)],
+            ),
+            "ori_channel_send"
+        );
+        assert_eq!(
+            specialized_stdlib_runtime_symbol(
+                "ori_channel_send",
+                &[channel, argument(Ty::List(Box::new(Ty::Int)))],
+            ),
+            "ori_channel_send_managed"
+        );
     }
 }

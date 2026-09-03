@@ -23,7 +23,7 @@ import ori.string = str
 Prefer that form in all new code and examples. Nested historical paths
 `ori.X.utils` and `ori.X.algorithms` remain accepted as **silent compatibility**
 aliases while the on-disk merge completes — they are not the preferred API.
-Product decision: `docs/archive/legacy/stdlib-merge-policy.md`.
+Product decision: `docs/planning/stdlib-merge-policy.md`.
 
 The stdlib is small and layered:
 - **Core types** (`optional`, `result`, `list`, etc.) — always available, no import.
@@ -127,7 +127,7 @@ Every module below is importable today. The list is verified against
 
 | Group | Modules |
 |---|---|
-| Core / runtime | `ori.core`, `ori.Error`, `ori.mem`, `ori.convert` |
+| Core / runtime | `ori.core`, `ori.Error`, `ori.mem`, `ori.convert`, `ori.handle` |
 | I/O and system | `ori.io`, `ori.fs`, `ori.files` *(compat alias for `ori.fs`)*, `ori.path`, `ori.os`, `ori.process`, `ori.args`, `ori.config`, `ori.log` |
 | Text and bytes | `ori.string`, `ori.bytes`, `ori.buffer`, `ori.format`, `ori.json` |
 | Collections | `ori.list`, `ori.map`, `ori.set`, `ori.iter` |
@@ -173,15 +173,51 @@ No import required. These types and functions are built into the language.
 
 `bool`, `int`, `int8`–`int64`, `u8`–`u64`, `float`, `float32`–`float64`,
 `string`, `bytes`, `void`, `list[T]`, `map[K,V]`, `set[T]`, `optional[T]`,
-`result[T,E]`, `range[int]`, `lazy[T]`, `future[T]`, `any[Trait]`,
+`result[T,E]`, `range[int]`, `lazy[T]`, `future[T]`, `handle[T]`, `any[Trait]`,
 `tuple[...]`
+
+`ori.handle.is_null` is the standard-library null-sentinel probe for borrowed
+`handle[T]` values. It returns `bool` and only compares the opaque pointer with
+zero; it never dereferences, retains, or releases the pointee. This helper does
+not make a handle nullable by construction and does not prove lifetime or
+thread affinity. Those guarantees remain part of the host API contract.
 
 Current collection limit:
 
-- `map` keys currently support `int`, `string`, or a user-defined type that
-  implements both `ori.core.Hashable` and `ori.core.Equatable`.
-- `set` elements currently support `int`, `string`, or a user-defined type that
-  implements both `ori.core.Hashable` and `ori.core.Equatable`.
+`Hashable` may remain a marker, or may provide a custom native hash:
+
+```ori
+apply UserKey use core.Hashable
+    hash(self) -> int
+        return self.id
+    end
+end
+```
+
+The method must return a stable `int` and obey the usual invariant: values
+that `Equatable.equals` considers equal must return the same hash. The compiler
+does not prove that invariant; violating it can make a key unreachable in a
+hash table.
+
+- `map` keys currently support `int`, `string`, or a non-recursive user-defined
+  type that implements `ori.core.Hashable` and has structural or explicit
+  `ori.core.Equatable`.
+- `set` elements currently support `int`, `string`, or a non-recursive
+  user-defined type that implements `ori.core.Hashable` and has structural or
+  explicit `ori.core.Equatable`.
+- For user-defined keys/elements, `Equatable.equals` is the native membership
+  predicate, so distinct values that compare equal are treated as one key or
+  element. A user-defined `hash(self) -> int` method on `Hashable` is used when
+  present; marker-only `Hashable` uses generated hashing for non-recursive
+  structural values (scalar/string/bytes fields and nested generated
+  aggregates). An explicit non-structural `Equatable` without `hash` safely
+  falls back to a constant hash. Recursive aggregate-key support and
+  benchmarked performance remain open.
+- `graph.Graph[T]` uses the same `Equatable.equals` callback for user-defined
+  struct and non-recursive enum nodes. Because `graph.new` is type-erased at the
+  source boundary, the first concrete node operation attaches the callback;
+  later operations keep the established node kind, and `clone`/closure preserve
+  the callback.
 - The checker rejects unsupported map keys and set elements with
   `type.collection_hash_unsupported`.
 
@@ -195,7 +231,7 @@ const value: int = lazy.force(delayed)
 ### Built-in Functions
 
 ```ori
-len(text: string)            -- int: byte length of a string
+len(text: string)            -- int: Unicode scalar-value count
 string(value: int)           -- string: convert an integer to text
 string(value: float)         -- string: convert a float to text
 string(value: bool)          -- string: convert a boolean to text
@@ -243,7 +279,12 @@ calling it reports `type.no_such_field`:
 |---|---|
 | `Iterable` | Recognized by `for` when the type exposes `mut next() -> optional[T]` — checked structurally, not through the trait table (`type.iterable_next_missing`). **This is the lazy-iteration mechanism**; see chapter 06 |
 | `Transferable` | Enforced for values crossing task or channel boundaries (`concurrency.not_transferable`) |
-| `Hashable` | Checked structurally for `map` keys and `set` elements |
+
+`Hashable` is the exception: it gates `map`/`set`/`hash_table` keys and
+registers an optional `hash(self) -> int` method. Marker-only implementations
+use generated structural hashes for non-recursive structs/enums; explicit
+non-structural `Equatable` without `hash` uses a constant hash. Generic graph
+nodes use structural or explicit `Equatable`.
 
 If you need a callable contract that a marker does not provide, declare your
 own trait.
@@ -272,6 +313,9 @@ flush(output: io.Output)                             -> result[void, string]
 close_input(input: io.Input)                         -> void
 close_output(output: io.Output)                      -> void
 ```
+
+`io.read_line` returns `none` at end of input or when the input line is not
+valid UTF-8. A successful value is therefore always a valid Ori `string`.
 
 `io.Input` and `io.Output` are opaque runtime-managed handles. They are created
 from the three standard streams (`stdin`, `stdout`, `stderr`) and support
@@ -334,10 +378,29 @@ write_text_result(path: string, content: string) -> result[string, string]
 exists_result(path: string) -> result[bool, string]
 remove_file(path: string) -> result[void, string]
 move_path(from: string, to: string) -> result[void, string]
+try_read_text(path: string) -> result[string, FsError]
+```
+
+Typed errors for filesystem operations:
+
+```ori
+public enum FsError
+    NotFound
+    PermissionDenied
+    AlreadyExists
+    InvalidPath
+    Other(message: string)
+end
 ```
 
 The async variants complete on the native runtime and return the same
-`result[string,string]` shape after `await`.
+`result[string,string]` shape after `await`. Blocking filesystem operations
+share a bounded native I/O pool: the queue holds at most 256 pending jobs and
+the runtime creates no more than four workers (clamped to the host's available
+parallelism). Submitting while the queue is full waits for capacity, preserving
+bounded memory use. Worker panics, shutdown admission, and worker-creation
+failures complete the associated future as a terminal failure and never discard
+the future ownership.
 
 `read_all(path)` is a text convenience alias for `read_text(path)`.
 `read_bytes(path)` returns the exact file bytes, including embedded `0x00`
@@ -391,6 +454,13 @@ string.to_bytes(s: string)                    -> bytes
 string.from_bytes(b: bytes)                   -> result[string, string]
 ```
 
+String positions use Unicode scalar values, not UTF-8 byte offsets.
+the global `len(string)`, `string.len`, `string.slice`, string indexing,
+`string.index_of`, `string.chars`, and direct string iteration share that index
+space in the native and C/debug backends.
+Extended grapheme clusters can contain multiple scalar values; grapheme
+segmentation is not currently a stdlib API.
+
 Additional `.orl` helpers are available directly under `ori.string`:
 
 ```text
@@ -443,9 +513,12 @@ bytes.get(b: bytes, index: int)              -> u8
 ## `ori.list`, `ori.map`, and `ori.set` - Collections
 
 The native runtime stores collection values as runtime handles. `map` keys and
-`set` elements currently support built-in hashable scalar values and
-user-defined values that satisfy the checker rules for `Hashable` and
-`Equatable`.
+`set` elements support built-in hashable scalar values and non-recursive
+user-defined values that satisfy the checker rules for `Hashable` plus
+structural or explicit `Equatable`; a user `hash(self) -> int` method supplies
+the native hash callback when present, while marker-only non-recursive
+structural values use generated hashing. Explicit non-structural equality
+without `hash` keeps a constant-hash correctness fallback.
 
 `ori.list` also exposes small `.orl` helpers directly:
 
@@ -668,7 +741,11 @@ possible. `maps.try_remove(m, key)` returns the removed value as
 `deque`, `queue`, `stack`, `linked_list`, and `doubly_linked_list` are distinct
 opaque stdlib types. `deque`, `queue`, and `stack` use the native deque runtime
 so front/back operations avoid the old list-front shifting cost. The linked-list
-modules expose cursor APIs as stable positions for the current list state.
+modules expose cursor APIs as positional indices over an indexed double-ended
+buffer sequence (backed by `VecDeque`) rather than raw heap-allocated pointer
+nodes, ensuring cyclic reference safety under ARC. Consequently, push/pop at
+the ends are O(1) amortized, while cursor lookup, `insert_after`, and `remove_at`
+are O(n).
 `cursor_front`, `cursor_back`, `find`, `value_at`, `insert_after`,
 `insert_before`, and `remove_at` return `optional`/`bool` instead of panicking on
 invalid cursors. A cursor is invalid after structural changes that move or remove
@@ -687,8 +764,8 @@ Comparable contract is stable.
 `hash_table.HashTable[K,V]` is a public advanced API over the same native hash
 engine used by `map[K,V]`. It exists for explicit capacity control and for
 `get/remove` APIs that return `optional[V]`. Keys follow the same rule as
-`map`: use `int`, `string`, or a user type that implements both
-`ori.core.Hashable` and `ori.core.Equatable`.
+`map`: use `int`, `string`, or a non-recursive user type with
+`ori.core.Hashable` plus structural or explicit `ori.core.Equatable`.
 
 `graph.Graph[N]` is an opaque adjacency-list graph. `graph.new(true)` creates a
 directed graph; `graph.new(false)` creates an undirected graph. `graph.add_edge`
@@ -702,6 +779,12 @@ when the graph is undirected or cyclic. New code can use
 `graph.shortest_path` is unweighted BFS shortest path.
 `graph.shortest_weighted_path` uses stored edge weights.
 `for node in graph_value` iterates a snapshot of graph nodes.
+For user-defined struct and non-recursive enum nodes, `Equatable.equals` is used
+for node identity and edge endpoint matching. Since `graph.new` is type-erased,
+the first operation that carries a concrete node value installs this callback;
+subsequent operations must use a compatible node kind. `graph.clone` and
+`graph.transitive_closure` preserve the callback. Recursive/generic edge cases
+and linked-list complexity remain tracked by `LANG-GRAPH-LIST-1`.
 
 `heap.Heap[T]` is an opaque min-heap. The smallest value according to the
 element ordering is returned first. The v1 runtime supports `int`, `string`,
@@ -965,6 +1048,9 @@ const totp_ok: bool = crypto.totp_verify(secret, code, 1_700_000_000, 1)
 | `totp_generate_secret()` | `→ string` | Base32 secret (160-bit) |
 | `totp_code(secret, unix_secs)` | `string, int → string` | 6-digit code; empty on failure |
 | `totp_verify(secret, code, unix_secs, window)` | `… → bool` | ±`window` steps (max 10) |
+| `try_hash_password(password)` | `string → result[string, string]` | Safe result wrapper, `err(...)` on failure |
+| `try_totp_generate_secret()` | `→ result[string, string]` | Safe result wrapper, `err(...)` on failure |
+| `try_totp_code(secret, unix_secs)` | `string, int → result[string, string]` | Safe result wrapper, `err(...)` on failure |
 
 ### Net timeouts (B7)
 
@@ -974,7 +1060,8 @@ const totp_ok: bool = crypto.totp_verify(secret, code, 1_700_000_000, 1)
 | `set_write_timeout_ms(conn, ms)` | same | used by `web.set_read_timeout` |
 
 Layer 2 wrappers in `stdlib/crypto.orl`: `hash_password` / `verify_password` /
-`totp_generate_secret` / `totp_code` / `totp_verify`.
+`totp_generate_secret` / `totp_code` / `totp_verify` / `try_hash_password` /
+`try_totp_generate_secret` / `try_totp_code`.
 
 Do **not** use plain MD5/SHA for password storage. Prefer this API for auth
 (web C10 / SEC9). TOTP is for 2FA (web C3 / `ori-web-auth`).
@@ -1023,11 +1110,38 @@ Currently transferable:
   `future[T]`, `task.Job[T]`, `channel.Channel[T]`, and the opaque collection
   handles above when their contents are transferable;
 - structs when all fields are transferable;
-- enum values without payload tracking in the current resolver;
+- enum values when every variant payload field is transferable (recursive enum
+  definitions are checked with a cycle-safe instantiation guard);
 - `atomic.AtomicInt` and the opaque task/channel error handles.
 
+Resource handles are deliberately not transferable: `fs.File`, `io.Input`,
+`io.Output`, `net.Connection`, `net.Listener`, and `net.UdpSocket` borrow
+process/OS state whose lifetime and thread affinity are controlled by their
+owning scope. `task.CancelToken` is the explicit exception because it contains
+only an atomic cancellation flag and is designed for cross-task coordination.
+
 Function values, lazy thunks, and `any[Trait]` values are not transferable by
-default. A closure passed to `task.spawn` also cannot capture a `var` binding.
+default. A direct named function value is accepted when its definition summary
+proves no mutable-global effect; an unsafe named function is rejected with
+`concurrency.global_mutable_capture`. Function values stored in local bindings
+are accepted when the checker records their closure captures and every
+captured value is transferable. Unknown function environments and nested
+function captures remain rejected with `concurrency.not_transferable`. A
+closure passed to `task.spawn` also
+cannot capture a lexical `var` binding or directly read/write a top-level
+mutable `var`. A module-level `var`
+is shared by all threads and has no implicit synchronization. Use an
+`atomic.AtomicInt`, a channel, or explicit single-owner state instead. The
+checker reports `concurrency.global_mutable_capture`. Same-module helper calls
+and imported named helpers are checked by conservative call-graph passes;
+receiver methods and `any[Trait]` dispatch are conservatively matched by method
+name. Local closure environments are represented by a checker-side capture
+summary today; a complete type-level isolation model and richer transitive
+function-value effects remain tracked in `CONC-THREADS-1`.
+
+Extern function values are treated as unknown effects and remain rejected at a
+task boundary until the host contract supplies an explicit transfer/effect
+summary.
 
 `ori.concurrent` is importable today as the umbrella module for this contract.
 Its concrete APIs currently live in `ori.task`, `ori.channel`, and
@@ -1040,7 +1154,7 @@ Its concrete APIs currently live in `ori.task`, `ori.channel`, and
 Status: implemented in the native runtime for explicit task and future APIs.
 The runtime now supports pollable futures, private failed/cancelled states, a
 FIFO executor queue, continuation scheduling, and non-blocking timers.
-`async func` currently uses native state-machine lowering for the supported v1
+`async` functions currently use native state-machine lowering for the supported v1
 subset. The call returns a `future[T]` immediately, the generated frame is
 scheduled on the native executor, and supported `await` shapes suspend through
 `ori_future_poll` plus `ori_future_on_ready` instead of calling
@@ -1097,6 +1211,46 @@ generated async frame reaches its terminal state.
 
 ---
 
+## `ori.cancel` — Structured Cancellation and Task Scopes
+
+`ori.cancel` provides structured lifetime management for cancellation tokens and child tasks, ensuring child tasks do not leak and cancellation propagates on scope exit.
+
+```ori
+import ori.cancel = cancel
+import ori.io = io
+import ori.list = lists
+import ori.task = task
+
+run_tasks() -> void
+    using scope: cancel.TaskScope = cancel.create_task_scope()
+    const job1: task.Job[void] = task.spawn(() => io.println("child 1"))
+    const job2: task.Job[void] = task.spawn(() => io.println("child 2"))
+    lists.push(scope.jobs, job1)
+    lists.push(scope.jobs, job2)
+    -- On block exit, scope.dispose() cancels the token and joins all tracked jobs.
+end
+```
+
+| Type / Function | Type | Notes |
+|---|---|---|
+| `CancelScope` | `struct { token: task.CancelToken }` | Cancellation scope implementing `core.Disposable`. |
+| `create_scope()` | `→ CancelScope` | Creates a scope with a fresh cancellation token. |
+| `create_scope_with(token)` | `task.CancelToken → CancelScope` | Wraps an existing token in a scope. |
+| `cancel(scope)` | `CancelScope → void` | Cancels the scope's token immediately. |
+| `is_cancelled(scope)` | `CancelScope → bool` | Checks if the scope has been cancelled. |
+| `defer_cancel(scope, millis)` | `CancelScope, int → future[void]` | Asynchronously waits then cancels the scope. |
+| `TaskScope` | `struct { token: task.CancelToken, jobs: list[task.Job[void]] }` | Structured task scope implementing `core.Disposable`. |
+| `create_task_scope()` | `→ TaskScope` | Creates a task scope with a fresh token and empty job list. |
+| `create_task_scope_with(token)` | `task.CancelToken → TaskScope` | Wraps an existing token into a task scope. |
+| `cancel_tasks(scope)` | `TaskScope → void` | Cancels the task scope's token. |
+| `is_tasks_cancelled(scope)` | `TaskScope → bool` | Checks if the task scope has been cancelled. |
+| `join_tasks(scope)` | `TaskScope → void` | Explicitly joins all tracked jobs. |
+
+Structured concurrency rule:
+Both `CancelScope` and `TaskScope` implement `core.Disposable`. When used with `using`, their `dispose` method is guaranteed to run upon exiting the block (by normal completion, return, or error). For `CancelScope`, `dispose` calls `task.cancel(scope.token)`. For `TaskScope`, `dispose` calls `task.cancel(scope.token)` and then joins every child job in `scope.jobs`, preventing detached background tasks from outliving the parent scope.
+
+---
+
 ## `ori.channel` - Channels
 
 Status: implemented in the native runtime with real synchronization.
@@ -1105,6 +1259,7 @@ Status: implemented in the native runtime with real synchronization.
 import ori.channel = channel
 
 channel.create[T]() -> channel.Channel[T]
+channel.create_bounded[T](capacity: int) -> optional[channel.Channel[T]]
 channel.send[T](ch: channel.Channel[T], value: T) -> result[void, channel.SendError]
 channel.receive[T](ch: channel.Channel[T]) -> result[T, channel.ReceiveError]
 channel.close[T](ch: channel.Channel[T]) -> void
@@ -1112,7 +1267,12 @@ channel.close[T](ch: channel.Channel[T]) -> void
 
 Behavior:
 
-- `channel.create` creates an unbounded FIFO channel.
+- `channel.create` creates an unbounded FIFO channel. Use
+  `channel.create_bounded` when the producer must have a finite queue.
+- `channel.create_bounded` returns `some(channel)` for a positive capacity and
+  `none` for zero or negative capacities. A bounded channel blocks `send` while
+  its queue is full; closing it wakes blocked senders, which then receive
+  `err(...)`. The queue never grows beyond the declared capacity.
 - `channel.send` enqueues a transferable value, or returns `err(...)` when
   the channel is closed.
 - `channel.receive` waits until a value is available, or returns `err(...)`
@@ -1159,8 +1319,19 @@ enum Value
 end
 
 json.parse(text: string) -> result[json.Value, string]
+json.try_parse(text: string) -> result[json.Value, JsonError]
+json.try_read(file_path: string) -> result[json.Value, JsonError]
 json.stringify(value: json.Value) -> string
 json.stringify_pretty(value: json.Value) -> string
+```
+
+Typed errors for JSON operations:
+
+```ori
+public enum JsonError
+    ParseError(message: string)
+    IoError(message: string)
+end
 ```
 
 Current behavior:
@@ -1174,9 +1345,10 @@ Current behavior:
 
 ## `ori.test` — Testing
 
-Status: partially implemented. Test functions marked with `@test` can be run
-with `ori test <file-or-project>`. This command uses the native backend and the
-Rust `ori-runtime` static library.
+Status: implemented for the native test runner. Test functions marked with
+`@test` can be run with `ori test <file-or-project>`. The assertion module is
+intentionally small and grows only when a runtime-backed assertion has a stable
+contract.
 
 Use `ori test <file-or-project> --filter <name>` to run only tests whose full
 name or short function name contains `<name>`. The runner reports how many tests
@@ -1246,6 +1418,20 @@ net.udp_recv_from(sock, max_bytes) -> result[bytes, string]
 net.udp_recv_from_async(sock, max_bytes) -> future[result[bytes, string]]
 net.udp_close(sock)
 net.udp_local_port(sock) -> int
+net.try_connect(host, port, timeout_ms) -> result[net.Connection, NetError]
+```
+
+Typed errors for networking operations:
+
+```ori
+public enum NetError
+    ConnectionRefused
+    TimedOut
+    HostUnreachable
+    AddressInUse
+    Closed
+    Other(message: string)
+end
 ```
 
 Current implementation notes:
@@ -1292,6 +1478,49 @@ Current implementation notes:
   `"macos"`, or `"unknown"`.
 - `os.arch()` currently normalizes known targets to `"x86_64"`, `"aarch64"`,
   `"x86"`, `"arm"`, or `"unknown"`.
+
+---
+
+## `ori.process` — Subprocess Execution
+
+`ori.process` provides subprocess execution with structured, binary-safe process output.
+
+```ori
+import ori.io = io
+import ori.process = proc
+import ori.string = string_mod
+
+struct ProcessOutput
+    status: int
+    stdout: bytes
+    stderr: bytes
+end
+
+main()
+    match proc.run_output("echo", ["hello"])
+        case ok(out):
+            io.println(string(out.status == 0))
+            match proc.stdout_text(out)
+                case ok(text): io.print(text)
+                case err(e): io.eprint("decode error: " + e)
+            end
+        case err(msg):
+            io.eprint("failed to run: " + msg)
+    end
+end
+```
+
+| Function / Type | Type | Notes |
+|---|---|---|
+| `ProcessOutput` | `struct { status: int, stdout: bytes, stderr: bytes }` | Binary-preserving execution result. |
+| `run(program, args)` | `string, list[string] → result[int, string]` | Spawns process, waits, returns exit code. |
+| `run_output(program, args)` | `string, list[string] → result[ProcessOutput, string]` | Spawns process, captures raw stdout and stderr bytes without loss. |
+| `stdout_text(output)` | `ProcessOutput → result[string, string]` | Decodes `stdout` bytes to UTF-8 text safely. |
+| `stderr_text(output)` | `ProcessOutput → result[string, string]` | Decodes `stderr` bytes to UTF-8 text safely. |
+| `run_capture(program, args)` | `string, list[string] → result[map[string, string], string]` | Legacy map capture for backward compatibility. |
+| `exit_code(capture)` | `map[string, string] → int` | Extracts exit code from legacy map capture. |
+| `stdout(capture)` | `map[string, string] → string` | Extracts stdout string from legacy map capture. |
+| `stderr(capture)` | `map[string, string] → string` | Extracts stderr string from legacy map capture. |
 
 ---
 
@@ -1366,3 +1595,38 @@ Future `ori.*` functions that expose rich errors are expected to return
 `result[T, ori.Error]`. Cause chaining and full `ori.core.Error` trait-method
 integration are still planned. Current implemented filesystem and parse helpers
 still use `string` errors or `optional[T]` where documented above.
+
+## `ori.err_trace` — Error Return Traces
+
+Status: implemented (`ERR-TRACE-1`). Provides runtime-backed helpers to append
+source file and line locations to error messages during propagation and format
+trace strings.
+
+```ori
+import ori.err_trace = trace
+
+public fail_level1() -> result[int, string]
+    match fail_level2()
+        case ok(v):
+            return ok(v)
+        case err(msg):
+            return err(trace.push("service.orl", 42, msg))
+    end
+end
+
+main()
+    match fail_level1()
+        case ok(_):
+            -- ...
+        case err(e):
+            const formatted = trace.format(e)
+            -- e.g. "connection reset\n  at service.orl:42"
+    end
+end
+```
+
+### Functions
+
+- `push(file: string, line: int, message: string) -> string`: Appends `\n  at <file>:<line>` to the error message string.
+- `format(message: string) -> string`: Formats the error trace or returns `<nil error>` for empty errors.
+

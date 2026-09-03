@@ -2,137 +2,95 @@
 
 > Status: normative  
 > Audience: language designers, compiler implementers, contributors  
-> Current project version: **0.3.8**  
-> Language surface: **S3**  
+> Surface: **S3** (Auk9-inspired), cutover `0.3.0` · living package **0.3.x** (FREEZE-1)  
 > Naming: **snake_case** functions · **PascalCase** types · visibility **`public`**  
-> Identity and purpose: [`00-manifesto.md`](00-manifesto.md)  
-> Spec index: [`README.md`](README.md)
+> Identity / purpose: [`00-manifesto.md`](00-manifesto.md)  
+> Spec index / product facts: [`README.md`](README.md)
 
 ---
 
-## What Ori is
+## What Ori Is
 
-Ori is a statically typed, reading-first programming language compiled to native code through Cranelift. `ori run` may execute through an in-process JIT when a compatible runtime cdylib is available.
+Ori is a statically typed, reading-first programming language compiled to native
+code (AOT), with optional in-process JIT for `ori run`.
 
-*ori* (אוֹרִי) means “my light” in Hebrew.
+*ori* (אוֹרִי) — Hebrew for "my light."
 
-Ori exists as:
+Ori exists to make programming accessible to people who find mainstream languages
+hostile — in particular people with ADHD, autism, and dyslexia — **and** as a
+serious laboratory for compiler study and AI-assisted programming. It is **not**
+a market-competition product. See the [manifesto](00-manifesto.md).
 
-- a serious compiler-engineering project;
-- a language for learning and building native programs;
-- a laboratory for AI-assisted programming;
-- an attempt to reduce cognitive load through visible contracts and actionable diagnostics.
-
-Ori is currently pre-1.0. Public contracts and experimental areas are separated by [`18-stability-and-compatibility.md`](18-stability-and-compatibility.md).
+It achieves readability not by being simpler, but by being more honest: every
+piece of information the reader needs is visible at the point where it is needed.
 
 ---
 
-## What Ori optimizes
+## What Ori Optimizes
 
-Ori optimizes for reading before writing.
+Ori optimizes for **reading**, not writing.
 
-A reader should find important information near the code that depends on it.
+A program is read many more times than it is written. Ori makes each read cheaper:
 
-| Question | Visible through |
+| Question | Visible through (S3) |
 |---|---|
-| Where does this file belong? | `module path` at the beginning of the file |
-| What type does this value have? | explicit annotations and documented local inference |
+| Where does this file belong? | `module path` first in every file |
+| What type does this value have? | Explicit annotations on bindings and public contracts |
 | Can this value be absent? | `optional[T]` |
 | Can this operation fail? | `result[T, E]` |
-| How is failure propagated? | `try expression` |
-| When is a resource released? | `using` and documented destructor behavior |
-| Where does trait behavior come from? | `apply Type` and `use Trait` |
-| What went wrong? | stable diagnostic codes with labels and actions |
-
-Readability does not mean avoiding advanced features. It means making their contracts inspectable.
+| When is a resource released? | `using` |
+| Where does trait behavior come from? | `apply Type` + `use Trait` |
+| What went wrong? | Structured diagnostic codes |
 
 ---
 
-## Core design goals
+## Core Design Goals
 
-1. **Explicit over hidden.** Important behavior should be visible in source or a local contract.
-2. **One canonical form.** A concept should not require choosing among equivalent legacy spellings.
-3. **Predictable failure.** Recoverable failure uses `result[T, E]`, not exceptions as ordinary control flow.
-4. **Explicit absence.** Absence uses `optional[T]`, not a universal null value.
-5. **Composition.** Structs, enums, traits, and functions compose behavior without class inheritance.
-6. **Readable diagnostics.** Errors identify the problem, location, reason, and likely action when useful.
-7. **Native execution.** The native Cranelift backend is the semantic reference.
-8. **Accessible documentation.** Active examples are current, focused, and executable where presented as runnable.
-9. **Versioned interoperability.** Runtime layouts and symbols are governed by a separate native ABI contract.
-
----
-
-## What Ori is not
-
-- Ori is not dynamically typed.
-- Ori is not a pure functional language, although it supports functional patterns.
-- Ori is not class-based or inheritance-oriented.
-- Ori does not expose Rust-style manual borrowing or explicit lifetime syntax.
-- Ori is not a bytecode/VM-first product.
-- Ori is not self-hosted at the current stage.
-- Ori's managed memory model does not remove the need for explicit resource cleanup.
+1. **Explicit over implicit.** If something happens, you can see it in the source.
+2. **No surprises.** The reader should predict runtime behavior from syntax alone.
+3. **No null.** Absence is modeled as `optional[T]`.
+4. **No exceptions as control flow.** Failure is modeled as `result[T, E]`.
+5. **Composition over inheritance.** Types are composed with structs, enums, and traits.
+6. **Readable diagnostics.** Every error message names what happened, where, and what to do.
+7. **One canonical form per concept.** Dual legacy syntax is rejected at the `0.3.0` cut (S3).
+8. **Accessible documentation.** Examples are short, syntactically valid, and up to date.
 
 ---
 
-## Program model
+## What Ori Is Not
 
-An Ori program is a graph of modules.
+- Ori is not a scripting language. Programs have explicit structure.
+- Ori is not a pure functional language. It supports functional patterns.
+- Ori is not an object-oriented language. There are no classes or inheritance.
+- Ori is not a systems language in the sense of manual memory management.
+  Memory is managed automatically through value semantics and automatic reference counting.
+- Ori is not a market product competing with industrial languages (see manifesto).
 
-Each source file begins with a module declaration:
+---
+
+## Mental Model (S3)
+
+An Ori program is a set of **modules**.
+
+Each module is a source file. The module path is declared first with `module`.
 
 ```ori
 module app.inventory
-```
-
-A project normally has `ori.proj` at its root and an entry file such as `main.orl`. Project and documentation formats are defined in [`17-project-and-docs.md`](17-project-and-docs.md).
-
-### Minimal program
-
-```ori
-module app.hello
 
 import ori.io = io
-
-main()
-    io.print("Hello, Ori!")
-end
-```
-
----
-
-## Declarations and visibility
-
-Top-level declarations are private by default. `public` exposes a declaration to other modules.
-
-```ori
-module app.inventory
 
 public item_count() -> int
     return 42
 end
 ```
 
-Public contracts require explicit types according to the relevant chapters. Local inference is limited to documented forms; it is not global Hindley–Milner inference.
-
----
-
-## Imports
-
-Ori supports three canonical import forms.
+### Imports (three forms)
 
 | Intent | Form | Effect |
-|---|---|---|
-| Select names | `import ori.fs (read_text, write_text)` | selected names enter local scope |
-| Alias a module | `import ori.io = io` | module is accessed through `io` |
-| Import whole path | `import ori.io` | access remains fully qualified |
-
-Selective imports may rename an item:
-
-```ori
-import ori.fs (read_text = read)
-```
-
-Public imports re-export:
+|--------|------|--------|
+| Selective | `import ori.fs (read_text, write_text)` | Names enter the local scope; rename with `read_text = rt` |
+| Module alias | `import ori.io = io` | Use `io.print(...)` — **path left, alias right** |
+| Whole module | `import ori.io` | Only fully-qualified `ori.io.print(...)` (no implicit alias) |
 
 ```ori
 module app.api
@@ -140,157 +98,48 @@ module app.api
 public import app.inventory = inventory
 ```
 
-Removed forms such as `namespace`, `import path as alias`, and `import path only (...)` are rejected. Migration assistance is available through `ori migrate-syntax` for supported mechanical rewrites.
+```ori
+module app.main
 
----
+import app.api = api
 
-## Types and values
-
-Common type forms include:
-
-```text
-int
-float
-bool
-string
-bytes
-list[T]
-map[K, V]
-optional[T]
-result[T, E]
-func(A, B) -> R
+main()
+    const count: int = api.inventory.item_count()
+end
 ```
 
-Structs and enums define user data.
+Block form (multi-import with commas **only** inside the block):
 
 ```ori
-struct User
-    name: string
-    age: int
-end
-
-enum LoadError
-    NotFound
-    Invalid(message: string)
+imports
+    ori.fs (read_text, write_text), ori.io = io
+    app.users = users
 end
 ```
 
-Construction uses visible type and field/variant syntax:
+Removed at `0.3.0` (hard errors): `namespace`, `import path as alias`,
+`import path only (…)`, Auk9 order `import alias = path`.
 
-```ori
-const user: User = User { name: "Ada", age: 36 }
-const failure: LoadError = LoadError.Invalid("bad record")
-```
+### Visibility
 
-Context-typed shorthand is allowed only where the expected type is known and documented.
+- Top-level declarations are private by default.
+- `public` makes a declaration visible to other modules.
+- `public import` re-exports; plain `import` does not.
+- Accessing a private imported declaration emits `name.private`.
 
----
+### The common path through Ori code
 
-## Failure and absence
-
-Use `optional[T]` when a value may be absent.
-
-Use `result[T, E]` when an operation may fail and the caller must handle or propagate the failure.
-
-```ori
-module app.math
-
-import ori.io = io
-
-divide(a: int, b: int) -> result[int, string]
-    if b == 0
-        return err("division by zero")
-    end
-
-    return ok(a / b)
-end
-
-main() -> result[void, string]
-    const answer: int = try divide(84, 2)
-    io.print(f"answer: {answer}")
-    return ok()
-end
-```
-
-`try expression` is the canonical propagation form. Removed postfix propagation forms are rejected.
+1. Define data shapes with `struct` and `enum`.
+2. Define behavior contracts with `trait`.
+3. Attach behavior with `apply Type` + `use Trait` (inline or `slot = freeFn`).
+4. Return `optional[T]` when a value may be absent.
+5. Return `result[T, E]` when an operation may fail; propagate with `try expr`.
+6. Use `using` for deterministic cleanup.
+7. Use `check` for programmer assertions.
 
 ---
 
-## Traits and behavior
-
-Traits define behavior contracts. Implementations use `apply Type` and one or more `use Trait` sections according to the grammar in [`08-traits.md`](08-traits.md).
-
-```ori
-module app.user
-
-import ori.core = core
-
-struct User
-    name: string
-end
-
-apply User use core.Displayable
-    display(self) -> string
-        return self.name
-    end
-end
-```
-
-An explicit `self` parameter defines an instance method. Receiver-less trait methods follow the associated-function rules documented in the trait specification.
-
----
-
-## Resource cleanup
-
-`using` provides deterministic cleanup for values implementing the required disposal contract.
-
-Object destructors and ARC cleanup follow separate runtime rules. Deterministic resource cleanup, custom destruction, and managed-memory release must not be treated as interchangeable.
-
-See:
-
-- [`10-memory.md`](10-memory.md);
-- [`16-runtime-ffi-safety.md`](16-runtime-ffi-safety.md);
-- [`19-abi.md`](19-abi.md).
-
----
-
-## Execution model
-
-The current compiler pipeline is:
-
-```text
-source/project
-  -> lexer
-  -> parser and AST
-  -> definitions and name resolution
-  -> type checking
-  -> typed HIR
-  -> optimization
-  -> Cranelift AOT or JIT
-  -> versioned native runtime
-```
-
-The native backend defines reference semantics. The C/debug backend supports a documented subset and must reject unsupported features explicitly.
-
-Backend support is defined in [`14-backend-support.md`](14-backend-support.md).
-
----
-
-## Diagnostics
-
-Diagnostics use stable codes such as:
-
-```text
-name.undefined
-parse.unterminated_block
-type.arg_count_mismatch
-```
-
-Every emitted public code belongs in [`13-error-catalog.md`](13-error-catalog.md). CLI and LSP may render diagnostics differently but must preserve their semantic identity and source ranges.
-
----
-
-## Complete introductory example
+## Complete Introductory Example
 
 ```ori
 module app.main
@@ -315,7 +164,6 @@ load_user(id: int) -> UserResult
     if id < 0
         return err("invalid id")
     end
-
     return ok(User { name: "Ada", age: 36 })
 end
 
@@ -326,38 +174,100 @@ main() -> result[void, string]
 end
 ```
 
-This example demonstrates:
+### Surface highlights in this example
 
-- module identity;
-- module aliases;
-- explicit data and public contracts;
-- field contracts;
-- trait implementation;
-- result construction and propagation;
-- native-runtime output.
-
----
-
-## Surface history
-
-The S3 surface was introduced in the 0.3 line and remains the current language surface in Ori 0.3.8.
-
-Historical introduction versions may be documented in the changelog, but active status documents use the current project version.
-
-The S3 design absorbed lessons from the retired Auk9 language-design laboratory. Auk9 is not a separate current product or compatibility target.
+| Concept | S3 form |
+|---------|---------|
+| File header | `module app.main` |
+| Import alias | `import ori.io = io` |
+| No `func` keyword | `load_user(...) -> …` / `main()` |
+| Types | `result[User, string]`, brackets not angles |
+| Struct literal | `User { name: …, age: … }` |
+| Traits | compact header `apply User use core.Displayable` (one trait, nothing else) |
+| Field contract | `age: int if it >= 0` — checked at runtime |
+| Propagation | `try load_user(1)` only (`?` removed) |
 
 ---
 
-## Where to continue
+## Surface S3 summary (breaking vs 0.2.x)
 
-- Modules and declarations: the next specification chapters.
-- Types: [`04-types.md`](04-types.md).
-- Expressions: [`05-expressions.md`](05-expressions.md).
-- Statements and control flow: [`06-statements.md`](06-statements.md).
-- Traits: [`08-traits.md`](08-traits.md).
-- Errors: [`09-errors.md`](09-errors.md).
-- Memory: [`10-memory.md`](10-memory.md).
-- Generics: [`11-generics.md`](11-generics.md).
-- Standard library: [`12-stdlib.md`](12-stdlib.md).
-- Stability: [`18-stability-and-compatibility.md`](18-stability-and-compatibility.md).
-- ABI: [`19-abi.md`](19-abi.md).
+| Area | Canonical S3 | Removed |
+|------|--------------|---------|
+| Header | `module path` | `namespace` |
+| Functions | `name(params) -> T` / `=> expr` | declaration `func` |
+| Types | `list[T]`, `map[K,V]`, `optional[T]`, `result[T,E]` | `<>`, `of` / `to` forms |
+| Generics | `Name[T]`, bounds `for T: Trait` | `where T is`, `func foo<T>` as canonical |
+| Control | `elif`, `try expr` | `else if`, postfix `?` |
+| Match | `case Variant` / `case Variant(...)` | leading `.` on case variants |
+| Literals | `Type { f: v }`, `{ f: v }`, map `{ "k": v }` | `Type(...)`, `.{…}`, guided `(…)` |
+| Imports | `path (A)`, `path = alias`, bare `path` | `as`, `only` |
+| Traits | `apply Type` + `use Trait` | `implement Trait for Type`, `apply Trait to Type` |
+| Closures | `(u) => expr` / `(u) … end` | `do(...)` |
+| Rhythm | poetic call, labeled `end if` | nested poetic call |
+
+Migration aid: `ori migrate-syntax`. Full list: `CHANGELOG.md` `[0.3.0]`.
+
+**After 0.3.0 (delivered):**
+
+| Slice | Content |
+|-------|---------|
+| **`0.3.1`** | Local Nim-style inference on obvious RHS (literals, typed struct/list forms) |
+| **Option B** | Also omit on **field / index / call / pipe** with a concrete return type; reject `void` / `try` / empty `[]`/`{}` / bare `none` |
+| **Pipe `\|\>`** | **Kept** as first-class Ori syntax (typed as `f(value)`) |
+
+**Still deferred / out of product:** multi-OS distribution and marketplace
+publish (shelved until language, docs, and performance are solid); self-hosting
+(M4) last.
+
+---
+
+## Relationship to Zenith / Auk9
+
+Ori is a new language. Lessons from Zenith informed early design; source is not
+compatible with Zenith.
+
+| Historical / lab | Ori S3 |
+|---|---|
+| Zenith `text` | `string` |
+| Zenith / early Ori `apply Trait to Type` | `apply Type` + `use Trait` |
+| Early Ori `implement Trait for Type` | same as above |
+| Early Ori `namespace` | `module` |
+| Early Ori `func f(...)` | `f(...)` |
+| Early Ori `list<T>` / `list of T` | `list[T]` |
+| Auk9 (lab) surface | absorbed as S3 on Ori; Auk9 is **not** a product |
+| Auk9 `import io = ori.io` | Ori uses `import ori.io = io` |
+| Auk9 `do(u) =>` | Ori uses `(u) =>` |
+| Ranges exclusive | Ori ranges are inclusive (`0..9` = 0–9) |
+| `std.*` | `ori.*` |
+
+---
+
+## Spec Structure
+
+| Chapter | Title |
+|---|---|
+| 00 | Manifesto (identity and purpose) |
+| 01 | Overview (this chapter) |
+| 02 | Lexical Structure |
+| 03 | Formal EBNF Grammar |
+| 04 | Type System |
+| 05 | Expressions |
+| 06 | Statements and Control Flow |
+| 07 | Functions and Closures |
+| 08 | Traits and Apply |
+| 09 | Errors and Propagation |
+| 10 | Memory and Cleanup |
+| 11 | Generics and Constraints |
+| 12 | Standard Library Contracts |
+| 13 | Diagnostic Error Catalog |
+| 14 | Backend Support Matrix |
+| 15 | Stdlib Maintenance |
+| 16 | Runtime FFI Safety |
+| 17 | Project Layout and `.oridoc` |
+| 18 | Stability and Compatibility |
+| 19 | Native ABI (`ori-native-abi-1`) |
+
+Chapter 03 is the standalone EBNF grammar in [`03-grammar.ebnf`](03-grammar.ebnf).
+It is a compact syntax index and must be read together with the normative
+lexical, type, expression, statement, function, and trait chapters. The
+grammar does not replace the semantic rules in those chapters.

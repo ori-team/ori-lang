@@ -62,7 +62,7 @@ Suggested order for newcomers:
 | 18 | [`native_showcase/`](native_showcase/) | Traits, `any[T]`, generics, `using`, `Displayable` |
 | 19 | [`linux_log_report/`](linux_log_report/) | Medium Linux log report with modules, filesystem I/O, and tests |
 
-## Catalog (all 22 mini-projects)
+## Catalog (all 23 mini-projects)
 
 | Example | Topic |
 |---------|--------|
@@ -86,6 +86,7 @@ Suggested order for newcomers:
 | [`random_format_iter/`](random_format_iter/) | Random / format / iter |
 | [`http_get/`](http_get/) | HTTP GET + TLS |
 | [`multi_module/`](multi_module/) | Multi-file project (`greeter.orl`) |
+| [`conditional_config/`](conditional_config/) | Structured `@cfg`, target facts, and manifest features |
 | [`native_showcase/`](native_showcase/) | Traits, generics, nominal IDs, enums, dispose |
 | [`linux_log_report/`](linux_log_report/) | Medium Linux log report (multi-module + filesystem I/O) |
 

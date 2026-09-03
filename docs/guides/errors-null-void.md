@@ -1,6 +1,6 @@
 # Errors, optional, void — mental model
 
-> Pedagogical guide (surface **S3 / 0.3.2**).  
+> Pedagogical guide (surface **S3 + inference B / workspace 0.3.8-dev**).
 > **Portuguese:** [errors-null-void.pt-BR.md](errors-null-void.pt-BR.md)  
 > Normative: [09-errors](../spec/09-errors.md), [04-types](../spec/04-types.md)
 

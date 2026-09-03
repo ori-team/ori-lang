@@ -264,6 +264,8 @@ pub enum IndexExpr {
 pub enum UnaryOp {
     Neg,
     Not,
+    /// Bitwise complement: `~x`.
+    BitNot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -281,6 +283,16 @@ pub enum BinaryOp {
     Ge,
     And,
     Or,
+    /// Bitwise AND: `a & b`.
+    Band,
+    /// Bitwise OR: `a | b`.
+    Bor,
+    /// Bitwise XOR: `a ^ b`.
+    Bxor,
+    /// Left shift: `a << n`.
+    Shl,
+    /// Right shift: `a >> n`.
+    Shr,
 }
 
 /// One arm of a `match` used as an expression: `case pattern [if guard]: expr`.

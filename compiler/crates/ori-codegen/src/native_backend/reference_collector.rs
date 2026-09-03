@@ -109,6 +109,7 @@ impl FunctionReferences {
             }
             HirExprKind::ListLit { elements, .. }
             | HirExprKind::ArrayLit { elements, .. }
+            | HirExprKind::SimdLit { elements, .. }
             | HirExprKind::TupleLit(elements)
             | HirExprKind::SetLit { elements, .. } => {
                 for element in elements {

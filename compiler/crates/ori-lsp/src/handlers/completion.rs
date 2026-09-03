@@ -67,71 +67,14 @@ pub fn stdlib_dot_completion_items(receiver: &str, source: &str) -> Vec<Completi
 /// Keyword completions for the Ori language (S3 surface).
 pub fn keyword_completion_items() -> Vec<CompletionItem> {
     let keywords = [
-        "module",
-        "import",
-        "imports",
-        // Removed S3 forms still highlighted; kept as completions only for migration search.
-        "as",
-        "only",
-        "public",
+        "module", "import", "imports", "public",
         // `func` remains a keyword for callable types `func(T) -> R`, not declarations.
-        "func",
-        "return",
-        "end",
-        "const",
-        "var",
-        "if",
-        "else",
-        "elif",
-        "try",
-        "while",
-        "for",
-        "in",
-        "repeat",
-        "loop",
-        "break",
-        "continue",
-        "match",
-        "case",
-        "struct",
-        "trait",
-        "apply",
-        "use",
-        "implement",
-        "enum",
-        "where",
-        "is",
-        "alias",
-        "do",
-        "and",
-        "or",
-        "not",
-        "true",
-        "false",
-        "none",
-        "ok",
-        "err",
-        "some",
-        "mut",
-        "self",
-        "extern",
-        "any",
-        "optional",
-        "result",
-        "list",
-        "map",
-        "set",
-        "range",
-        "void",
-        "using",
-        "try",
-        "check",
-        "with",
-        "then",
-        "tuple",
-        "lazy",
-        "async",
-        "await",
+        "func", "return", "end", "const", "var", "if", "else", "elif", "while", "for", "in",
+        "repeat", "loop", "break", "continue", "match", "case", "struct", "trait", "apply", "use",
+        "enum", "alias", "newtype", "and", "or", "not", "true", "false", "none", "ok", "err",
+        "some", "mut", "self", "attr", "extern", "any", "optional", "result", "list", "map", "set",
+        "range", "void", "handle", "using", "try", "check", "with", "then", "tuple", "lazy",
+        "async", "await", "iter",
     ];
 
     keywords
@@ -168,7 +111,7 @@ pub fn snippet_completion_items() -> Vec<CompletionItem> {
         ),
         snippet(
             "apply",
-            "apply ${1:Type}\n    use ${2:Trait}\n        ${3:method}(self) -> ${4:ret}\n            ${0}\n        end\n    end\nend",
+            "apply ${1:Type} use ${2:Trait}\n    ${3:method}(self) -> ${4:ret}\n        ${0}\n    end\nend",
         ),
         snippet("if", "if ${1:condition}\n    ${0}\nend"),
         snippet("ifelse", "if ${1:condition}\n    ${2}\nelse\n    ${0}\nend"),
@@ -176,10 +119,9 @@ pub fn snippet_completion_items() -> Vec<CompletionItem> {
         snippet("for", "for ${1:item} in ${2:collection}\n    ${0}\nend"),
         snippet("loop", "loop\n    ${0}\nend"),
         snippet("match", "match ${1:value}\ncase ${2:pattern}:\n    ${0}\nend"),
-        snippet(
-            "using",
-            "using ${1:name}: ${2:Type} = ${3:expr}\n    ${0}\nend",
-        ),
+        // `using` is a single statement. The surrounding function/block owns
+        // the `end`; inserting one here would close user code unexpectedly.
+        snippet("using", "using ${1:name}: ${2:Type} = ${3:expr}"),
         snippet("check", "check ${1:condition}, \"${2:message}\""),
         snippet("import", "import ${1:ori.module} = ${2:alias}"),
     ]
@@ -200,4 +142,90 @@ fn snippet(label: &str, body: &str) -> CompletionItem {
 pub fn dedupe_completion_items(items: &mut Vec<CompletionItem>) {
     let mut seen = BTreeSet::new();
     items.retain(|item| seen.insert(item.label.clone()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{keyword_completion_items, snippet_completion_items};
+
+    fn assert_parses(source: &str) {
+        let file_id = ori_diagnostics::FileId(0);
+        let mut sink = ori_diagnostics::DiagnosticSink::default();
+        let tokens = ori_lexer::lex(source, file_id, &mut sink);
+        let _ = ori_parser::parse(&tokens, source, file_id, &mut sink);
+        assert!(
+            !sink.has_errors(),
+            "canonical snippet fixture must parse: {:?}",
+            sink.diagnostics()
+        );
+    }
+
+    #[test]
+    fn keyword_completion_only_offers_s3_surface() {
+        let labels: Vec<_> = keyword_completion_items()
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+
+        for removed in ["namespace", "as", "only", "implement", "where", "is", "do"] {
+            assert!(
+                !labels.iter().any(|label| label == removed),
+                "removed S3 keyword `{removed}` must not be suggested"
+            );
+        }
+        for canonical in [
+            "module", "imports", "elif", "newtype", "async", "await", "try",
+        ] {
+            assert!(
+                labels.iter().any(|label| label == canonical),
+                "canonical S3 keyword `{canonical}` must be suggested"
+            );
+        }
+
+        let mut sorted = labels.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            labels.len(),
+            sorted.len(),
+            "keyword list must not contain duplicates"
+        );
+    }
+
+    #[test]
+    fn snippets_do_not_insert_removed_syntax_or_extra_block_end() {
+        let snippets = snippet_completion_items();
+        let apply = snippets
+            .iter()
+            .find(|item| item.label == "apply")
+            .and_then(|item| item.insert_text.as_deref())
+            .expect("apply snippet");
+        assert!(apply.starts_with("apply ${1:Type} use ${2:Trait}"));
+        assert!(!apply.contains("implement") && !apply.contains(" to "));
+
+        let using = snippets
+            .iter()
+            .find(|item| item.label == "using")
+            .and_then(|item| item.insert_text.as_deref())
+            .expect("using snippet");
+        assert!(
+            !using.contains("\nend"),
+            "using is a statement, not a block"
+        );
+
+        for item in snippets {
+            let body = item.insert_text.unwrap_or_default();
+            assert!(!body.contains(" as "), "snippet uses removed import syntax");
+            assert!(
+                !body.contains(" only "),
+                "snippet uses removed import syntax"
+            );
+            assert!(!body.contains("<"), "snippet uses removed angle syntax");
+        }
+
+        assert_parses(
+            "module app.main\n\ntrait Trait\n    method(self) -> int\nend\n\nstruct Type\nend\n\napply Type use Trait\n    method(self) -> int\n        return 1\n    end\nend\n",
+        );
+        assert_parses("module app.main\n\nmain()\n    using value: string = \"ok\"\nend\n");
+    }
 }

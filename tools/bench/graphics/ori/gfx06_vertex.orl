@@ -1,0 +1,70 @@
+module app.bench_vertex
+
+import ori.io = io
+import ori.list = lists
+
+-- GFX-BENCH-06: transform hundreds of thousands of Vec4 by Mat4.
+-- Measures: structs, float throughput, inlining, memory bandwidth.
+
+struct Vec4
+    x: float
+    y: float
+    z: float
+    w: float
+end
+
+struct Mat4
+    m00: float
+    m01: float
+    m02: float
+    m03: float
+    m10: float
+    m11: float
+    m12: float
+    m13: float
+    m20: float
+    m21: float
+    m22: float
+    m23: float
+    m30: float
+    m31: float
+    m32: float
+    m33: float
+end
+
+transform(v: Vec4, m: Mat4) -> Vec4
+    const x: float = m.m00 * v.x + m.m01 * v.y + m.m02 * v.z + m.m03 * v.w
+    const y: float = m.m10 * v.x + m.m11 * v.y + m.m12 * v.z + m.m13 * v.w
+    const z: float = m.m20 * v.x + m.m21 * v.y + m.m22 * v.z + m.m23 * v.w
+    const w: float = m.m30 * v.x + m.m31 * v.y + m.m32 * v.z + m.m33 * v.w
+    return Vec4 { x: x, y: y, z: z, w: w }
+end
+
+main()
+    const n: int = 2000
+
+    var verts: list[Vec4] = []
+    var out: list[Vec4] = []
+    var i: int = 0
+    while i < n
+        const t: float = float(i) * 0.00001
+        lists.push(verts, Vec4 { x: t, y: t * 2.0, z: t * 3.0, w: 1.0 })
+        lists.push(out, Vec4 { x: 0.0, y: 0.0, z: 0.0, w: 0.0 })
+        i = i + 1
+    end
+
+    const m: Mat4 = Mat4 {
+        m00: 1.0, m01: 0.0, m02: 0.0, m03: 0.5,
+        m10: 0.0, m11: 1.0, m12: 0.0, m13: 0.5,
+        m20: 0.0, m21: 0.0, m22: 1.0, m23: 0.5,
+        m30: 0.0, m31: 0.0, m32: 0.0, m33: 1.0,
+    }
+
+    i = 0
+    while i < n
+        out[i] = transform(verts[i], m)
+        i = i + 1
+    end
+
+    io.print(f"{out[n - 1].x}")
+end

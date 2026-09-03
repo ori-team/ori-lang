@@ -1,0 +1,41 @@
+module app.bench_gradient
+
+import ori.io = io
+import ori.list = lists
+import ori.math = math
+
+-- GFX-BENCH-02: horizontal + vertical gradient.
+-- R = x / width, G = y / height, B = (x + y) ramp.
+-- Measures: int -> float conversion, float ops, nested loops.
+-- Packed as R*65536 + G*256 + B (no bitwise ops yet; GFX-BITWISE-1 pending).
+
+main()
+    const width: int = 640
+    const height: int = 480
+    const count: int = width * height
+
+    var pixels: list[int] = []
+    var i: int = 0
+    while i < count
+        lists.push(pixels, 0)
+        i = i + 1
+    end
+
+    var y: int = 0
+    while y < height
+        var x: int = 0
+        while x < width
+            const fx: float = float(x) / float(width)
+            const fy: float = float(y) / float(height)
+            const r: int = math.floor(fx * 255.0)
+            const g: int = math.floor(fy * 255.0)
+            const b: int = math.floor((fx + fy) * 127.5)
+            const pixel: int = (r << 16) | (g << 8) | b
+            pixels[y * width + x] = pixel
+            x = x + 1
+        end
+        y = y + 1
+    end
+
+    io.print(f"{pixels[count - 1]}")
+end

@@ -29,7 +29,15 @@ public default(s: string, fallback: string) -> string
 end
 
 public equals_ignore_case(a: string, b: string) -> bool
-    return ori.string.to_lower(a) == ori.string.to_lower(b)
+    return ori.string.case_fold(a) == ori.string.case_fold(b)
+end
+
+public is_ascii(s: string) -> bool
+    return ori.string.is_ascii(s)
+end
+
+public case_fold(s: string) -> string
+    return ori.string.case_fold(s)
 end
 
 public center(s: string, width: int) -> string

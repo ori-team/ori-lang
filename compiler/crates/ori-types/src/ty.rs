@@ -92,11 +92,9 @@ pub enum Ty {
     Optional(Box<Ty>),
     Result(Box<Ty>, Box<Ty>),
     List(Box<Ty>),
+    /// `buffer[T]` — a contiguous, mutably-indexable, fixed-length heap block.
+    Buffer(Box<Ty>),
     /// `slice[T]` — a read-only window over a `list[T]`.
-    ///
-    /// Holds the owning list plus a range, never a copy of the elements, so
-    /// taking a window is O(1) whatever the length. Reads resolve through the
-    /// owner because `push` can move the element buffer.
     Slice(Box<Ty>),
     /// `array[T, size: N]` — element type and length.
     ///
@@ -105,6 +103,8 @@ pub enum Ty {
     /// still generic (`array[byte, size: cap]` inside `Buffer[const cap: int]`).
     /// Two arrays of different length are different types.
     Array(Box<Ty>, Box<Ty>),
+    /// `simd[T, N]` — portable fixed-width SIMD vector (LANG-SIMD-1).
+    Simd(Box<Ty>, u16),
     Map(Box<Ty>, Box<Ty>),
     Set(Box<Ty>),
     Range(Box<Ty>),
@@ -218,6 +218,7 @@ impl Ty {
             Ty::String
                 | Ty::Bytes
                 | Ty::List(_)
+                | Ty::Buffer(_)
                 | Ty::Slice(_)
                 | Ty::Map(_, _)
                 | Ty::Set(_)
@@ -264,6 +265,7 @@ impl Ty {
             Ty::Infer(_) => true,
             Ty::Optional(t)
             | Ty::List(t)
+            | Ty::Buffer(t)
             | Ty::Slice(t)
             | Ty::Set(t)
             | Ty::Range(t)
@@ -275,6 +277,7 @@ impl Ty {
             Ty::Any(_) => false,
             Ty::Result(a, b) | Ty::Map(a, b) => a.contains_infer() || b.contains_infer(),
             Ty::Array(elem, size) => elem.contains_infer() || size.contains_infer(),
+            Ty::Simd(elem, _) => elem.contains_infer(),
             Ty::Opaque { args, .. } => args.iter().any(|arg| arg.contains_infer()),
             Ty::Tuple(ts) => ts.iter().any(|t| t.contains_infer()),
             Ty::Func { params, ret } => {
@@ -295,6 +298,7 @@ impl Ty {
             Ty::Error => true,
             Ty::Optional(t)
             | Ty::List(t)
+            | Ty::Buffer(t)
             | Ty::Slice(t)
             | Ty::Set(t)
             | Ty::Range(t)
@@ -306,6 +310,7 @@ impl Ty {
             Ty::Any(_) => false,
             Ty::Result(a, b) | Ty::Map(a, b) => a.contains_error() || b.contains_error(),
             Ty::Array(elem, size) => elem.contains_error() || size.contains_error(),
+            Ty::Simd(elem, _) => elem.contains_error(),
             Ty::Opaque { args, .. } => args.iter().any(|arg| arg.contains_error()),
             Ty::Tuple(ts) => ts.iter().any(|t| t.contains_error()),
             Ty::Func { params, ret } => {
@@ -359,6 +364,7 @@ impl Ty {
                 a_ok.is_assignable_to(b_ok) && a_err.is_assignable_to(b_err)
             }
             (List(a), List(b))
+            | (Buffer(a), Buffer(b))
             | (Slice(a), Slice(b))
             | (Set(a), Set(b))
             | (Range(a), Range(b))
@@ -430,11 +436,10 @@ impl Ty {
     /// wherever a def map is in reach.
     pub fn display_in(&self, def_map: &DefMap) -> std::string::String {
         match self {
-            // An *applied* type parameter (`F[A]`) is encoded as a sentinel id
-            // that carries no name, so there is nothing to look up. Printing the
-            // raw id here is what produced `<def DefId(1073741824)>`. This shape
+            // An *applied* type parameter (`F[A]`) is encoded as a synthetic id
+            // that carries no name, so there is nothing to look up. This shape
             // only arises from higher-kinded syntax, which is out of scope.
-            Ty::Named(id, args) if (id.0 & 0x4000_0000) != 0 => {
+            Ty::Named(id, args) if id.is_synthetic_type_param() => {
                 let inner = args
                     .iter()
                     .map(|a| a.display_in(def_map))
@@ -443,7 +448,19 @@ impl Ty {
                 format!("<type parameter>[{inner}]")
             }
             Ty::Named(id, args) => {
-                let name = def_map.get(*id).name.clone();
+                let Some(definition) = def_map.try_get(*id) else {
+                    let inner = args
+                        .iter()
+                        .map(|a| a.display_in(def_map))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return if inner.is_empty() {
+                        "<unresolved type>".to_string()
+                    } else {
+                        format!("<unresolved type>[{inner}]")
+                    };
+                };
+                let name = definition.name.clone();
                 let name = if name.is_empty() {
                     return self.display();
                 } else {
@@ -467,6 +484,7 @@ impl Ty {
                 err.display_in(def_map)
             ),
             Ty::List(inner) => format!("list[{}]", inner.display_in(def_map)),
+            Ty::Buffer(inner) => format!("buffer[{}]", inner.display_in(def_map)),
             Ty::Slice(inner) => format!("slice[{}]", inner.display_in(def_map)),
             Ty::Array(elem, size) => match &**size {
                 Ty::ConstInt(_, n) => format!("array[{}, size: {}]", elem.display_in(def_map), n),
@@ -476,6 +494,7 @@ impl Ty {
                     other.display_in(def_map)
                 ),
             },
+            Ty::Simd(elem, lanes) => format!("simd[{}, {}]", elem.display_in(def_map), lanes),
             Ty::Set(inner) => format!("set[{}]", inner.display_in(def_map)),
             Ty::Map(k, v) => format!("map[{}, {}]", k.display_in(def_map), v.display_in(def_map)),
             Ty::Range(inner) => format!("range[{}]", inner.display_in(def_map)),
@@ -542,6 +561,7 @@ impl Ty {
                 err.display_with_names(names)
             ),
             Ty::List(inner) => format!("list[{}]", inner.display_with_names(names)),
+            Ty::Buffer(inner) => format!("buffer[{}]", inner.display_with_names(names)),
             Ty::Slice(inner) => format!("slice[{}]", inner.display_with_names(names)),
             Ty::Array(elem, size) => match &**size {
                 Ty::ConstInt(_, value) => {
@@ -553,6 +573,9 @@ impl Ty {
                     other.display_with_names(names)
                 ),
             },
+            Ty::Simd(elem, lanes) => {
+                format!("simd[{}, {lanes}]", elem.display_with_names(names))
+            }
             Ty::Set(inner) => format!("set[{}]", inner.display_with_names(names)),
             Ty::Map(key, value) => format!(
                 "map[{}, {}]",
@@ -616,11 +639,13 @@ impl Ty {
             Ty::Optional(t) => format!("optional[{}]", t.display()),
             Ty::Result(ok, err) => format!("result[{}, {}]", ok.display(), err.display()),
             Ty::List(t) => format!("list[{}]", t.display()),
+            Ty::Buffer(t) => format!("buffer[{}]", t.display()),
             Ty::Slice(t) => format!("slice[{}]", t.display()),
             Ty::Array(elem, size) => match &**size {
                 Ty::ConstInt(_, n) => format!("array[{}, size: {}]", elem.display(), n),
                 other => format!("array[{}, size: {}]", elem.display(), other.display()),
             },
+            Ty::Simd(elem, lanes) => format!("simd[{}, {}]", elem.display(), lanes),
             Ty::Map(k, v) => format!("map[{}, {}]", k.display(), v.display()),
             Ty::Set(t) => format!("set[{}]", t.display()),
             Ty::Range(t) => format!("range[{}]", t.display()),
@@ -715,6 +740,7 @@ pub fn substitute_ty_params(ty: &Ty, args: &[Ty]) -> Ty {
             Box::new(substitute_ty_params(err, args)),
         ),
         Ty::List(elem) => Ty::List(Box::new(substitute_ty_params(elem, args))),
+        Ty::Buffer(elem) => Ty::Buffer(Box::new(substitute_ty_params(elem, args))),
         Ty::Slice(elem) => Ty::Slice(Box::new(substitute_ty_params(elem, args))),
         // Substituting the length is the point: `array[byte, size: cap]` becomes
         // `array[byte, size: 8]` once `cap` is bound.
@@ -722,6 +748,7 @@ pub fn substitute_ty_params(ty: &Ty, args: &[Ty]) -> Ty {
             Box::new(substitute_ty_params(elem, args)),
             Box::new(substitute_ty_params(size, args)),
         ),
+        Ty::Simd(elem, lanes) => Ty::Simd(Box::new(substitute_ty_params(elem, args)), *lanes),
         Ty::Map(k, v) => Ty::Map(
             Box::new(substitute_ty_params(k, args)),
             Box::new(substitute_ty_params(v, args)),
@@ -764,6 +791,80 @@ pub struct AliasView<'a> {
     pub arity: usize,
 }
 
+/// Replace the internal JSON `Value` placeholder with the concrete stdlib
+/// definition in a resolved module.
+///
+/// Runtime signatures are declared once in the stdlib manifest, before the
+/// source module is inserted into a project's definition map. They therefore
+/// use [`DefId::SYNTHETIC_JSON_VALUE`] as a temporary marker. Keeping this
+/// normalization here gives the checker and HIR one implementation and makes
+/// missing `ori.json.Value` fail closed as `Ty::Error` instead of leaking a
+/// synthetic identity into backend code.
+pub fn replace_json_placeholder(ty: Ty, def_map: &DefMap) -> Ty {
+    let json_value = def_map.lookup("ori.json.Value");
+
+    fn recurse(ty: Ty, json_value: Option<DefId>) -> Ty {
+        match ty {
+            Ty::Named(id, _) if id == DefId::SYNTHETIC_JSON_VALUE => json_value
+                .map(|resolved| Ty::Named(resolved, Vec::new()))
+                .unwrap_or(Ty::Error),
+            Ty::Named(id, args) => Ty::Named(
+                id,
+                args.into_iter()
+                    .map(|arg| recurse(arg, json_value))
+                    .collect(),
+            ),
+            Ty::Optional(inner) => Ty::Optional(Box::new(recurse(*inner, json_value))),
+            Ty::Result(ok, err) => Ty::Result(
+                Box::new(recurse(*ok, json_value)),
+                Box::new(recurse(*err, json_value)),
+            ),
+            Ty::List(inner) => Ty::List(Box::new(recurse(*inner, json_value))),
+            Ty::Buffer(inner) => Ty::Buffer(Box::new(recurse(*inner, json_value))),
+            Ty::Slice(inner) => Ty::Slice(Box::new(recurse(*inner, json_value))),
+            Ty::Array(inner, size) => Ty::Array(
+                Box::new(recurse(*inner, json_value)),
+                Box::new(recurse(*size, json_value)),
+            ),
+            Ty::Simd(inner, lanes) => Ty::Simd(Box::new(recurse(*inner, json_value)), lanes),
+            Ty::Map(key, value) => Ty::Map(
+                Box::new(recurse(*key, json_value)),
+                Box::new(recurse(*value, json_value)),
+            ),
+            Ty::Set(inner) => Ty::Set(Box::new(recurse(*inner, json_value))),
+            Ty::Range(inner) => Ty::Range(Box::new(recurse(*inner, json_value))),
+            Ty::Lazy(inner) => Ty::Lazy(Box::new(recurse(*inner, json_value))),
+            Ty::Handle(inner) => Ty::Handle(Box::new(recurse(*inner, json_value))),
+            Ty::Future(inner) => Ty::Future(Box::new(recurse(*inner, json_value))),
+            Ty::TaskJob(inner) => Ty::TaskJob(Box::new(recurse(*inner, json_value))),
+            Ty::Channel(inner) => Ty::Channel(Box::new(recurse(*inner, json_value))),
+            Ty::Opaque { kind, args } => Ty::Opaque {
+                kind,
+                args: args
+                    .into_iter()
+                    .map(|arg| recurse(arg, json_value))
+                    .collect(),
+            },
+            Ty::Tuple(elements) => Ty::Tuple(
+                elements
+                    .into_iter()
+                    .map(|element| recurse(element, json_value))
+                    .collect(),
+            ),
+            Ty::Func { params, ret } => Ty::Func {
+                params: params
+                    .into_iter()
+                    .map(|param| recurse(param, json_value))
+                    .collect(),
+                ret: Box::new(recurse(*ret, json_value)),
+            },
+            other => other,
+        }
+    }
+
+    recurse(ty, json_value)
+}
+
 /// Expand all `Ty::Named(id, args)` where `id` refers to a `TypeAlias` def.
 ///
 /// The expansion is performed recursively until no alias remains (with a
@@ -804,6 +905,15 @@ where
             Box::new(normalize_ty_aliases_depth(*err, lookup, depth)),
         ),
         Ty::List(elem) => Ty::List(Box::new(normalize_ty_aliases_depth(*elem, lookup, depth))),
+        Ty::Buffer(elem) => Ty::Buffer(Box::new(normalize_ty_aliases_depth(*elem, lookup, depth))),
+        Ty::Array(elem, size) => Ty::Array(
+            Box::new(normalize_ty_aliases_depth(*elem, lookup, depth)),
+            Box::new(normalize_ty_aliases_depth(*size, lookup, depth)),
+        ),
+        Ty::Simd(elem, lanes) => Ty::Simd(
+            Box::new(normalize_ty_aliases_depth(*elem, lookup, depth)),
+            lanes,
+        ),
         Ty::Map(k, v) => Ty::Map(
             Box::new(normalize_ty_aliases_depth(*k, lookup, depth)),
             Box::new(normalize_ty_aliases_depth(*v, lookup, depth)),
@@ -855,7 +965,10 @@ pub fn expand_ty_aliases(
     alias_map: &std::collections::HashMap<DefId, (usize, Ty)>,
 ) -> Ty {
     normalize_ty_aliases(ty, &|id| {
-        if def_map.get(id).kind == DefKind::TypeAlias {
+        if def_map
+            .try_get(id)
+            .is_some_and(|definition| definition.kind == DefKind::TypeAlias)
+        {
             alias_map.get(&id).cloned()
         } else {
             None
@@ -877,7 +990,10 @@ pub fn erase_newtypes(
     newtype_map: &std::collections::HashMap<DefId, Ty>,
 ) -> Ty {
     normalize_ty_aliases(ty, &|id| {
-        if def_map.get(id).kind == DefKind::Newtype {
+        if def_map
+            .try_get(id)
+            .is_some_and(|definition| definition.kind == DefKind::Newtype)
+        {
             // Arity 0: newtypes take no type parameters today.
             newtype_map.get(&id).cloned().map(|repr| (0, repr))
         } else {
@@ -910,6 +1026,11 @@ pub fn substitute_trait_self(ty: &Ty, trait_def_id: DefId, self_ty: &Ty) -> Ty {
             Box::new(substitute_trait_self(err, trait_def_id, self_ty)),
         ),
         Ty::List(inner) => Ty::List(Box::new(substitute_trait_self(
+            inner,
+            trait_def_id,
+            self_ty,
+        ))),
+        Ty::Buffer(inner) => Ty::Buffer(Box::new(substitute_trait_self(
             inner,
             trait_def_id,
             self_ty,
@@ -974,7 +1095,8 @@ pub fn substitute_trait_self(ty: &Ty, trait_def_id: DefId, self_ty: &Ty) -> Ty {
 
 #[cfg(test)]
 mod tests {
-    use super::{DefId, HashMap, SmolStr, Ty};
+    use super::{replace_json_placeholder, DefId, DefKind, DefMap, HashMap, SmolStr, Ty};
+    use ori_diagnostics::{FileId, Span};
 
     #[test]
     fn codegen_type_display_uses_declared_names_recursively() {
@@ -986,5 +1108,56 @@ mod tests {
         );
 
         assert_eq!(ty.display_with_names(&names), "result[list[User], string]");
+    }
+
+    #[test]
+    fn display_in_recovers_from_synthetic_or_unknown_definition_ids() {
+        let definitions = DefMap::default();
+        assert_eq!(
+            Ty::Named(DefId::synthetic_literal(7), Vec::new()).display_in(&definitions),
+            "<unresolved type>"
+        );
+        assert_eq!(
+            Ty::Named(DefId::synthetic_type_param(0), vec![Ty::String]).display_in(&definitions),
+            "<type parameter>[string]"
+        );
+    }
+
+    #[test]
+    fn json_placeholder_normalization_is_shared_and_fail_closed() {
+        let mut definitions = DefMap::default();
+        let json_id = definitions.register(
+            DefKind::Enum,
+            SmolStr::new("Value"),
+            SmolStr::new("ori.json.Value"),
+            true,
+            FileId(0),
+            Span::new(0, 0),
+        );
+        let placeholder = Ty::Result(
+            Box::new(Ty::List(Box::new(Ty::Named(
+                DefId::SYNTHETIC_JSON_VALUE,
+                Vec::new(),
+            )))),
+            Box::new(Ty::Optional(Box::new(Ty::Named(
+                DefId::SYNTHETIC_JSON_VALUE,
+                Vec::new(),
+            )))),
+        );
+
+        assert_eq!(
+            replace_json_placeholder(placeholder.clone(), &definitions),
+            Ty::Result(
+                Box::new(Ty::List(Box::new(Ty::Named(json_id, Vec::new())))),
+                Box::new(Ty::Optional(Box::new(Ty::Named(json_id, Vec::new())))),
+            )
+        );
+        assert_eq!(
+            replace_json_placeholder(placeholder, &DefMap::default()),
+            Ty::Result(
+                Box::new(Ty::List(Box::new(Ty::Error))),
+                Box::new(Ty::Optional(Box::new(Ty::Error))),
+            )
+        );
     }
 }

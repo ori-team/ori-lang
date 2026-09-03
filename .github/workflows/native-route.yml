@@ -18,34 +18,34 @@ jobs:
         include:
           - name: windows-msvc
             os: windows-latest
-            toolchain: stable
+            toolchain: 1.95.0
             smoke: powershell
           - name: windows-gnu
             os: windows-latest
-            toolchain: stable-x86_64-pc-windows-gnu
+            toolchain: 1.95.0-x86_64-pc-windows-gnu
             smoke: powershell
           - name: linux-gnu
             os: ubuntu-latest
-            toolchain: stable
+            toolchain: 1.95.0
             smoke: sh
           - name: macos-x86_64
             os: macos-15-intel
-            toolchain: stable
+            toolchain: 1.95.0
             smoke: sh
           - name: macos-aarch64
             os: macos-15
-            toolchain: stable
+            toolchain: 1.95.0
             smoke: sh
 
     defaults:
       run:
         working-directory: compiler
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust toolchain
         run: |
-          rustup toolchain install ${{ matrix.toolchain }}
+          rustup toolchain install ${{ matrix.toolchain }} --profile minimal
           rustup default ${{ matrix.toolchain }}
           rustc -Vv
           cargo -V
@@ -57,20 +57,46 @@ jobs:
           "ORI_USE_RUST_LLD=1" >> $env:GITHUB_ENV
           "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=rust-lld" >> $env:GITHUB_ENV
 
-      - name: Check compiler crates
-        run: cargo check -p ori-types -p ori-hir -p ori-codegen -p ori-driver -p ori-runtime
+      - name: Audit Rust dependencies
+        if: matrix.name == 'linux-gnu'
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit --locked
+
+      - name: Enforce incremental rustfmt baseline
+        if: matrix.name == 'linux-gnu'
+        working-directory: ${{ github.workspace }}
+        run: python3 tools/qa/rustfmt_scoped.py
+
+      - name: Check complete workspace
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Strict Clippy complete workspace
+        if: matrix.name == 'linux-gnu'
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test runtime
-        run: cargo test -p ori-runtime
+        run: cargo test -p ori-runtime --locked
 
       - name: Test native driver integration
-        run: cargo test -p ori-driver --test multifile_imports
+        run: cargo test -p ori-driver --test multifile_imports --locked
 
       - name: Test async diagnostics and runtime bridge
-        run: cargo test -p ori-driver --test concurrency_async
+        run: cargo test -p ori-driver --test concurrency_async --locked
 
       - name: Test diagnostic catalog
-        run: cargo test -p ori-driver --test diagnostic_catalog
+        run: cargo test -p ori-driver --test diagnostic_catalog --locked
+
+      - name: Test C backend under sanitizers
+        if: matrix.name == 'linux-gnu'
+        run: ORI_REQUIRE_C_SANITIZERS=1 cargo test -p ori-driver --test c_backend_sanitizers --locked -- --nocapture
+
+      - name: Validate documentation coverage and examples
+        if: matrix.name == 'linux-gnu'
+        working-directory: ${{ github.workspace }}
+        run: |
+          sh tools/qa/docs_coverage.sh
+          sh tools/qa/docs_examples.sh
 
       - name: Native release package (Windows)
         if: matrix.smoke == 'powershell'
@@ -92,7 +118,7 @@ jobs:
             --force
 
       - name: Upload native release package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ori-${{ matrix.name }}
           path: |
@@ -109,7 +135,7 @@ jobs:
     needs: native-route
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install system linker only (no Rust)
         run: |
@@ -131,7 +157,7 @@ jobs:
           fi
 
       - name: Download release artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ori-linux-gnu
           path: dist
@@ -175,7 +201,7 @@ jobs:
           }
 
       - name: Download release artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ori-windows-msvc
           path: dist
@@ -242,7 +268,7 @@ jobs:
     needs: native-route
     runs-on: macos-15-intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Ensure Rust is not present
         run: |
@@ -259,7 +285,7 @@ jobs:
           fi
 
       - name: Download release artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ori-macos-x86_64
           path: dist
@@ -279,7 +305,7 @@ jobs:
     needs: native-route
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Ensure Rust is not present
         run: |
@@ -296,7 +322,7 @@ jobs:
           fi
 
       - name: Download release artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ori-macos-aarch64
           path: dist

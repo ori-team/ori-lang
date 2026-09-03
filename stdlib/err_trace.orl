@@ -1,0 +1,14 @@
+module ori.err_trace
+
+-- Zero-Cost Error Return Traces (ERR-TRACE-1).
+--
+-- Exposes runtime helpers to push file:line location entries to error messages
+-- and format error return traces.
+
+public push(file: string, line: int, message: string) -> string
+    return ori.err_trace.push(file, line, message)
+end
+
+public format(message: string) -> string
+    return ori.err_trace.format(message)
+end

@@ -2,7 +2,7 @@
   "name": "vscode-orl",
   "displayName": "Ori Language",
   "description": "Language support for Ori (.orl) \u2014 LSP, stdlib completion, doctor, and tooling",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "publisher": "ori-lang",
   "license": "MIT OR Apache-2.0",
   "engines": {
@@ -91,6 +91,28 @@
           "type": "string",
           "default": "",
           "description": "Override stdlib root (maps to ORI_STDLIB_ROOT)."
+        },
+        "ori.cfg.target": {
+          "type": "string",
+          "default": "",
+          "description": "Target triple used by @cfg and native artifact selection (ORI_TARGET_TRIPLE)."
+        },
+        "ori.cfg.executionProfile": {
+          "type": "string",
+          "enum": ["standalone", "embedded"],
+          "default": "standalone",
+          "description": "Execution profile used by @cfg (ORI_EXECUTION_PROFILE)."
+        },
+        "ori.cfg.features": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Manifest-declared features enabled for compiler and LSP processes (ORI_FEATURES)."
+        },
+        "ori.cfg.noDefaultFeatures": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable the manifest default feature set (ORI_NO_DEFAULT_FEATURES)."
         },
         "ori.runtime.lib": {
           "type": "string",

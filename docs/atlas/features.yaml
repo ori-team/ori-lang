@@ -1,0 +1,260 @@
+schema: ori-doc-atlas/v1
+baseline:
+  language_surface: "0.3.0"
+  local_inference: "0.3.1-option-B"
+  workspace: "0.3.8-dev"
+  latest_release: "0.3.7"
+  abi: ori-native-abi-1
+
+features:
+  - id: language.lexical
+    name: Lexical syntax and literals
+    status: stable
+    implementation: [compiler/crates/ori-lexer/src/token.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports/collections.rs]
+    user_docs: [docs/language/tour.md]
+    reference: [docs/spec/02-lexical.md, docs/spec/03-grammar.ebnf]
+    examples: [examples/language_features/main.orl]
+
+  - id: language.modules
+    name: Modules, imports, and visibility
+    status: stable
+    implementation: [compiler/crates/ori-parser/src, compiler/crates/ori-hir/src]
+    tests: [compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/tour.md, docs/guides/first-project.md]
+    reference: [docs/spec/01-overview.md, docs/spec/17-project-and-docs.md]
+    examples: [examples/multi_module/main.orl]
+
+  - id: language.bindings
+    name: Const, var, mutability, inference, and destructuring
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/stmt.rs, compiler/crates/ori-types/src/check.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md]
+    reference: [docs/spec/04-types.md, docs/spec/06-statements.md]
+    examples: [examples/language_features/main.orl]
+
+  - id: language.types
+    name: Primitive, tuple, collection, optional, result, range, and lazy types
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/ty.rs, compiler/crates/ori-types/src/ty.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/guides/errors-null-void.md]
+    reference: [docs/spec/04-types.md]
+    examples: [examples/collections_demo/main.orl, examples/error_handling/main.orl]
+    limitations: "The checker gates user-defined map/set keys on `Hashable` plus structural or explicit `Equatable`; a user `hash(self) -> int` method now supplies the native callback, marker-only non-recursive structural keys use generated hashes, and explicit non-structural equality without `hash` uses a constant-hash correctness fallback. Generic graph nodes dispatch the same equality callback on their first concrete operation and preserve it through graph copies. Recursive aggregate keys and benchmarked performance remain open. `handle[T]` remains a partial borrowed-pointer type with non-transferable values and export aggregates containing handles rejected; `ori.handle.null()` and `ori.handle.is_null` only manage/probe the null sentinel, while safe access, lifetime, foreign-thread affinity, and transfer details remain open."
+
+  - id: language.arrays-and-slices
+    name: Inline arrays and slices
+    status: partial
+    implementation: [compiler/crates/ori-parser/src, compiler/crates/ori-codegen/src/native_backend.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/advanced.md]
+    reference: [docs/spec/04-types.md, docs/spec/14-backend-support.md]
+    examples: []
+    limitations: "Native arrays are scalar-only; backend parity is incomplete."
+
+  - id: language.alias-and-newtype
+    name: Transparent aliases and nominal newtypes
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/item.rs, compiler/crates/ori-types/src/resolve.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/04-types.md, docs/spec/11-generics.md]
+    examples: [examples/language_features/main.orl]
+
+  - id: language.functions
+    name: Functions, parameters, defaults, contracts, variadics, and expression bodies
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/item.rs, compiler/crates/ori-parser/src/parse_item.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/07-functions.md]
+    examples: [examples/hello/main.orl]
+
+  - id: language.closures
+    name: Closures and captures
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/expr.rs, compiler/crates/ori-codegen/src/native_backend.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/05-expressions.md, docs/spec/07-functions.md]
+    examples: [examples/native_showcase/main.orl]
+
+  - id: language.control-flow
+    name: Conditionals, loops, using, and checks
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/stmt.rs, compiler/crates/ori-parser/src/parse_stmt.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/guides/cookbook.md]
+    reference: [docs/spec/06-statements.md, docs/spec/09-errors.md]
+    examples: [examples/using_fs/main.orl]
+
+  - id: language.pattern-matching
+    name: Match statements, expressions, guards, and or-patterns
+    status: stable
+    implementation: [compiler/crates/ori-ast/src/pattern.rs, compiler/crates/ori-types/src/check.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/tour.md]
+    reference: [docs/spec/05-expressions.md, docs/spec/06-statements.md]
+    examples: [examples/language_features/main.orl, examples/error_handling/main.orl]
+    limitations: "Or-pattern alternatives cannot bind variables."
+
+  - id: language.generics
+    name: Generic functions, structs, traits, and constraints
+    status: partial
+    implementation: [compiler/crates/ori-parser/src/parse_item.rs, compiler/crates/ori-types/src]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/08-traits.md, docs/spec/11-generics.md]
+    examples: [examples/native_showcase/main.orl]
+    limitations: "Generic traits and higher-kinded types remain restricted."
+
+  - id: language.const-generics
+    name: Named compile-time generic arguments
+    status: partial
+    implementation: [compiler/crates/ori-parser/src, compiler/crates/ori-types/src/lower.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/11-generics.md]
+    examples: [examples/test_generics.orl]
+    limitations: "Const evaluation is intentionally side-effect-free and limited."
+
+  - id: language.traits
+    name: Traits, apply/use, associated types, and associated functions
+    status: partial
+    implementation: [compiler/crates/ori-ast/src/item.rs, compiler/crates/ori-types/src]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md]
+    reference: [docs/spec/08-traits.md]
+    examples: [examples/native_showcase/main.orl]
+    limitations: "Associated items are implemented; higher-kinded trait constructors remain restricted."
+
+  - id: language.errors
+    name: Optional/result propagation and diagnostics
+    status: stable
+    implementation: [compiler/crates/ori-types/src/check.rs, compiler/crates/ori-diagnostics/src]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/diagnostic_catalog.rs]
+    user_docs: [docs/guides/errors-null-void.md]
+    reference: [docs/spec/09-errors.md, docs/spec/13-error-catalog.md]
+    examples: [examples/error_handling/main.orl]
+
+  - id: language.async
+    name: Async functions, await, futures, tasks, channels, and atomics
+    status: partial
+    implementation: [compiler/crates/ori-codegen/src/native_backend.rs, compiler/crates/ori-runtime/src/lib.rs]
+    tests: [compiler/crates/ori-driver/tests/concurrency_async.rs]
+    user_docs: [docs/language/tour.md, docs/language/concurrency.md, docs/guides/testing.md]
+    reference: [docs/spec/06-statements.md, docs/spec/10-memory.md, docs/spec/12-stdlib.md]
+    examples: [examples/async_demo/main.orl, examples/concurrency/main.orl]
+    limitations: "Only the documented native state-machine subset is supported. AUD-CHANNEL-1 and AUD-NET-1 ownership/lifetime blockers are covered, and direct plus same-module/imported named-helper access to mutable globals from spawned closures now emits `concurrency.global_mutable_capture`. Pure named function values and local closures with checker-side transferable-capture summaries are accepted; unsafe or unknown environments are rejected. Receiver methods and any[Trait] dispatch use conservative method-name effect matching. OS resource handles (`fs.File`, `io.Input`, `io.Output`, `net.Connection`, `net.Listener`, `net.UdpSocket`) are explicitly non-transferable; `task.CancelToken` is transferable by design. Complete type-level isolation, async ownership verification, structured cancellation, and sanitizer/TSan scheduling remain open. `channel.create_bounded` and the shared blocking-I/O pool are implemented and bounded; typed operational errors remain open."
+
+  - id: language.iter-generators
+    name: Iter functions and suspend
+    status: partial
+    implementation: [compiler/crates/ori-ast/src/item.rs, compiler/crates/ori-ast/src/stmt.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    user_docs: [docs/language/tour.md, docs/language/concurrency.md]
+    reference: [docs/spec/06-statements.md, docs/spec/11-generics.md]
+    examples: [examples/random_format_iter/main.orl]
+    limitations: "Direct for-loop consumption has deliberate restrictions."
+
+  - id: language.memory
+    name: ARC, cycle collection, Disposable, and custom destructors
+    status: partial
+    implementation: [compiler/crates/ori-runtime/src/lib.rs, compiler/crates/ori-codegen/src/native_backend.rs]
+    tests: [compiler/crates/ori-driver/tests/memory_arc.rs, compiler/crates/ori-driver/tests/concurrency_async.rs]
+    user_docs: [docs/language/tour.md, docs/language/advanced.md, docs/guides/errors-null-void.md]
+    reference: [docs/spec/10-memory.md, docs/spec/16-runtime-ffi-safety.md]
+    examples: [examples/using_fs/main.orl, examples/native_showcase/main.orl]
+    limitations: "AUD-ARC-1 is closed: exact edge multiplicity is covered for owner teardown, cycles, duplicate struct/list/map/channel slots, and AOT/JIT leak parity. Async frame emission now verifies slot bounds, overlap, native layouts, and zero-initialized managed await bindings, but use-based liveness remains conservative and a full HIR ownership proof is still open; scheduled sanitizer/TSan execution remains under the quality roadmap."
+
+  - id: language.attributes
+    name: Declaration attributes
+    status: implemented
+    implementation: [compiler/crates/ori-types/src/check.rs, compiler/crates/ori-hir/src/lower.rs, compiler/crates/ori-hir/src/optimize/inline_leafs.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/advanced.md]
+    reference: [docs/spec/02-lexical.md, docs/spec/13-error-catalog.md]
+    examples: [examples/tests_demo/main.orl, examples/embed/add_scores.orl]
+    limitations: "@inline and @no_inline are enforced during leaf-inlining and lowering. Unsupported namespaced metadata is rejected with `attr.unknown`; third-party attribute schemas and effects remain a future design."
+
+  - id: language.conditional-compilation
+    name: Structured conditional compilation
+    status: implemented
+    implementation: [compiler/crates/ori-ast/src/common.rs, compiler/crates/ori-parser/src/parse_item.rs, compiler/crates/ori-types/src/conditional.rs, compiler/crates/ori-driver/src/main.rs, compiler/crates/ori-driver/src/package.rs, compiler/crates/ori-driver/src/pipeline/project.rs, compiler/crates/ori-driver/src/incremental.rs, compiler/crates/ori-lsp/src]
+    tests: [compiler/crates/ori-driver/tests/multifile_imports.rs, compiler/crates/ori-driver/tests/jit_run.rs, compiler/crates/ori-lsp/src/index/semantic.rs]
+    user_docs: [docs/language/advanced.md, docs/language/advanced.pt-BR.md]
+    reference: [docs/spec/02-lexical.md, docs/spec/03-grammar.ebnf, docs/spec/13-error-catalog.md, docs/spec/17-project-and-docs.md]
+    examples: [examples/conditional_config/main.orl]
+    limitations: "Cfg v1 applies to top-level declarations; feature dependencies and full native cross-compilation are outside the contract."
+
+  - id: language.ffi
+    name: extern blocks, c_export, and native ABI
+    status: partial
+    implementation: [compiler/crates/ori-codegen/src/c_header.rs, compiler/crates/ori-codegen/src/native_backend.rs]
+    tests: [compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/interop.md, examples/embed/README.md]
+    reference: [docs/spec/16-runtime-ffi-safety.md, docs/spec/19-abi.md]
+    examples: [examples/embed/add_scores.orl]
+    limitations: "Direct collection aggregates remain outside ABI-1. Direct, optional, and result string/bytes ingress is copied before Ori retains it. Concrete non-generic opaque managed-handle inputs are rejected when null, foreign, wrong-size, or same-size wrong-type. Generated code has no provenance-only fallback and generic aggregate exports remain rejected. A cross-platform hostile foreign-host sanitizer matrix remains open."
+
+  - id: tooling.hosted-session
+    name: Hosted compiler session and scalar JIT
+    status: experimental
+    implementation: [compiler/crates/ori-embed/src/lib.rs, compiler/crates/ori-embed/examples/hosted_scalar_calls.rs, compiler/crates/ori-driver/src/pipeline/frontend.rs, compiler/crates/ori-driver/src/pipeline/native.rs, compiler/crates/ori-codegen/src/native_backend/jit.rs, compiler/crates/ori-runtime/src/lib.rs]
+    tests: [compiler/crates/ori-embed/src/lib.rs, compiler/crates/ori-runtime/src/tests.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/language/interop.md, docs/language/interop.pt-BR.md]
+    reference: [docs/planning/embedded-runtime-host-abi-v1.md, docs/planning/interactive-compiler-service.md]
+    examples: [compiler/crates/ori-embed/examples/hosted_scalar_calls.rs, tools/bench/hosted_scalar_calls.sh]
+    limitations: "Rust only and experimental. AUD-EMBED-1 and AUD-UNLOAD-1 cover Rust-owned string/bytes copies, generation-bound slice tokens, runtime leases, worker shutdown, and signal-handler restoration. Arbitrary runtime aborts, callback C ABI/thread dispatch, and concurrent hot reload remain planned."
+
+  - id: compiler.optimizations
+    name: HIR optimization pipeline
+    status: partial
+    implementation: [compiler/crates/ori-hir/src/optimize]
+    tests: [compiler/crates/ori-driver/tests/arithmetic_and_optimizer_guards.rs, compiler/crates/ori-driver/tests/dx_scripting.rs]
+    user_docs: [README.md, README.pt-BR.md, docs/language/advanced.md, docs/language/advanced.pt-BR.md]
+    reference: [docs/planning/roadmap-code-audit-performance-architecture.md]
+    examples: [tools/bench]
+    limitations: "AUD-OPT-1/AUD-OPT-2 are closed by conservative effect classification and call-boundary-preserving inlining. Explicit HIR temporaries may broaden safe inlining later; SIMD remains a no-op scaffold."
+
+  - id: stdlib.core
+    name: Standard library runtime and source modules
+    status: partial
+    implementation: [compiler/crates/ori-types/src/stdlib.rs, compiler/crates/ori-runtime/src/lib.rs, compiler/crates/ori-codegen/src/c_backend.rs, stdlib]
+    tests: [compiler/crates/ori-runtime/src/tests.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
+    user_docs: [docs/guides/stdlib-reference.md, stdlib/README.md]
+    reference: [docs/spec/12-stdlib.md, docs/spec/15-stdlib-maintenance.md]
+    examples: [examples/collections_demo/main.orl, examples/http_get/main.orl]
+    limitations: "Module inventory and broad functionality exist. ARC multiplicity, managed-channel ownership, async network lifetime/cancellation, bounded channels, shared blocking async I/O workers, and managed native bytes with embedded NUL are covered by regressions. Typed operational errors, Unicode parity, reactor performance, and sanitizer/TSan coverage remain open."
+
+  - id: tooling.cli
+    name: Compiler, package, documentation, and migration CLI
+    status: partial
+    implementation: [compiler/crates/ori-driver/src/main.rs]
+    tests: [compiler/crates/ori-driver/tests/summary.rs, compiler/crates/ori-driver/tests/doctor.rs, compiler/crates/ori-driver/tests/doc_export.rs]
+    user_docs: [docs/guides/cli-reference.md]
+    reference: [docs/spec/17-project-and-docs.md]
+    examples: [examples/README.md]
+    limitations: "Core commands, contained package extraction, integrity checks, and lock-driven reproducibility are implemented (AUD-PKG-1/2). Daemon/doctest paths remain partial."
+
+  - id: tooling.editors
+    name: LSP, VS Code, Zed, and DAP debugger
+    status: partial
+    implementation: [compiler/crates/ori-lsp/src, extensions/vscode-orl, extensions/zed-ori]
+    tests: [compiler/crates/ori-driver/tests/doctor.rs, compiler/crates/ori-driver/tests/summary.rs]
+    user_docs: [docs/guides/debugging.md, extensions/README.md, extensions/vscode-orl/README.md, extensions/zed-ori/README.md]
+    reference: [docs/spec/14-backend-support.md]
+    examples: [examples/README.md]
+    limitations: "Zed has no automatic debugger wiring in its current extension API. LSP UTF-16 positions, resolver identity, snapshot-version publication, and semantic editor lint still need conformance evidence; canonical S3 completion/hover is the implemented baseline."
+
+  - id: tooling.quality-release
+    name: Quality, security, package, and release gates
+    status: partial
+    implementation: [tools/qa, .github/workflows, compiler/crates/ori-driver/src/package.rs]
+    tests: [compiler/crates/ori-driver/tests/diagnostic_catalog.rs, compiler/crates/ori-driver/tests/security_robustness.rs]
+    user_docs: [README.md, README.pt-BR.md]
+    reference: [docs/planning/roadmap-code-audit-performance-architecture.md, docs/planning/BACKLOG.md]
+    examples: []
+    limitations: "Required QA, package integrity/locks, and release reproducibility are implemented (AUD-QA-1, AUD-PKG-1/2, AUD-REL-1). Behavioral gates, fuzzing/sanitizers, and full-workspace formatting debt remain AUD-QA-2/3 and the scoped ratchet."
