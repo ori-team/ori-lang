@@ -1169,6 +1169,57 @@ end
 }
 
 #[test]
+fn e2e_doctest_directives_output_and_compile_fail() {
+    let dir = TestDir::new("doctest_directives");
+    dir.write(
+        "sample.oridoc",
+        r#"# Sample Doctests
+
+Test with expected compile failure:
+```ori
+const bad: int = "string"
+-- compile_fail: type.type_mismatch
+```
+
+Test with runtime output assertion:
+```ori
+import ori.io = io
+io.print("hello doctest")
+-- output: hello doctest
+```
+
+Test with multiline output:
+```ori
+io.print("line 1")
+io.print("line 2")
+-- output:
+-- line 1
+-- line 2
+```
+"#,
+    );
+
+    let output = Command::new(ori_exe())
+        .arg("test")
+        .arg("--doc")
+        .arg(dir.path("sample.oridoc"))
+        .output()
+        .expect("failed to run doctest command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "doctest failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("ok:") || stdout.contains("ok:"),
+        "expected ok in test output:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+
+#[test]
 fn e2e_daemon_jsonrpc_compilation_and_diagnostics() {
     use std::io::Write;
 

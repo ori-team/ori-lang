@@ -22,6 +22,7 @@ pub struct TestOutput {
     pub filter: Option<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct TestResult {
     pub name: String,
     pub passed: bool,

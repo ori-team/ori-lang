@@ -19,6 +19,15 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Doctest output assertions, compile-fail directives, and rich diagnostics (`DX-DOCTEST-1`).**
+  Extended `ori test --doc` doctest runner with directive parsing and execution:
+  captures stdout during in-process Cranelift JIT execution to validate `-- output: <text>`
+  (including multiline expected output); supports `-- compile_fail` (optionally matching specific
+  diagnostic codes or substrings) for documentation examples demonstrating type or syntax errors;
+  formats rich source-labelled diagnostics (severity, code, message, `--> file:line`, why, and action);
+  automatically extracts top-level import statements to module scope without duplication.
+  Covered by 6 unit tests in `pipeline/doctest.rs` and 2 E2E tests in `tests/dx_scripting.rs`.
+
 - **Hostile-input fuzzing and pathological literal robust testing (`AUD-QA-3`).**
   Enriched `tools/qa/fuzz_smoke.py` with structured generators covering extreme number literals (4,000 digits),
   pathological identifiers (4,000 chars), unclosed strings/f-strings/comments, embedded null bytes (`\0`),

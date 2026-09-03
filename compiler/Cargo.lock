@@ -1071,6 +1071,7 @@ version = "0.3.8"
 dependencies = [
  "clap",
  "flate2",
+ "libc",
  "ori-ast",
  "ori-codegen",
  "ori-diagnostics",
