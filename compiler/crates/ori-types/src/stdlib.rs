@@ -191,6 +191,8 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.string.case_fold" => "ori_string_case_fold", c_backend),
     stdlib!("ori.string.replace" => "ori_string_replace", c_backend),
     stdlib!("ori.string.chars" => "ori_string_chars", c_backend),
+    stdlib!("ori.err_trace.push", ["err_trace.push"] => "ori_err_trace_push", c_backend),
+    stdlib!("ori.err_trace.format", ["err_trace.format"] => "ori_err_trace_format", c_backend),
     stdlib!("string", [] => "ori_to_string", c_backend),
     stdlib!("int", [] => "ori_to_int", c_backend),
     stdlib!("float", [] => "ori_to_float", c_backend),
@@ -894,6 +896,8 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
         | "ori.string.to_upper"
         | "ori.string.to_lower"
         | "ori.string.case_fold" => (vec![Ty::String], Ty::String),
+        "ori.err_trace.push" => (vec![Ty::String, Ty::Int, Ty::String], Ty::String),
+        "ori.err_trace.format" => (vec![Ty::String], Ty::String),
         "ori.string.is_ascii" => (vec![Ty::String], Ty::Bool),
         "ori.string.replace" => (vec![Ty::String, Ty::String, Ty::String], Ty::String),
         "ori.string.chars" => (vec![Ty::String], Ty::List(Box::new(Ty::String))),
@@ -1895,7 +1899,9 @@ pub fn stdlib_native_abi(
         | "ori_files_read_text_async"
         | "ori_files_read_bytes"
         | "ori_files_read_all"
-        | "ori_files_list_dir" => (vec![Ptr], Some(Ptr)),
+        | "ori_files_list_dir"
+        | "ori_err_trace_format" => (vec![Ptr], Some(Ptr)),
+        "ori_err_trace_push" => (vec![Ptr, I64, Ptr], Some(Ptr)),
         "ori_bytes_len" => (vec![Ptr], Some(I64)),
         "ori_string_replace" => (vec![Ptr, Ptr, Ptr], Some(Ptr)),
         "ori_string_index_of" => (vec![Ptr, Ptr], Some(I64)),

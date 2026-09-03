@@ -1924,7 +1924,7 @@ pub unsafe extern "C" fn ori_reactor_wake() {
 #[no_mangle]
 pub unsafe extern "C" fn ori_err_trace_push(
     file: *const std::ffi::c_char,
-    line: u32,
+    line: i64,
     err_str: *mut u8,
 ) -> *mut u8 {
     let file_str = if file.is_null() {

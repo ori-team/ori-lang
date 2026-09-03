@@ -12,6 +12,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Zero-cost error return traces (`ERR-TRACE-1`).**
+  Exposed `ori.err_trace` in the standard library (`stdlib/err_trace.orl`) with
+  `push(file: string, line: int, message: string) -> string` and
+  `format(message: string) -> string`, wired into `ori_err_trace_push` and
+  `ori_err_trace_format` in `ori-runtime`, the Cranelift native backend, and the C
+  backend, enabling source location tracking during error propagation.
+
 - **Residual feature matrix and diagnostics (`AUD-FRONT-1`).**
   Added explicit fail-closed diagnostics for unsupported residual syntax forms,
   including `parse.newtype_generics_unsupported` for generic newtypes and

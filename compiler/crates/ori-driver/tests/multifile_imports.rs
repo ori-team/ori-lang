@@ -13310,6 +13310,72 @@ end
 }
 
 #[test]
+fn compile_runs_err_trace_push_and_format_native() {
+    let dir = TestDir::new("err_trace_push_and_format");
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.err_trace = trace
+
+level2() -> result[int, string]
+    return err("connection reset")
+end
+
+level1() -> result[int, string]
+    match level2()
+        case ok(val):
+            return ok(val)
+        case err(msg):
+            const traced = trace.push("network.orl", 42, msg)
+            return err(traced)
+    end
+end
+
+main()
+    match level1()
+        case ok(_):
+            io.println("UNEXPECTED_OK")
+        case err(e):
+            const formatted = trace.format(e)
+            if formatted.contains("connection reset") and formatted.contains("at network.orl:42")
+                io.println("TRACE_SUCCESS")
+            else
+                io.println("TRACE_FAILED")
+            end
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "err_trace_native");
+    assert!(stdout.contains("TRACE_SUCCESS"), "stdout: {stdout}");
+}
+
+#[test]
+fn build_c_backend_compiles_err_trace() {
+    let dir = TestDir::new("c_backend_err_trace");
+    let source = r#"module app.main
+
+import ori.err_trace = trace
+
+level1() -> string
+    return trace.push("main.orl", 10, "err")
+end
+
+main()
+    const s = level1()
+    const f = trace.format(s)
+end
+"#;
+    dir.write("main.orl", source);
+
+    let build = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build.has_errors, "{:?}", build.diagnostics);
+    assert!(build.c_source.contains("ori_err_trace_push"));
+    assert!(build.c_source.contains("ori_err_trace_format"));
+}
+
+#[test]
 fn check_accepts_stdlib_gap_parity_imports() {
     let dir = TestDir::new("stdlib_gap_parity_imports");
     dir.write(

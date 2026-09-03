@@ -1768,6 +1768,20 @@ static inline bool ori_string_is_ascii(ori_string_t s) {
 static inline ori_string_t ori_string_case_fold(ori_string_t s) {
     return ori_string_to_lower(s);
 }
+static inline ori_string_t ori_err_trace_push(ori_string_t file, int64_t line, ori_string_t err_str) {
+    char buf[128];
+    int n = snprintf(buf, sizeof(buf), "\n  at %.*s:%lld", (int)file.len, file.data, (long long)line);
+    size_t new_len = err_str.len + (n > 0 ? (size_t)n : 0);
+    char* out = (char*)malloc(new_len + 1);
+    if (!out) abort();
+    memcpy(out, err_str.data, err_str.len);
+    if (n > 0) memcpy(out + err_str.len, buf, (size_t)n);
+    out[new_len] = '\0';
+    return (ori_string_t){ .data = out, .len = new_len };
+}
+static inline ori_string_t ori_err_trace_format(ori_string_t err_str) {
+    return ori_string_dup_range(err_str.data, err_str.len);
+}
 static inline ori_string_t ori_string_to_upper(ori_string_t s) {
     char* out = (char*)malloc(s.len + 1);
     if (!out) abort();

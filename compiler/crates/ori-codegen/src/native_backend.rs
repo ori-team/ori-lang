@@ -4447,6 +4447,12 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_string_case_fold", &[pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_string_case_fold"), id);
+        let id = decl("ori_err_trace_push", &[pt, types::I64, pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_err_trace_push"), id);
+        let id = decl("ori_err_trace_format", &[pt], vec![], Some(pt))?;
+        self.stdlib_ids
+            .insert(SmolStr::new("ori_err_trace_format"), id);
         let id = decl("ori_string_replace", &[pt, pt, pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_string_replace"), id);

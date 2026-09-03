@@ -1595,3 +1595,38 @@ Future `ori.*` functions that expose rich errors are expected to return
 `result[T, ori.Error]`. Cause chaining and full `ori.core.Error` trait-method
 integration are still planned. Current implemented filesystem and parse helpers
 still use `string` errors or `optional[T]` where documented above.
+
+## `ori.err_trace` — Error Return Traces
+
+Status: implemented (`ERR-TRACE-1`). Provides runtime-backed helpers to append
+source file and line locations to error messages during propagation and format
+trace strings.
+
+```ori
+import ori.err_trace = trace
+
+public fail_level1() -> result[int, string]
+    match fail_level2()
+        case ok(v):
+            return ok(v)
+        case err(msg):
+            return err(trace.push("service.orl", 42, msg))
+    end
+end
+
+main()
+    match fail_level1()
+        case ok(_):
+            -- ...
+        case err(e):
+            const formatted = trace.format(e)
+            -- e.g. "connection reset\n  at service.orl:42"
+    end
+end
+```
+
+### Functions
+
+- `push(file: string, line: int, message: string) -> string`: Appends `\n  at <file>:<line>` to the error message string.
+- `format(message: string) -> string`: Formats the error trace or returns `<nil error>` for empty errors.
+
