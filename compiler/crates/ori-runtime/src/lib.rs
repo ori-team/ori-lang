@@ -10759,6 +10759,36 @@ unsafe extern "C" fn ori_process_run_capture(program: *const u8, args: *mut OriL
 }
 
 #[no_mangle]
+unsafe extern "C" fn ori_process_run_output(program: *const u8, args: *mut OriList) -> *mut u8 {
+    let program_str = cstr_str(program);
+    let mut command = std::process::Command::new(program_str);
+    if !args.is_null() {
+        for i in 0..(*args).len {
+            if let Some(arg) = list_string_at(args, i) {
+                command.arg(arg);
+            }
+        }
+    }
+    match command.output() {
+        Ok(output) => {
+            let status = output.status.code().unwrap_or(-1) as i64;
+            let stdout_bytes = cstring_from_bytes(output.stdout);
+            let stderr_bytes = cstring_from_bytes(output.stderr);
+            let tuple = ori_alloc(24, None) as *mut i64;
+            *tuple = status;
+            *tuple.add(1) = stdout_bytes as i64;
+            *tuple.add(2) = stderr_bytes as i64;
+            ori_arc_register_edge(tuple as *mut u8, stdout_bytes);
+            ori_arc_register_edge(tuple as *mut u8, stderr_bytes);
+            ori_arc_release(stdout_bytes);
+            ori_arc_release(stderr_bytes);
+            new_result(true, tuple as *mut u8)
+        }
+        Err(e) => new_result(false, cstring_from_str(&e.to_string())),
+    }
+}
+
+#[no_mangle]
 unsafe extern "C" fn ori_net_connect(host: *const u8, port: i64, timeout_ms: i64) -> *mut u8 {
     let host_str = cstr_str(host);
     let address = format!("{host_str}:{port}");

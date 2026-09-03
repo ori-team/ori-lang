@@ -717,6 +717,10 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
         "ori.process.run_capture",
         ["process.run_capture"] => "ori_process_run_capture"
     ),
+    stdlib!(
+        "ori.process.run_output_raw",
+        ["process.run_output_raw"] => "ori_process_run_output"
+    ),
     stdlib!("ori.net.connect", ["net.connect"] => "ori_net_connect"),
     stdlib!("ori.net.connect_tls", ["net.connect_tls"] => "ori_net_connect_tls"),
     stdlib!(
@@ -1744,6 +1748,13 @@ pub fn stdlib_func_sig(path: &str) -> Option<(Vec<Ty>, Ty)> {
                 Box::new(Ty::String),
             ),
         ),
+        "ori.process.run_output_raw" => (
+            vec![Ty::String, Ty::List(Box::new(Ty::String))],
+            Ty::Result(
+                Box::new(Ty::Tuple(vec![Ty::Int, Ty::Bytes, Ty::Bytes])),
+                Box::new(Ty::String),
+            ),
+        ),
         "ori.net.connect" => (
             vec![Ty::String, Ty::Int, Ty::Int],
             Ty::Result(Box::new(connection_ty()), Box::new(Ty::String)),
@@ -2194,7 +2205,9 @@ pub fn stdlib_native_abi(
         "ori_test_skip" => (vec![Ptr], None),
         "ori_bytes_from_list" => (vec![Ptr], Some(Ptr)),
         "ori_bytes_to_list" => (vec![Ptr], Some(Ptr)),
-        "ori_process_run" | "ori_process_run_capture" => (vec![Ptr, Ptr], Some(Ptr)),
+        "ori_process_run" | "ori_process_run_capture" | "ori_process_run_output" => {
+            (vec![Ptr, Ptr], Some(Ptr))
+        }
         "ori_net_connect"
         | "ori_net_connect_tls"
         | "ori_net_connect_async"

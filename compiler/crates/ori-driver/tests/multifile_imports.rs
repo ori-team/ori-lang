@@ -13099,6 +13099,119 @@ end
 }
 
 #[test]
+fn compile_runs_process_run_output_typed_native() {
+    let dir = TestDir::new("process_run_output_typed_native");
+    #[cfg(windows)]
+    let source = r#"module app.main
+
+import ori.bytes = bytes_mod
+import ori.io = io
+import ori.process = proc
+import ori.string = string_mod
+
+main()
+    var c_flag: string = "c"
+    match string_mod.from_bytes(bytes_mod.from_list([47, 99]))
+        case ok(flag):
+            c_flag = flag
+        case err(_):
+            c_flag = "c"
+    end
+    match proc.run_output("cmd", [c_flag, "echo", "typed-process-ok"])
+        case ok(output):
+            io.println(string(output.status == 0))
+            match proc.stdout_text(output)
+                case ok(text):
+                    io.println(string_mod.trim(text))
+                case err(_):
+                    io.println("decode error")
+            end
+        case err(e):
+            io.println("error: " + e)
+    end
+end
+"#;
+    #[cfg(not(windows))]
+    let source = r#"module app.main
+
+import ori.io = io
+import ori.process = proc
+import ori.string = string_mod
+
+main()
+    match proc.run_output("echo", ["typed-process-ok"])
+        case ok(output):
+            io.println(string(output.status == 0))
+            match proc.stdout_text(output)
+                case ok(text):
+                    io.println(string_mod.trim(text))
+                case err(_):
+                    io.println("decode error")
+            end
+        case err(e):
+            io.println("error: " + e)
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "process_run_output_typed_native");
+    assert!(stdout.contains("true"), "stdout: {stdout}");
+    assert!(stdout.contains("typed-process-ok"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_process_run_output_binary_bytes_preservation_native() {
+    let dir = TestDir::new("process_run_output_binary_preservation");
+    let source = r#"module app.main
+
+import ori.bytes = bytes_mod
+import ori.io = io
+import ori.process = proc
+
+main()
+    match proc.run_output("python3", ["-c", "import sys; sys.stdout.buffer.write(bytes([65, 66, 67]))"])
+        case ok(output):
+            io.println(string(output.status == 0))
+            io.println(string(bytes_mod.len(output.stdout)))
+        case err(e):
+            io.println("error: " + e)
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "process_run_output_binary_preservation");
+    assert!(stdout.contains("true"), "stdout: {stdout}");
+    assert!(stdout.contains("3"), "stdout: {stdout}");
+}
+
+#[test]
+fn compile_runs_crypto_typed_results_native() {
+    let dir = TestDir::new("crypto_typed_results_native");
+    let source = r#"module app.main
+
+import ori.crypto = crypto
+import ori.io = io
+
+main()
+    match crypto.try_hash_password("my-secret-pw")
+        case ok(h):
+            io.println(string(crypto.verify_password("my-secret-pw", h)))
+            io.println(string(crypto.verify_password("wrong-pw", h)))
+        case err(e):
+            io.println("error: " + e)
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "crypto_typed_results_native");
+    assert!(stdout.contains("true"), "stdout: {stdout}");
+    assert!(stdout.contains("false"), "stdout: {stdout}");
+}
+
+#[test]
 fn check_accepts_stdlib_gap_parity_imports() {
     let dir = TestDir::new("stdlib_gap_parity_imports");
     dir.write(

@@ -84,7 +84,7 @@ implementation before tooling and QA expansion.
 | 4 | **LANG-FFI-1** | Prevent foreign strings from escaping through `@c_export` aggregates | 0 | M | **done** |
 | 5 | **LANG-OWNERSHIP-VERIFY-1** | Verify async frame liveness/cleanup against HIR ownership facts | 0 | XL | **done** |
 | 6 | **LANG-GRAPH-LIST-1** | Make graph key semantics generic and make linked-list names/complexity truthful | 1 | L | **done** |
-| 7 | **LANG-STD-ERRORS-1** | Replace sentinel/string operational errors with stable typed stdlib errors | 1 | XL | **todo** |
+| 7 | **LANG-STD-ERRORS-1** | Replace sentinel/string operational errors with stable typed stdlib errors | 1 | XL | **partial** |
 | 8 | **LANG-CHANNEL-1** | Define bounded-channel capacity/backpressure and closure behavior | 1 | M | **done** |
 | 9 | **LANG-IO-POOL-1** | Use a bounded shared worker pool for async filesystem operations | 1 | M | **done** |
 | 10 | **META-ATTR-1** | Define schemas/effects for custom attributes or reject unsupported names | 1 | M | **done** |
@@ -185,6 +185,15 @@ attributes now fail closed with `attr.unknown`; only the seven built-in
 attributes have checker schemas. The inert name-based acceptance path was
 removed, and a driver regression protects the behavior. Third-party schemas
 remain a future design, but unsupported metadata is no longer silently ignored.
+
+**Typed process output and safe crypto slice completed 2026-09-02 (LANG-STD-ERRORS-1 partial):**
+`ori.process` now provides `ProcessOutput { status: int, stdout: bytes, stderr: bytes }`,
+`proc.run_output(program, args) -> result[ProcessOutput, string]`, and safe text decoders
+`proc.stdout_text(output)` / `proc.stderr_text(output) -> result[string, string]`.
+The runtime preserves raw bytes without lossy UTF-8 replacement. `ori.crypto` adds
+`try_hash_password`, `try_totp_generate_secret`, and `try_totp_code` returning `result[string, string]`
+instead of empty-string sentinels on failure. Driver regressions cover typed process execution,
+binary byte preservation, and crypto result handling.
 
 ### Open — consolidated 2026-07-20
 

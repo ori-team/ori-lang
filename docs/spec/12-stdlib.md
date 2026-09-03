@@ -1035,6 +1035,9 @@ const totp_ok: bool = crypto.totp_verify(secret, code, 1_700_000_000, 1)
 | `totp_generate_secret()` | `→ string` | Base32 secret (160-bit) |
 | `totp_code(secret, unix_secs)` | `string, int → string` | 6-digit code; empty on failure |
 | `totp_verify(secret, code, unix_secs, window)` | `… → bool` | ±`window` steps (max 10) |
+| `try_hash_password(password)` | `string → result[string, string]` | Safe result wrapper, `err(...)` on failure |
+| `try_totp_generate_secret()` | `→ result[string, string]` | Safe result wrapper, `err(...)` on failure |
+| `try_totp_code(secret, unix_secs)` | `string, int → result[string, string]` | Safe result wrapper, `err(...)` on failure |
 
 ### Net timeouts (B7)
 
@@ -1044,7 +1047,8 @@ const totp_ok: bool = crypto.totp_verify(secret, code, 1_700_000_000, 1)
 | `set_write_timeout_ms(conn, ms)` | same | used by `web.set_read_timeout` |
 
 Layer 2 wrappers in `stdlib/crypto.orl`: `hash_password` / `verify_password` /
-`totp_generate_secret` / `totp_code` / `totp_verify`.
+`totp_generate_secret` / `totp_code` / `totp_verify` / `try_hash_password` /
+`try_totp_generate_secret` / `try_totp_code`.
 
 Do **not** use plain MD5/SHA for password storage. Prefer this API for auth
 (web C10 / SEC9). TOTP is for 2FA (web C3 / `ori-web-auth`).
@@ -1396,6 +1400,49 @@ Current implementation notes:
   `"macos"`, or `"unknown"`.
 - `os.arch()` currently normalizes known targets to `"x86_64"`, `"aarch64"`,
   `"x86"`, `"arm"`, or `"unknown"`.
+
+---
+
+## `ori.process` — Subprocess Execution
+
+`ori.process` provides subprocess execution with structured, binary-safe process output.
+
+```ori
+import ori.io = io
+import ori.process = proc
+import ori.string = string_mod
+
+struct ProcessOutput
+    status: int
+    stdout: bytes
+    stderr: bytes
+end
+
+main()
+    match proc.run_output("echo", ["hello"])
+        case ok(out):
+            io.println(string(out.status == 0))
+            match proc.stdout_text(out)
+                case ok(text): io.print(text)
+                case err(e): io.eprint("decode error: " + e)
+            end
+        case err(msg):
+            io.eprint("failed to run: " + msg)
+    end
+end
+```
+
+| Function / Type | Type | Notes |
+|---|---|---|
+| `ProcessOutput` | `struct { status: int, stdout: bytes, stderr: bytes }` | Binary-preserving execution result. |
+| `run(program, args)` | `string, list[string] → result[int, string]` | Spawns process, waits, returns exit code. |
+| `run_output(program, args)` | `string, list[string] → result[ProcessOutput, string]` | Spawns process, captures raw stdout and stderr bytes without loss. |
+| `stdout_text(output)` | `ProcessOutput → result[string, string]` | Decodes `stdout` bytes to UTF-8 text safely. |
+| `stderr_text(output)` | `ProcessOutput → result[string, string]` | Decodes `stderr` bytes to UTF-8 text safely. |
+| `run_capture(program, args)` | `string, list[string] → result[map[string, string], string]` | Legacy map capture for backward compatibility. |
+| `exit_code(capture)` | `map[string, string] → int` | Extracts exit code from legacy map capture. |
+| `stdout(capture)` | `map[string, string] → string` | Extracts stdout string from legacy map capture. |
+| `stderr(capture)` | `map[string, string] → string` | Extracts stderr string from legacy map capture. |
 
 ---
 

@@ -15,3 +15,15 @@ end
 public stderr(capture: map[string, string]) -> string
     return base.stderr(capture)
 end
+
+public run_output(program: string, args: list[string]) -> result[base.ProcessOutput, string]
+    return base.run_output(program, args)
+end
+
+public stdout_text(output: base.ProcessOutput) -> result[string, string]
+    return base.stdout_text(output)
+end
+
+public stderr_text(output: base.ProcessOutput) -> result[string, string]
+    return base.stderr_text(output)
+end

@@ -12,6 +12,14 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Typed process output and safe crypto helpers (`LANG-STD-ERRORS-1`, partial).**
+  Added `ori.process.ProcessOutput` (`status: int`, `stdout: bytes`, `stderr: bytes`)
+  and `proc.run_output(program, args) -> result[ProcessOutput, string]`, capturing
+  unmodified binary output without lossy UTF-8 conversion. Added safe string decoding
+  helpers `stdout_text(output)` and `stderr_text(output) -> result[string, string]`.
+  Added `try_hash_password`, `try_totp_generate_secret`, and `try_totp_code` in
+  `ori.crypto` returning `result[string, string]` instead of empty strings on failure.
+
 - **Language-first external-audit reconciliation (2026-09-01).** The current
   implementation truth, priority order, and remaining P0/P1 language
   contracts are now recorded in the audit roadmap, Atlas, and single backlog.
