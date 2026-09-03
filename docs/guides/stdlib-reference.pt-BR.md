@@ -17,7 +17,8 @@ Paths antigos como `.utils` e `.algorithms` existem apenas por compatibilidade.
 | I/O | `ori.io`, `ori.fs`, `ori.path` |
 | Texto e bytes | `ori.string`, `ori.string_view`, `ori.bytes`, `ori.convert` |
 | Collections e memória | `ori.list`, `ori.map`, `ori.set`, `ori.queue`, `ori.stack`, `ori.deque`, `ori.heap`, `ori.buffer`, `ori.slotmap`, `ori.span` |
-| Gráficos e janelas | `ori.image` implementa BMP/PPM; `ori.window` é um stub desconectado, sem janela do SO, eventos reais ou apresentação de pixels |
+| Gráficos e imagens | `ori.image` implementa geração de imagens BMP/PPM |
+| Erros e diagnósticos | `ori.err_trace` (traces de erro e formatação) |
 | Dados | `ori.json`, `ori.validate` |
 | Tempo e aleatoriedade | `ori.time`, `ori.random`, `ori.format` |
 | Processos | `ori.args`, `ori.config`, `ori.os`, `ori.process` |

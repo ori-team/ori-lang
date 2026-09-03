@@ -10,6 +10,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+- **Disconnected `ori.window` stub and unused `ori_window_*` runtime stubs (`AUD-HYGIENE-1`, `GFX-WINDOW-1`).**
+  Removed `stdlib/window.orl` and dead `ori_window_*` functions in `ori-runtime`. Freestanding window
+  and software canvas graphics are out of product scope per AGENTS.md; direct BMP/PPM image export
+  remains supported via `ori.image`.
+
 ### Added
 
 - **Eliminate `DefId::INVALID` recovery sentinels in HIR and codegen (`AUD-FRONT-2`).**
