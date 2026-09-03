@@ -28,7 +28,7 @@ RUST_TEST_THREADS=1 cargo test --workspace --locked -- --quiet
 echo "== S6 examples smoke =="
 if [ -x "$script_dir/examples_smoke.sh" ]; then
   ORI_EXAMPLES_COMPILE=1 \
-    ORI_EXAMPLES_RUN="${ORI_EXAMPLES_RUN:-hello,language_features,native_showcase}" \
+    ORI_EXAMPLES_RUN="${ORI_EXAMPLES_RUN:-hello,language_features,native_showcase,collections_demo,string_toolkit,bytes_usage,conditional_config,error_handling}" \
     "$script_dir/examples_smoke.sh"
 fi
 

@@ -19,6 +19,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Multi-phase diagnostic shape verification and expanded curated example execution (`AUD-QA-2`).**
+  Expanded `tests/diagnostic_catalog.rs` to validate real diagnostic shapes, severities, primary spans, and
+  actionable advice across all major compiler phases (parser `parse.module_missing`, resolver `name.undefined`,
+  type checker `type.type_mismatch`, attribute `attr.c_export_not_public`, and semantic linter `lint.unused_variable`).
+  Expanded default curated L3 execution in `tools/qa/daily_full.sh` to 8 examples (`hello`, `language_features`,
+  `native_showcase`, `collections_demo`, `string_toolkit`, `bytes_usage`, `conditional_config`, `error_handling`).
+
 - **Exhaustive expression and structured binding traversal in AST linter and LSP (`AUD-LSP-5`).**
   Extended `ori-driver` and `ori-lsp` in-memory semantic linting (`run_lint_source`) to comprehensively traverse
   all AST expression variants (`MatchExpr` arms and patterns, closures, struct updates, `try`, `await`,

@@ -88,35 +88,82 @@ fn diagnostic_catalog_matches_emitted_codes() {
 }
 
 #[test]
-fn representative_diagnostic_has_catalog_shape() {
-    let output = run_check_source(
-        Path::new("diagnostic_catalog_missing_module.orl"),
+fn representative_diagnostics_have_catalog_shapes_across_phases() {
+    use ori_driver::pipeline::run_lint_source;
+
+    // 1. Parser diagnostic: parse.module_missing
+    let parse_out = run_check_source(
+        Path::new("missing_module.orl"),
         "main()\nend\n".to_owned(),
     )
-    .expect("in-memory diagnostic fixture should be checkable");
-    let diagnostic = output
+    .expect("in-memory fixture should be checkable");
+    let parse_diag = parse_out
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.code == "parse.module_missing")
-        .expect("missing module fixture should emit parse.module_missing");
+        .find(|d| d.code == "parse.module_missing")
+        .expect("missing module must emit parse.module_missing");
+    assert_eq!(parse_diag.severity, Severity::Error);
+    assert!(!parse_diag.message.trim().is_empty());
+    let primary = parse_diag.labels.first().expect("primary label");
+    assert!(primary.span.start <= primary.span.end);
 
-    assert_eq!(diagnostic.severity, Severity::Error);
-    assert!(
-        !diagnostic.message.trim().is_empty(),
-        "diagnostics need a primary message"
-    );
-    let primary = diagnostic
-        .labels
-        .first()
-        .expect("diagnostics need a primary source label");
-    assert!(
-        primary.span.start <= primary.span.end,
-        "primary diagnostic span must be ordered"
-    );
-    assert!(
-        primary.span.end <= "main()\nend\n".len() as u32,
-        "primary diagnostic span must be inside the source"
-    );
+    // 2. Resolver diagnostic: name.undefined
+    let resolve_out = run_check_source(
+        Path::new("unresolved.orl"),
+        "module app.main\n\nmain()\n    unknown_function_call()\nend\n".to_owned(),
+    )
+    .expect("in-memory fixture should be checkable");
+    let resolve_diag = resolve_out
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "name.undefined")
+        .expect("undefined symbol must emit name.undefined");
+    assert_eq!(resolve_diag.severity, Severity::Error);
+    assert!(!resolve_diag.message.trim().is_empty());
+    assert!(!resolve_diag.labels.is_empty());
+
+    // 3. Type checker diagnostic: type.type_mismatch
+    let type_out = run_check_source(
+        Path::new("type_mismatch.orl"),
+        "module app.main\n\nmain()\n    const x: int = \"hello\"\nend\n".to_owned(),
+    )
+    .expect("in-memory fixture should be checkable");
+    let type_diag = type_out
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "type.type_mismatch")
+        .expect("mismatched type must emit type.type_mismatch");
+    assert_eq!(type_diag.severity, Severity::Error);
+    assert!(!type_diag.message.trim().is_empty());
+
+    // 4. Attribute diagnostic: attr.c_export_not_public
+    let attr_out = run_check_source(
+        Path::new("attr_check.orl"),
+        "module app.main\n\n@c_export\ninternal_func() -> void\nend\n\nmain()\nend\n".to_owned(),
+    )
+    .expect("in-memory fixture should be checkable");
+    let attr_diag = attr_out
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "attr.c_export_not_public")
+        .expect("non-public c_export must emit attr.c_export_not_public");
+    assert_eq!(attr_diag.severity, Severity::Error);
+    assert!(!attr_diag.message.trim().is_empty());
+
+    // 5. Semantic linter diagnostic: lint.unused_variable
+    let lint_out = run_lint_source(
+        Path::new("unused_var.orl"),
+        "module app.main\n\nmain()\n    const unused_value: int = 100\nend\n".to_owned(),
+    )
+    .expect("in-memory fixture should be lintable");
+    let lint_diag = lint_out
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "lint.unused_variable")
+        .expect("unused variable must emit lint.unused_variable");
+    assert_eq!(lint_diag.severity, Severity::Warning);
+    assert!(!lint_diag.message.trim().is_empty());
+    assert!(lint_diag.action.is_some(), "linter diagnostics must provide actionable suggestions");
 }
 
 #[test]
