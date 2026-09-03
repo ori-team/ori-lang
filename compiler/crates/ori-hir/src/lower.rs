@@ -70,6 +70,7 @@ fn ori_mem_size_of_ty(ty: &Ty) -> i64 {
             Ty::ConstInt(_, n) if *n >= 0 => ori_mem_size_of_ty(elem) * n,
             _ => 0,
         },
+        Ty::Simd(elem, lanes) => ori_mem_size_of_ty(elem) * (*lanes as i64),
         Ty::Error => 0,
         Ty::Infer(_) | Ty::Param { .. } => 8,
         // A slice is a small `(owner, start, len)` block behind a pointer.
@@ -962,6 +963,8 @@ struct Lowerer<'a> {
     /// Iterators currently being inlined, to reject (mutual) recursion.
     iter_inline_stack: Vec<SmolStr>,
     current_where_constraints: Vec<ori_types::WhereConstraintSig>,
+    /// `DefId` -> explicit minimum alignment from `@align(N)` (`LANG-ALIGN-1`).
+    struct_explicit_aligns: HashMap<DefId, u32>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -1021,6 +1024,7 @@ impl<'a> Lowerer<'a> {
             iter_inline_counter: 0,
             iter_inline_stack: Vec::new(),
             current_where_constraints: Vec::new(),
+            struct_explicit_aligns: HashMap::new(),
         }
     }
 
@@ -1066,6 +1070,7 @@ impl<'a> Lowerer<'a> {
                 Ty::ConstInt(_, n) if *n >= 0 => self.size_of_ty(elem) * n,
                 _ => 0,
             },
+            Ty::Simd(elem, lanes) => self.size_of_ty(elem) * (*lanes as i64),
             Ty::Named(def_id, args) => {
                 let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
                     return 8;
@@ -1075,7 +1080,11 @@ impl<'a> Lowerer<'a> {
                 }
                 // Sum of aligned field sizes, matching the native layout.
                 let mut offset: i64 = 0;
-                let mut max_align: i64 = 1;
+                let mut max_align: i64 = self
+                    .struct_explicit_aligns
+                    .get(def_id)
+                    .map(|&a| a as i64)
+                    .unwrap_or(1);
                 for (_, field_ty) in &sig.fields {
                     let substituted = substitute_ty_params(field_ty, args);
                     let size = self.size_of_ty(&substituted);
@@ -1097,6 +1106,9 @@ impl<'a> Lowerer<'a> {
     fn align_of_ty(&self, ty: &Ty) -> i64 {
         match ty {
             Ty::Array(elem, _) => self.align_of_ty(elem),
+            Ty::Simd(elem, lanes) => (self.size_of_ty(elem) * (*lanes as i64))
+                .min(16)
+                .max(self.align_of_ty(elem)),
             Ty::Named(def_id, args) => {
                 let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
                     return 8;
@@ -1104,14 +1116,20 @@ impl<'a> Lowerer<'a> {
                 if !self.ty_is_inline(sig, args, &mut Vec::new()) {
                     return 8;
                 }
-                sig.fields
+                let base_align = sig
+                    .fields
                     .iter()
                     .map(|(_, field_ty)| {
                         let substituted = substitute_ty_params(field_ty, args);
                         self.align_of_ty(&substituted)
                     })
                     .max()
-                    .unwrap_or(1)
+                    .unwrap_or(1);
+                if let Some(&explicit) = self.struct_explicit_aligns.get(def_id) {
+                    base_align.max(explicit as i64)
+                } else {
+                    base_align
+                }
             }
             other => ori_mem_align_of_ty(other),
         }
@@ -1946,6 +1964,7 @@ fn builtin_stdlib_structs(def_map: &DefMap) -> Vec<HirStruct> {
         ],
         is_public: true,
         repr_c: false,
+        explicit_align: None,
         span: Span::DUMMY,
     }]
 }
@@ -2091,12 +2110,24 @@ pub fn lower(
                             .iter()
                             .any(|arg| matches!(arg, ori_ast::common::AttrArg::String(s, _) if *s == "C"))
                 });
+                let explicit_align = item.attrs.iter().find_map(|a| {
+                    if a.name.text == "align" {
+                        if let Some(ori_ast::common::AttrArg::Int(raw, _)) = a.args.first() {
+                            return raw.parse::<u32>().ok();
+                        }
+                    }
+                    None
+                });
+                if let Some(align) = explicit_align {
+                    l.struct_explicit_aligns.insert(def_id, align);
+                }
                 structs.push(HirStruct {
                     def_id,
                     name: SmolStr::new(&path),
                     fields,
                     is_public: s.visibility == Visibility::Public,
                     repr_c,
+                    explicit_align,
                     span: s.span,
                 });
 
@@ -2822,6 +2853,7 @@ fn insert_default_arguments_expr(
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::SetLit { elements, .. }
         | HirExprKind::TupleLit(elements) => {
             for elem in elements {
@@ -4411,8 +4443,7 @@ impl<'a> Lowerer<'a> {
                 fields,
                 ..
             } => {
-                let def_id = self
-                    .resolve_def_id_with_kind(&type_name.to_string(), DefKind::Struct);
+                let def_id = self.resolve_def_id_with_kind(&type_name.to_string(), DefKind::Struct);
                 let ty = def_id
                     .map(|id| Ty::Named(id, Vec::new()))
                     .unwrap_or(Ty::Infer(0));
@@ -4423,7 +4454,8 @@ impl<'a> Lowerer<'a> {
                 let hfields: Vec<(SmolStr, HirExpr)> = fields
                     .iter()
                     .map(|f| {
-                        let declared = def_id.and_then(|id| self.struct_field_ty(id, f.name.text.as_str()));
+                        let declared =
+                            def_id.and_then(|id| self.struct_field_ty(id, f.name.text.as_str()));
                         (
                             f.name.text.clone(),
                             self.lower_expr_expecting(&f.value, tp, declared.as_ref()),
@@ -4647,6 +4679,24 @@ impl<'a> Lowerer<'a> {
                         elements: elems,
                     },
                     ty: array_ty.clone(),
+                    span: expr.span(),
+                }
+            }
+            Expr::List { elements, .. } if matches!(expected, Some(Ty::Simd(_, _))) => {
+                let Some(simd_ty @ Ty::Simd(elem_ty, lanes)) = expected else {
+                    unreachable!("guarded by the match arm")
+                };
+                let elems: Vec<HirExpr> = elements
+                    .iter()
+                    .map(|e| self.lower_expr_expecting(e, tp, Some(elem_ty)))
+                    .collect();
+                HirExpr {
+                    kind: HirExprKind::SimdLit {
+                        elem_ty: (**elem_ty).clone(),
+                        lanes: *lanes,
+                        elements: elems,
+                    },
+                    ty: simd_ty.clone(),
                     span: expr.span(),
                 }
             }
@@ -5739,7 +5789,7 @@ fn for_second_binding_ty(ty: &Ty) -> Ty {
 
 fn index_result_ty(ty: &Ty) -> Ty {
     match ty {
-        Ty::List(t) | Ty::Set(t) | Ty::Array(t, _) => *t.clone(),
+        Ty::List(t) | Ty::Set(t) | Ty::Array(t, _) | Ty::Simd(t, _) => *t.clone(),
         Ty::Map(_, v) => *v.clone(),
         Ty::String => Ty::String,
         Ty::Tuple(elems) => elems.first().cloned().unwrap_or(Ty::Infer(0)),

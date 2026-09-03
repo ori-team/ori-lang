@@ -24,6 +24,7 @@ const DIAGNOSTIC_CATEGORIES: &[&str] = &[
     "name",
     "native",
     "parse",
+    "perf",
     "project",
     "type",
     "using",
@@ -92,11 +93,8 @@ fn representative_diagnostics_have_catalog_shapes_across_phases() {
     use ori_driver::pipeline::run_lint_source;
 
     // 1. Parser diagnostic: parse.module_missing
-    let parse_out = run_check_source(
-        Path::new("missing_module.orl"),
-        "main()\nend\n".to_owned(),
-    )
-    .expect("in-memory fixture should be checkable");
+    let parse_out = run_check_source(Path::new("missing_module.orl"), "main()\nend\n".to_owned())
+        .expect("in-memory fixture should be checkable");
     let parse_diag = parse_out
         .diagnostics
         .iter()
@@ -163,7 +161,10 @@ fn representative_diagnostics_have_catalog_shapes_across_phases() {
         .expect("unused variable must emit lint.unused_variable");
     assert_eq!(lint_diag.severity, Severity::Warning);
     assert!(!lint_diag.message.trim().is_empty());
-    assert!(lint_diag.action.is_some(), "linter diagnostics must provide actionable suggestions");
+    assert!(
+        lint_diag.action.is_some(),
+        "linter diagnostics must provide actionable suggestions"
+    );
 }
 
 #[test]

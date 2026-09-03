@@ -58,6 +58,7 @@ import ori.math                         -- só ori.math.…
 |------|-------------|
 | `int`, `float`, `bool`, `string`, `bytes` | primitivos / texto / binário |
 | `list[T]`, `map[K, V]`, `set[T]` | coleções |
+| `simd[float32, 4]` | vetor SIMD de largura fixa (veja [recursos avançados](advanced.pt-BR.md)) |
 | `optional[T]` | valor ou `none` (sem null) |
 | `result[T, E]` | `ok(T)` ou `err(E)` |
 | `void` | sem valor útil |

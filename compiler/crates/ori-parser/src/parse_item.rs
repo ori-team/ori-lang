@@ -323,6 +323,10 @@ impl<'src> Parser<'src> {
                     let tok = self.advance().unwrap();
                     let raw = self.slice(tok.span);
                     args.push(AttrArg::String(raw[1..raw.len() - 1].into(), span));
+                } else if self.at(&TokenKind::IntLit) {
+                    let tok = self.advance().unwrap();
+                    let raw = self.slice(tok.span);
+                    args.push(AttrArg::Int(SmolStr::new(raw), tok.span));
                 } else {
                     break;
                 }

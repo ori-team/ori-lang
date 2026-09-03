@@ -32,8 +32,7 @@ opções; o `ori-lsp` herda os valores do processo do editor.
 ## Limites
 
 - diagnósticos, hover e completion funcionam quando `ori-lsp` está no `PATH`;
-- o DAP existe via `ori debug --dap`, mas ainda não possui integração
-  automática pela API da extensão;
+- depuração cooperativa via DAP com adaptador registrado `ori-dap`, que lança `ori debug --dap`;
 - cores por tree-sitter e publicação na loja do Zed continuam pendentes.
 
 English: [README.md](README.md).

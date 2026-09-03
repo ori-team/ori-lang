@@ -99,9 +99,12 @@ precisa ser explícita.
 
 ## Attributes de declaração
 
-Ori reconhece hoje um conjunto fechado de attributes em declarações de nível
-superior: `@test`, `@deprecated("mensagem")`, `@inline`, `@no_inline`, `@cfg`,
-`@repr("C")` e `@c_export`. Um attribute desconhecido é erro.
+Ori reconhece um conjunto fechado de attributes em declarações de nível
+superior: `@test`, `@deprecated("mensagem")`, `@inline`, `@no_inline`, `@noalloc`,
+`@align(N)`, `@cfg`, `@repr("C")` e `@c_export`. Um attribute desconhecido é erro.
+
+- `@noalloc` verifica estaticamente que a função não realiza alocações na heap (proíbe literais `list`/`map`/`set`, interpolação de strings, closures, `await`, `using` e chamadas a funções que alocam).
+- `@align(N)` força alinhamento explícito da struct para potências de dois (1, 2, 4, 8, 16, 32, 64), essencial para GPU uniform buffers e tipos FFI/GDExtension.
 
 `@repr` é propositalmente restrito: somente `@repr("C")` exato em uma struct é
 aceito. Layout packed e outras strings de representação não existem.
@@ -127,14 +130,43 @@ código inativo continua sendo verificada; nomes e tipos dentro dele, não.
 Consulte as [regras normativas](../spec/02-lexical.md#conditional-compilation)
 e os [campos de features](../spec/17-project-and-docs.md#oriproj).
 
-## Buffers contíguos e estado da vetorização SIMD
+## Vetores SIMD Portáteis (`simd[T, N]`)
+
+Ori oferece tipos nativos de vetores SIMD com largura fixa (`simd[float32, 4]`, `simd[int32, lanes: 4]`)
+baixados diretamente para instruções vetoriais da CPU (x86_64 SSE/AVX e ARM NEON). Suportam operações
+aritméticas paralelas diretas (`+`, `-`, `*`, `/`) e indexação de lanes:
+
+```ori
+const a: simd[float32, 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32]
+const b: simd[float32, 4] = [10.0f32, 20.0f32, 30.0f32, 40.0f32]
+const c: simd[float32, 4] = a + b    -- instrução vetorial única
+const x: float32 = c[0]             -- extração de lane
+```
+
+Combinações suportadas: `float32`/`int32` x 2, 4, 8, 16; `float64`/`int64` x 2, 4; `int16`/`u16` x 4, 8, 16; `int8`/`u8` x 8, 16.
+
+## Arenas de Memória e Escopo (`mem.region`)
+
+`mem.region()` cria uma arena do tipo bump allocator para alocações temporárias de frame (loops de jogos a 60/120 FPS,
+listas de visibilidade, filas de comandos de renderização), descartando custos de contagem de referência:
+
+```ori
+import ori.mem = mem
+
+main()
+    using r: mem.Region = mem.region()
+    -- alocações da região no frame...
+    mem.reset(r)           -- reset instantâneo em O(1)
+end                        -- liberação determinística via core.Disposable ao sair do bloco
+```
+
+Garantias de análise de escape:
+- Uma `Region` não pode escapar do bloco que a declarou via `return` (`using.escape`).
+- Uma `Region` não pode cruzar threads ou ser enviada para tarefas assíncronas (não é `Transferable`).
+
+## Buffers contíguos (`buffer[T]`)
 
 `buffer[T]` representa memória contígua e plana na heap para arrays numéricos, buffers de pixels e amostras de áudio.
-O backend nativo atualmente emite operações escalares para laços sobre buffers
-e arrays. `GFX-SIMD-1` continua planejado; nenhum passe de vetorização fica ativo no
-pipeline HIR até existir transformação comprovada, política de recursos do alvo
-e limiar de benchmark. O backend ainda não transforma laços nem emite operações
-vetoriais de 128 bits.
 
 ```ori
 import ori.buffer = buf

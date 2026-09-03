@@ -272,19 +272,25 @@ fn pointer_provenance_and_typed_utf8_ffi_contracts() {
     unsafe {
         ori_arc_release(foreign_ptr);
     }
-    assert!(!lock_arc_state().allocations.contains_key(&(foreign_ptr as usize)));
+    assert!(!lock_arc_state()
+        .allocations
+        .contains_key(&(foreign_ptr as usize)));
 
     // 2. Managed typed aggregate allocation provenance
     let payload = unsafe { ori_alloc_typed(24, None, 101) };
     assert!(!payload.is_null());
-    assert!(lock_arc_state().allocations.contains_key(&(payload as usize)));
+    assert!(lock_arc_state()
+        .allocations
+        .contains_key(&(payload as usize)));
     unsafe {
         ori_handle_validate(payload);
         ori_handle_validate_size(payload, 24);
         ori_handle_validate_size_type(payload, 24, 101);
         ori_arc_release(payload);
     }
-    assert!(!lock_arc_state().allocations.contains_key(&(payload as usize)));
+    assert!(!lock_arc_state()
+        .allocations
+        .contains_key(&(payload as usize)));
 
     // 3. Typed UTF-8 validation across FFI ingress
     assert_eq!(unsafe { cstr_str_result(std::ptr::null()) }, Ok(""));
@@ -897,7 +903,10 @@ fn collection_and_abi_bridge_layouts_match_native_contract() {
     assert_eq!(std::mem::offset_of!(OriGraph, version), ptr_size + 16);
     assert_eq!(std::mem::offset_of!(OriGraph, edge_from), ptr_size + 24);
     assert_eq!(std::mem::offset_of!(OriGraph, edge_to), ptr_size * 2 + 24);
-    assert_eq!(std::mem::offset_of!(OriGraph, edge_weight), ptr_size * 3 + 24);
+    assert_eq!(
+        std::mem::offset_of!(OriGraph, edge_weight),
+        ptr_size * 3 + 24
+    );
     assert_eq!(std::mem::offset_of!(OriGraph, edge_len), ptr_size * 4 + 24);
     assert_eq!(std::mem::offset_of!(OriGraph, edge_cap), ptr_size * 4 + 32);
     assert_eq!(std::mem::offset_of!(OriGraph, directed), ptr_size * 4 + 40);

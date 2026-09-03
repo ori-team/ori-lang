@@ -158,12 +158,19 @@ struct ProjectDependency {
 pub(super) struct ImportContext {
     dependencies: Vec<ImportDependency>,
     pub(super) native_libs: Vec<NativeLibContext>,
+    pub(super) native_configs: Vec<PackageNativeConfigContext>,
     cfg: CfgContext,
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct NativeLibContext {
     pub(super) name: String,
+    pub(super) package_root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PackageNativeConfigContext {
+    pub(super) config: crate::package::NativeConfig,
     pub(super) package_root: PathBuf,
 }
 
@@ -964,10 +971,11 @@ fn add_package_manifest_dependencies(
     for lib in manifest.native_libs {
         push_native_lib(context, lib, manifest.root.clone());
     }
+    push_package_native_config(context, manifest.native_config, manifest.root);
     Ok(())
 }
 
-/// Register `native_libs` from a dependency package (and its nested package deps once).
+/// Register `native_libs` and `native_config` from a dependency package (and its nested package deps once).
 fn push_package_native_libs(
     context: &mut ImportContext,
     package_root: &Path,
@@ -980,6 +988,11 @@ fn push_package_native_libs(
     for lib in &manifest.native_libs {
         push_native_lib(context, lib.clone(), manifest.root.clone());
     }
+    push_package_native_config(
+        context,
+        manifest.native_config.clone(),
+        manifest.root.clone(),
+    );
     // One level of nested package deps (adapter → sqlite).
     for dependency in &manifest.dependencies {
         if let crate::package::DependencyRequirement::Path { path, .. } = &dependency.requirement {
@@ -990,10 +1003,46 @@ fn push_package_native_libs(
                 for lib in nested_manifest.native_libs {
                     push_native_lib(context, lib, nested_manifest.root.clone());
                 }
+                push_package_native_config(
+                    context,
+                    nested_manifest.native_config,
+                    nested_manifest.root.clone(),
+                );
             }
         }
     }
     Ok(())
+}
+
+fn push_package_native_config(
+    context: &mut ImportContext,
+    config: crate::package::NativeConfig,
+    package_root: PathBuf,
+) {
+    if config.dependencies.is_empty()
+        && config.platforms.linux.libraries.is_empty()
+        && config.platforms.linux.frameworks.is_empty()
+        && config.platforms.linux.library_dirs.is_empty()
+        && config.platforms.linux.link_flags.is_empty()
+        && config.platforms.windows.libraries.is_empty()
+        && config.platforms.windows.frameworks.is_empty()
+        && config.platforms.windows.library_dirs.is_empty()
+        && config.platforms.windows.link_flags.is_empty()
+        && config.platforms.macos.libraries.is_empty()
+        && config.platforms.macos.frameworks.is_empty()
+        && config.platforms.macos.library_dirs.is_empty()
+        && config.platforms.macos.link_flags.is_empty()
+        && config.platforms.all.libraries.is_empty()
+        && config.platforms.all.frameworks.is_empty()
+        && config.platforms.all.library_dirs.is_empty()
+        && config.platforms.all.link_flags.is_empty()
+    {
+        return;
+    }
+    context.native_configs.push(PackageNativeConfigContext {
+        config,
+        package_root,
+    });
 }
 
 fn push_native_lib(context: &mut ImportContext, name: String, package_root: PathBuf) {

@@ -63,7 +63,7 @@ the editor process.
 |---------|--------|
 | Open `.orl` as language Ori | yes |
 | `ori-lsp` diagnostics / hover / complete | yes (if on PATH) |
-| Cooperative DAP debugger | available through `ori debug --dap`; automatic Zed wiring is not available in the current extension API |
+| Cooperative DAP debugger | yes — registered `ori-dap` adapter launches `ori debug --dap` for the active `.orl` file |
 | Tree-sitter syntax colors | **not yet** |
 | Zed extension store | **not yet** (GitHub zip + dev install) |
 

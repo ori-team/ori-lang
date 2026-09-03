@@ -3889,6 +3889,9 @@ impl CCodegen {
             HirExprKind::ArrayLit { .. } => self.unsupported_expr(
                 "`array[T, size: N]` is native-backend only; the C debug backend has no inline-array lowering",
             ),
+            HirExprKind::SimdLit { .. } => self.unsupported_expr(
+                "`simd[T, N]` is native-backend only; the C debug backend has no SIMD lowering",
+            ),
             HirExprKind::ListLit { elem_ty, elements } => {
                 let c_elem_ty = ty_to_c(elem_ty);
                 if elements.is_empty() {
@@ -5889,6 +5892,7 @@ mod tests {
             }],
             is_public: false,
             repr_c: false,
+            explicit_align: None,
             span: Span::DUMMY,
         });
         module.traits.push(HirTrait {

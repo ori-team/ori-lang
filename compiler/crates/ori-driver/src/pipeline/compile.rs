@@ -182,6 +182,16 @@ pub fn run_compile_with_options(
                     .native_static_libs
                     .push(lib_path.to_string_lossy().to_string());
             }
+            for config_ctx in import_context.native_configs {
+                let resolved = crate::native_deps::resolve_native_config(
+                    &config_ctx.config,
+                    &target,
+                    &config_ctx.package_root,
+                )?;
+                for arg in resolved.to_link_args(&target) {
+                    runtime_link.native_static_libs.push(arg);
+                }
+            }
 
             let interface_fingerprint = crate::incremental::interface_fingerprint(&hir);
             let split_modules = !options.lib

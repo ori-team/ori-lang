@@ -297,7 +297,10 @@ end
     );
 
     let out = run_check(&dir.path("main.orl")).unwrap();
-    assert!(out.has_errors, "resource handles must not cross task boundaries");
+    assert!(
+        out.has_errors,
+        "resource handles must not cross task boundaries"
+    );
     let codes = diagnostic_codes(&out);
     assert!(
         codes.contains(&"async.capture_not_transferable"),

@@ -233,6 +233,31 @@ pub fn lower_type_with_local_aliases_and_structs(
             }
             Ty::Array(Box::new(elem_ty), Box::new(size_ty))
         }
+        AstType::Simd { elem, lanes, span } => {
+            let elem_ty = rec!(elem);
+            let valid = match &elem_ty {
+                Ty::Float32 | Ty::Int32 => matches!(*lanes, 2 | 4 | 8 | 16),
+                Ty::Float64 | Ty::Int64 => matches!(*lanes, 2 | 4),
+                Ty::Int16 | Ty::U16 => matches!(*lanes, 4 | 8 | 16),
+                Ty::Int8 | Ty::U8 => matches!(*lanes, 8 | 16),
+                _ => false,
+            };
+            if !valid && !elem_ty.is_error() {
+                sink.emit(
+                    Diagnostic::error(
+                        "type.invalid_simd_type",
+                        format!(
+                            "invalid SIMD type `simd[{}, {lanes}]`: supported combinations are float32/int32 x 2,4,8,16; float64/int64 x 2,4; int16/u16 x 4,8,16; int8/u8 x 8,16",
+                            elem_ty.display_in(def_map),
+                        ),
+                    )
+                    .with_label(Label::primary(file_id, *span, "invalid SIMD type specification"))
+                    .with_action("use a supported scalar element type and lane count for simd"),
+                );
+                return Ty::Error;
+            }
+            Ty::Simd(Box::new(elem_ty), *lanes)
+        }
         // Check local type aliases (e.g. associated types in implement blocks)
         AstType::Named(name)
             if name.is_single() && local_aliases.contains_key(name.last().as_str()) =>
@@ -772,6 +797,7 @@ pub fn is_inline_ty(ty: &Ty) -> bool {
             ..
         } => true,
         Ty::Array(elem, _) => is_inline_ty(elem),
+        Ty::Simd(elem, _) => is_inline_ty(elem),
         _ => false,
     }
 }

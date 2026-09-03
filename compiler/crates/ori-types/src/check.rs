@@ -191,6 +191,8 @@ pub struct Checker<'a> {
     /// Return analysis runs after the body and cannot re-derive this (it has
     /// no types), so exhaustiveness is recorded here as it is computed.
     exhaustive_matches: HashSet<ori_diagnostics::Span>,
+    /// Set of function names within the current file marked with `@noalloc`.
+    noalloc_funcs: HashSet<SmolStr>,
 }
 
 impl CheckerIndexes {
@@ -380,6 +382,7 @@ impl<'a> Checker<'a> {
             newtype_map: &indexes.newtype_map,
             local_type_aliases: HashMap::new(),
             exhaustive_matches: HashSet::new(),
+            noalloc_funcs: HashSet::new(),
         }
     }
 
@@ -796,10 +799,41 @@ impl<'a> Checker<'a> {
         for alias in invalid_aliases {
             self.aliases.remove(&alias);
         }
+        // Collect `@noalloc` function names in this file for strict call verification.
+        for item in &file.items {
+            if let Item::Func(f) = &item.item {
+                if item.attrs.iter().any(|a| a.name.text == "noalloc") {
+                    self.noalloc_funcs.insert(f.name.text.clone());
+                }
+            }
+            // Same for struct/apply/impl method declarations.
+            if let Item::Struct(s) = &item.item {
+                for m in &s.methods {
+                    if item.attrs.iter().any(|a| a.name.text == "noalloc") {
+                        self.noalloc_funcs.insert(m.name.text.clone());
+                    }
+                }
+            }
+            if let Item::Apply(apply) = &item.item {
+                for member in &apply.free_members {
+                    if let ApplyMember::Method(m) = member {
+                        if item.attrs.iter().any(|a| a.name.text == "noalloc") {
+                            self.noalloc_funcs.insert(m.name.text.clone());
+                        }
+                    }
+                }
+            }
+        }
         for item in &file.items {
             self.check_item_attrs(item);
             match &item.item {
-                Item::Func(f) => self.check_func(f, &[], None),
+                Item::Func(f) => {
+                    let is_noalloc = item.attrs.iter().any(|a| a.name.text == "noalloc");
+                    if is_noalloc {
+                        self.check_noalloc_func(f);
+                    }
+                    self.check_func(f, &[], None)
+                }
                 Item::Const(c) => {
                     let expected = self.lower(&c.ty, &[]);
                     self.check_collection_runtime_limits(&expected, c.ty.span());
@@ -1016,7 +1050,7 @@ impl<'a> Checker<'a> {
                         "unknown attribute",
                     ))
                     .with_action(
-                        "use one of `@test`, `@deprecated`, `@inline`, `@no_inline`, `@cfg`, `@repr`, or `@c_export`",
+                        "use one of `@test`, `@deprecated`, `@inline`, `@no_inline`, `@noalloc`, `@align`, `@cfg`, `@repr`, or `@c_export`",
                     ),
                 );
                 continue;
@@ -1312,6 +1346,379 @@ impl<'a> Checker<'a> {
                 "every path through this function recurses",
             ))
             .with_action("add a branch that returns without calling this function"),
+        );
+    }
+
+    /// Perform static analysis on functions marked `@noalloc` (`LANG-NOALLOC-1`).
+    ///
+    /// Asserts that the function does not perform dynamic heap allocations (list/map/set
+    /// literals, interpolated strings, closures, await scheduling) and does not call
+    /// functions that allocate or are not themselves marked `@noalloc`.
+    fn check_noalloc_func(&mut self, func: &FuncDecl) {
+        if func.is_async {
+            self.sink.emit(
+                Diagnostic::error(
+                    "perf.allocation_in_noalloc",
+                    format!("`@noalloc` function `{}` cannot be async", func.name.text),
+                )
+                .with_label(Label::primary(
+                    self.file_id,
+                    func.name.span,
+                    "async function allocates execution frames on heap",
+                ))
+                .with_action("remove `@noalloc` or make the function synchronous"),
+            );
+        }
+        self.check_noalloc_block(&func.body, &func.name.text);
+    }
+
+    fn check_noalloc_block(&mut self, block: &Block, func_name: &str) {
+        for stmt in &block.stmts {
+            self.check_noalloc_stmt(stmt, func_name);
+        }
+    }
+
+    fn check_noalloc_stmt(&mut self, stmt: &Stmt, func_name: &str) {
+        match stmt {
+            Stmt::Expr(expr) => self.check_noalloc_expr(expr, func_name),
+            Stmt::Const(c) => self.check_noalloc_expr(&c.value, func_name),
+            Stmt::Var(v) => self.check_noalloc_expr(&v.value, func_name),
+            Stmt::Destructure(d) => self.check_noalloc_expr(&d.value, func_name),
+            Stmt::Assign(a) => self.check_noalloc_expr(&a.value, func_name),
+            Stmt::CompoundAssign(ca) => self.check_noalloc_expr(&ca.value, func_name),
+            Stmt::If(i) => {
+                self.check_noalloc_expr(&i.condition, func_name);
+                self.check_noalloc_block(&i.then_block, func_name);
+                for (cond, blk) in &i.else_ifs {
+                    self.check_noalloc_expr(cond, func_name);
+                    self.check_noalloc_block(blk, func_name);
+                }
+                if let Some(eb) = &i.else_block {
+                    self.check_noalloc_block(eb, func_name);
+                }
+            }
+            Stmt::IfSome(i) => {
+                self.check_noalloc_expr(&i.value, func_name);
+                self.check_noalloc_block(&i.then_block, func_name);
+                if let Some(eb) = &i.else_block {
+                    self.check_noalloc_block(eb, func_name);
+                }
+            }
+            Stmt::While(w) => {
+                self.check_noalloc_expr(&w.condition, func_name);
+                self.check_noalloc_block(&w.body, func_name);
+            }
+            Stmt::WhileSome(ws) => {
+                self.check_noalloc_expr(&ws.value, func_name);
+                self.check_noalloc_block(&ws.body, func_name);
+            }
+            Stmt::For(f) => {
+                if !matches!(f.iterable.as_ref(), Expr::Range { .. }) {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "perf.allocation_in_noalloc",
+                            "iterating over a dynamic collection inside `@noalloc` function",
+                        )
+                        .with_label(Label::primary(
+                            self.file_id,
+                            f.iterable.span(),
+                            "dynamic collection iteration here",
+                        ))
+                        .with_action(
+                            "use a numeric range loop `for i in 0..N` or a fixed-size array/span",
+                        ),
+                    );
+                }
+                self.check_noalloc_expr(&f.iterable, func_name);
+                self.check_noalloc_block(&f.body, func_name);
+            }
+            Stmt::Repeat(r) => {
+                self.check_noalloc_expr(&r.count, func_name);
+                self.check_noalloc_block(&r.body, func_name);
+            }
+            Stmt::Loop(l) => {
+                self.check_noalloc_block(&l.body, func_name);
+            }
+            Stmt::Match(m) => {
+                self.check_noalloc_expr(&m.scrutinee, func_name);
+                for case in &m.cases {
+                    match case {
+                        ori_ast::stmt::MatchCase::Pattern { guard, body, .. } => {
+                            if let Some(g) = guard {
+                                self.check_noalloc_expr(g, func_name);
+                            }
+                            for s in body {
+                                self.check_noalloc_stmt(s, func_name);
+                            }
+                        }
+                        ori_ast::stmt::MatchCase::Else { body, .. } => {
+                            for s in body {
+                                self.check_noalloc_stmt(s, func_name);
+                            }
+                        }
+                    }
+                }
+            }
+            Stmt::Return(r) => {
+                if let Some(expr) = &r.value {
+                    self.check_noalloc_expr(expr, func_name);
+                }
+            }
+            Stmt::Suspend(s) => {
+                self.check_noalloc_expr(&s.value, func_name);
+            }
+            Stmt::Check(c) => {
+                self.check_noalloc_expr(&c.condition, func_name);
+            }
+            Stmt::Using(using_stmt) => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "`using` statement cannot be used inside `@noalloc` function",
+                    )
+                    .with_label(Label::primary(
+                        self.file_id,
+                        using_stmt.span,
+                        "resource binding here",
+                    ))
+                    .with_action("manage resources outside the zero-allocation hot path"),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn check_noalloc_expr(&mut self, expr: &Expr, func_name: &str) {
+        match expr {
+            Expr::List { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "list literal allocates heap memory",
+                    )
+                    .with_label(Label::primary(self.file_id, *span, "heap allocation here"))
+                    .with_action("use an inline array `array[T, size: N]` or pass a pre-allocated buffer/span"),
+                );
+            }
+            Expr::Map { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "map literal allocates heap memory",
+                    )
+                    .with_label(Label::primary(self.file_id, *span, "heap allocation here"))
+                    .with_action("avoid creating heap-allocated maps inside `@noalloc` functions"),
+                );
+            }
+            Expr::Set { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "set literal allocates heap memory",
+                    )
+                    .with_label(Label::primary(self.file_id, *span, "heap allocation here"))
+                    .with_action("avoid creating heap-allocated sets inside `@noalloc` functions"),
+                );
+            }
+            Expr::FStrLit { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "interpolated string formats and allocates heap memory",
+                    )
+                    .with_label(Label::primary(
+                        self.file_id,
+                        *span,
+                        "string allocation here",
+                    ))
+                    .with_action("avoid string formatting inside `@noalloc` functions"),
+                );
+            }
+            Expr::Closure(closure) => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "closure allocation is forbidden inside `@noalloc` function",
+                    )
+                    .with_label(Label::primary(
+                        self.file_id,
+                        closure.span,
+                        "closure allocation here",
+                    ))
+                    .with_action("use a named function or avoid closure allocation"),
+                );
+            }
+            Expr::Await { span, .. } => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "`await` allocates and schedules asynchronous tasks",
+                    )
+                    .with_label(Label::primary(self.file_id, *span, "await allocation here"))
+                    .with_action("perform asynchronous operations outside `@noalloc` functions"),
+                );
+            }
+            Expr::Binary { op, lhs, rhs, span } => {
+                if *op == BinaryOp::Add
+                    && (matches!(lhs.as_ref(), Expr::StrLit { .. })
+                        || matches!(rhs.as_ref(), Expr::StrLit { .. }))
+                {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "perf.allocation_in_noalloc",
+                            "string concatenation allocates heap memory",
+                        )
+                        .with_label(Label::primary(
+                            self.file_id,
+                            *span,
+                            "string concatenation here",
+                        ))
+                        .with_action("avoid string concatenation inside `@noalloc` functions"),
+                    );
+                }
+                self.check_noalloc_expr(lhs, func_name);
+                self.check_noalloc_expr(rhs, func_name);
+            }
+            Expr::Unary { operand, .. } => {
+                self.check_noalloc_expr(operand, func_name);
+            }
+            Expr::Range { start, end, .. } => {
+                self.check_noalloc_expr(start, func_name);
+                self.check_noalloc_expr(end, func_name);
+            }
+            Expr::Tuple { elements, .. } => {
+                for el in elements {
+                    self.check_noalloc_expr(el, func_name);
+                }
+            }
+            Expr::StructLit { fields, .. } | Expr::AnonStructLit { fields, .. } => {
+                for field in fields {
+                    self.check_noalloc_expr(&field.value, func_name);
+                }
+            }
+            Expr::EnumVariantNamed { fields, .. } => {
+                for field in fields {
+                    self.check_noalloc_expr(&field.value, func_name);
+                }
+            }
+            Expr::Field { object, .. } => {
+                self.check_noalloc_expr(object, func_name);
+            }
+            Expr::TupleIndex { object, .. } => {
+                self.check_noalloc_expr(object, func_name);
+            }
+            Expr::Index { object, index, .. } => {
+                self.check_noalloc_expr(object, func_name);
+                if let ori_ast::expr::IndexExpr::Single(idx) = index {
+                    self.check_noalloc_expr(idx, func_name);
+                }
+            }
+            Expr::IfExpr {
+                condition,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                self.check_noalloc_expr(condition, func_name);
+                self.check_noalloc_expr(then_expr, func_name);
+                self.check_noalloc_expr(else_expr, func_name);
+            }
+            Expr::MatchExpr {
+                scrutinee, arms, ..
+            } => {
+                self.check_noalloc_expr(scrutinee, func_name);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.check_noalloc_expr(guard, func_name);
+                    }
+                    self.check_noalloc_expr(&arm.body, func_name);
+                }
+            }
+            Expr::StructUpdate { base, updates, .. } => {
+                self.check_noalloc_expr(base, func_name);
+                for field in updates {
+                    self.check_noalloc_expr(&field.value, func_name);
+                }
+            }
+            Expr::IsCheck { value, .. } => {
+                self.check_noalloc_expr(value, func_name);
+            }
+            Expr::Pipe { value, func, .. } => {
+                self.check_noalloc_expr(value, func_name);
+                self.check_noalloc_expr(func, func_name);
+            }
+            Expr::Try { expr, .. } => {
+                self.check_noalloc_expr(expr, func_name);
+            }
+            Expr::Call { callee, args, span } => {
+                self.check_noalloc_call(callee, args, *span, func_name);
+            }
+            _ => {}
+        }
+    }
+
+    fn check_noalloc_call(&mut self, callee: &Expr, args: &[Arg], span: Span, func_name: &str) {
+        for arg in args {
+            let value = match &arg.value {
+                ArgValue::Expr(e) | ArgValue::Spread(e) => e,
+            };
+            self.check_noalloc_expr(value, func_name);
+        }
+
+        let callee_name = match callee {
+            Expr::Ident(name) => name.text.to_string(),
+            Expr::QualifiedIdent(name) => name.to_string(),
+            _ => {
+                self.sink.emit(
+                    Diagnostic::error(
+                        "perf.allocation_in_noalloc",
+                        "indirect call through expression is forbidden in `@noalloc` context",
+                    )
+                    .with_label(Label::primary(self.file_id, span, "indirect call here"))
+                    .with_action("call direct `@noalloc` functions only"),
+                );
+                return;
+            }
+        };
+
+        if is_pure_non_allocating_intrinsic(&callee_name) {
+            return;
+        }
+
+        if is_known_allocating_function(&callee_name) {
+            self.sink.emit(
+                Diagnostic::error(
+                    "perf.allocation_in_noalloc",
+                    format!(
+                        "call to allocating standard function `{callee_name}` inside `@noalloc` function `{func_name}`"
+                    ),
+                )
+                .with_label(Label::primary(self.file_id, span, "allocating call here"))
+                .with_action("avoid allocating standard library functions in hot paths"),
+            );
+            return;
+        }
+
+        let base_name = callee_name.rsplit('.').next().unwrap_or(&callee_name);
+        if self.noalloc_funcs.contains(base_name) {
+            return;
+        }
+
+        self.sink.emit(
+            Diagnostic::error(
+                "perf.allocation_in_noalloc",
+                format!(
+                    "call to function `{callee_name}` which is not marked `@noalloc` inside `@noalloc` function `{func_name}`"
+                ),
+            )
+            .with_label(Label::primary(
+                self.file_id,
+                span,
+                "call to non-@noalloc function here",
+            ))
+            .with_action(format!(
+                "annotate `{callee_name}` with `@noalloc` or avoid calling allocating functions"
+            )),
         );
     }
 
@@ -2089,6 +2496,30 @@ impl<'a> Checker<'a> {
                     }
                     return;
                 }
+                if let Some(val) = &r.value {
+                    if let Some(root) = expr_root_name(val) {
+                        if let Some((_, is_using)) = self.lookup_binding_flags(&root.text) {
+                            if is_using {
+                                self.sink.emit(
+                                    Diagnostic::error(
+                                        "using.escape",
+                                        format!(
+                                            "scoped resource `{}` bound by `using` cannot escape its declaring block via return",
+                                            root.text
+                                        ),
+                                    )
+                                    .with_label(Label::primary(
+                                        self.file_id,
+                                        val.span(),
+                                        "scoped resource escapes here",
+                                    ))
+                                    .with_why("deterministic resource cleanup disposes the value upon exiting the block scope".to_string())
+                                    .with_action("process the scoped resource inside the using block without returning it directly"),
+                                );
+                            }
+                        }
+                    }
+                }
                 let ret_ty = r.value.as_ref().map_or(Ty::Void, |e| {
                     if expr_needs_expected_context(e) {
                         self.check_expr_assignable_to(e, expected_ret)
@@ -2565,6 +2996,29 @@ impl<'a> Checker<'a> {
                 }
                 expected.clone()
             }
+            Expr::List { elements, span } if matches!(expected, Ty::Simd(_, _)) => {
+                let Ty::Simd(elem_ty, lanes) = expected else {
+                    unreachable!("guarded by the match arm")
+                };
+                for element in elements {
+                    self.check_expr_assignable_to(element, elem_ty);
+                }
+                if elements.len() != *lanes as usize {
+                    self.sink.emit(
+                        Diagnostic::error(
+                            "type.simd_length_mismatch",
+                            format!(
+                                "`{}` needs {lanes} elements, found {}",
+                                expected.display_in(self.def_map),
+                                elements.len()
+                            ),
+                        )
+                        .with_label(Label::primary(self.file_id, *span, "simd literal"))
+                        .with_action(format!("write exactly {lanes} elements")),
+                    );
+                }
+                expected.clone()
+            }
             Expr::Closure(closure) => {
                 let actual = self.infer_closure(closure, Some(expected));
                 self.expect_assignable(&actual, expected, expr.span());
@@ -2718,7 +3172,6 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-
         expected.clone()
     }
 
@@ -4039,6 +4492,49 @@ impl<'a> Checker<'a> {
                                 }
                                 *elem.clone()
                             }
+                            Ty::Simd(elem, lanes) => {
+                                if !idx_ty.is_assignable_to(&Ty::Int) && !idx_ty.is_error() {
+                                    self.sink.emit(
+                                        Diagnostic::error(
+                                            "type.index_not_int",
+                                            format!(
+                                                "simd index must be `int`, found `{}`",
+                                                idx_ty.display_in(self.def_map)
+                                            ),
+                                        )
+                                        .with_label(Label::primary(
+                                            self.file_id,
+                                            *span,
+                                            "index here",
+                                        ))
+                                        .with_action("use an integer index"),
+                                    );
+                                }
+                                if let Expr::IntLit { raw, .. } = idx_expr.as_ref() {
+                                    if let Ok(i) = raw.parse::<i64>() {
+                                        if i >= *lanes as i64 {
+                                            self.sink.emit(
+                                                Diagnostic::error(
+                                                    "type.simd_index_out_of_bounds",
+                                                    format!(
+                                                        "simd has {lanes} lanes, index {i} is out of bounds"
+                                                    ),
+                                                )
+                                                .with_label(Label::primary(
+                                                    self.file_id,
+                                                    *span,
+                                                    "out of bounds",
+                                                ))
+                                                .with_action(format!(
+                                                    "use a lane index between 0 and {}",
+                                                    lanes - 1
+                                                )),
+                                            );
+                                        }
+                                    }
+                                }
+                                *elem.clone()
+                            }
                             Ty::Buffer(elem) => {
                                 if !idx_ty.is_assignable_to(&Ty::Int) && !idx_ty.is_error() {
                                     self.sink.emit(
@@ -4237,7 +4733,10 @@ impl<'a> Checker<'a> {
         use BinaryOp::*;
         match op {
             Add | Sub | Mul | Div | Rem => {
-                if lt.is_numeric() && lt == rt {
+                if (lt.is_numeric() && lt == rt)
+                    || (matches!(op, Add | Sub | Mul | Div)
+                        && matches!(lt, Ty::Simd(elem, lanes) if matches!(rt, Ty::Simd(r_elem, r_lanes) if elem == r_elem && lanes == r_lanes)))
+                {
                     lt.clone()
                 } else if op == Add && lt == &Ty::String && rt == &Ty::String {
                     Ty::String
@@ -6927,6 +7426,7 @@ impl<'a> Checker<'a> {
             Ty::ConstInt(_, _) => true,
             // Elements live inline, so an array moves exactly when they do.
             Ty::Array(elem, _) => self.is_transferable_ty_inner(elem, visiting),
+            Ty::Simd(elem, _) => self.is_transferable_ty_inner(elem, visiting),
             // A buffer/slice owns its heap block/window; sharing without
             // ownership would dangle — not transferable.
             Ty::Buffer(_) | Ty::Slice(_) => false,
@@ -9589,22 +10089,33 @@ fn item_target_name(item: &Item) -> &'static str {
 fn is_known_attr(name: &str) -> bool {
     matches!(
         name,
-        "test" | "deprecated" | "inline" | "no_inline" | "cfg" | "repr" | "c_export"
+        "test"
+            | "deprecated"
+            | "inline"
+            | "no_inline"
+            | "noalloc"
+            | "align"
+            | "cfg"
+            | "repr"
+            | "c_export"
     )
 }
 
 fn attr_applies_to(name: &str, target: &str) -> bool {
     match name {
-        "test" | "inline" | "no_inline" | "c_export" => target == "func",
+        "test" | "inline" | "no_inline" | "noalloc" | "c_export" => target == "func",
         "deprecated" | "cfg" => true,
-        "repr" => target == "struct",
+        "repr" | "align" => target == "struct",
         _ => false,
     }
 }
 
 fn attr_args_valid(name: &str, attr: &Attr) -> bool {
     match name {
-        "test" | "inline" | "no_inline" => attr.args.is_empty(),
+        "test" | "inline" | "no_inline" | "noalloc" => attr.args.is_empty(),
+        "align" => {
+            matches!(attr.args.as_slice(), [AttrArg::Int(raw, _)] if is_valid_align_value(raw))
+        }
         "c_export" => matches!(attr.args.as_slice(), [] | [AttrArg::String(_, _)]),
         "deprecated" => matches!(attr.args.as_slice(), [AttrArg::String(_, _)]),
         "repr" => matches!(attr.args.as_slice(), [AttrArg::String(value, _)] if value == "C"),
@@ -9613,10 +10124,19 @@ fn attr_args_valid(name: &str, attr: &Attr) -> bool {
     }
 }
 
+fn is_valid_align_value(raw: &str) -> bool {
+    if let Ok(n) = raw.parse::<u32>() {
+        matches!(n, 1 | 2 | 4 | 8 | 16 | 32 | 64)
+    } else {
+        false
+    }
+}
+
 fn attr_target_action(name: &str) -> &'static str {
     match name {
         "test" => "move `@test` to a function declaration",
-        "inline" | "no_inline" => "use this attribute only on function declarations",
+        "inline" | "no_inline" | "noalloc" => "use this attribute only on function declarations",
+        "align" => "use `@align(N)` only on struct declarations",
         "c_export" => "move `@c_export` to a free `public` function",
         _ => "move the attribute to a declaration that supports it",
     }
@@ -9624,7 +10144,10 @@ fn attr_target_action(name: &str) -> &'static str {
 
 fn attr_arg_action(name: &str) -> &'static str {
     match name {
-        "test" | "inline" | "no_inline" => "remove the attribute arguments",
+        "test" | "inline" | "no_inline" | "noalloc" => "remove the attribute arguments",
+        "align" => {
+            "use `@align(N)` with a power-of-two integer between 1 and 64 (1, 2, 4, 8, 16, 32, 64)"
+        }
         "c_export" => "use `@c_export` or `@c_export(\"symbol_name\")`",
         "deprecated" => "use `@deprecated(\"message\")` with exactly one string message",
         "repr" => "use exactly `@repr(\"C\")`",
@@ -10376,4 +10899,49 @@ fn for_second_binding_ty(ty: &Ty) -> Ty {
         // iterable itself as non-iterable before we ever bind this.
         _ => Ty::Error,
     }
+}
+
+fn is_pure_non_allocating_intrinsic(name: &str) -> bool {
+    matches!(
+        name,
+        "math.abs"
+            | "math.min"
+            | "math.max"
+            | "math.sqrt"
+            | "math.sin"
+            | "math.cos"
+            | "math.tan"
+            | "math.floor"
+            | "math.ceil"
+            | "math.round"
+            | "math.pow"
+            | "math.clamp"
+            | "math.atan2"
+            | "buffer.get"
+            | "buffer.set"
+            | "buffer.len"
+            | "buffer.is_empty"
+            | "span.get"
+            | "span.set_at"
+            | "span.len"
+            | "span.is_empty"
+            | "mem.size_of"
+            | "mem.align_of"
+            | "assert"
+            | "panic"
+            | "todo"
+            | "unreachable"
+    )
+}
+
+fn is_known_allocating_function(name: &str) -> bool {
+    name.starts_with("fmt.")
+        || name.starts_with("strings.")
+        || name.starts_with("lists.")
+        || name.starts_with("maps.")
+        || name.starts_with("sets.")
+        || name.starts_with("task.spawn")
+        || name.starts_with("channel.create")
+        || name.starts_with("fs.")
+        || name.starts_with("net.")
 }

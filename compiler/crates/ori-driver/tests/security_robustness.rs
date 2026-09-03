@@ -600,4 +600,3 @@ fn hostile_inputs_and_pathological_literals_never_panic_in_checker() {
         assert_diagnostic_spans_within_sources(&checked.cache, &checked.diagnostics);
     }
 }
-

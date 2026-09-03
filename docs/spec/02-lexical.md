@@ -396,6 +396,8 @@ Built-in attributes:
 | `@deprecated("msg")` | any declaration | exactly one string argument | Emits `attr.deprecated` warning at use sites |
 | `@inline` | function declaration | no arguments | Validated and stored; not acted on by the current backend |
 | `@no_inline` | function declaration | no arguments | Validated and stored; not acted on by the current backend |
+| `@noalloc` | function declaration | no arguments | Statically verified: rejects heap allocations, collection literals, string formatting, closures, `await`, `using`, dynamic collection iteration, and calls to functions not marked `@noalloc`; violation emits `perf.allocation_in_noalloc` |
+| `@align(N)` | struct declaration | power-of-two integer between 1 and 64 (1, 2, 4, 8, 16, 32, 64) | Forces struct alignment and padding to at least `N` bytes in Cranelift layout and C export headers (`alignas(N)`); reflected in `ori.mem.align_of` and `ori.mem.size_of` |
 | `@cfg(predicate)` | any top-level declaration | exactly one structured predicate; one `@cfg` per declaration | Removes an inactive declaration before name resolution and type checking |
 | `@repr("C")` | struct declaration | supported form is exactly the string `"C"` | Selects the C-compatible struct layout path |
 | `@c_export` / `@c_export("name")` | public function | no argument or one C identifier | Emits the host-facing ABI export; see [19-abi.md](19-abi.md) |

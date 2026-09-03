@@ -200,6 +200,7 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {
@@ -383,6 +384,7 @@ fn count_var_uses(expr: &HirExpr, name: &str) -> usize {
             .fold(0, usize::saturating_add),
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => elements
             .iter()
@@ -467,6 +469,7 @@ fn expr_has_inline_barrier(expr: &HirExpr) -> bool {
             .any(|(_, value)| expr_has_inline_barrier(value)),
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => elements.iter().any(expr_has_inline_barrier),
         HirExprKind::ListSpreadLit { elements, .. } => elements
@@ -565,6 +568,7 @@ fn subst_var(expr: &mut HirExpr, name: &str, replacement: &HirExpr) {
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {

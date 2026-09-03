@@ -136,7 +136,11 @@ impl DaemonSession {
             match read_source_file(&file) {
                 Ok(code) => (code, file),
                 Err(error) => {
-                    return error_response(id, -32001, &format!("failed to read `{file}`: {error}"));
+                    return error_response(
+                        id,
+                        -32001,
+                        &format!("failed to read `{file}`: {error}"),
+                    );
                 }
             }
         } else {

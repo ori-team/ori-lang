@@ -230,7 +230,28 @@ impl ProjectSemanticIndex {
             }
         }
 
+        // Support dot-completion on traits directly (e.g. any[Trait] or Trait bounds)
+        for trait_sig in &self.resolved.trait_sigs {
+            let def = self.resolved.def_map.get(trait_sig.def_id);
+            let matches = def.path.as_str() == type_name
+                || def.name.as_str() == type_name
+                || type_name.ends_with(&format!(".{}", def.name))
+                || def.path.as_str().ends_with(&format!(".{type_name}"));
+            if matches {
+                for method in &trait_sig.methods {
+                    let ret = ty_to_str(&method.return_ty, &self.resolved);
+                    items.push(CompletionItem {
+                        label: method.name.to_string(),
+                        kind: Some(CompletionItemKind::METHOD),
+                        detail: Some(format!("trait method -> {ret}")),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
         items.extend(self.complete_opaque_methods(&type_name));
+        crate::handlers::completion::dedupe_completion_items(&mut items);
 
         items
     }
@@ -747,6 +768,7 @@ fn ty_to_str(ty: &Ty, resolved: &ResolvedModule) -> String {
             ty_to_str(inner, resolved),
             ty_to_str(len, resolved)
         ),
+        Ty::Simd(inner, lanes) => format!("simd[{}, {lanes}]", ty_to_str(inner, resolved)),
         Ty::Map(k, v) => format!(
             "map[{}, {}]",
             ty_to_str(k, resolved),
@@ -874,5 +896,17 @@ mod tests {
             qualified_token_path(source, &tokens, 2).as_deref(),
             Some("café.東京.valor")
         );
+    }
+
+    #[test]
+    fn trait_methods_are_offered_on_dot_completion() {
+        let source = "module app.dot\n\ntrait Drawable\n    draw(self) -> void\nend\npublic render(d: app.Drawable)\nend\n";
+        let path = std::path::PathBuf::from("dot.orl");
+        let output = ori_driver::pipeline::run_check_source(&path, source.into())
+            .expect("valid semantic fixture");
+        let proj = ProjectSemanticIndex::new(output.resolved, output.cache, path);
+        let source2 = "module app.dot\n\ntrait Drawable\n    draw(self) -> void\nend\npublic render(d: app.Drawable)\nend\n";
+        let items = proj.complete_after_dot("d", source2);
+        assert!(items.iter().any(|i| i.label == "draw"));
     }
 }

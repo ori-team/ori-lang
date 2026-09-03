@@ -107,6 +107,19 @@ batem em todas as linguagens em todos os kernels.
 8. Host é notebook; **razões importam mais que ms absolutos**.
 9. **Não** mede I/O, async, FFI ou apps reais.
 
+## Hot paths sem alocação (`@noalloc` + `mem.region` + `simd`)
+
+A onda de alta performance (2026-09-03) adiciona primitivas zero-allocation de propósito
+geral para loops de 60/120 FPS:
+
+- `@noalloc` em funções verifica estaticamente que não há alocações heap (proíbe `list`/`map`/`set`,
+  interpolação, closures, `await`, `using` e chamadas a funções que alocam).
+- `using r: mem.Region = mem.region()` cria arenas com reset instantâneo em O(1) (`mem.reset`),
+  sem custo de contagem de referência por objeto.
+- `simd[float32, 4]` baixa diretamente para vetores de CPU (x86_64 SSE/AVX e ARM NEON) com
+  operadores paralelos (`+`, `-`, `*`, `/`).
+- `@align(N)` força alinhamento de structs para GPU uniform buffers (`alignas(N)`).
+
 ## Como reproduzir
 
 ```bash

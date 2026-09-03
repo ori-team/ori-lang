@@ -1,4 +1,7 @@
-use zed_extension_api::{self as zed, LanguageServerId, Result};
+use zed_extension_api::{
+    self as zed, serde_json, DebugAdapterBinary, DebugTaskDefinition, LanguageServerId, Result,
+    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+};
 
 struct OriExtension;
 
@@ -32,6 +35,50 @@ impl zed::Extension for OriExtension {
             args: Vec::new(),
             env,
         })
+    }
+
+    fn get_dap_binary(
+        &mut self,
+        adapter_name: String,
+        _config: DebugTaskDefinition,
+        user_provided_debug_adapter_path: Option<String>,
+        worktree: &zed::Worktree,
+    ) -> Result<DebugAdapterBinary, String> {
+        let command = user_provided_debug_adapter_path
+            .or_else(|| worktree.which("ori"))
+            .ok_or_else(|| {
+                "ori binary not found on PATH. Install Ori so `ori` is available for debugging."
+                    .to_string()
+            })?;
+
+        let mut envs = Vec::new();
+        if let Some(stdlib) = worktree_stdlib_root(worktree) {
+            envs.push(("ORI_STDLIB_ROOT".to_string(), stdlib));
+        }
+
+        Ok(DebugAdapterBinary {
+            command: Some(command),
+            arguments: vec!["debug".to_string(), "--dap".to_string()],
+            envs,
+            cwd: None,
+            connection: None,
+            request_args: StartDebuggingRequestArguments {
+                configuration: serde_json::to_string(&serde_json::json!({
+                    "type": adapter_name,
+                    "request": "launch",
+                }))
+                .unwrap_or_default(),
+                request: StartDebuggingRequestArgumentsRequest::Launch,
+            },
+        })
+    }
+
+    fn dap_request_kind(
+        &mut self,
+        _adapter_name: String,
+        _config: serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest, String> {
+        Ok(StartDebuggingRequestArgumentsRequest::Launch)
     }
 }
 

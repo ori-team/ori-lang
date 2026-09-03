@@ -13533,10 +13533,19 @@ end
     assert!(native_stdout.contains("file"), "native: {native_stdout}");
     assert!(native_stdout.contains("flow"), "native: {native_stdout}");
     assert!(native_stdout.contains("office"), "native: {native_stdout}");
-    assert!(native_stdout.contains("\u{03BF}\u{03B4}\u{03C5}\u{03C3}\u{03C3}\u{03B5}\u{03C5}\u{03C3}"), "native: {native_stdout}");
+    assert!(
+        native_stdout.contains("\u{03BF}\u{03B4}\u{03C5}\u{03C3}\u{03C3}\u{03B5}\u{03C5}\u{03C3}"),
+        "native: {native_stdout}"
+    );
     assert!(native_stdout.contains("привет"), "native: {native_stdout}");
-    assert!(native_stdout.contains("ｈｅｌｌｏ"), "native: {native_stdout}");
-    assert!(native_stdout.contains("ori 🚀 2026"), "native: {native_stdout}");
+    assert!(
+        native_stdout.contains("ｈｅｌｌｏ"),
+        "native: {native_stdout}"
+    );
+    assert!(
+        native_stdout.contains("ori 🚀 2026"),
+        "native: {native_stdout}"
+    );
 
     // Run C backend and verify exact bit-for-bit parity
     let out = run_build(&dir.path("main.orl")).unwrap();
@@ -14746,4 +14755,130 @@ end
         .expect("refreshed module records");
     assert_eq!(artifact_for(after_modules, "main.orl"), main_before);
     assert_ne!(artifact_for(after_modules, "helper.orl"), helper_before);
+}
+
+#[test]
+fn package_manifest_with_native_platform_libs_compiles_and_runs() {
+    let dir = TestDir::new("pkg_native_platform_libs");
+    dir.write(
+        "ori.pkg.toml",
+        r#"[package]
+name = "demo.native_pkg"
+version = "1.0.0"
+entry = "main.orl"
+ori_version = "0.3.8"
+
+[native.linux]
+libraries = ["m"]
+
+[native.windows]
+libraries = ["kernel32"]
+
+[native.macos]
+libraries = ["m"]
+
+[native]
+link_flags = []
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module demo.native_pkg
+
+main() -> int
+    return 42
+end
+"#,
+    );
+
+    let exe = dir.path("app.exe");
+    let out = run_compile(&dir.path("ori.pkg.toml"), &exe).expect("compile must succeed");
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let run_res = std::process::Command::new(&exe)
+        .output()
+        .expect("run binary");
+    assert!(run_res.status.success());
+}
+
+#[test]
+fn package_manifest_native_pkg_config_missing_dependency_fails_gracefully() {
+    let dir = TestDir::new("pkg_native_missing_pkg_config");
+    dir.write(
+        "ori.pkg.toml",
+        r#"[package]
+name = "demo.broken_native"
+version = "1.0.0"
+entry = "main.orl"
+ori_version = "0.3.8"
+
+[native.dependencies.nonexistent_pkg_xyz_999]
+pkg_config = "nonexistent_pkg_xyz_999"
+"#,
+    );
+    dir.write(
+        "main.orl",
+        r#"module demo.broken_native
+
+main()
+end
+"#,
+    );
+
+    let exe = dir.path("app.exe");
+    match run_compile(&dir.path("ori.pkg.toml"), &exe) {
+        Err(err) => {
+            assert!(
+                err.contains("package.native_dependency_missing")
+                    || err.contains("package.native_pkg_config_missing"),
+                "error should report native dependency issue: {err}"
+            );
+        }
+        Ok(_) => panic!("should fail with missing native dependency"),
+    }
+}
+
+#[test]
+fn compile_lib_emits_alignas_in_c_header() {
+    let dir = TestDir::new("align_c_header");
+    dir.write(
+        "lib.orl",
+        r#"module app.lib
+
+@repr("C")
+@align(16)
+public struct UniformData
+    matrix: int
+    offset: int
+end
+
+@c_export
+public compute_uniform(data: UniformData) -> int
+    return data.matrix + data.offset
+end
+
+main()
+end
+"#,
+    );
+
+    let out_so = dir.path("libuniform.so");
+    let out = run_compile_with_options(
+        &dir.path("lib.orl"),
+        &out_so,
+        CompileOptions {
+            native_raw: false,
+            lib: true,
+        },
+    )
+    .expect("compile --lib");
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let header_path = dir.path("libuniform.h");
+    assert!(header_path.is_file(), "header should exist");
+    let header = std::fs::read_to_string(&header_path).expect("read generated C header");
+    assert!(
+        header.contains("alignas(16)") || header.contains("__attribute__((aligned(16)))"),
+        "header must contain alignment directive: {header}"
+    );
 }

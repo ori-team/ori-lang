@@ -4006,6 +4006,200 @@ unsafe extern "C" fn ori_span_subspan(span: *mut OriSpan, offset: i64, len: i64)
     ori_span_new(owner, (*span).start + offset, len)
 }
 
+// ── Region bump arena allocator (MEM-REGION-1) ────────────────────────────────
+
+const REGION_DEFAULT_CHUNK_SIZE: usize = 64 * 1024; // 64 KiB
+
+struct RegionChunk {
+    ptr: *mut u8,
+    cap: usize,
+}
+
+/// A scoped bump arena allocator for frame-temporary objects (`MEM-REGION-1`).
+///
+/// Allocates memory from contiguous chunks by bumping an offset pointer in O(1).
+/// Reset is an O(1) operation: the offset resets to 0 while existing chunks are
+/// retained for subsequent frames.
+pub struct OriRegion {
+    chunks: Vec<RegionChunk>,
+    current_chunk: usize,
+    current_offset: usize,
+    total_allocated: usize,
+    allocation_count: usize,
+}
+
+unsafe extern "C" fn ori_region_dtor(ptr: *mut u8) {
+    let region = ptr as *mut OriRegion;
+    if region.is_null() {
+        return;
+    }
+    for chunk in &(*region).chunks {
+        if !chunk.ptr.is_null() {
+            libc::free(chunk.ptr as *mut libc::c_void);
+        }
+    }
+    std::ptr::drop_in_place(region);
+}
+
+unsafe extern "C" fn ori_region_dtor_wrapper(ptr: *mut u8) {
+    let inner_ptr = *(ptr as *mut *mut OriRegion);
+    if !inner_ptr.is_null() {
+        ori_region_dtor(inner_ptr as *mut u8);
+        libc::free(inner_ptr as *mut libc::c_void);
+    }
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_region_new() -> *mut OriRegion {
+    let initial_cap = REGION_DEFAULT_CHUNK_SIZE;
+    let initial_ptr = checked_malloc(initial_cap) as *mut u8;
+    let initial_chunk = RegionChunk {
+        ptr: initial_ptr,
+        cap: initial_cap,
+    };
+    let region_raw = checked_malloc(std::mem::size_of::<OriRegion>()) as *mut OriRegion;
+    if region_raw.is_null() {
+        libc::free(initial_ptr as *mut libc::c_void);
+        abort_bounds("out of memory while allocating Region arena");
+    }
+    std::ptr::write(
+        region_raw,
+        OriRegion {
+            chunks: vec![initial_chunk],
+            current_chunk: 0,
+            current_offset: 0,
+            total_allocated: 0,
+            allocation_count: 0,
+        },
+    );
+    let managed = ori_alloc(
+        std::mem::size_of::<*mut OriRegion>(),
+        Some(ori_region_dtor_wrapper),
+    );
+    *(managed as *mut *mut OriRegion) = region_raw;
+    managed as *mut OriRegion
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_region_alloc(handle: *mut OriRegion, size: i64, align: i64) -> *mut u8 {
+    if handle.is_null() || size <= 0 {
+        return std::ptr::null_mut();
+    }
+    let region_ptr = *(handle as *mut *mut OriRegion);
+    if region_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let region = &mut *region_ptr;
+    let size = size as usize;
+    let align = (align.max(1) as usize).next_power_of_two();
+
+    if region.chunks.is_empty() {
+        let initial_cap = size.max(REGION_DEFAULT_CHUNK_SIZE);
+        let initial_ptr = checked_malloc(initial_cap) as *mut u8;
+        region.chunks.push(RegionChunk {
+            ptr: initial_ptr,
+            cap: initial_cap,
+        });
+        region.current_chunk = 0;
+        region.current_offset = 0;
+    }
+
+    let current_chunk = &mut region.chunks[region.current_chunk];
+    let base_addr = current_chunk.ptr as usize + region.current_offset;
+    let aligned_addr = (base_addr + align - 1) & !(align - 1);
+    let padding = aligned_addr - base_addr;
+
+    if region.current_offset + padding + size <= current_chunk.cap {
+        region.current_offset += padding + size;
+        region.total_allocated += size;
+        region.allocation_count += 1;
+        return aligned_addr as *mut u8;
+    }
+
+    let next_chunk_cap = (size + align)
+        .max(REGION_DEFAULT_CHUNK_SIZE * 2)
+        .next_power_of_two();
+    let next_ptr = checked_malloc(next_chunk_cap) as *mut u8;
+    let new_chunk = RegionChunk {
+        ptr: next_ptr,
+        cap: next_chunk_cap,
+    };
+    region.chunks.push(new_chunk);
+    region.current_chunk = region.chunks.len() - 1;
+
+    let chunk = &mut region.chunks[region.current_chunk];
+    let base_addr = chunk.ptr as usize;
+    let aligned_addr = (base_addr + align - 1) & !(align - 1);
+    let padding = aligned_addr - base_addr;
+
+    region.current_offset = padding + size;
+    region.total_allocated += size;
+    region.allocation_count += 1;
+    aligned_addr as *mut u8
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_region_reset(handle: *mut OriRegion) {
+    if handle.is_null() {
+        return;
+    }
+    let region_ptr = *(handle as *mut *mut OriRegion);
+    if region_ptr.is_null() {
+        return;
+    }
+    let region = &mut *region_ptr;
+    region.current_chunk = 0;
+    region.current_offset = 0;
+    region.total_allocated = 0;
+    region.allocation_count = 0;
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_region_free(handle: *mut OriRegion) {
+    if handle.is_null() {
+        return;
+    }
+    let region_ptr = *(handle as *mut *mut OriRegion);
+    if region_ptr.is_null() {
+        return;
+    }
+    let region = &mut *region_ptr;
+    for chunk in &region.chunks {
+        if !chunk.ptr.is_null() {
+            libc::free(chunk.ptr as *mut libc::c_void);
+        }
+    }
+    region.chunks.clear();
+    region.current_chunk = 0;
+    region.current_offset = 0;
+    region.total_allocated = 0;
+    region.allocation_count = 0;
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_region_size(handle: *mut OriRegion) -> i64 {
+    if handle.is_null() {
+        return 0;
+    }
+    let region_ptr = *(handle as *mut *mut OriRegion);
+    if region_ptr.is_null() {
+        return 0;
+    }
+    (*region_ptr).total_allocated as i64
+}
+
+#[no_mangle]
+unsafe extern "C" fn ori_region_count(handle: *mut OriRegion) -> i64 {
+    if handle.is_null() {
+        return 0;
+    }
+    let region_ptr = *(handle as *mut *mut OriRegion);
+    if region_ptr.is_null() {
+        return 0;
+    }
+    (*region_ptr).allocation_count as i64
+}
+
 #[no_mangle]
 unsafe extern "C" fn ori_list_set(list: *mut OriList, index: i64, value: i64) {
     if list.is_null() || index < 0 || index >= (*list).len {

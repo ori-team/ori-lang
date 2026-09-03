@@ -636,7 +636,9 @@ fn lint_expr(expr: &Expr, context: &mut LintContext<'_>) {
                 lint_expr(&f.value, context);
             }
         }
-        Expr::MatchExpr { scrutinee, arms, .. } => {
+        Expr::MatchExpr {
+            scrutinee, arms, ..
+        } => {
             lint_expr(scrutinee, context);
             for arm in arms {
                 context.with_scope(|context| {

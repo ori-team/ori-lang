@@ -19,6 +19,61 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Zed editor DAP debugging integration (`ZED-EXT-1`).**
+  Implemented `get_dap_binary` and `dap_request_kind` in `extensions/zed-ori` using `zed_extension_api` 0.7:
+  registers `ori-dap` adapter launching `ori debug --dap`, connecting Zed's native debug UI to the compiler's
+  cooperative DAP adapter for breakpoints, step debugging, and variable inspection.
+
+- **Starlight documentation portal synchronization (`DOC-SITE-1`).**
+  Synchronized `ori-website` reference pages with 88 modules and 1012 exported symbols via `ori doc export`,
+  including full interactive API references for `ori.mem.Region`, `@align`, and `@noalloc`. Validated with
+  Astro 5 + Starlight build and Pagefind search index generation.
+
+- **Portable fixed-width SIMD vector primitives (`LANG-SIMD-1`).**
+  Added first-class `simd[T, N]` types (`simd[float32, 4]`, `simd[int32, lanes: 4]`) lowered directly to
+  Cranelift SIMD IR instructions (x86_64 SSE/AVX `F32x4`/`I32x4` and aarch64 NEON) with native vector
+  operations (`+`, `-`, `*`, `/`), lane-indexed extraction (`v[i]`), and constant-time vector construction
+  from literals. Verified in both AOT and JIT paths. Covered by E2E verification in `dx_scripting.rs`.
+
+- **Scoped bump-arena memory regions (`MEM-REGION-1`).**
+  Added `ori.mem.Region` with stack-local deterministic lifecycle (`using r: mem.Region = mem.region()`):
+  native `OriRegion` bump-arena allocator with 64 KiB chunks, O(1) allocation via pointer bump,
+  O(1) bulk reset (`mem.reset`) without traversing object graphs, and deterministic disposal
+  (`core.Disposable`) upon block exit. Includes inspection utilities (`mem.size`, `mem.count`)
+  and compile-time escape analysis: `Region` cannot escape its declaring block via `return`
+  (`using.escape`) or cross threads/tasks (not `Transferable`). Covered by native runtime unit
+  tests and E2E verification in `dx_scripting.rs`.
+
+- **Explicit struct alignment and padding control `@align(N)` (`LANG-ALIGN-1`).**
+  Added the built-in struct attribute `@align(N)` accepting power-of-two alignment boundaries (1, 2, 4, 8,
+  16, 32, 64). Lowered directly through AST, checker, HIR (`HirStruct.explicit_align`), and Cranelift
+  native codegen (`StructLayout`), enforcing minimum struct alignment and padding. Reflected in compile-time
+  constants and runtime introspection (`ori.mem.align_of` and `ori.mem.size_of`), and propagated to generated
+  C export headers (`alignas(N)` in C++ / `__attribute__((aligned(N)))` in C) for GPU uniform/storage buffers
+  (std140/std430), SIMD vectors, and foreign engine boundaries (GDExtension). Covered by unit and E2E tests
+  in `dx_scripting.rs` and `multifile_imports.rs`.
+
+- **Static zero-allocation verification attribute `@noalloc` (`LANG-NOALLOC-1`).**
+  Introduced the built-in function attribute `@noalloc` for performance-critical hot paths (e.g. 60/120 FPS
+  engine tick loops, audio DSP callbacks, physics integration). The type checker statically verifies the
+  function body and strictly rejects dynamic heap allocations: collection literals (`list`, `map`, `set`),
+  interpolated strings (`f"..."`), string concatenation (`+`), closures, asynchronous operations (`await`,
+  `async`), `using` blocks, dynamic collection iteration, and calls to functions not marked `@noalloc` or
+  known allocating standard library functions (`fmt.*`, `lists.*`, `maps.*`, `sets.*`, `strings.*`, `task.spawn`).
+  Emits diagnostic `perf.allocation_in_noalloc` on violation with source span, cause, and actionable advice.
+  Covered by unit tests and E2E verification in `tests/dx_scripting.rs`.
+
+- **Declarative native dependencies, pkg-config resolution, and platform link configurations (`PKG-NATIVE-1`).**
+  Extended package manifests (`ori.pkg.toml`) with declarative native dependency management:
+  supports `[native.dependencies.<lib>]` with `pkg_config = "..."`, `static = bool`, `framework = "..."`,
+  and version constraints, plus inline tables under `[native.dependencies]`; per-platform library,
+  framework, directory, and flag specifications (`[native.linux]`, `[native.windows]`, `[native.macos]`,
+  and common `[native]`). Automated `pkg-config` querying translates `--libs` output into `-L`, `-l`,
+  and `-framework` link lines for Unix/macOS or `.lib` and `/LIBPATH` directives for Windows MSVC,
+  enabling direct linking of system libraries (e.g. Raylib, Box2D, OpenGL, X11) without manual `.a`
+  linker scripts or staging workarounds. Covered by unit tests in `package.rs` and `native_deps.rs`
+  and E2E compilation tests in `multifile_imports.rs`.
+
 - **Persistent daemon session caching, warm check hits, and invalidation (`CLI-DAEMON-1`).**
   Extended `ori daemon` with `DaemonSession` state tracking: caches type-check results keyed
   by source content SHA-256 with bounded capacity (256 entries) and FIFO eviction. Enables

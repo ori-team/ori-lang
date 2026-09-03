@@ -160,6 +160,31 @@ demo.math = { path = "../demo-math", version = "0.1.0" }
 [features]
 default = []
 tls = []
+
+[native.dependencies.raylib]
+pkg_config = "raylib"
+static = true
+version = ">= 5.0"
+
+[native.linux]
+libraries = ["GL", "X11", "m", "dl"]
+library_dirs = ["/usr/local/lib"]
+link_flags = ["-Wl,-rpath,/opt/engine/lib"]
+
+[native.windows]
+libraries = ["user32", "opengl32"]
+library_dirs = ["C:\\libs"]
+link_flags = ["/NODEFAULTLIB:libcmt"]
+
+[native.macos]
+frameworks = ["OpenGL", "Cocoa", "IOKit"]
+libraries = ["m"]
+library_dirs = ["/opt/homebrew/lib"]
+
+[native]
+libraries = []
+library_dirs = []
+link_flags = []
 ```
 
 | Field | Description |
@@ -170,6 +195,16 @@ tls = []
 | `package.ori_version` | Minimum expected Ori compiler version. |
 | `features.default` | Package features enabled by default. |
 | `features.<name>` | Declares a package feature; cfg v1 requires an empty array. |
+| `native.dependencies.<lib>` | Declarative native dependency resolved via `pkg-config` or host framework. |
+| `native.dependencies.<lib>.pkg_config` | System package name passed to `pkg-config --libs`. |
+| `native.dependencies.<lib>.static` | When `true`, requests static linking via `pkg-config --static`. |
+| `native.dependencies.<lib>.framework` | Host framework name (macOS/Darwin `-framework <name>`). |
+| `native.dependencies.<lib>.version` | Semantic or comparison version requirement validated against `pkg-config`. |
+| `native.<platform>.libraries` | Explicit list of link libraries (`-l<name>` on Unix, `<name>.lib` on MSVC). |
+| `native.<platform>.frameworks` | Explicit list of frameworks (macOS). |
+| `native.<platform>.library_dirs` | Directory paths added to linker search path (`-L` or `/LIBPATH`). |
+| `native.<platform>.link_flags` | Direct platform linker flags passed through during native code generation. |
+| `native` | Platform-independent fallback link configuration applied across all targets. |
 
 `ori check`, `ori run`, `ori test`, and `ori doc` accept `ori.pkg.toml` as
 input when the directory is used as a package.

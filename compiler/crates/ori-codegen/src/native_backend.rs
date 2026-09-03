@@ -219,6 +219,19 @@ fn cl_type(ty: &Ty, ptr_ty: types::Type) -> Option<types::Type> {
         Ty::Int8 | Ty::U8 => Some(types::I8),
         Ty::Float | Ty::Float64 => Some(types::F64),
         Ty::Float32 => Some(types::F32),
+        Ty::Simd(elem, lanes) => match (&**elem, *lanes) {
+            (Ty::Float32, 4) => Some(types::F32X4),
+            (Ty::Float32, 2) => Some(types::F32X2),
+            (Ty::Float32, 8) => Some(types::F32X8),
+            (Ty::Int32 | Ty::U32, 4) => Some(types::I32X4),
+            (Ty::Int32 | Ty::U32, 2) => Some(types::I32X2),
+            (Ty::Int32 | Ty::U32, 8) => Some(types::I32X8),
+            (Ty::Float64, 2) => Some(types::F64X2),
+            (Ty::Int64 | Ty::U64 | Ty::Int, 2) => Some(types::I64X2),
+            (Ty::Int16 | Ty::U16, 8) => Some(types::I16X8),
+            (Ty::Int8 | Ty::U8, 16) => Some(types::I8X16),
+            _ => Some(types::F32X4),
+        },
         Ty::String
         | Ty::Bytes
         | Ty::Func { .. }
@@ -763,7 +776,11 @@ pub fn has_runtime_global_initializers(hir: &HirModule) -> bool {
 }
 
 fn is_float_ty(ty: &Ty) -> bool {
-    matches!(ty, Ty::Float | Ty::Float32 | Ty::Float64)
+    match ty {
+        Ty::Float | Ty::Float32 | Ty::Float64 => true,
+        Ty::Simd(elem, _) => is_float_ty(elem),
+        _ => false,
+    }
 }
 
 fn validate_native_hir(hir: &HirModule) -> Result<(), String> {
@@ -1070,6 +1087,14 @@ impl NativeHirValidator {
             }
             HirExprKind::ArrayLit { elem_ty, elements } => {
                 self.reject_error_ty(elem_ty, "array element type", expr.span)?;
+                for element in elements {
+                    self.expr(element)?;
+                }
+            }
+            HirExprKind::SimdLit {
+                elem_ty, elements, ..
+            } => {
+                self.reject_error_ty(elem_ty, "simd lane type", expr.span)?;
                 for element in elements {
                     self.expr(element)?;
                 }
@@ -1551,6 +1576,7 @@ fn expr_contains_await(expr: &HirExpr) -> bool {
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => elements.iter().any(expr_contains_await),
         HirExprKind::ListSpreadLit { elements, .. } => elements
@@ -1751,6 +1777,7 @@ fn expr_collect_var_uses(expr: &HirExpr, uses: &mut HashSet<SmolStr>) {
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for element in elements {
@@ -2129,6 +2156,22 @@ fn simple_async_lift_expr_awaits(
         HirExprKind::ArrayLit { elem_ty, elements } => Some(HirExpr {
             kind: HirExprKind::ArrayLit {
                 elem_ty: elem_ty.clone(),
+                elements: elements
+                    .iter()
+                    .map(|element| simple_async_lift_expr_awaits(element, awaits, first_index))
+                    .collect::<Option<Vec<_>>>()?,
+            },
+            ty: expr.ty.clone(),
+            span: expr.span,
+        }),
+        HirExprKind::SimdLit {
+            elem_ty,
+            lanes,
+            elements,
+        } => Some(HirExpr {
+            kind: HirExprKind::SimdLit {
+                elem_ty: elem_ty.clone(),
+                lanes: *lanes,
                 elements: elements
                     .iter()
                     .map(|element| simple_async_lift_expr_awaits(element, awaits, first_index))
@@ -3031,6 +3074,7 @@ impl GeneralAsyncCollector {
             }
             HirExprKind::ListLit { elements, .. }
             | HirExprKind::ArrayLit { elements, .. }
+            | HirExprKind::SimdLit { elements, .. }
             | HirExprKind::TupleLit(elements)
             | HirExprKind::SetLit { elements, .. } => {
                 for elem in elements {
@@ -3188,6 +3232,12 @@ fn field_size_align(ty: &Ty, ptr_ty: types::Type) -> (u32, u8) {
             }
         }
     }
+    if let Ty::Simd(elem, lanes) = ty {
+        let (elem_size, _) = field_size_align(elem, ptr_ty);
+        let size = elem_size.saturating_mul(*lanes as u32);
+        let align = size.min(16).clamp(1, 16) as u8;
+        return (size, align);
+    }
     let cl = cl_type(ty, ptr_ty).unwrap_or(ptr_ty);
     let bytes = cl.bytes();
     let align = bytes.clamp(1, 8) as u8;
@@ -3237,7 +3287,14 @@ fn closure_env_layout(captures: &[HirClosureCapture], ptr_ty: types::Type) -> (V
 }
 
 fn compute_struct_layout(fields: &[HirField], ptr_ty: types::Type, repr_c: bool) -> StructLayout {
-    compute_struct_layout_with(fields, ptr_ty, repr_c, &HashMap::new(), &HashSet::new())
+    compute_struct_layout_with(
+        fields,
+        ptr_ty,
+        repr_c,
+        None,
+        &HashMap::new(),
+        &HashSet::new(),
+    )
 }
 
 /// GFX-INLINE-1: layout computation with inline-struct awareness.
@@ -3248,11 +3305,12 @@ fn compute_struct_layout_with(
     fields: &[HirField],
     ptr_ty: types::Type,
     repr_c: bool,
+    explicit_align: Option<u32>,
     struct_layouts: &HashMap<ori_types::DefId, StructLayout>,
     inline_struct_ids: &HashSet<ori_types::DefId>,
 ) -> StructLayout {
     let mut offset = 0u32;
-    let mut max_align = 1u8;
+    let mut max_align = explicit_align.map(|a| a as u8).unwrap_or(1);
     let mut result = Vec::new();
     for f in fields {
         let (size, align) =
@@ -3997,6 +4055,7 @@ impl<M: Module> NativeBackend<M> {
                 &s.fields,
                 self.ptr_ty,
                 s.repr_c,
+                s.explicit_align,
                 &self.struct_layouts,
                 &self.inline_struct_ids,
             );
@@ -4447,7 +4506,12 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_string_case_fold", &[pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_string_case_fold"), id);
-        let id = decl("ori_err_trace_push", &[pt, types::I64, pt], vec![], Some(pt))?;
+        let id = decl(
+            "ori_err_trace_push",
+            &[pt, types::I64, pt],
+            vec![],
+            Some(pt),
+        )?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_err_trace_push"), id);
         let id = decl("ori_err_trace_format", &[pt], vec![], Some(pt))?;
@@ -4900,6 +4964,24 @@ impl<M: Module> NativeBackend<M> {
         let id = decl("ori_buffer_as_slice", &[pt], vec![], Some(pt))?;
         self.stdlib_ids
             .insert(SmolStr::new("ori_buffer_as_slice"), id);
+        // Region bump arena allocator (MEM-REGION-1)
+        let id = decl("ori_region_new", &[], vec![], Some(pt))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_region_new"), id);
+        let id = decl(
+            "ori_region_alloc",
+            &[pt, types::I64, types::I64],
+            vec![],
+            Some(pt),
+        )?;
+        self.stdlib_ids.insert(SmolStr::new("ori_region_alloc"), id);
+        let id = decl("ori_region_reset", &[pt], vec![], None)?;
+        self.stdlib_ids.insert(SmolStr::new("ori_region_reset"), id);
+        let id = decl("ori_region_free", &[pt], vec![], None)?;
+        self.stdlib_ids.insert(SmolStr::new("ori_region_free"), id);
+        let id = decl("ori_region_size", &[pt], vec![], Some(types::I64))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_region_size"), id);
+        let id = decl("ori_region_count", &[pt], vec![], Some(types::I64))?;
+        self.stdlib_ids.insert(SmolStr::new("ori_region_count"), id);
         let id = decl("ori_list_pop", &[pt], vec![], Some(types::I64))?;
         self.stdlib_ids.insert(SmolStr::new("ori_list_pop"), id);
         let id = decl("ori_list_remove", &[pt, types::I64], vec![], None)?;
@@ -15570,9 +15652,8 @@ impl<'a> FuncCodegen<'a> {
             }
             HirExprKind::Await(inner) => self.emit_await(inner, &expr.ty)?,
             HirExprKind::StructLit { def_id, fields } => {
-                let def_id = def_id.ok_or_else(|| {
-                    "unresolved struct literal during native codegen".to_string()
-                })?;
+                let def_id = def_id
+                    .ok_or_else(|| "unresolved struct literal during native codegen".to_string())?;
                 if let Some(layout) = self.struct_layouts.get(&def_id).cloned() {
                     // Managed fields are owned by their registered ARC edges
                     // (single cascade owner). A custom destructor may observe
@@ -15766,6 +15847,30 @@ impl<'a> FuncCodegen<'a> {
                             self.builder.ins().load(cl, MemFlags::new(), addr, 0)
                         }
                     }
+                    Ty::Simd(elem_ty, _) => {
+                        let Some(elem_cl) = cl_type(elem_ty, self.ptr_ty) else {
+                            return Err(native_codegen_unsupported(
+                                "native codegen cannot index `simd` lane type yet",
+                            ));
+                        };
+                        let (elem_size, _) = self.field_size_align_for_layout(elem_ty);
+                        let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
+                            ir::StackSlotKind::ExplicitSlot,
+                            32,
+                            4,
+                        ));
+                        self.builder.ins().stack_store(container, slot, 0);
+                        let base = self.builder.ins().stack_addr(self.ptr_ty, slot, 0);
+                        let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
+                        let byte_offset = self.builder.ins().imul(idx, stride);
+                        let offset = if self.ptr_ty == types::I64 {
+                            byte_offset
+                        } else {
+                            self.builder.ins().ireduce(self.ptr_ty, byte_offset)
+                        };
+                        let addr = self.builder.ins().iadd(base, offset);
+                        self.builder.ins().load(elem_cl, MemFlags::new(), addr, 0)
+                    }
                     Ty::String => {
                         let slice_ref =
                             *self.func_refs.get("ori_string_slice").ok_or_else(|| {
@@ -15910,6 +16015,29 @@ impl<'a> FuncCodegen<'a> {
                     }
                 }
                 base
+            }
+            HirExprKind::SimdLit {
+                elem_ty,
+                lanes,
+                elements,
+            } => {
+                let vec_cl_ty = cl_type(&expr.ty, self.ptr_ty).unwrap_or(types::F32X4);
+                let (elem_size, _) = self.field_size_align_for_layout(elem_ty);
+                let total = elem_size.saturating_mul(*lanes as u32).max(16);
+                let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
+                    ir::StackSlotKind::ExplicitSlot,
+                    total,
+                    4,
+                ));
+                let base = self.builder.ins().stack_addr(self.ptr_ty, slot, 0);
+                for (index, element) in elements.iter().enumerate() {
+                    let value = self.emit_expr(element)?;
+                    let offset = (index as u32).saturating_mul(elem_size) as i32;
+                    self.builder
+                        .ins()
+                        .store(MemFlags::new(), value, base, offset);
+                }
+                self.builder.ins().stack_load(vec_cl_ty, slot, 0)
             }
             HirExprKind::ListLit { elem_ty, elements } => {
                 let list_ptr = self.emit_new_list()?;
@@ -16169,9 +16297,8 @@ impl<'a> FuncCodegen<'a> {
                 base,
                 updates,
             } => {
-                let def_id = def_id.ok_or_else(|| {
-                    "unresolved struct update during native codegen".to_string()
-                })?;
+                let def_id = def_id
+                    .ok_or_else(|| "unresolved struct update during native codegen".to_string())?;
                 if let Some(layout) = self.struct_layouts.get(&def_id).cloned() {
                     let base_ptr = self.emit_expr(base)?;
                     let new_ptr = self.malloc_typed_bytes(layout.size, def_id)?;
@@ -17723,6 +17850,12 @@ impl<'a> FuncCodegen<'a> {
             Div => {
                 if float {
                     self.builder.ins().fdiv(lv, rv)
+                } else if matches!(ty, Ty::Simd(..)) {
+                    if unsigned {
+                        self.builder.ins().udiv(lv, rv)
+                    } else {
+                        self.builder.ins().sdiv(lv, rv)
+                    }
                 } else if unsigned {
                     self.emit_division_guard(lv, rv, false)?;
                     self.builder.ins().udiv(lv, rv)

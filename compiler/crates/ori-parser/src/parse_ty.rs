@@ -65,6 +65,9 @@ impl<'src> Parser<'src> {
             let (inner, end) = self.parse_single_type_arg()?;
             return Some(Type::Slice(Box::new(inner), span.cover(end)));
         }
+        if self.at_contextual("simd") && self.peek_nth_kind(1) == Some(&TokenKind::LBracket) {
+            return self.parse_simd_type(span);
+        }
 
         match self.peek_kind()? {
             // ── Primitive types ───────────────────────────────────────────────
@@ -403,6 +406,49 @@ impl<'src> Parser<'src> {
         Some(Type::Array {
             elem: Box::new(elem),
             size: value,
+            span: start.cover(end),
+        })
+    }
+
+    fn parse_simd_type(&mut self, start: ori_diagnostics::Span) -> Option<Type> {
+        self.advance(); // contextual `simd`
+        self.expect(&TokenKind::LBracket)?;
+        let elem = self.parse_type()?;
+        self.expect(&TokenKind::Comma)?;
+
+        let lanes_span = self.current_span();
+        let lanes = if self.at(&TokenKind::IntLit) {
+            let tok = self.advance().unwrap().span;
+            let raw = self.slice(tok);
+            raw.parse::<u16>().ok()?
+        } else if self.peek_nth_kind(1) == Some(&TokenKind::Colon) {
+            let key = self.parse_name()?;
+            self.expect(&TokenKind::Colon)?;
+            if key.text.as_str() != "lanes" {
+                self.error(
+                    "parse.expected_simd_lanes",
+                    format!("`simd` names its lane count `lanes`, not `{}`", key.text),
+                    key.span,
+                );
+                return None;
+            }
+            let tok = self.expect(&TokenKind::IntLit)?;
+            let raw = self.slice(tok);
+            raw.parse::<u16>().ok()?
+        } else {
+            self.error(
+                "parse.expected_simd_lanes",
+                "expected lane count in `simd[T, N]` or `simd[T, lanes: N]`",
+                lanes_span,
+            );
+            return None;
+        };
+
+        let end = self.current_span();
+        self.expect(&TokenKind::RBracket)?;
+        Some(Type::Simd {
+            elem: Box::new(elem),
+            lanes,
             span: start.cover(end),
         })
     }

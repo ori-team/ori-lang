@@ -269,6 +269,7 @@ fn collect_expr_uses(expr: &HirExpr, used: &mut HashSet<SmolStr>) {
         }
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {
@@ -406,6 +407,7 @@ fn expr_effect(expr: &HirExpr, contract_structs: &HashSet<DefId>) -> ExprEffect 
         ),
         HirExprKind::ListLit { elements, .. }
         | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => combine_effects(
             elements

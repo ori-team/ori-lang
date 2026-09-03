@@ -94,6 +94,7 @@ when the compiler starts producing it.
 | `parse.apply_member_after_use` | error | Free methods/binds appear after a `use Trait` section (order is free members, then `use`) |
 | `parse.expected_const_expression` | error | A named type argument contains an expression outside the side-effect-free CT-0 subset |
 | `parse.expected_array_size` | error | `array[…]` is missing its length, or names it something other than `size`: write `array[int, size: 4]` |
+| `parse.expected_simd_lanes` | error | `simd[…]` is missing its lane count (`simd[float32, 4]` or `simd[float32, lanes: 4]`) |
 | `parse.associated_type_keyword_removed` | error | `type Name = …` for an associated type was removed; write `alias Name = …` |
 | `apply.redundant_use_block` | error | An `apply` block whose whole body is one `use` section; write the compact header `apply Type use Trait` |
 | `parse.poetic_call_nested` | error | Nested poetic call (juxtaposition of calls without parentheses) is not allowed; at most one poetic verb per expression |
@@ -169,6 +170,9 @@ when the compiler starts producing it.
 | `type.struct_literal_named_fields_required` | error | Struct construction requires named fields |
 | `type.tuple_index_on_non_tuple` | error | Tuple index access was used on a non-tuple value |
 | `type.array_index_out_of_bounds` | error | A constant index is past the end of an `array`. The length is part of the type, so this is caught at compile time |
+| `type.invalid_simd_type` | error | Element type or lane count is not supported for SIMD vectors |
+| `type.simd_index_out_of_bounds` | error | SIMD vector lane index is out of bounds |
+| `type.simd_length_mismatch` | error | Literal has different number of elements than the SIMD lane count |
 | `type.array_length_mismatch` | error | An array literal has a different number of elements than its declared length |
 | `type.array_element_not_inline` | error | An `array` element type is not inline: it is reference counted, or a struct containing a managed field (the diagnostic names the offending field), or a recursive struct with no finite size. Elements are stored inline with no ARC; use an inline struct/array or `list[T]` for managed values |
 | `type.negative_array_size` | error | `array[T, size: N]` was given a negative length |
@@ -243,6 +247,12 @@ Regression tests: `compile_reports_violated_param_contract`,
 | `async.capture_not_transferable` | error | Closure passed to `task.spawn` captures a value that is not `Transferable` |
 | `async.await_outside_async` | error | `await` was used outside an `async` function (`async name(...)`) |
 | `async.await_non_future` | error | `await` was used on a value that is not `future[T]` |
+
+### `perf`
+
+| Code | Severity | Description |
+|---|---|---|
+| `perf.allocation_in_noalloc` | error | Dynamic heap allocation, collection creation, string formatting, or call to a non-`@noalloc` function inside a function annotated with `@noalloc` |
 
 ### `backend`
 
@@ -423,6 +433,7 @@ Regression tests: `check_rejects_recursion_with_no_escape`,
 | Code | Severity | Description |
 |---|---|---|
 | `using.not_disposable` | error | `using` value does not satisfy the disposable contract |
+| `using.escape` | error | Resource bound by `using` escapes its scope via `return` or result: scoped arenas would dangle after deterministic disposal |
 
 ### `extern`
 

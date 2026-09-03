@@ -298,9 +298,10 @@ O modelo central de Ori é pequeno:
 - `optional[T]` modela ausência;
 - `result[T, E]` modela falha recuperável;
 - só `try expr` propaga (postfix `?` removido no S3);
-- `using` deixa limpeza explícita;
-- diagnósticos usam códigos estáveis como `name.undefined` e
-  `project.circular_import`.
+- `using` deixa limpeza determinística explícita (ex: `using r: mem.Region = mem.region()`);
+- recursos de sistemas de alta performance: checagem estática `@noalloc`, alinhamento explícito `@align(N)`, arenas de bump allocation (`mem.region`) e vetores SIMD portáteis de largura fixa (`simd[float32, 4]`);
+- dependências nativas e integração declarativa com `pkg-config` via `[native.dependencies]` no `ori.pkg.toml`;
+- diagnósticos usam códigos estáveis como `name.undefined` e `perf.allocation_in_noalloc`.
 
 Exemplo com `result`:
 

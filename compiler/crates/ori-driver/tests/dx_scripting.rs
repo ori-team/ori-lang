@@ -1128,7 +1128,10 @@ end
     );
     assert!(stdout.contains("CHILD_1"), "stdout: {stdout}");
     assert!(stdout.contains("CHILD_2"), "stdout: {stdout}");
-    assert!(stdout.contains("PARENT_CONTINUES_AFTER_JOIN"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("PARENT_CONTINUES_AFTER_JOIN"),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -1217,7 +1220,6 @@ io.print("line 2")
         "expected ok in test output:\nstdout: {stdout}\nstderr: {stderr}"
     );
 }
-
 
 #[test]
 fn e2e_daemon_jsonrpc_compilation_and_diagnostics() {
@@ -1347,5 +1349,382 @@ end
     assert!(
         stdout.contains("BUFFER_LOOP_OK"),
         "expected BUFFER_LOOP_OK in stdout: {stdout}"
+    );
+}
+
+#[test]
+fn e2e_noalloc_static_verification() {
+    use ori_driver::pipeline::{run_check_source, CheckOutput};
+    use std::path::Path;
+
+    // Valid: pure scalar @noalloc + calling other @noalloc function
+    let ok_out: CheckOutput = run_check_source(
+        Path::new("noalloc_ok.orl"),
+        r#"module app.main
+
+@noalloc
+helper(x: int) -> int
+    return x + 1
+end
+
+@noalloc
+update_tick(x: int) -> int
+    const y: int = helper(x)
+    return y * 2
+end
+
+main()
+    const v: int = update_tick(5)
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(
+        !ok_out.has_errors,
+        "pure scalar @noalloc must pass: {:?}",
+        ok_out.diagnostics
+    );
+
+    // Rejected: list literal
+    let list_out = run_check_source(
+        Path::new("noalloc_list.orl"),
+        r#"module app.main
+
+@noalloc
+hot_path() -> int
+    const xs: list[int] = [1, 2, 3]
+    return 0
+end
+
+main()
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(list_out.has_errors);
+    assert!(
+        list_out
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "perf.allocation_in_noalloc"),
+        "list literal must emit perf.allocation_in_noalloc: {:?}",
+        list_out.diagnostics
+    );
+
+    // Rejected: call to non-@noalloc user function
+    let call_out = run_check_source(
+        Path::new("noalloc_call.orl"),
+        r#"module app.main
+
+helper() -> int
+    return 1
+end
+
+@noalloc
+hot_path() -> int
+    return helper()
+end
+
+main()
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(call_out.has_errors);
+    assert!(
+        call_out
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "perf.allocation_in_noalloc"),
+        "call to non-@noalloc must emit perf.allocation_in_noalloc: {:?}",
+        call_out.diagnostics
+    );
+
+    // Rejected: async cannot be @noalloc
+    let async_out = run_check_source(
+        Path::new("noalloc_async.orl"),
+        r#"module app.main
+
+@noalloc
+async poll() -> void
+end
+
+main()
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(async_out.has_errors);
+    assert!(
+        async_out
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "perf.allocation_in_noalloc"),
+        "async @noalloc must emit perf.allocation_in_noalloc: {:?}",
+        async_out.diagnostics
+    );
+}
+
+#[test]
+fn e2e_align_attribute_and_layout_control() {
+    use ori_driver::pipeline::{run_check_source, CheckOutput};
+    use std::path::Path;
+
+    // 1. Valid: struct with @align(16)
+    let ok_out: CheckOutput = run_check_source(
+        Path::new("align_ok.orl"),
+        r#"module app.main
+
+import ori.mem = mem
+
+@align(16)
+struct GpuBlock
+    x: int
+    y: int
+end
+
+main()
+    const b: GpuBlock = GpuBlock { x: 1, y: 2 }
+    check mem.align_of(b) == 16
+    check mem.size_of(b) == 16
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(
+        !ok_out.has_errors,
+        "valid @align(16) must pass: {:?}",
+        ok_out.diagnostics
+    );
+
+    // 2. Rejected: non-power-of-two alignment
+    let bad_val_out = run_check_source(
+        Path::new("align_bad_val.orl"),
+        r#"module app.main
+
+@align(3)
+struct BadAlign
+    x: int
+end
+
+main()
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(bad_val_out.has_errors);
+    assert!(
+        bad_val_out
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "attr.invalid_arg"),
+        "non-power-of-two @align must emit attr.invalid_arg: {:?}",
+        bad_val_out.diagnostics
+    );
+
+    // 3. Rejected: @align on function (invalid target)
+    let bad_target_out = run_check_source(
+        Path::new("align_bad_target.orl"),
+        r#"module app.main
+
+@align(16)
+calculate() -> int
+    return 1
+end
+
+main()
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(bad_target_out.has_errors);
+    assert!(
+        bad_target_out
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "attr.invalid_target"),
+        "@align on function must emit attr.invalid_target: {:?}",
+        bad_target_out.diagnostics
+    );
+}
+
+#[test]
+fn e2e_region_arena_lifecycle_and_escape() {
+    use ori_driver::pipeline::{run_check_source, CheckOutput};
+    use std::path::Path;
+
+    // 1. Valid: using region with alloc + reset + size/count
+    let ok_out: CheckOutput = run_check_source(
+        Path::new("region_ok.orl"),
+        r#"module app.main
+
+import ori.mem = mem
+import ori.core = core
+
+main()
+    using r: mem.Region = mem.region()
+    check mem.count(r) == 0
+    check mem.size(r) == 0
+    mem.reset(r)
+    check mem.count(r) == 0
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(
+        !ok_out.has_errors,
+        "valid region lifecycle must pass: {:?}",
+        ok_out.diagnostics
+    );
+
+    // 2. Rejected: return of using-bound region escapes scope
+    let escape_out = run_check_source(
+        Path::new("region_escape.orl"),
+        r#"module app.main
+
+import ori.mem = mem
+
+leak() -> mem.Region
+    using r: mem.Region = mem.region()
+    return r
+end
+
+main()
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(escape_out.has_errors);
+    assert!(
+        escape_out
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "using.escape"),
+        "return of using-bound region must emit using.escape: {:?}",
+        escape_out.diagnostics
+    );
+}
+
+#[test]
+fn e2e_simd_vector_types_and_operations() {
+    use ori_driver::pipeline::{run_check_source, CheckOutput};
+    use std::path::Path;
+
+    // 1. Valid: simd[float32, 4] with arithmetic and indexing
+    let ok_out: CheckOutput = run_check_source(
+        Path::new("simd_ok.orl"),
+        r#"module app.main
+
+main()
+    const a: simd[float32, 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32]
+    const b: simd[float32, 4] = [10.0f32, 20.0f32, 30.0f32, 40.0f32]
+    const c: simd[float32, 4] = a + b
+    check c[0] == 11.0f32
+    check c[3] == 44.0f32
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(
+        !ok_out.has_errors,
+        "valid simd[float32, 4] must pass: {:?}",
+        ok_out.diagnostics
+    );
+
+    // 2. Valid: named lanes form simd[int32, lanes: 4]
+    let named_out: CheckOutput = run_check_source(
+        Path::new("simd_named.orl"),
+        r#"module app.main
+
+main()
+    const v: simd[int32, lanes: 4] = [1i32, 2i32, 3i32, 4i32]
+    check v[0] == 1i32
+    check v[3] == 4i32
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(
+        !named_out.has_errors,
+        "named lanes simd must pass: {:?}",
+        named_out.diagnostics
+    );
+
+    // 3. Rejected: length mismatch
+    let bad_len_out = run_check_source(
+        Path::new("simd_bad_len.orl"),
+        r#"module app.main
+
+main()
+    const v: simd[float32, 4] = [1.0f32, 2.0f32]
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(bad_len_out.has_errors);
+    assert!(
+        bad_len_out
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "type.simd_length_mismatch"),
+        "simd length mismatch must emit type.simd_length_mismatch: {:?}",
+        bad_len_out.diagnostics
+    );
+
+    // 4. Rejected: invalid element type
+    let bad_elem_out = run_check_source(
+        Path::new("simd_bad_elem.orl"),
+        r#"module app.main
+
+main()
+    const v: simd[string, 4] = ["a", "b", "c", "d"]
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(bad_elem_out.has_errors);
+    assert!(
+        bad_elem_out
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "type.invalid_simd_type"),
+        "invalid simd element type must emit type.invalid_simd_type: {:?}",
+        bad_elem_out.diagnostics
+    );
+
+    // 5. Rejected: out-of-bounds lane index
+    let oob_out = run_check_source(
+        Path::new("simd_oob.orl"),
+        r#"module app.main
+
+main()
+    const v: simd[float32, 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32]
+    const x = v[4]
+end
+"#
+        .to_string(),
+    )
+    .expect("check source must be loadable");
+    assert!(oob_out.has_errors);
+    assert!(
+        oob_out
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "type.simd_index_out_of_bounds"),
+        "simd out of bounds lane index must emit type.simd_index_out_of_bounds: {:?}",
+        oob_out.diagnostics
     );
 }

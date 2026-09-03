@@ -176,9 +176,12 @@ Ori does not silently mix `UserId` and `int`; conversions must be written.
 
 ## Declaration attributes
 
-Ori currently recognizes a closed set of top-level declaration attributes:
-`@test`, `@deprecated("message")`, `@inline`, `@no_inline`, `@cfg`,
-`@repr("C")`, and `@c_export`. Unknown attributes are errors.
+Ori recognizes a closed set of top-level declaration attributes:
+`@test`, `@deprecated("message")`, `@inline`, `@no_inline`, `@noalloc`,
+`@align(N)`, `@cfg`, `@repr("C")`, and `@c_export`. Unknown attributes are errors.
+
+- `@noalloc` statically verifies that the function performs no dynamic heap allocations (prohibits `list`/`map`/`set` literals, interpolated strings, closures, `await`, `using`, dynamic collection loops, and calls to functions not marked `@noalloc`).
+- `@align(N)` explicitly sets struct alignment to a power-of-two (1, 2, 4, 8, 16, 32, 64), matching GPU uniform buffers and FFI boundaries (`alignas(N)`).
 
 `@repr` is intentionally narrow: only exact `@repr("C")` on a struct is
 accepted. It selects the supported C-compatible layout route. Packed layouts
@@ -203,13 +206,43 @@ The supported keys are `target_os`, `target_arch`, `target_family`,
 and type errors inside it are not. See the [normative attribute rules](../spec/02-lexical.md#conditional-compilation)
 and [manifest feature fields](../spec/17-project-and-docs.md#oriproj).
 
-## Contiguous buffers and SIMD status
+## Portable SIMD Vectors (`simd[T, N]`)
+
+Ori provides first-class fixed-width SIMD vector types (`simd[float32, 4]`, `simd[int32, lanes: 4]`)
+lowered directly to CPU vector registers (x86_64 SSE/AVX and ARM NEON). They support direct parallel
+arithmetic operators (`+`, `-`, `*`, `/`) and lane indexing:
+
+```ori
+const a: simd[float32, 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32]
+const b: simd[float32, 4] = [10.0f32, 20.0f32, 30.0f32, 40.0f32]
+const c: simd[float32, 4] = a + b    -- single SIMD vector instruction
+const x: float32 = c[0]             -- lane extraction
+```
+
+Supported combinations: `float32`/`int32` x 2, 4, 8, 16; `float64`/`int64` x 2, 4; `int16`/`u16` x 4, 8, 16; `int8`/`u8` x 8, 16.
+
+## Scoped Memory Arenas (`mem.region`)
+
+`mem.region()` creates a high-performance scoped bump-arena for frame-temporary allocations (60/120 FPS game
+loops, visibility sets, rendering command queues), bypassing ARC reference counting:
+
+```ori
+import ori.mem = mem
+
+main()
+    using r: mem.Region = mem.region()
+    -- perform frame allocations...
+    mem.reset(r)           -- O(1) bulk reset
+end                        -- deterministic cleanup via core.Disposable on scope exit
+```
+
+Escape analysis guarantees:
+- A `Region` cannot escape its declaring block via `return` (`using.escape`).
+- A `Region` cannot cross threads or tasks (it is not `Transferable`).
+
+## Contiguous buffers (`buffer[T]`)
 
 `buffer[T]` represents flat, contiguous heap memory for numeric arrays, pixel arrays, and audio samples.
-The native backend currently emits scalar operations for loops over buffers and
-arrays. `GFX-SIMD-1` remains planned; no vectorizer is enabled in the HIR
-pipeline until a proven transformation, target-feature policy, and benchmark
-threshold exist.
 
 ```ori
 import ori.buffer = buf

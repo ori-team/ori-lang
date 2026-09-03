@@ -108,6 +108,19 @@ polyglot suite unless noted.
 8. Host is a laptop CPU; **ratios matter more than absolute milliseconds**.
 9. This does **not** measure I/O, async, FFI, multi-file projects, or real apps.
 
+## Zero-allocation hot paths (`@noalloc` + `mem.region` + `simd`)
+
+The high-performance systems wave (2026-09-03) provides general-purpose zero-allocation
+primitives for 60/120 FPS frame loops:
+
+- `@noalloc` statically checks that marked functions perform no dynamic heap allocations
+  (rejecting `list`/`map`/`set`, string formatting, closures, `await`, `using`, and allocating calls).
+- `using r: mem.Region = mem.region()` creates bump-arenas with O(1) bulk resets (`mem.reset`),
+  eliminating per-object reference-counting overhead in tick loops.
+- `simd[float32, 4]` lowers directly to CPU vector registers (x86_64 SSE/AVX and ARM NEON)
+  with parallel vector arithmetic (`+`, `-`, `*`, `/`).
+- `@align(N)` explicitly aligns struct layouts for GPU uniform buffers (`alignas(N)`).
+
 ## How to reproduce
 
 Requires `ori`, `python3`, `cargo`/`rustc`, `gcc`, `go`, `node`, `tsc`, `ruby`, `nim`

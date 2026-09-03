@@ -138,6 +138,12 @@ pub enum Type {
         size: ConstExpr,
         span: Span,
     },
+    /// `simd[T, lanes: N]` or `simd[T, N]` — portable fixed-width SIMD vector (LANG-SIMD-1).
+    Simd {
+        elem: Box<Type>,
+        lanes: u16,
+        span: Span,
+    },
     Map(Box<Type>, Box<Type>, Span),
     Set(Box<Type>, Span),
     Range(Box<Type>, Span),
@@ -189,6 +195,7 @@ impl Type {
             Type::Buffer(_, s)
             | Type::Slice(_, s)
             | Type::Array { span: s, .. }
+            | Type::Simd { span: s, .. }
             | Type::Optional(_, s)
             | Type::List(_, s)
             | Type::Set(_, s)

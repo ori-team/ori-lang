@@ -9,3 +9,7 @@ repository = "https://github.com/raillen/ori-lang"
 [language_servers.ori-lsp]
 name = "Ori LSP"
 language = "Ori"
+
+[debug_adapters.ori-dap]
+name = "Ori DAP"
+languages = ["Ori"]

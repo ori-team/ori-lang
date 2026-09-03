@@ -434,7 +434,7 @@ See the FFI documentation for detailed ABI shapes.
 
 ## `ori.mem`
 
-`ori.mem` provides explicit memory inspection utilities:
+`ori.mem` provides memory inspection utilities and scoped bump-arena regions (`MEM-REGION-1`):
 
 ```ori
 import ori.mem = mem
@@ -446,6 +446,23 @@ mem.align_of(value)        -- alignment in bytes of value's static type
 These are compile-time constants. The argument is used as a type witness and
 is not needed in ordinary code.
 
-Current status: `ori.mem` is importable. The current parser does not support
-type-argument call syntax such as `size_of<T>()`, so code should use the
-expression-based form above.
+### Scoped Arenas (`mem.region`)
+
+`mem.region()` creates a high-performance scoped bump-arena (`Region`) designed for frame-temporary
+allocations (game tick loops, physics updates, visibility lists, and intermediate transformations).
+Allocations bump a cursor in O(1) without touching the global ARC lock or registry.
+
+```ori
+import ori.mem = mem
+
+main()
+    using r: mem.Region = mem.region()
+    -- perform frame allocations...
+    mem.reset(r)           -- O(1) bulk reset: bumps discarded, chunks preserved for next tick
+end                        -- deterministic cleanup via core.Disposable upon block exit
+```
+
+**Escape Analysis Guarantees:**
+1. A `Region` cannot escape its declaring block via `return` (enforced by `using.escape`).
+2. A `Region` cannot cross threads or tasks (it is not `Transferable`, preventing `task.spawn` capture).
+3. Reset is instant O(1) without traversing object pointer graphs.

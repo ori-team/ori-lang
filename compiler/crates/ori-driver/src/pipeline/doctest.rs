@@ -188,7 +188,10 @@ fn format_source_labelled_diagnostics(
         };
         out.push_str(&format!("{severity} [{}]: {}", diag.code, diag.message));
         for label in &diag.labels {
-            out.push_str(&format!("\n  --> {}:{}: {}", file, base_line, label.message));
+            out.push_str(&format!(
+                "\n  --> {}:{}: {}",
+                file, base_line, label.message
+            ));
         }
         if let Some(why) = &diag.why {
             out.push_str(&format!("\n  why: {why}"));
@@ -246,7 +249,11 @@ impl StdoutCapture {
             let mut output = Vec::new();
             let mut buf = [0u8; 1024];
             loop {
-                let n = libc::read(self.pipe_read, buf.as_mut_ptr() as *mut libc::c_void, buf.len());
+                let n = libc::read(
+                    self.pipe_read,
+                    buf.as_mut_ptr() as *mut libc::c_void,
+                    buf.len(),
+                );
                 if n <= 0 {
                     break;
                 }
@@ -340,7 +347,8 @@ pub fn run_doctests(cases: &[DocTestCase], filter: Option<&str>) -> (Vec<TestRes
         cache.append(check_out.cache);
 
         if check_out.has_errors {
-            let rendered = format_source_labelled_diagnostics(&check_out.diagnostics, &case.file, case.line);
+            let rendered =
+                format_source_labelled_diagnostics(&check_out.diagnostics, &case.file, case.line);
             match &directive {
                 DoctestDirective::CompileFail(expected_code) => {
                     if let Some(code) = expected_code {
@@ -360,7 +368,9 @@ pub fn run_doctests(cases: &[DocTestCase], filter: Option<&str>) -> (Vec<TestRes
                         } else {
                             results.push(failed_doctest(
                                 name,
-                                format!("Expected compile failure with `{code}`, but got:\n{rendered}"),
+                                format!(
+                                    "Expected compile failure with `{code}`, but got:\n{rendered}"
+                                ),
                             ));
                         }
                     } else {
@@ -442,7 +452,10 @@ pub fn run_doctests(cases: &[DocTestCase], filter: Option<&str>) -> (Vec<TestRes
                         }
                         DoctestDirective::Output(expected) => {
                             if !passed_normally {
-                                failed_doctest(name, format!("doctest exited with status {}", run_out.exit_code))
+                                failed_doctest(
+                                    name,
+                                    format!("doctest exited with status {}", run_out.exit_code),
+                                )
                             } else {
                                 let actual_trim = captured_stdout.trim();
                                 let expected_trim = expected.trim();
@@ -466,20 +479,18 @@ pub fn run_doctests(cases: &[DocTestCase], filter: Option<&str>) -> (Vec<TestRes
                                 }
                             }
                         }
-                        _ => {
-                            TestResult {
-                                name,
-                                passed: passed_normally,
-                                skipped: false,
-                                stdout: captured_stdout,
-                                stderr: if passed_normally {
-                                    String::new()
-                                } else {
-                                    format!("doctest exited with status {}", run_out.exit_code)
-                                },
-                                status: Some(run_out.exit_code),
-                            }
-                        }
+                        _ => TestResult {
+                            name,
+                            passed: passed_normally,
+                            skipped: false,
+                            stdout: captured_stdout,
+                            stderr: if passed_normally {
+                                String::new()
+                            } else {
+                                format!("doctest exited with status {}", run_out.exit_code)
+                            },
+                            status: Some(run_out.exit_code),
+                        },
                     }
                 }
                 Err(error) => {
@@ -605,7 +616,11 @@ mod tests {
 
         let (results, _) = run_doctests(&cases, None);
         assert_eq!(results.len(), 1);
-        assert!(results[0].passed, "compile_fail doctest should pass: {:?}", results[0]);
+        assert!(
+            results[0].passed,
+            "compile_fail doctest should pass: {:?}",
+            results[0]
+        );
     }
 
     #[test]

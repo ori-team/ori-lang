@@ -105,6 +105,44 @@ host, que deve liberá-la com `ori_arc_release`. Retornos `bytes` usam
 > emprestados do host por uma fuga FFI manual; mantenha o ponteiro válido apenas
 > durante a chamada.
 
+## Dependências nativas declarativas
+
+No `ori.pkg.toml`, seções `[native.dependencies.<lib>]` (`pkg_config`, `static`, `framework`, `version`)
+e `[native.linux]`, `[native.windows]`, `[native.macos]` (com `libraries`, `frameworks`, `library_dirs`,
+`link_flags`) declaram bibliotecas do sistema sem scripts de link manuais:
+
+```toml
+[native.dependencies.raylib]
+pkg_config = "raylib"
+version = ">= 5.0"
+
+[native.linux]
+libraries = ["GL", "X11", "m", "dl"]
+
+[native.windows]
+libraries = ["user32", "opengl32"]
+
+[native.macos]
+frameworks = ["OpenGL", "Cocoa"]
+```
+
+O compilador resolve `pkg-config`, traduz os flags para `-l`, `-L` e `-framework` (ou `.lib` e `/LIBPATH` no MSVC) e propaga as flags para o linker nativo.
+
+### Alinhamento explícito (`@align`)
+
+Structs `@repr("C")` podem receber alinhamento explícito com `@align(N)` para potências de dois (1 a 64),
+emitido nos headers C irmãos (`alignas(N)`/`__attribute__((aligned(N)))`) para GPU uniform buffers e
+GDExtension:
+
+```ori
+@repr("C")
+@align(16)
+public struct UniformData
+    matrix: int
+    offset: int
+end
+```
+
 ## Limites atuais
 
 `@c_export` pertence ao backend nativo; o backend C/debug não é a referência de

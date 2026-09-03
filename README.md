@@ -350,9 +350,10 @@ Ori's core model is small:
 - `optional[T]` models absence; `result[T, E]` models recoverable failure;
 - only `try expr` propagates (postfix `?` removed);
 - closures use `(u) => expr` (no `do`);
-- `using` makes cleanup explicit;
-- diagnostics use stable codes such as `name.undefined`; the migration
-  diagnostic `parse.namespace_removed` keeps its historical name.
+- `using` makes cleanup explicit (e.g. `using r: mem.Region = mem.region()`);
+- zero-allocation systems capabilities: static `@noalloc`, explicit `@align(N)`, bump arenas (`mem.region`), and portable fixed-width SIMD vectors (`simd[float32, 4]`);
+- declarative native platform linking and `pkg-config` via `[native.dependencies]` in `ori.pkg.toml`;
+- diagnostics use stable codes such as `name.undefined` and `perf.allocation_in_noalloc`.
 
 Example with `result`:
 

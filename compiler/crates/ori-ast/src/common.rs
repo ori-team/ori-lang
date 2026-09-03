@@ -145,6 +145,7 @@ impl CfgPredicate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttrArg {
     String(SmolStr, Span),
+    Int(SmolStr, Span),
     Named { key: Name, value: Name },
     Cfg(CfgPredicate),
 }

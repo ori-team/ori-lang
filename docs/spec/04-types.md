@@ -162,6 +162,7 @@ These types are built into the language and require no import.
 |---|---|
 | `list[T]` | Ordered, resizable sequence |
 | `array[T, size: N]` | Fixed-length sequence stored **inline** — see below |
+| `simd[T, N]` | Fixed-width SIMD vector (`simd[float32, 4]`, `simd[int32, lanes: 4]`) lowered to CPU vector registers — see below |
 | `buffer[T]` | Mutable, contiguous, fixed-length heap block — see below |
 | `slice[T]` | A read-only **window** over a `list[T]` — see below |
 | `map[K, V]` | Key-value mapping. `int` and `string` use native hashing; non-recursive user-defined struct or enum values with `Hashable` use a user `hash(self) -> int` method when present, otherwise generated structural hashing. Explicit, non-structural `Equatable` without `hash` uses a constant hash (`LANG-COLL-EQHASH-1`) |
@@ -371,6 +372,30 @@ rejected. Use `list[T]` when the elements are managed.
 
 Native only. The C debug backend declines inline arrays rather than lowering
 them to a heap list that would behave differently (chapter 14).
+
+---
+
+## Portable SIMD Vectors (`simd[T, N]`)
+
+`simd[T, N]` (or `simd[T, lanes: N]`) is a first-class value type lowered directly to CPU vector
+registers (x86_64 SSE/AVX `F32x4`/`I32x4` and aarch64 NEON). It supports parallel arithmetic
+operators (`+`, `-`, `*`, `/`) and individual lane indexing.
+
+```ori
+const a: simd[float32, 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32]
+const b: simd[float32, 4] = [10.0f32, 20.0f32, 30.0f32, 40.0f32]
+const c: simd[float32, 4] = a + b    -- single SIMD vector instruction
+const first: float32 = c[0]          -- lane extraction
+```
+
+### Supported Combinations
+
+| Element Type | Supported Lanes | Register Width |
+|---|---|---|
+| `float32`, `int32`, `u32` | 2, 4, 8, 16 | 64-bit, 128-bit, 256-bit, 512-bit |
+| `float64`, `int64`, `u64` | 2, 4 | 128-bit, 256-bit |
+| `int16`, `u16` | 4, 8, 16 | 64-bit, 128-bit, 256-bit |
+| `int8`, `u8` | 8, 16 | 64-bit, 128-bit |
 
 ---
 

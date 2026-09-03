@@ -27,8 +27,40 @@ pub struct PackageManifest {
     pub description: Option<String>,
     pub dependencies: Vec<PackageDependency>,
     pub native_libs: Vec<String>,
+    pub native_config: NativeConfig,
     pub declared_features: BTreeSet<String>,
     pub default_features: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NativeConfig {
+    pub dependencies: Vec<NativeDependency>,
+    pub platforms: NativePlatformConfigs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeDependency {
+    pub name: String,
+    pub pkg_config: Option<String>,
+    pub is_static: bool,
+    pub framework: Option<String>,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NativePlatformConfigs {
+    pub linux: PlatformLinkConfig,
+    pub windows: PlatformLinkConfig,
+    pub macos: PlatformLinkConfig,
+    pub all: PlatformLinkConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlatformLinkConfig {
+    pub libraries: Vec<String>,
+    pub frameworks: Vec<String>,
+    pub library_dirs: Vec<PathBuf>,
+    pub link_flags: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -711,6 +743,7 @@ fn parse_project_lock_manifest(path: &Path) -> Result<PackageManifest, String> {
         description: None,
         dependencies,
         native_libs: Vec::new(),
+        native_config: NativeConfig::default(),
         declared_features: BTreeSet::new(),
         default_features: BTreeSet::new(),
     })
@@ -1325,6 +1358,8 @@ fn parse_package_manifest(
     let mut package = HashMap::new();
     let mut dependencies = Vec::new();
     let mut native_libs = Vec::new();
+    let mut native_config = NativeConfig::default();
+    let mut sub_native_deps: HashMap<String, NativeDependency> = HashMap::new();
     let mut declared_features = BTreeSet::new();
     let mut default_features = BTreeSet::new();
 
@@ -1351,6 +1386,77 @@ fn parse_package_manifest(
                 manifest_path.display()
             )
         })?;
+
+        if section == "native" {
+            parse_platform_link_key(
+                &mut native_config.platforms.all,
+                key,
+                value,
+                &manifest_path,
+                line_no,
+            )?;
+            continue;
+        }
+        if let Some(target) = section.strip_prefix("native.") {
+            match target {
+                "linux" => {
+                    parse_platform_link_key(
+                        &mut native_config.platforms.linux,
+                        key,
+                        value,
+                        &manifest_path,
+                        line_no,
+                    )?;
+                    continue;
+                }
+                "windows" => {
+                    parse_platform_link_key(
+                        &mut native_config.platforms.windows,
+                        key,
+                        value,
+                        &manifest_path,
+                        line_no,
+                    )?;
+                    continue;
+                }
+                "macos" => {
+                    parse_platform_link_key(
+                        &mut native_config.platforms.macos,
+                        key,
+                        value,
+                        &manifest_path,
+                        line_no,
+                    )?;
+                    continue;
+                }
+                "dependencies" => {
+                    let dep = parse_native_dependency_entry(key, value, &manifest_path, line_no)?;
+                    native_config.dependencies.push(dep);
+                    continue;
+                }
+                _ if target.starts_with("dependencies.") => {
+                    let dep_name = target["dependencies.".len()..].trim();
+                    if dep_name.is_empty() {
+                        return Err(format!(
+                            "package.manifest_syntax: `{}` line {line_no}: empty native dependency name in section",
+                            manifest_path.display()
+                        ));
+                    }
+                    let entry = sub_native_deps
+                        .entry(dep_name.to_string())
+                        .or_insert_with(|| NativeDependency {
+                            name: dep_name.to_string(),
+                            pkg_config: None,
+                            is_static: false,
+                            framework: None,
+                            version: None,
+                        });
+                    parse_native_dep_field(entry, key, value, &manifest_path, line_no)?;
+                    continue;
+                }
+                _ => {}
+            }
+        }
 
         match section.as_str() {
             "package" => {
@@ -1474,6 +1580,16 @@ fn parse_package_manifest(
         ));
     }
 
+    for (_dep_name, dep) in sub_native_deps {
+        if !native_config
+            .dependencies
+            .iter()
+            .any(|d| d.name == dep.name)
+        {
+            native_config.dependencies.push(dep);
+        }
+    }
+
     Ok(PackageManifest {
         root,
         manifest_path,
@@ -1484,6 +1600,7 @@ fn parse_package_manifest(
         description,
         dependencies,
         native_libs,
+        native_config,
         declared_features,
         default_features,
     })
@@ -1502,6 +1619,237 @@ fn validate_feature_identifier(name: &str) -> Result<(), String> {
             "invalid feature name `{name}`; use an ASCII identifier other than `default`"
         ))
     }
+}
+
+fn parse_bool_value(raw: &str) -> Result<bool, String> {
+    let value = raw.trim().trim_matches('"').trim();
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("expected `true` or `false`, found `{raw}`")),
+    }
+}
+
+/// Parse `[native.*]`, `[native.linux]`, `[native.windows]`, `[native.macos]`
+/// keys into a `PlatformLinkConfig`. Keys accepted:
+/// `libraries`, `frameworks`, `library_dirs`, `link_flags`.
+fn parse_platform_link_key(
+    platform: &mut PlatformLinkConfig,
+    key: &str,
+    value: &str,
+    manifest_path: &Path,
+    line_no: usize,
+) -> Result<(), String> {
+    let key = normalize_key(key).map_err(|err| {
+        format!(
+            "package.manifest_syntax: `{}` line {line_no}: {err}",
+            manifest_path.display()
+        )
+    })?;
+    match key.as_str() {
+        "libraries" => {
+            let libs = parse_string_array_value(value).map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {line_no}: {err}",
+                    manifest_path.display()
+                )
+            })?;
+            platform.libraries.extend(libs);
+        }
+        "frameworks" => {
+            let fws = parse_string_array_value(value).map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {line_no}: {err}",
+                    manifest_path.display()
+                )
+            })?;
+            platform.frameworks.extend(fws);
+        }
+        "library_dirs" => {
+            let dirs = parse_string_array_value(value).map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {line_no}: {err}",
+                    manifest_path.display()
+                )
+            })?;
+            platform
+                .library_dirs
+                .extend(dirs.into_iter().map(PathBuf::from));
+        }
+        "link_flags" => {
+            let flags = parse_string_array_value(value).map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {line_no}: {err}",
+                    manifest_path.display()
+                )
+            })?;
+            platform.link_flags.extend(flags);
+        }
+        other => {
+            return Err(format!(
+                "package.manifest_syntax: `{}` line {line_no}: unknown platform link key `{other}`",
+                manifest_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Parse a native dependency inline entry under `[native.dependencies]`.
+/// Forms accepted: `name = "pkg-config"` or
+/// `name = { pkg_config = "...", static = true/false, framework = "...", version = "..." }`.
+fn parse_native_dependency_entry(
+    key: &str,
+    value: &str,
+    manifest_path: &Path,
+    line_no: usize,
+) -> Result<NativeDependency, String> {
+    let name = normalize_key(key).map_err(|err| {
+        format!(
+            "package.manifest_syntax: `{}` line {line_no}: {err}",
+            manifest_path.display()
+        )
+    })?;
+    let value = value.trim();
+    if value.starts_with('{') {
+        let table = parse_loose_inline_table(value).map_err(|err| {
+            format!(
+                "package.manifest_syntax: `{}` line {line_no}: {err}",
+                manifest_path.display()
+            )
+        })?;
+        let pkg_config = table.get("pkg_config").cloned();
+        let is_static = table
+            .get("static")
+            .map(|s| parse_bool_value(s))
+            .transpose()
+            .map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {line_no}: {err}",
+                    manifest_path.display()
+                )
+            })?
+            .unwrap_or(false);
+        let framework = table.get("framework").cloned();
+        let version = table.get("version").cloned();
+        Ok(NativeDependency {
+            name,
+            pkg_config,
+            is_static,
+            framework,
+            version,
+        })
+    } else if value.starts_with('"') {
+        let pkg_config = parse_string_value(value).map_err(|err| {
+            format!(
+                "package.manifest_syntax: `{}` line {line_no}: {err}",
+                manifest_path.display()
+            )
+        })?;
+        Ok(NativeDependency {
+            name,
+            pkg_config: Some(pkg_config),
+            is_static: false,
+            framework: None,
+            version: None,
+        })
+    } else {
+        Err(format!(
+            "package.manifest_syntax: `{}` line {line_no}: expected inline table or string for native dependency `{name}`",
+            manifest_path.display()
+        ))
+    }
+}
+
+/// Parse a field within a `[native.dependencies.<name>]` section.
+fn parse_native_dep_field(
+    dep: &mut NativeDependency,
+    key: &str,
+    value: &str,
+    manifest_path: &Path,
+    line_no: usize,
+) -> Result<(), String> {
+    let key = normalize_key(key).map_err(|err| {
+        format!(
+            "package.manifest_syntax: `{}` line {line_no}: {err}",
+            manifest_path.display()
+        )
+    })?;
+    match key.as_str() {
+        "pkg_config" => {
+            let pkg_config = parse_string_value(value).map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {line_no}: {err}",
+                    manifest_path.display()
+                )
+            })?;
+            dep.pkg_config = Some(pkg_config);
+        }
+        "static" => {
+            dep.is_static = parse_bool_value(value).map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {line_no}: {err}",
+                    manifest_path.display()
+                )
+            })?;
+        }
+        "framework" => {
+            let fw = parse_string_value(value).map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {line_no}: {err}",
+                    manifest_path.display()
+                )
+            })?;
+            dep.framework = Some(fw);
+        }
+        "version" => {
+            let version = parse_string_value(value).map_err(|err| {
+                format!(
+                    "package.manifest_syntax: `{}` line {line_no}: {err}",
+                    manifest_path.display()
+                )
+            })?;
+            dep.version = Some(version);
+        }
+        other => {
+            return Err(format!(
+                "package.manifest_syntax: `{}` line {line_no}: unknown native dependency key `{other}`",
+                manifest_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_loose_inline_table(raw: &str) -> Result<HashMap<String, String>, String> {
+    let trimmed = raw.trim();
+    if !trimmed.ends_with('}') {
+        return Err("inline table must end with `}`".to_string());
+    }
+    let inner = trimmed
+        .strip_prefix('{')
+        .ok_or_else(|| "inline table must start with `{`".to_string())?
+        .strip_suffix('}')
+        .unwrap()
+        .trim();
+    let mut out = HashMap::new();
+    if inner.is_empty() {
+        return Ok(out);
+    }
+    for part in split_top_level(inner, ',') {
+        let (key, value) = split_key_value(part.trim())
+            .ok_or_else(|| "inline table item must use `key = value`".to_string())?;
+        let key = normalize_key(key)?;
+        let value = value.trim();
+        let parsed_value = if value.starts_with('"') {
+            parse_string_value(value)?
+        } else {
+            // Permite `true` / `false` sem aspas em tabelas inline
+            value.to_string()
+        };
+        out.insert(key, parsed_value);
+    }
+    Ok(out)
 }
 
 fn parse_dependency(key: &str, value: &str) -> Result<PackageDependency, String> {
@@ -1754,7 +2102,7 @@ fn parse_string_array_value(raw: &str) -> Result<Vec<String>, String> {
     }
 
     let mut items = Vec::new();
-    for part in inner.split(',') {
+    for part in split_top_level(inner, ',') {
         let part = part.trim();
         if part.is_empty() {
             continue;
@@ -4273,6 +4621,143 @@ mod tests {
         );
         let error = validate_package_tarball(&hardlink_archive).expect_err("hardlink must fail");
         assert!(error.contains("unsupported entry kind"), "{error}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_manifest_parses_declarative_native_dependencies() {
+        let manifest_src = r#"
+[package]
+name = "engine_demo"
+version = "0.2.0"
+entry = "main.orl"
+ori_version = "0.3.8"
+
+[native.dependencies.raylib]
+pkg_config = "raylib"
+static = true
+version = ">= 5.0"
+
+[native.dependencies]
+gl = { pkg_config = "gl" }
+cocoa = { framework = "Cocoa" }
+box2d = "box2d"
+
+[native.linux]
+libraries = ["GL", "X11", "m", "dl"]
+library_dirs = ["/usr/local/lib"]
+link_flags = ["-Wl,-rpath,/opt/engine/lib"]
+
+[native.windows]
+libraries = ["user32", "opengl32"]
+library_dirs = ["C:\\libs"]
+link_flags = ["/NODEFAULTLIB:libcmt"]
+
+[native.macos]
+frameworks = ["OpenGL", "Cocoa", "IOKit"]
+libraries = ["m"]
+library_dirs = ["/opt/homebrew/lib"]
+
+[native]
+libraries = ["common_c"]
+link_flags = ["-Wl,-z,now"]
+"#;
+        let root = std::env::temp_dir().join(format!(
+            "ori_pkg_native_{}_{}",
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        fs::write(root.join("main.orl"), "module app.main\nmain()\nend\n").expect("write entry");
+        let manifest_path = root.join("ori.pkg.toml");
+        fs::write(&manifest_path, manifest_src).expect("write manifest");
+
+        let manifest = load_package_manifest(&manifest_path).expect("load manifest must succeed");
+        assert_eq!(manifest.name, "engine_demo");
+        assert_eq!(manifest.version, "0.2.0");
+
+        // Assert native dependencies
+        let raylib = manifest
+            .native_config
+            .dependencies
+            .iter()
+            .find(|d| d.name == "raylib")
+            .expect("raylib dep");
+        assert_eq!(raylib.pkg_config.as_deref(), Some("raylib"));
+        assert!(raylib.is_static);
+        assert_eq!(raylib.version.as_deref(), Some(">= 5.0"));
+
+        let gl = manifest
+            .native_config
+            .dependencies
+            .iter()
+            .find(|d| d.name == "gl")
+            .expect("gl dep");
+        assert_eq!(gl.pkg_config.as_deref(), Some("gl"));
+        assert!(!gl.is_static);
+
+        let cocoa = manifest
+            .native_config
+            .dependencies
+            .iter()
+            .find(|d| d.name == "cocoa")
+            .expect("cocoa dep");
+        assert_eq!(cocoa.framework.as_deref(), Some("Cocoa"));
+
+        let box2d = manifest
+            .native_config
+            .dependencies
+            .iter()
+            .find(|d| d.name == "box2d")
+            .expect("box2d dep");
+        assert_eq!(box2d.pkg_config.as_deref(), Some("box2d"));
+
+        // Assert platform link configurations
+        assert_eq!(
+            manifest.native_config.platforms.linux.libraries,
+            vec!["GL", "X11", "m", "dl"]
+        );
+        assert_eq!(
+            manifest.native_config.platforms.linux.library_dirs,
+            vec![PathBuf::from("/usr/local/lib")]
+        );
+        assert_eq!(
+            manifest.native_config.platforms.linux.link_flags,
+            vec!["-Wl,-rpath,/opt/engine/lib"]
+        );
+
+        assert_eq!(
+            manifest.native_config.platforms.windows.libraries,
+            vec!["user32", "opengl32"]
+        );
+        assert_eq!(
+            manifest.native_config.platforms.windows.library_dirs,
+            vec![PathBuf::from("C:\\libs")]
+        );
+        assert_eq!(
+            manifest.native_config.platforms.windows.link_flags,
+            vec!["/NODEFAULTLIB:libcmt"]
+        );
+
+        assert_eq!(
+            manifest.native_config.platforms.macos.frameworks,
+            vec!["OpenGL", "Cocoa", "IOKit"]
+        );
+        assert_eq!(manifest.native_config.platforms.macos.libraries, vec!["m"]);
+        assert_eq!(
+            manifest.native_config.platforms.macos.library_dirs,
+            vec![PathBuf::from("/opt/homebrew/lib")]
+        );
+
+        assert_eq!(
+            manifest.native_config.platforms.all.libraries,
+            vec!["common_c"]
+        );
+        assert_eq!(
+            manifest.native_config.platforms.all.link_flags,
+            vec!["-Wl,-z,now"]
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 }

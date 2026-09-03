@@ -103,6 +103,8 @@ pub enum Ty {
     /// still generic (`array[byte, size: cap]` inside `Buffer[const cap: int]`).
     /// Two arrays of different length are different types.
     Array(Box<Ty>, Box<Ty>),
+    /// `simd[T, N]` — portable fixed-width SIMD vector (LANG-SIMD-1).
+    Simd(Box<Ty>, u16),
     Map(Box<Ty>, Box<Ty>),
     Set(Box<Ty>),
     Range(Box<Ty>),
@@ -275,6 +277,7 @@ impl Ty {
             Ty::Any(_) => false,
             Ty::Result(a, b) | Ty::Map(a, b) => a.contains_infer() || b.contains_infer(),
             Ty::Array(elem, size) => elem.contains_infer() || size.contains_infer(),
+            Ty::Simd(elem, _) => elem.contains_infer(),
             Ty::Opaque { args, .. } => args.iter().any(|arg| arg.contains_infer()),
             Ty::Tuple(ts) => ts.iter().any(|t| t.contains_infer()),
             Ty::Func { params, ret } => {
@@ -307,6 +310,7 @@ impl Ty {
             Ty::Any(_) => false,
             Ty::Result(a, b) | Ty::Map(a, b) => a.contains_error() || b.contains_error(),
             Ty::Array(elem, size) => elem.contains_error() || size.contains_error(),
+            Ty::Simd(elem, _) => elem.contains_error(),
             Ty::Opaque { args, .. } => args.iter().any(|arg| arg.contains_error()),
             Ty::Tuple(ts) => ts.iter().any(|t| t.contains_error()),
             Ty::Func { params, ret } => {
@@ -490,6 +494,7 @@ impl Ty {
                     other.display_in(def_map)
                 ),
             },
+            Ty::Simd(elem, lanes) => format!("simd[{}, {}]", elem.display_in(def_map), lanes),
             Ty::Set(inner) => format!("set[{}]", inner.display_in(def_map)),
             Ty::Map(k, v) => format!("map[{}, {}]", k.display_in(def_map), v.display_in(def_map)),
             Ty::Range(inner) => format!("range[{}]", inner.display_in(def_map)),
@@ -568,6 +573,9 @@ impl Ty {
                     other.display_with_names(names)
                 ),
             },
+            Ty::Simd(elem, lanes) => {
+                format!("simd[{}, {lanes}]", elem.display_with_names(names))
+            }
             Ty::Set(inner) => format!("set[{}]", inner.display_with_names(names)),
             Ty::Map(key, value) => format!(
                 "map[{}, {}]",
@@ -637,6 +645,7 @@ impl Ty {
                 Ty::ConstInt(_, n) => format!("array[{}, size: {}]", elem.display(), n),
                 other => format!("array[{}, size: {}]", elem.display(), other.display()),
             },
+            Ty::Simd(elem, lanes) => format!("simd[{}, {}]", elem.display(), lanes),
             Ty::Map(k, v) => format!("map[{}, {}]", k.display(), v.display()),
             Ty::Set(t) => format!("set[{}]", t.display()),
             Ty::Range(t) => format!("range[{}]", t.display()),
@@ -739,6 +748,7 @@ pub fn substitute_ty_params(ty: &Ty, args: &[Ty]) -> Ty {
             Box::new(substitute_ty_params(elem, args)),
             Box::new(substitute_ty_params(size, args)),
         ),
+        Ty::Simd(elem, lanes) => Ty::Simd(Box::new(substitute_ty_params(elem, args)), *lanes),
         Ty::Map(k, v) => Ty::Map(
             Box::new(substitute_ty_params(k, args)),
             Box::new(substitute_ty_params(v, args)),
@@ -816,6 +826,7 @@ pub fn replace_json_placeholder(ty: Ty, def_map: &DefMap) -> Ty {
                 Box::new(recurse(*inner, json_value)),
                 Box::new(recurse(*size, json_value)),
             ),
+            Ty::Simd(inner, lanes) => Ty::Simd(Box::new(recurse(*inner, json_value)), lanes),
             Ty::Map(key, value) => Ty::Map(
                 Box::new(recurse(*key, json_value)),
                 Box::new(recurse(*value, json_value)),
@@ -895,6 +906,14 @@ where
         ),
         Ty::List(elem) => Ty::List(Box::new(normalize_ty_aliases_depth(*elem, lookup, depth))),
         Ty::Buffer(elem) => Ty::Buffer(Box::new(normalize_ty_aliases_depth(*elem, lookup, depth))),
+        Ty::Array(elem, size) => Ty::Array(
+            Box::new(normalize_ty_aliases_depth(*elem, lookup, depth)),
+            Box::new(normalize_ty_aliases_depth(*size, lookup, depth)),
+        ),
+        Ty::Simd(elem, lanes) => Ty::Simd(
+            Box::new(normalize_ty_aliases_depth(*elem, lookup, depth)),
+            lanes,
+        ),
         Ty::Map(k, v) => Ty::Map(
             Box::new(normalize_ty_aliases_depth(*k, lookup, depth)),
             Box::new(normalize_ty_aliases_depth(*v, lookup, depth)),

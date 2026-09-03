@@ -226,7 +226,14 @@ fn render_struct_declarations(
         let exported = &exported_structs[&structure.def_id];
         match exported.kind {
             CExportStructKind::ScalarBridge => {
-                header.push_str(&format!("typedef struct {} {{\n", exported.c_name));
+                if let Some(align) = structure.explicit_align {
+                    header.push_str(&format!(
+                        "#ifdef __cplusplus\ntypedef struct alignas({align}) {} {{\n#else\ntypedef struct __attribute__((aligned({align}))) {} {{\n#endif\n",
+                        exported.c_name, exported.c_name
+                    ));
+                } else {
+                    header.push_str(&format!("typedef struct {} {{\n", exported.c_name));
+                }
                 let mut field_names = HashSet::new();
                 for field in &structure.fields {
                     let c_type = direct_c_type(&field.ty)?;

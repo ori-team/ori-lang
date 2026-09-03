@@ -60,6 +60,7 @@ import ori.math                         -- whole module: only ori.math.…
 |------|---------|
 | `int`, `float`, `bool`, `string`, `bytes` | primitives / text / binary |
 | `list[T]`, `map[K, V]`, `set[T]` | collections |
+| `simd[float32, 4]` | fixed-width SIMD vector (see [advanced types](advanced.md)) |
 | `optional[T]` | presence or `none` (not null) |
 | `result[T, E]` | success `ok(T)` or failure `err(E)` |
 | `void` | no useful value (side effects) |

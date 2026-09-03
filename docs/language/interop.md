@@ -124,6 +124,42 @@ The runtime safety contract forbids treating an arbitrary integer as a managed
 pointer, retaining a borrowed value after its call, or inventing a collection
 layout. See [16-runtime-ffi-safety.md](../spec/16-runtime-ffi-safety.md).
 
+## Declarative native dependencies
+
+In `ori.pkg.toml`, `[native.dependencies.<lib>]` (`pkg_config`, `static`, `framework`, `version`)
+and `[native.linux]`, `[native.windows]`, `[native.macos]` (`libraries`, `frameworks`, `library_dirs`,
+`link_flags`) declare system dependencies without manual `.a` linker script workarounds:
+
+```toml
+[native.dependencies.raylib]
+pkg_config = "raylib"
+version = ">= 5.0"
+
+[native.linux]
+libraries = ["GL", "X11", "m", "dl"]
+
+[native.windows]
+libraries = ["user32", "opengl32"]
+
+[native.macos]
+frameworks = ["OpenGL", "Cocoa"]
+```
+
+### Explicit alignment (`@align`)
+
+`@repr("C")` structs can specify power-of-two alignment with `@align(N)` (1 to 64),
+propagated into generated sibling C headers (`alignas(N)` / `__attribute__((aligned(N)))`)
+for GPU uniform buffers and GDExtension boundaries:
+
+```ori
+@repr("C")
+@align(16)
+public struct UniformData
+    matrix: int
+    offset: int
+end
+```
+
 ## Current limits
 
 - `@c_export` is native-backend functionality; the C/debug backend is not an ABI reference;
