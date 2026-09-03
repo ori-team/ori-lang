@@ -12,6 +12,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Enforce `@inline` and `@no_inline` attributes during optimization and lowering.**
+  Functions decorated with `@inline` and `@no_inline` now have their intent propagated
+  through HIR `is_inline` and `is_no_inline` flags; leaf-inlining optimization respects
+  `@no_inline` by preserving calls under all optimization levels, and prioritizes `@inline`
+  functions beyond default heuristic statement limits.
+
 - **Zero-cost error return traces (`ERR-TRACE-1`).**
   Exposed `ori.err_trace` in the standard library (`stdlib/err_trace.orl`) with
   `push(file: string, line: int, message: string) -> string` and

@@ -98,6 +98,8 @@ mod tests {
                 is_public: true,
                 is_async: false,
                 is_mut: false,
+                is_inline: false,
+                is_no_inline: false,
                 c_export_name: None,
                 span: span(),
             }],
@@ -184,6 +186,8 @@ mod tests {
             is_public: false,
             is_async: false,
             is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
             c_export_name: None,
             span: span(),
         };
@@ -226,6 +230,8 @@ mod tests {
                     is_public: true,
                     is_async: false,
                     is_mut: false,
+                    is_inline: false,
+                    is_no_inline: false,
                     c_export_name: None,
                     span: span(),
                 },
@@ -239,6 +245,94 @@ mod tests {
             HirStmt::Return(Some(e), _) => match e.kind {
                 HirExprKind::IntLit(42) => {}
                 ref other => panic!("expected IntLit(42) after inline+fold, got {other:?}"),
+            },
+            other => panic!("expected Return, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn leaf_inline_respects_no_inline_under_aggressive() {
+        let add_one = HirFunc {
+            def_id: DefId(2),
+            name: SmolStr::new("add_one"),
+            params: vec![HirParam {
+                name: SmolStr::new("x"),
+                ty: Ty::Int,
+                default: None,
+                contract: None,
+                variadic: false,
+                span: span(),
+            }],
+            return_ty: Ty::Int,
+            body: HirBlock {
+                stmts: vec![HirStmt::Return(
+                    Some(bin(ori_ast::expr::BinaryOp::Add, var("x"), int_lit(1))),
+                    span(),
+                )],
+                span: span(),
+            },
+            closure_captures: vec![],
+            is_public: false,
+            is_async: false,
+            is_mut: false,
+            is_inline: false,
+            is_no_inline: true,
+            c_export_name: None,
+            span: span(),
+        };
+        let mut module = HirModule {
+            namespace: SmolStr::new("app"),
+            structs: vec![],
+            enums: vec![],
+            traits: vec![],
+            trait_impls: vec![],
+            funcs: vec![
+                add_one,
+                HirFunc {
+                    def_id: DefId(1),
+                    name: SmolStr::new("main"),
+                    params: vec![],
+                    return_ty: Ty::Int,
+                    body: HirBlock {
+                        stmts: vec![HirStmt::Return(
+                            Some(HirExpr {
+                                kind: HirExprKind::Call {
+                                    callee: Box::new(HirExpr {
+                                        kind: HirExprKind::Var(SmolStr::new("add_one")),
+                                        ty: Ty::Int,
+                                        span: span(),
+                                    }),
+                                    args: vec![HirArg {
+                                        label: None,
+                                        value: int_lit(41),
+                                        spread: false,
+                                    }],
+                                },
+                                ty: Ty::Int,
+                                span: span(),
+                            }),
+                            span(),
+                        )],
+                        span: span(),
+                    },
+                    closure_captures: vec![],
+                    is_public: true,
+                    is_async: false,
+                    is_mut: false,
+                    is_inline: false,
+                    is_no_inline: false,
+                    c_export_name: None,
+                    span: span(),
+                },
+            ],
+            consts: vec![],
+            externs: vec![],
+        };
+        optimize_module(&mut module, OptLevel::Aggressive);
+        match &module.funcs[1].body.stmts[0] {
+            HirStmt::Return(Some(e), _) => match &e.kind {
+                HirExprKind::Call { .. } => {}
+                other => panic!("expected Call preserved due to no_inline, got {other:?}"),
             },
             other => panic!("expected Return, got {other:?}"),
         }
@@ -269,6 +363,8 @@ mod tests {
             is_public: false,
             is_async: false,
             is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
             c_export_name: None,
             span: span(),
         };
@@ -311,6 +407,8 @@ mod tests {
                     is_public: true,
                     is_async: false,
                     is_mut: false,
+                    is_inline: false,
+                    is_no_inline: false,
                     c_export_name: None,
                     span: span(),
                 },
@@ -353,6 +451,8 @@ mod tests {
             is_public: false,
             is_async: false,
             is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
             c_export_name: None,
             span: span(),
         };
@@ -396,6 +496,8 @@ mod tests {
                     is_public: true,
                     is_async: false,
                     is_mut: false,
+                    is_inline: false,
+                    is_no_inline: false,
                     c_export_name: None,
                     span: span(),
                 },

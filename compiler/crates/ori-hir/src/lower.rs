@@ -1903,6 +1903,8 @@ fn lower_apply_method(
         is_public: m.visibility == Visibility::Public,
         is_async: m.is_async,
         is_mut: m.is_mut,
+        is_inline: false,
+        is_no_inline: false,
         c_export_name: None,
         span: m.span,
     });
@@ -2128,6 +2130,8 @@ pub fn lower(
                         is_public: m.visibility == Visibility::Public,
                         is_async: m.is_async,
                         is_mut: m.is_mut,
+                        is_inline: false,
+                        is_no_inline: false,
                         c_export_name: None,
                         span: m.span,
                     });
@@ -2270,6 +2274,8 @@ pub fn lower(
                             is_public: func.visibility == Visibility::Public,
                             is_async: func.is_async,
                             is_mut: func.is_mut,
+                            is_inline: false,
+                            is_no_inline: false,
                             c_export_name: None,
                             span: func.span,
                         });
@@ -2308,6 +2314,8 @@ pub fn lower(
                 l.current_where_constraints = previous_where_constraints;
                 l.pop();
                 let c_export_name = c_export_name_from_attrs(&item.attrs, f.name.text.as_str());
+                let is_inline = item.attrs.iter().any(|a| a.name.text == "inline");
+                let is_no_inline = item.attrs.iter().any(|a| a.name.text == "no_inline");
                 funcs.push(HirFunc {
                     def_id,
                     name: SmolStr::new(&path),
@@ -2318,6 +2326,8 @@ pub fn lower(
                     is_public: f.visibility == Visibility::Public,
                     is_async: f.is_async,
                     is_mut: f.is_mut,
+                    is_inline,
+                    is_no_inline,
                     c_export_name,
                     span: f.span,
                 });
@@ -4728,6 +4738,8 @@ impl<'a> Lowerer<'a> {
             is_public: false,
             is_async: false,
             is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
             c_export_name: None,
             span,
         });

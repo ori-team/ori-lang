@@ -500,6 +500,8 @@ fn inject_test_harness(module: &mut HirModule, tests: &[TestCase]) {
         is_public: false,
         is_async: false,
         is_mut: false,
+        is_inline: false,
+        is_no_inline: false,
         c_export_name: None,
         span,
     };

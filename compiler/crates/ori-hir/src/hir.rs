@@ -94,6 +94,8 @@ pub struct HirFunc {
     pub is_public: bool,
     pub is_async: bool,
     pub is_mut: bool,
+    pub is_inline: bool,
+    pub is_no_inline: bool,
     /// When set (`@c_export` / `@c_export("name")`), the native backend emits an
     /// additional C ABI export with this unmangled symbol name (cdylib / `--lib`).
     pub c_export_name: Option<SmolStr>,

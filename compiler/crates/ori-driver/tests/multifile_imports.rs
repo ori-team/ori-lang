@@ -13376,6 +13376,39 @@ end
 }
 
 #[test]
+fn compile_runs_inline_and_no_inline_attributes_native() {
+    let dir = TestDir::new("inline_no_inline_attrs");
+    let source = r#"module app.main
+
+import ori.io = io
+
+@inline
+add_fast(a: int, b: int) -> int
+    return a + b
+end
+
+@no_inline
+compute_slow(x: int) -> int
+    return x * 2
+end
+
+main()
+    const r1 = add_fast(10, 20)
+    const r2 = compute_slow(r1)
+    if r2 == 60
+        io.println("INLINE_SUCCESS")
+    else
+        io.println("FAILED")
+    end
+end
+"#;
+    dir.write("main.orl", source);
+
+    let stdout = compile_and_run(&dir, "inline_attrs_native");
+    assert!(stdout.contains("INLINE_SUCCESS"), "stdout: {stdout}");
+}
+
+#[test]
 fn check_accepts_stdlib_gap_parity_imports() {
     let dir = TestDir::new("stdlib_gap_parity_imports");
     dir.write(

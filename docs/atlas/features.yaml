@@ -171,13 +171,13 @@ features:
 
   - id: language.attributes
     name: Declaration attributes
-    status: partial
-    implementation: [compiler/crates/ori-types/src/check.rs, compiler/crates/ori-hir/src/lower.rs]
+    status: implemented
+    implementation: [compiler/crates/ori-types/src/check.rs, compiler/crates/ori-hir/src/lower.rs, compiler/crates/ori-hir/src/optimize/inline_leafs.rs]
     tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
     user_docs: [docs/language/advanced.md]
     reference: [docs/spec/02-lexical.md, docs/spec/13-error-catalog.md]
     examples: [examples/tests_demo/main.orl, examples/embed/add_scores.orl]
-    limitations: "@inline and @no_inline are validated but not yet acted on. Unsupported namespaced metadata is rejected with `attr.unknown`; third-party attribute schemas and effects remain a future design."
+    limitations: "@inline and @no_inline are enforced during leaf-inlining and lowering. Unsupported namespaced metadata is rejected with `attr.unknown`; third-party attribute schemas and effects remain a future design."
 
   - id: language.conditional-compilation
     name: Structured conditional compilation

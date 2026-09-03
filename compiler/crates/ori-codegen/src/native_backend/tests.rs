@@ -215,6 +215,8 @@ fn simple_async_func(stmts: Vec<HirStmt>) -> HirFunc {
         is_public: false,
         is_async: true,
         is_mut: false,
+        is_inline: false,
+        is_no_inline: false,
         c_export_name: None,
         span: Span::DUMMY,
     }
@@ -358,6 +360,8 @@ fn simple_async_state_machine_plan_accepts_void_tail_expression() {
         is_public: false,
         is_async: true,
         is_mut: false,
+        is_inline: false,
+        is_no_inline: false,
         c_export_name: None,
         span: Span::DUMMY,
     };
@@ -417,6 +421,8 @@ fn simple_async_state_machine_plan_accepts_prefix_local_and_tail_control_flow() 
         is_public: false,
         is_async: true,
         is_mut: false,
+        is_inline: false,
+        is_no_inline: false,
         c_export_name: None,
         span: Span::DUMMY,
     };
@@ -2235,6 +2241,8 @@ fn module_with_body(stmts: Vec<HirStmt>) -> HirModule {
             is_public: true,
             is_async: false,
             is_mut: false,
+            is_inline: false,
+            is_no_inline: false,
             c_export_name: None,
             span: Span::new(0, 30),
         }],

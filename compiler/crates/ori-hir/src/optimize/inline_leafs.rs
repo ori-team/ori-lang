@@ -16,7 +16,7 @@ pub(super) fn inline_leafs_module(module: &mut HirModule) {
     // Collect leaf candidates: name -> (params, body stmts clone, return_ty)
     let mut leaves: HashMap<SmolStr, LeafFn> = HashMap::new();
     for f in &module.funcs {
-        if f.is_async || f.name.as_str() == "main" {
+        if f.is_async || f.name.as_str() == "main" || f.is_no_inline {
             continue;
         }
         // Parameter contracts run at the call boundary. Substitution would
@@ -24,7 +24,7 @@ pub(super) fn inline_leafs_module(module: &mut HirModule) {
         if f.params.iter().any(|param| param.contract.is_some()) {
             continue;
         }
-        if f.body.stmts.len() > MAX_INLINE_STMTS {
+        if !f.is_inline && f.body.stmts.len() > MAX_INLINE_STMTS {
             continue;
         }
         if func_calls_name(&f.body, f.name.as_str()) {
