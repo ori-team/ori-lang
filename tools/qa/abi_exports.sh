@@ -93,7 +93,27 @@ if [ -n "$shared_artifact" ]; then
     shared_exports=$($symbol_tool -g --defined-only "$shared_artifact" 2>/dev/null |
         grep -oE '_?ori_[A-Za-z0-9_]+' |
         sed 's/^_//' | sort -u)
-    for symbol in ori_rt_init ori_rt_shutdown ori_host_error_code; do
+    for symbol in \
+        ori_rt_init \
+        ori_rt_shutdown \
+        ori_rt_version \
+        ori_rt_abi_version \
+        ori_host_clear_error \
+        ori_host_error_code \
+        ori_host_error_message \
+        ori_alloc \
+        ori_alloc_typed \
+        ori_arc_retain \
+        ori_arc_release \
+        ori_arc_register_edge \
+        ori_arc_unregister_edge \
+        ori_arc_collect_cycles \
+        ori_handle_validate \
+        ori_handle_validate_size \
+        ori_handle_validate_size_type \
+        ori_handle_null \
+        ori_reactor_poll \
+        ori_reactor_wake; do
         if ! printf '%s\n' "$shared_exports" | grep -Fx "$symbol" >/dev/null 2>&1; then
             echo "abi_exports: missing shared symbol $symbol" >&2
             missing=1

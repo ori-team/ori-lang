@@ -19,6 +19,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Operational ABI export verification and layout regressions (`AUD-ABI-QA-1`).**
+  Expanded `tools/qa/abi_exports.sh` to check all 20 canonical public runtime symbols in the staged cdylib
+  (`ori_rt_*`, `ori_alloc*`, `ori_arc_*`, `ori_handle_*`, `ori_host_*`, `ori_reactor_*`) in addition to
+  manifest-derived static symbols. Added layout regressions in `ori-runtime/src/tests.rs` for `OriHeap`,
+  `OriDeque`, `OriGraph`, and `OriBytes`, and typed the `OriBytes` bridge in `ori-runtime`.
+
 - **Runtime allocation boundary matrix, failure contracts, and typed FFI validation (`AUD-RT-1`, `AUD-RT-2`).**
   Formalized and regression-tested the public allocation boundary matrix covering `ori_alloc`,
   `ori_alloc_typed`, collection capacity growth, zeroed buffer allocations, string repeat/padding,

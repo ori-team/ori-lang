@@ -9481,6 +9481,12 @@ pub struct OriOptionalFloat {
     value: f64,
 }
 
+#[repr(C)]
+pub struct OriBytes {
+    pub data: *mut u8,
+    pub len: i64,
+}
+
 unsafe fn alloc_optional_int(has_value: c_uchar, value: i64) -> *mut OriOptionalInt {
     let ptr = ori_alloc(std::mem::size_of::<OriOptionalInt>(), None) as *mut OriOptionalInt;
     if !ptr.is_null() {
@@ -9955,9 +9961,9 @@ unsafe extern "C" fn ori_bytes_copy_parts(parts: *const u8) -> *mut u8 {
     if parts.is_null() {
         return cstring_from_bytes(Vec::new());
     }
-    let ptr_size = std::mem::size_of::<*const u8>();
-    let data = std::ptr::read_unaligned(parts as *const *const u8);
-    let len = std::ptr::read_unaligned(parts.add(ptr_size) as *const i64);
+    let view = &*(parts as *const OriBytes);
+    let data = view.data;
+    let len = view.len;
     if len < 0 {
         abort_bounds("ori bytes input length cannot be negative");
     }

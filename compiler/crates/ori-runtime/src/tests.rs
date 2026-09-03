@@ -872,6 +872,43 @@ fn list_map_and_set_layouts_keep_native_backend_offsets() {
 }
 
 #[test]
+fn collection_and_abi_bridge_layouts_match_native_contract() {
+    let ptr_size = std::mem::size_of::<*mut u8>();
+
+    // OriHeap layout
+    assert_eq!(std::mem::offset_of!(OriHeap, data), 0);
+    assert_eq!(std::mem::offset_of!(OriHeap, len), ptr_size);
+    assert_eq!(std::mem::offset_of!(OriHeap, cap), ptr_size + 8);
+    assert_eq!(std::mem::offset_of!(OriHeap, version), ptr_size + 16);
+    assert_eq!(std::mem::offset_of!(OriHeap, item_kind), ptr_size + 24);
+    assert_eq!(std::mem::offset_of!(OriHeap, compare_fn), ptr_size + 32);
+
+    // OriDeque layout
+    assert_eq!(std::mem::offset_of!(OriDeque, values), 0);
+    assert_eq!(
+        std::mem::offset_of!(OriDeque, version),
+        std::mem::size_of::<VecDeque<i64>>()
+    );
+
+    // OriGraph layout
+    assert_eq!(std::mem::offset_of!(OriGraph, nodes), 0);
+    assert_eq!(std::mem::offset_of!(OriGraph, len), ptr_size);
+    assert_eq!(std::mem::offset_of!(OriGraph, cap), ptr_size + 8);
+    assert_eq!(std::mem::offset_of!(OriGraph, version), ptr_size + 16);
+    assert_eq!(std::mem::offset_of!(OriGraph, edge_from), ptr_size + 24);
+    assert_eq!(std::mem::offset_of!(OriGraph, edge_to), ptr_size * 2 + 24);
+    assert_eq!(std::mem::offset_of!(OriGraph, edge_weight), ptr_size * 3 + 24);
+    assert_eq!(std::mem::offset_of!(OriGraph, edge_len), ptr_size * 4 + 24);
+    assert_eq!(std::mem::offset_of!(OriGraph, edge_cap), ptr_size * 4 + 32);
+    assert_eq!(std::mem::offset_of!(OriGraph, directed), ptr_size * 4 + 40);
+
+    // OriBytes FFI bridge layout
+    assert_eq!(std::mem::offset_of!(OriBytes, data), 0);
+    assert_eq!(std::mem::offset_of!(OriBytes, len), ptr_size);
+    assert_eq!(std::mem::size_of::<OriBytes>(), ptr_size + 8);
+}
+
+#[test]
 fn list_backed_collection_handles_keep_list_layout_and_empty_optionals() {
     let _guard = TEST_ARC_LOCK.lock().unwrap();
     arc_state().lock().unwrap().allocations.clear();
