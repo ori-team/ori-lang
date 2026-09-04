@@ -15,7 +15,7 @@ errors (`ori migrate-syntax` rewrites many of them).
 ```ori
 module app.hello
 
-import ori.io = io
+import ori.io as io
 
 main()
     io.println("Hello, Ori!")
@@ -31,7 +31,7 @@ ori run main.orl
 | Idea | Form |
 |------|------|
 | File belongs to a namespace | `module app.hello` first line |
-| Import with short name | `import ori.io = io` (path **left**, alias **right**) |
+| Import with short name | `import ori.io as io` (or `= io`) |
 | Entry point | `main()` — no `func` keyword |
 | Blocks | end with `end` |
 | Types | explicit on bindings when public / when not inferred |
@@ -44,7 +44,7 @@ Three import forms:
 
 ```ori
 import ori.fs (read_text, write_text)   -- selective
-import ori.string = str                 -- alias
+import ori.string as str                -- alias (`as` or `=`)
 import ori.math                         -- whole module: only ori.math.…
 ```
 
@@ -223,19 +223,19 @@ const c: Color = Color.Rgb(r: 1, g: 2, b: 3)
 const moved: Point = p with { x: 10 } end
 ```
 
-Traits use **`apply Type`** + **`use Trait`** (not `implement Trait for Type`).
-Import the trait module first (`import ori.core = core`).
+Traits use **`apply Type: Trait`** (or `apply Type use Trait`).
+Import the trait module first (`import ori.core as core`).
 
 ```ori
-import ori.core = core
-import ori.io = io
+import ori.core as core
+import ori.io as io
 
 struct Point
     x: int
     y: int
 end
 
-apply Point use core.Displayable
+apply Point: core.Displayable
     display(self) -> string
         return f"({self.x}, {self.y})"
     end
@@ -252,7 +252,7 @@ owns something outside Ori's managed heap, it may implement
 `core.Destructor`:
 
 ```ori
-apply NativeHandle use core.Destructor
+apply NativeHandle: core.Destructor
     mut destroy(self)
         close_external(self.id)
     end
@@ -380,12 +380,12 @@ See [First project](../guides/first-project.md) and
 |-------|-------------|
 | `namespace` | `module` |
 | `func name()` | `name()` |
-| `import x as y` / `only` | `import path = y` / `(…)` |
+| `import path only (…)` | `import path (…)` / `(item as alias)` |
 | `list of T` / `Foo<T>` | `list[T]` / `Foo[T]` |
 | `success` / `error` | `ok` / `err` |
 | `else if` | `elif` |
 | `expr?` | `try expr` |
-| `implement Trait for T` | `apply T` + `use Trait` |
+| `implement Trait for T` | `apply T: Trait` |
 
 ```bash
 ori migrate-syntax path/to/sources
@@ -398,8 +398,8 @@ ori migrate-syntax path/to/sources
 ```ori
 module app.main
 
-import ori.io = io
-import ori.task = task
+import ori.io as io
+import ori.task as task
 
 async main()
     await task.sleep(10)

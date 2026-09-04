@@ -38,7 +38,7 @@ escrever diretamente uma `var` mutável de módulo. O checker emite
 `concurrency.global_mutable_capture`. O checker também segue chamadas para
 helpers do mesmo módulo e helpers nomeados importados (inclusive funções
 associadas) por uma análise conservadora de ponto fixo. Chamadas por receptor
-e despacho `any[Trait]` usam um resumo conservador por nome de método; assim,
+e despacho de traits dinâmicas (`any[Trait]` ou `Trait`) usam um resumo conservador por nome de método; assim,
 um método que possa tocar uma `var` global mutável é rejeitado na fronteira.
 Uma função nomeada passada diretamente é aceita quando seu resumo prova que
 ela não toca uma `var` global mutável. Uma closure guardada em binding local
@@ -73,7 +73,7 @@ nem aguarda uma árvore de tarefas filhas, portanto não é um escopo completo d
 concorrência estruturada:
 
 ```ori
-import ori.cancel = cancel
+import ori.cancel as cancel
 
 const scope: cancel.CancelScope = cancel.create_scope()
 if cancel.is_cancelled(scope)

@@ -11,18 +11,17 @@ the limit is part of the contract, not an invitation to guess a future syntax.
 
 ## Arrays and slices
 
-`list[T]` grows dynamically. `array[T, size: N]` has its length in the type and
-stores its elements inline. The size argument is named because a bare number in
-`[]` looks like an index everywhere else:
+`list[T]` grows dynamically. `array[T, N]` (or `array[T, size: N]`) has its length
+in the type and stores its elements inline:
 
 ```ori
 struct Grid
-    cells: array[int, size: 4]
+    cells: array[int, 4]
     label: string
 end
 
 main()
-    var values: array[int, size: 3] = [1, 2, 3]
+    var values: array[int, 3] = [1, 2, 3]
     values[1] = 99
     const grid: Grid = Grid { cells: [10, 20, 30, 40], label: "grid" }
 end
@@ -30,10 +29,11 @@ end
 
 Rules:
 
-- the length is part of the type; `array[int, size: 3]` and `array[int, size: 4]` do not substitute for one another;
+- the length is part of the type; `array[int, 3]` and `array[int, 4]` do not substitute for one another;
+- positional `array[int, 4]` and named `array[int, size: 4]` represent the same type;
 - literals must have the exact length;
 - out-of-range constant indexes are compile-time errors;
-- the current native backend requires scalar array elements;
+- the current native backend requires scalar or inline struct array elements;
 - the C/debug backend does not provide full array parity.
 
 `slice[T]` is a read-only O(1) window over a list. It keeps the owning list
@@ -41,8 +41,8 @@ alive and observes later writes to that list. `lists.slice` copies; a window
 does not:
 
 ```ori
-import ori.list = lists
-import ori.slice = sl
+import ori.list as lists
+import ori.slice as sl
 
 var values: list[int] = [10, 20, 30]
 const window: slice[int] = lists.window(values, 0, 2)
@@ -127,11 +127,16 @@ apply Bag use Container
 end
 ```
 
-A method with `self` is an instance method. Without `self`, it is an associated
-function called through the type:
+Traits without associated types use the compact direct header `apply Type: Trait`.
+
+A method with `self` is an instance method. Inherent methods live directly in the
+`struct` definition:
 
 ```ori
-apply User
+struct User
+    name: string
+    age: int
+
     make_empty() -> User
         return User { name: "", age: 0 }
     end
@@ -227,7 +232,7 @@ Supported combinations: `float32`/`int32` x 2, 4, 8, 16; `float64`/`int64` x 2, 
 loops, visibility sets, rendering command queues), bypassing ARC reference counting:
 
 ```ori
-import ori.mem = mem
+import ori.mem as mem
 
 main()
     using r: mem.Region = mem.region()
@@ -245,7 +250,7 @@ Escape analysis guarantees:
 `buffer[T]` represents flat, contiguous heap memory for numeric arrays, pixel arrays, and audio samples.
 
 ```ori
-import ori.buffer = buf
+import ori.buffer as buf
 
 var pixels: buffer[int] = buf.alloc[int](1920 * 1080)
 buf.set(pixels, 0, 0xFF0000FF)

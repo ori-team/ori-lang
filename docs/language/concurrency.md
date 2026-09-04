@@ -65,7 +65,7 @@ contract. A closure cannot capture a mutable `var` binding or directly read or
 write a top-level mutable `var` for `task.spawn`. The checker reports
 `concurrency.global_mutable_capture`. The checker also follows calls to
 same-module helpers and imported named helpers with conservative fixed-point
-passes. Receiver methods and `any[Trait]` dispatch use a conservative
+passes. Receiver methods and dynamic trait dispatch (`any[Trait]` or bare `Trait`) use a conservative
 method-name summary, so a method that may touch a mutable global is rejected
 at the boundary. A direct named function value is accepted when its definition
 summary proves no mutable-global effect. A closure stored in a local binding
@@ -98,7 +98,7 @@ The complete runnable example is [`examples/concurrency/main.orl`](../../example
 tree of child tasks, so this is not a complete structured-concurrency scope:
 
 ```ori
-import ori.cancel = cancel
+import ori.cancel as cancel
 
 const scope: cancel.CancelScope = cancel.create_scope()
 if cancel.is_cancelled(scope)

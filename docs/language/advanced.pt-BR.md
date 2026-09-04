@@ -6,17 +6,17 @@
 
 ## Arrays e slices
 
-`list[T]` cresce dinamicamente. `array[T, size: N]` tem o tamanho dentro do
-tipo e armazena os elementos inline:
+`list[T]` cresce dinamicamente. `array[T, N]` (ou `array[T, size: N]`) tem o
+tamanho dentro do tipo e armazena os elementos inline:
 
 ```ori
 struct Grid
-    cells: array[int, size: 4]
+    cells: array[int, 4]
     label: string
 end
 
 main()
-    var values: array[int, size: 3] = [1, 2, 3]
+    var values: array[int, 3] = [1, 2, 3]
     values[1] = 99
 end
 ```
@@ -151,7 +151,7 @@ Combinações suportadas: `float32`/`int32` x 2, 4, 8, 16; `float64`/`int64` x 2
 listas de visibilidade, filas de comandos de renderização), descartando custos de contagem de referência:
 
 ```ori
-import ori.mem = mem
+import ori.mem as mem
 
 main()
     using r: mem.Region = mem.region()
@@ -169,7 +169,7 @@ Garantias de análise de escape:
 `buffer[T]` representa memória contígua e plana na heap para arrays numéricos, buffers de pixels e amostras de áudio.
 
 ```ori
-import ori.buffer = buf
+import ori.buffer as buf
 
 var pixels: buffer[int] = buf.alloc[int](1920 * 1080)
 buf.set(pixels, 0, 0xFF0000FF)
@@ -184,7 +184,7 @@ struct RecursoNativo
     handle: int
 end
 
-apply RecursoNativo use core.Destructor
+apply RecursoNativo: core.Destructor
     mut destroy(self) -> void
         -- Fecha descritor do SO ou recurso externo
     end

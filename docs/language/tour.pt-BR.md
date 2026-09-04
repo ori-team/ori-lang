@@ -15,7 +15,7 @@ duros (`ori migrate-syntax` reescreve várias delas).
 ```ori
 module app.hello
 
-import ori.io = io
+import ori.io as io
 
 main()
     io.println("Hello, Ori!")
@@ -31,7 +31,7 @@ ori run main.orl
 | Ideia | Forma |
 |-------|--------|
 | Arquivo em um namespace | `module app.hello` na primeira linha |
-| Import com nome curto | `import ori.io = io` (path **à esquerda**) |
+| Import com nome curto | `import ori.io as io` (ou `= io`) |
 | Entrada | `main()` — sem keyword `func` |
 | Blocos | terminam com `end` |
 | Tipos | explícitos na API pública / quando a inferência não basta |
@@ -42,7 +42,7 @@ ori run main.orl
 
 ```ori
 import ori.fs (read_text, write_text)   -- seletivo
-import ori.string = str                 -- alias
+import ori.string as str                -- alias (`as` ou `=`)
 import ori.math                         -- só ori.math.…
 ```
 
@@ -173,21 +173,21 @@ const p: Point = Point { x: 1, y: 2 }
 const movido: Point = p with { x: 10 } end
 ```
 
-Traits: **`apply Type`** + **`use Trait`** (não `implement … for`).
-Importe o módulo do trait (`import ori.core = core`) e use
-`use core.Displayable`. Conversão: `string(value)`, não método solto
+Traits: **`apply Type: Trait`** (ou `apply Type use Trait`).
+Importe o módulo do trait (`import ori.core as core`) e use
+`apply Type: core.Displayable`. Conversão: `string(value)`, não método solto
 `value.display()` fora do trait.
 
 ```ori
-import ori.core = core
-import ori.io = io
+import ori.core as core
+import ori.io as io
 
 struct Point
     x: int
     y: int
 end
 
-apply Point use core.Displayable
+apply Point: core.Displayable
     display(self) -> string
         return f"({self.x}, {self.y})"
     end
@@ -204,7 +204,7 @@ que um valor possui algo fora do heap gerenciado de Ori, ele pode implementar
 `core.Destructor`:
 
 ```ori
-apply NativeHandle use core.Destructor
+apply NativeHandle: core.Destructor
     mut destroy(self)
         close_external(self.id)
     end
@@ -325,10 +325,12 @@ Guia: [Primeiro projeto](../guides/first-project.pt-BR.md).
 |-------|-----|
 | `namespace` | `module` |
 | `func name()` | `name()` |
-| `import x as y` | `import path = y` |
+| `import path only (…)` | `import path (…)` / `(item as alias)` |
+| `list of T` / `Foo<T>` | `list[T]` / `Foo[T]` |
 | `success` / `error` | `ok` / `err` |
 | `else if` | `elif` |
 | `expr?` | `try expr` |
+| `implement Trait for T` | `apply T: Trait` |
 
 ```bash
 ori migrate-syntax caminho/
@@ -341,8 +343,8 @@ ori migrate-syntax caminho/
 ```ori
 module app.main
 
-import ori.io = io
-import ori.task = task
+import ori.io as io
+import ori.task as task
 
 async main()
     await task.sleep(10)
