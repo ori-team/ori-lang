@@ -105,12 +105,24 @@ def iter_utf8_files() -> list[Path]:
     return files
 
 
+# Historical records keep their original wording: the retired identity may
+# appear in accumulated release notes and in the isolated archive/history tree.
+IDENTITY_SKIP_PREFIXES = (
+    "CHANGELOG.md",
+    "docs/archive/",
+    "docs/planning/historico/",
+)
+
+
 def check_identity(errors: list[str]) -> None:
     patterns = [RETIRED_NAME.casefold(), RETIRED_REPOSITORY.casefold()]
     for path in iter_utf8_files():
+        relative = path.relative_to(ROOT).as_posix()
+        if relative.startswith(IDENTITY_SKIP_PREFIXES):
+            continue
         folded = path.read_text(encoding="utf-8").casefold()
         if any(pattern in folded for pattern in patterns):
-            fail(errors, f"retired project identity remains in {path.relative_to(ROOT)}")
+            fail(errors, f"retired project identity remains in {relative}")
 
 
 def normalized_link_target(source: Path, raw_target: str) -> Path | None:
@@ -130,7 +142,8 @@ def check_markdown_links(errors: list[str], paths: list[str]) -> None:
         if source.suffix.lower() != ".md" or not source.is_file():
             continue
         text = source.read_text(encoding="utf-8")
-        for raw_target in MARKDOWN_LINK.findall(text):
+        text_without_code = re.sub(r"```[\s\S]*?```|`[^`\n]+`", "", text)
+        for raw_target in MARKDOWN_LINK.findall(text_without_code):
             target = normalized_link_target(source, raw_target)
             if target is None:
                 continue
@@ -183,10 +196,6 @@ def main() -> int:
 
     if ATLAS.is_file() and "catalog.yaml" not in ATLAS.read_text(encoding="utf-8"):
         fail(errors, "ATLAS does not route to docs/catalog.yaml")
-
-    retired_history_root = ROOT / "docs/planning/historico"
-    if retired_history_root.exists() and any(retired_history_root.rglob("*.md")):
-        fail(errors, "retired historical root contains Markdown files: docs/planning/historico")
 
     loose_archive = ROOT / "docs/archive"
     allowed_loose = {"README.md", "MIGRATION_REPORT.md"}

@@ -130,7 +130,7 @@
       "patterns": [
         {
           "name": "keyword.control.ori",
-          "match": "\\b(async|await|try|return|end|if|else|elif|while|for|in|repeat|loop|break|continue|match|case|using|check|with|then|and|or|not|import|public|module|struct|trait|apply|use|enum|where|is|alias|newtype|mut|self|attr|extern|handle|lazy|tuple|void|true|false|none|ok|err|some)\\b"
+          "match": "\\b(async|await|as|try|return|end|if|else|elif|while|for|in|repeat|loop|break|continue|match|case|using|check|with|then|and|or|not|import|public|module|struct|trait|apply|use|enum|where|is|alias|newtype|mut|self|attr|extern|handle|lazy|tuple|void|true|false|none|ok|err|some)\\b"
         },
         {
           "name": "invalid.deprecated.ori",
@@ -142,7 +142,7 @@
         },
         {
           "name": "storage.type.ori",
-          "match": "\\b(const|var|func|any|optional|result|list|map|set|range|tuple|lazy|void|bool|int|int8|int16|int32|int64|u8|u16|u32|u64|float|float32|float64|string|bytes|never|future)\\b"
+          "match": "\\b(const|var|func|any|optional|result|list|array|simd|buffer|slice|map|set|range|tuple|lazy|void|bool|int|int8|int16|int32|int64|u8|u16|u32|u64|float|float32|float64|string|bytes|never|future)\\b"
         }
       ]
     },

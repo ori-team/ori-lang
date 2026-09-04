@@ -64,7 +64,7 @@ pub fn stdlib_dot_completion_items(receiver: &str, source: &str) -> Vec<Completi
     stdlib_catalog().dot_completion_items(receiver, &import_map)
 }
 
-/// Keyword completions for the Ori language (S3 surface).
+/// Keyword completions for the Ori language (S3/0.4 surface).
 pub fn keyword_completion_items() -> Vec<CompletionItem> {
     let keywords = [
         "module", "import", "imports", "public",
@@ -72,9 +72,9 @@ pub fn keyword_completion_items() -> Vec<CompletionItem> {
         "func", "return", "end", "const", "var", "if", "else", "elif", "while", "for", "in",
         "repeat", "loop", "break", "continue", "match", "case", "struct", "trait", "apply", "use",
         "enum", "alias", "newtype", "and", "or", "not", "true", "false", "none", "ok", "err",
-        "some", "mut", "self", "attr", "extern", "any", "optional", "result", "list", "map", "set",
-        "range", "void", "handle", "using", "try", "check", "with", "then", "tuple", "lazy",
-        "async", "await", "iter",
+        "some", "mut", "self", "attr", "extern", "any", "optional", "result", "list", "array",
+        "simd", "map", "set", "range", "void", "handle", "using", "try", "check", "with", "then",
+        "tuple", "lazy", "async", "await", "iter", "as",
     ];
 
     keywords
@@ -97,7 +97,7 @@ pub fn snippet_completion_items() -> Vec<CompletionItem> {
         ),
         snippet(
             "main",
-            "module ${1:app.main}\n\nimport ori.io = io\n\nmain() -> void\n    ${0}\nend",
+            "module ${1:app.main}\n\nimport ori.io as io\n\nmain() -> void\n    ${0}\nend",
         ),
         snippet(
             "async fn",
@@ -111,7 +111,7 @@ pub fn snippet_completion_items() -> Vec<CompletionItem> {
         ),
         snippet(
             "apply",
-            "apply ${1:Type} use ${2:Trait}\n    ${3:method}(self) -> ${4:ret}\n        ${0}\n    end\nend",
+            "apply ${1:Type}: ${2:Trait}\n    ${3:method}(self) -> ${4:ret}\n        ${0}\n    end\nend",
         ),
         snippet("if", "if ${1:condition}\n    ${0}\nend"),
         snippet("ifelse", "if ${1:condition}\n    ${2}\nelse\n    ${0}\nend"),
@@ -123,7 +123,7 @@ pub fn snippet_completion_items() -> Vec<CompletionItem> {
         // the `end`; inserting one here would close user code unexpectedly.
         snippet("using", "using ${1:name}: ${2:Type} = ${3:expr}"),
         snippet("check", "check ${1:condition}, \"${2:message}\""),
-        snippet("import", "import ${1:ori.module} = ${2:alias}"),
+        snippet("import", "import ${1:ori.module} as ${2:alias}"),
     ]
 }
 
@@ -167,18 +167,18 @@ mod tests {
             .map(|item| item.label)
             .collect();
 
-        for removed in ["namespace", "as", "only", "implement", "where", "is", "do"] {
+        for removed in ["namespace", "only", "implement", "where", "is", "do"] {
             assert!(
                 !labels.iter().any(|label| label == removed),
-                "removed S3 keyword `{removed}` must not be suggested"
+                "removed keyword `{removed}` must not be suggested"
             );
         }
         for canonical in [
-            "module", "imports", "elif", "newtype", "async", "await", "try",
+            "module", "imports", "elif", "newtype", "async", "await", "try", "as",
         ] {
             assert!(
                 labels.iter().any(|label| label == canonical),
-                "canonical S3 keyword `{canonical}` must be suggested"
+                "canonical keyword `{canonical}` must be suggested"
             );
         }
 
@@ -200,7 +200,7 @@ mod tests {
             .find(|item| item.label == "apply")
             .and_then(|item| item.insert_text.as_deref())
             .expect("apply snippet");
-        assert!(apply.starts_with("apply ${1:Type} use ${2:Trait}"));
+        assert!(apply.starts_with("apply ${1:Type}: ${2:Trait}"));
         assert!(!apply.contains("implement") && !apply.contains(" to "));
 
         let using = snippets
@@ -215,7 +215,6 @@ mod tests {
 
         for item in snippets {
             let body = item.insert_text.unwrap_or_default();
-            assert!(!body.contains(" as "), "snippet uses removed import syntax");
             assert!(
                 !body.contains(" only "),
                 "snippet uses removed import syntax"

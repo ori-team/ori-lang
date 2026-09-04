@@ -585,7 +585,11 @@ fn lower_named(
     let span = name.span;
     match resolve_name(name, module_path, def_map, file_id, span, sink, aliases) {
         Some(id) => {
-            if def_map.get(id).kind == DefKind::Trait && args.is_empty() {
+            if def_map
+                .try_get(id)
+                .is_some_and(|def| def.kind == DefKind::Trait)
+                && args.is_empty()
+            {
                 Ty::Any(id)
             } else {
                 Ty::Named(id, args.to_vec())
