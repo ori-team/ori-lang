@@ -20,13 +20,13 @@ but new code should prefer `ori.string`, `ori.map`, and the other parents.
 |---|---|---|
 | I/O | `ori.io`, `ori.fs`, `ori.path` | streams, files, paths |
 | Text and bytes | `ori.string`, `ori.string_view`, `ori.bytes`, `ori.convert` | parsing, formatting, zero-copy views, encoding |
-| Collections & memory | `ori.list`, `ori.map`, `ori.set`, `ori.queue`, `ori.stack`, `ori.deque`, `ori.heap`, `ori.linked_list`, `ori.doubly_linked_list`, `ori.buffer`, `ori.slotmap`, `ori.span` | containers, contiguous buffers, generational slots |
-| Graphics & images | `ori.image` | BMP/PPM 24-bit uncompressed image generation helpers |
-| Errors & diagnostics | `ori.err_trace` | Zero-cost error return traces and formatting |
+| Collections & memory | `ori.list`, `ori.map`, `ori.set`, `ori.queue`, `ori.stack`, `ori.deque`, `ori.heap`, `ori.linked_list`, `ori.doubly_linked_list`, `ori.buffer`, `ori.slotmap`, `ori.span`, `ori.mem` | containers, contiguous buffers, generational slots, scoped bump arenas |
+| Graphics & images | `ori.image` | BMP/PPM image generation, typed Image structs |
+| Errors & diagnostics | `ori.err_trace`, `ori.fs.FsError`, `ori.net.http.HttpError` | domain error enums and zero-cost error traces |
 | Data formats | `ori.json`, `ori.validate` | JSON and validation helpers |
 | Time and randomness | `ori.time`, `ori.random`, `ori.format` | time, sampling, display |
 | Processes and environment | `ori.args`, `ori.config`, `ori.os`, `ori.process` | command-line tools and host state |
-| Networking | `ori.net` | TCP, TLS, UDP, synchronous and async helpers |
+| Networking | `ori.net`, `ori.net.http` | TCP, TLS, UDP, HTTP client, Response helpers |
 | Concurrency & async | `ori.task`, `ori.channel`, `ori.atomic`, `ori.concurrent`, `ori.cancel` | futures, tasks, channels, atomics, thread transfers, cancellation scopes |
 | Security | `ori.crypto` | password and TOTP helpers |
 | Testing | `ori.test` | assertions, skips, leak checks, doctests |

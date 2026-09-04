@@ -1145,7 +1145,20 @@ summary.
 
 `ori.concurrent` is importable today as the umbrella module for this contract.
 Its concrete APIs currently live in `ori.task`, `ori.channel`, and
-`ori.atomic`.
+`ori.atomic`. Generic value helpers copy and transfer values across task boundaries:
+
+```ori
+import ori.concurrent as conc
+
+const v: int = conc.copy(42)
+const s: string = conc.transfer("message")
+```
+
+| Function | Type | Notes |
+|---|---|---|
+| `copy[T](value: T) -> T` | generic copy | Returns the value; collections clone via their module helpers. |
+| `transfer[T](value: T) -> T` | generic transfer | Value must satisfy `Transferable` when crossing tasks. |
+| `copy_int`, `copy_string`, `copy_list_int`, ... | monomorphic legacy | Preserved for compatibility; delegate to the generic form. |
 
 ---
 
@@ -1629,4 +1642,97 @@ end
 
 - `push(file: string, line: int, message: string) -> string`: Appends `\n  at <file>:<line>` to the error message string.
 - `format(message: string) -> string`: Formats the error trace or returns `<nil error>` for empty errors.
+
+---
+
+## `ori.net.http` — HTTP Client and Types
+
+`ori.net.http` provides low-level HTTP/1.1 client utilities built over `ori.net` TCP and TLS.
+
+```ori
+import ori.net.http as http
+
+public struct Response
+    status: int
+    status_text: string
+    headers: string
+    body: string
+
+    is_success(self) -> bool
+        return self.status >= 200 and self.status < 300
+    end
+
+    is_redirect(self) -> bool
+        return self.status >= 300 and self.status < 400
+    end
+
+    is_client_error(self) -> bool
+        return self.status >= 400 and self.status < 500
+    end
+
+    is_server_error(self) -> bool
+        return self.status >= 500 and self.status < 600
+    end
+end
+
+public enum HttpError
+    ConnectionFailed(message: string)
+    Timeout
+    InvalidResponse(message: string)
+    TlsError(message: string)
+    Other(message: string)
+end
+```
+
+| Function | Signature | Notes |
+|---|---|---|
+| `get_plain(host, port, path, timeout)` | `string, int, string, int -> ResponseResult` | Blocking HTTP GET over plain TCP. |
+| `get_tls(host, port, path, timeout)` | `string, int, string, int -> ResponseResult` | Blocking HTTP GET over TLS. |
+| `post_plain(host, port, path, headers, body, timeout)` | `string, int, string, string, string, int -> ResponseResult` | Blocking HTTP POST over plain TCP. |
+| `post_tls(host, port, path, headers, body, timeout)` | `string, int, string, string, string, int -> ResponseResult` | Blocking HTTP POST over TLS. |
+| `build_request(...)` | `string, string, string, string, string -> string` | Serializes an HTTP/1.1 request wire buffer. |
+| `parse_response(raw)` | `string -> ResponseResult` | Parses an HTTP/1.1 response wire buffer. |
+
+---
+
+## `ori.image` — Image Export (BMP & PPM)
+
+`ori.image` provides direct software rendering export for pixels without external dependencies.
+
+```ori
+import ori.image as img
+
+public enum ImageFormat
+    Bmp
+    Ppm
+end
+
+public struct Image
+    width: int
+    height: int
+    pixels: list[int]
+
+    pixel_count(self) -> int
+        return self.width * self.height
+    end
+
+    get_pixel(self, x: int, y: int) -> int
+        if x < 0 or x >= self.width or y < 0 or y >= self.height
+            return 0
+        end
+        const idx: int = y * self.width + x
+        if idx < ori.list.len(self.pixels)
+            return ori.list.get(self.pixels, idx)
+        end
+        return 0
+    end
+end
+```
+
+| Function | Signature | Notes |
+|---|---|---|
+| `encode_ppm(w, h, pixels)` | `int, int, list[int] -> string` | Encodes pixel buffer into ASCII PPM (P3) format. |
+| `write_ppm(path, w, h, pixels)` | `string, int, int, list[int] -> result[string, string]` | Writes pixel buffer to a PPM file. |
+| `encode_bmp(w, h, pixels)` | `int, int, list[int] -> bytes` | Encodes pixel buffer into standard 24-bit uncompressed Windows BMP. |
+| `write_bmp(path, w, h, pixels)` | `string, int, int, list[int] -> result[string, string]` | Writes pixel buffer to a BMP file. |
 

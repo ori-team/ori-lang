@@ -17,12 +17,12 @@ Paths antigos como `.utils` e `.algorithms` existem apenas por compatibilidade.
 | I/O | `ori.io`, `ori.fs`, `ori.path` |
 | Texto e bytes | `ori.string`, `ori.string_view`, `ori.bytes`, `ori.convert` |
 | Collections e memória | `ori.list`, `ori.map`, `ori.set`, `ori.queue`, `ori.stack`, `ori.deque`, `ori.heap`, `ori.buffer`, `ori.slotmap`, `ori.span` |
-| Gráficos e imagens | `ori.image` implementa geração de imagens BMP/PPM |
-| Erros e diagnósticos | `ori.err_trace` (traces de erro e formatação) |
+| Gráficos e imagens | `ori.image` implementa geração de imagens BMP/PPM e struct `Image` |
+| Erros e diagnósticos | `ori.err_trace`, `ori.fs.FsError`, `ori.net.http.HttpError` |
 | Dados | `ori.json`, `ori.validate` |
 | Tempo e aleatoriedade | `ori.time`, `ori.random`, `ori.format` |
 | Processos | `ori.args`, `ori.config`, `ori.os`, `ori.process` |
-| Rede | `ori.net` |
+| Rede | `ori.net`, `ori.net.http` (cliente HTTP e Response) |
 | Concorrência e async | `ori.task`, `ori.channel`, `ori.atomic`, `ori.concurrent`, `ori.cancel` |
 | Segurança | `ori.crypto` |
 | Testes | `ori.test` |
