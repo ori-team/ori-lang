@@ -2,17 +2,22 @@
 
 > Status: normative
 > Audience: compiler implementers, language designers
-> Surface: **S3** (`0.3.0`)
+> Surface: **S3** (`0.3.0`) + colon form 0.4+
 
 ---
 
 ## Overview
 
 Traits describe behavior. They declare what a type must be able to do.
-`apply Type` blocks attach trait behavior (and free methods) to a type via
-`use Trait` sections.
+`apply Type: TraitA, TraitB` blocks attach trait behavior to a type in a single
+block (canonical 0.4+ form). Inherent methods live directly inside the `struct`
+body; `use Trait` inside `apply Type` remains valid for compatibility.
 
 Traits are Ori's mechanism for polymorphism. There is no class inheritance.
+
+A trait name in a parameter position (`greet(who: Named)`) is dynamic dispatch
+over that trait — the same type as `any[Named]`, lowered to `Ty::Any(trait)`.
+Bare-trait and `any[Trait]` spellings are equivalent.
 
 ---
 
@@ -73,10 +78,30 @@ end
 
 ---
 
-## `apply Type` + `use Trait` (S3)
+## `apply Type: Trait` (Canonical form) and `apply Type use Trait` (S3)
 
-When the whole block is one trait and nothing else, the **compact header** is
-the required form:
+Attaching traits to a type uses the colon header, optionally listing multiple traits:
+
+```ori
+apply Circle: Drawable
+    draw(self, canvas: Canvas)
+        canvas.draw_circle(self.center, self.radius)
+    end
+end
+
+apply Player: Named, Scored
+    name(self) -> string
+        return self.tag
+    end
+
+    score(self) -> int
+        return self.points
+    end
+end
+```
+
+The S3 compact header (`apply Circle use Drawable`) and nested `use` sections
+also remain accepted for backwards compatibility:
 
 ```ori
 apply Circle use Drawable
@@ -86,15 +111,11 @@ apply Circle use Drawable
 end
 ```
 
-The nested form is required when the compact header cannot express the
-content — two or more traits, or free members alongside a trait:
+The nested form with multiple `use` sections is supported when traits declare
+associated types scoped to individual sections:
 
 ```ori
 apply Circle
-    area(self) -> float
-        return 3.14159 * self.radius * self.radius
-    end
-
     use Drawable
         draw(self, canvas: Canvas)
             canvas.draw_circle(self.center, self.radius)
@@ -155,10 +176,23 @@ apply Point use Comparable
 end
 ```
 
-### Free methods without a trait
+### Inherent methods
 
-`apply Type` may contain only free methods/binds (no `use`). Those methods are
-available as inherent methods on the type.
+Inherent methods (specific to the type, not satisfying any trait) live directly
+inside the `struct` definition:
+
+```ori
+struct Counter
+    value: int
+
+    bump(self) -> int
+        return self.value + 1
+    end
+end
+```
+
+`apply Type` with free methods/binds remains accepted for backwards compatibility,
+keeping `apply` primarily reserved for trait conformance.
 
 ### Associated functions (no `self`)
 
@@ -216,11 +250,13 @@ leniency was removed when associated functions landed.)
 
 ### Rules
 
-- `apply Type` — the type receiving methods/traits.
-- `use Trait` — attaches `Trait` to that type inside the apply block.
+- `apply Type: TraitA, TraitB` — attaches traits directly to `Type` in a single block.
+- `apply Type use Trait` / `use Trait` — accepted for compatibility.
+- Inherent methods belong directly inside the `struct` body.
+- A trait name in parameter position (`p: Trait`) is dynamic dispatch (`Ty::Any`), equivalent to `any[Trait]`.
 - All required methods from each used trait must be provided.
 - Default methods may be omitted or overridden.
-- Multiple traits may be used for the same type (one or several apply blocks).
+- Multiple traits may be implemented for the same type (one or several apply blocks).
 - `self` may omit an explicit type annotation when the context is the applied type.
 - Removed forms (hard error):
   - `implement Trait for Type` → `parse.implement_removed`

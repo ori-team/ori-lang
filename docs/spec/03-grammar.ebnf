@@ -34,19 +34,19 @@ module_decl
     = "module" qualified_name
     ;
 
-(* Three import forms (S3). No `as` / `only`. Multi-comma only in imports_block. *)
+(* Import forms (S3/0.4+). Supports `as` and `=` for aliases. Multi-comma only in imports_block. *)
 import_decl
     = [ "public" ] "import" import_form
     ;
 
 import_form
     = qualified_name "(" import_item { "," import_item } [ "," ] ")"   (* selective *)
-    | qualified_name "=" IDENT                                         (* path = alias *)
+    | qualified_name ( "as" | "=" ) IDENT                              (* path as alias *)
     | qualified_name                                                   (* bare path, no implicit alias *)
     ;
 
 import_item
-    = IDENT [ "=" IDENT ]    (* member rename inside selective list only *)
+    = IDENT [ ( "as" | "=" ) IDENT ]    (* member rename inside selective list *)
     ;
 
 imports_block
@@ -235,6 +235,8 @@ generic_type
     | "range"    "[" type "]"
     | "lazy"     "[" type "]"
     | "any"      "[" type_ref "]"
+    | "array"    "[" type "," ( INTEGER | "size:" INTEGER ) "]"
+    | "simd"     "[" type "," ( INTEGER | "lanes:" INTEGER ) "]"
     | "future"   "[" type "]"
     | qualified_name "[" type { "," type } "]"
     ;
@@ -317,11 +319,14 @@ func_signature
 
 
 (* ============================================================
-   APPLY (S3: apply Type + use Trait + bind)
+   APPLY (Canonical 0.4+ colon form and S3 use form)
    ============================================================ *)
 
 apply_decl
-    = "apply" type_ref
+    = "apply" type_ref ":" type_ref { "," type_ref }
+      { apply_use_member }
+      "end"
+    | "apply" type_ref [ "use" type_ref ]
       { apply_free_member }
       { apply_use_section }
       "end"

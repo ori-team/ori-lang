@@ -19,10 +19,10 @@ During the **S3 (`0.3.0` surface)** cycle, these points are public contract:
 - `.orl` files in UTF-8;
 - blocks terminated by `end` (labels optional: `end if`, `end match`, …);
 - `module` required at the top of the file (`namespace` is an error);
-- explicit imports in the three S3 forms: `import path (A)`,
-  `import path = alias`, `import path` (no import `as` / `only`);
+- explicit imports: `import path (A)`, `import path as alias` (or `= alias`),
+  `import path`;
 - explicit types on bindings, parameters, and public return types;
-- composite types with `[]` (`optional[T]`, `result[T, E]`, `list[T]`, …);
+- composite types with `[]` (`optional[T]`, `result[T, E]`, `list[T]`, `array[T, N]`, `simd[T, N]`, …);
 - absence through `optional[T]`;
 - failure through `result[T, E]`;
 - propagation **only** through `try expr` (postfix `expr?` is an error);
@@ -30,7 +30,9 @@ During the **S3 (`0.3.0` surface)** cycle, these points are public contract:
   the expected type is known;
 - enum construction with `Enum.Variant(...)`, or `.Variant(...)` when the
   expected type is known;
-- traits through `apply Type` + `use Trait`;
+- traits through `apply Type: Trait` (canonical) or `apply Type use Trait`;
+- inherent methods declared directly inside `struct` bodies;
+- bare trait names in parameter annotations (`p: Trait`) as dynamic dispatch;
 - the native backend as the semantic reference.
 
 Changes to these points must be documented in `CHANGELOG.md` and need a
@@ -50,6 +52,13 @@ under FREEZE-1 as additive surface, each with regression tests:
 | `const { field } = value` — destructuring bindings | [06](06-statements.md) |
 | `alias Name = Type` inside a `use` section | [08](08-traits.md) |
 | `Buffer[size: 8]` — const generics with named arguments | [11](11-generics.md) |
+| `@align(N)` — explicit struct alignment | [04](04-types.md) |
+| `@noalloc` — static non-allocating execution verification | [07](07-functions.md) |
+| `simd[T, N]` — portable fixed-width SIMD vectors | [04](04-types.md) |
+| `mem.region()` — scoped bump memory arenas (`core.Disposable`) | [10](10-memory.md) |
+| `apply Type: TraitA, TraitB` — direct multi-trait header | [08](08-traits.md) |
+| `import path as alias` — canonical alias keyword | [01](01-overview.md) |
+| `array[T, N]` — compact positional fixed-length array | [04](04-types.md) |
 
 ---
 

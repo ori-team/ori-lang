@@ -120,13 +120,12 @@ Some words above are reserved precisely so that the pre-S3 spelling produces a
 **dedicated** diagnostic instead of a confusing generic one. Writing them emits
 a `parse.*_removed` error (see chapter 13):
 
-| Word | Removed form | Canonical S3 form |
+| Word | Removed form | Canonical S3/0.4+ form |
 |---|---|---|
 | `namespace` | `namespace app.main` | `module app.main` |
 | `func` | declaration `func f(...)` | `f(...)` — `func` survives only as the **callable type**: `func(T) -> R` |
-| `implement` | `implement Trait for Type` | `apply Type use Trait` |
+| `implement` | `implement Trait for Type` | `apply Type: Trait` (or `apply Type use Trait`) |
 | `do` | `do(u) => ...` | `(u) => ...` |
-| `as` | `import path as alias` | `import path = alias` |
 | `where` | `where T is Trait` | `for T: Trait` |
 
 `success` and `error` are reserved so that the pre-S3 result constructors report
@@ -136,6 +135,7 @@ The remaining reserved words are live surface:
 
 | Word | Form |
 |---|---|
+| `as` | module and item alias in imports: `import path as alias`, `import path (item as alias)` |
 | `with` | struct update expression: `base with { field: value } end` |
 | `then` | inline if expression: `if cond then a else b` (the `else` branch is mandatory — `parse.missing_else_in_if_expr`) |
 | `lazy` | the type `lazy[T]` |
@@ -162,7 +162,8 @@ remain usable as ordinary identifiers elsewhere:
 | `for` | Also after a name in generic bounds: `max for T: Comparable (...)` |
 | `use` | Inside `apply Type` — starts a trait section: `use Trait` |
 | `imports` | Opens the multi-import block: `imports … end` |
-| `array` | Names a type in type position: `array[int, size: 4]` |
+| `array` | Names a type in type position: `array[int, 4]` or `array[int, size: 4]` |
+| `simd` | Names a type in type position: `simd[float32, 4]` or `simd[float32, lanes: 4]` |
 | `slice` | Names a type in type position: `slice[int]` |
 | `iter` | Before a function declaration: `iter counter(stop: int) -> int` — a generator (chapter 06). Elsewhere (e.g. the module alias `iter.map(...)`) it is an ordinary identifier |
 | `suspend` | Statement start inside an `iter` function: `suspend value`. Followed by `=`, `+=`, `.`, `(`, or `[` it is an ordinary identifier |

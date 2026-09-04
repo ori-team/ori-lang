@@ -161,7 +161,7 @@ These types are built into the language and require no import.
 | Type | Description |
 |---|---|
 | `list[T]` | Ordered, resizable sequence |
-| `array[T, size: N]` | Fixed-length sequence stored **inline** — see below |
+| `array[T, N]` | Fixed-length sequence stored **inline** (`array[T, N]` or `array[T, size: N]`) — see below |
 | `simd[T, N]` | Fixed-width SIMD vector (`simd[float32, 4]`, `simd[int32, lanes: 4]`) lowered to CPU vector registers — see below |
 | `buffer[T]` | Mutable, contiguous, fixed-length heap block — see below |
 | `slice[T]` | A read-only **window** over a `list[T]` — see below |
@@ -172,7 +172,7 @@ These types are built into the language and require no import.
 | `result[T, E]` | A value that represents success or failure |
 | `range[int]` | An inclusive integer range |
 | `lazy[T]` | Lazy value computed at most once through `lazy.once` and `lazy.force` |
-| `any[Trait]` | Dynamic dispatch over a trait |
+| `any[Trait]` / `Trait` | Dynamic dispatch over a trait (either bare `param: Trait` or `any[Trait]`) |
 
 ---
 
@@ -262,7 +262,7 @@ nullability, lifetime, equality, FFI, and cross-thread contract is tracked in
 `LANG-HANDLE-1`; this section describes the current implementation boundary
 rather than promising an ownership guarantee.
 
-## Fixed-Size Arrays (`array[T, size: N]`)
+## Fixed-Size Arrays (`array[T, N]` or `array[T, size: N]`)
 
 `array` is the counterpart of `list`: the length is part of the **type**, so the
 elements are stored inline — in the stack frame for a local, or inside the
@@ -271,12 +271,12 @@ counting.
 
 ```ori
 struct Grid
-    cells: array[int, size: 4]
+    cells: array[int, 4]
     label: string
 end
 
 main()
-    var xs: array[int, size: 3] = [1, 2, 3]
+    var xs: array[int, 3] = [1, 2, 3]
     xs[1] = 99
 
     const g: Grid = Grid { cells: [10, 20, 30, 40], label: "grid" }
@@ -284,10 +284,10 @@ main()
 end
 ```
 
-The length is written as a **named** const argument for the same reason
-`Buffer[size: 8]` is (chapter 11): a bare `array[int, 4]` puts a loose number
-between brackets, which reads as an index everywhere else in Ori. Any other name
-is `parse.expected_array_size`.
+The length can be written compactly as a positional integer (`array[int, 4]`) or
+explicitly as a named const argument (`array[int, size: 4]`). Both spellings are
+accepted and represent the exact same type. Named parameters other than `size`
+are rejected with `parse.expected_array_size`.
 
 The value may be a concrete CT-0 expression. CT-0 is deliberately smaller than
 runtime Ori: integer literals, integer/boolean module constants, checked integer
@@ -303,9 +303,9 @@ const page: array[int, size: page_size] = [1, 2, 3, 4, 5, 6, 7, 8]
 
 ### Rules
 
-- **The length is part of the identity.** `array[int, size: 4]` and
-  `array[int, size: 8]` are different types and do not substitute for each
-  other.
+- **The length is part of the identity.** `array[int, 4]` and
+  `array[int, 8]` are different types and do not substitute for each
+  other. `array[int, 4]` and `array[int, size: 4]` are the same type.
 - **A literal must match the length exactly** — `type.array_length_mismatch`
   otherwise.
 - **A constant index is bounds-checked at compile time**
@@ -576,18 +576,25 @@ computed only if another path needs it.
 
 ---
 
-## Dynamic Dispatch (`any[Trait]`)
+## Dynamic Dispatch (`any[Trait]` and Bare Trait Types)
 
 `any[Trait]` holds a value of any type that implements `Trait`, selected at runtime.
+In parameter and variable annotations, the trait name can be written directly without
+the `any[...]` wrapper (`who: Drawable`), lowering to the same `Ty::Any` representation.
 
 ```ori
-const shape: any[Drawable] = Circle(radius: 10.0)
+const shape: Drawable = Circle { radius: 10.0 }
 shape.draw()
+
+draw_item(item: Drawable)
+    item.draw()
+end
 ```
 
 Rules:
-- `any[Trait]` values have heap-allocated vtable dispatch.
-- Prefer generics for performance-sensitive paths.
+- `any[Trait]` and bare `Trait` in type positions represent the same dynamic dispatch type.
+- Trait object values have heap-allocated vtable dispatch.
+- Prefer generics (`for T: Trait`) for performance-sensitive paths.
 - `==` on `any[Trait]` is supported through the runtime vtable. Equal
   concrete payloads compare structurally when their types provide equality;
   values with different concrete types compare unequal.

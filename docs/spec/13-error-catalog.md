@@ -18,7 +18,7 @@ Every **emitted** diagnostic should allow a reader to answer:
 Under **S3**, messages and actions **must not** recommend removed forms
 (`namespace`, declaration `func`, `else if`, postfix `?`, `import as`, …).
 Prefer the canonical form (`module`, `name(...)`, `elif`, `try expr`,
-`import path = alias`).
+`import path as alias`).
 
 Consistency gate: `cargo test -p ori-driver --test diagnostic_catalog`.
 
@@ -88,11 +88,11 @@ when the compiler starts producing it.
 | `parse.question_propagate_removed` | error | Source used removed postfix `?` propagation; use `try expr` |
 | `parse.else_if_removed` | error | Source used removed `else if`; use `elif` for chained conditionals |
 | `parse.case_dot_variant_removed` | error | Source used removed leading `.` on a match enum variant; write `case Variant` / `case Variant(...)` |
-| `parse.implement_removed` | error | `implement Trait for Type` was removed; use `apply Type` with `use Trait` |
-| `parse.apply_trait_to_removed` | error | `apply Trait to Type` / `apply Trait for Type` was removed; use `apply Type` with `use Trait` |
+| `parse.implement_removed` | error | `implement Trait for Type` was removed; use `apply Type: Trait` (or `apply Type use Trait`) |
+| `parse.apply_trait_to_removed` | error | `apply Trait to Type` / `apply Trait for Type` was removed; use `apply Type: Trait` (or `apply Type use Trait`) |
 | `parse.apply_member_after_use` | error | Free methods/binds appear after a `use Trait` section (order is free members, then `use`) |
 | `parse.expected_const_expression` | error | A named type argument contains an expression outside the side-effect-free CT-0 subset |
-| `parse.expected_array_size` | error | `array[…]` is missing its length, or names it something other than `size`: write `array[int, size: 4]` |
+| `parse.expected_array_size` | error | `array[…]` is missing its length: write `array[int, 4]` or `array[int, size: 4]` |
 | `parse.expected_simd_lanes` | error | `simd[…]` is missing its lane count (`simd[float32, 4]` or `simd[float32, lanes: 4]`) |
 | `parse.associated_type_keyword_removed` | error | `type Name = …` for an associated type was removed; write `alias Name = …` |
 | `apply.redundant_use_block` | error | An `apply` block whose whole body is one `use` section; write the compact header `apply Type use Trait` |

@@ -5,7 +5,9 @@
 > Surface: **S3** (`0.3.0`) + local inference **`0.3.1` / option B** + pipe `|>`  
 > Post-FREEZE-1 additions: `newtype`, match expressions, or-patterns, `if ok` /
 > `if err`, destructuring bindings, associated type aliases, const generics with
-> named arguments  
+> named arguments, `@align(N)`, `@noalloc`, `simd[T, N]`, `mem.region()`,
+> `apply Type: TraitA, TraitB`, `import path as alias`, `array[T, N]`, bare trait
+> parameters (`p: Trait`)  
 > Milestones closed: **M2** stdlib · **M3** ABI · **M1** Rust-free install path  
 > QA: skill **`ori-lang-qa`** · stages `tools/qa/` · matrix [`../planning/qa/test-matrix-ori.md`](../planning/qa/test-matrix-ori.md)
 
@@ -23,7 +25,7 @@ Product docs index: [../README.md](../README.md).
 
 | Fact | Value |
 |------|--------|
-| Canonical surface | S3: `module`, `public`, `import path = alias`, `list[T]`, `end` blocks, `apply`/`use` |
+| Canonical surface | S3/0.4+: `module`, `public`, `import path as alias`, `list[T]`, `array[T, N]`, `simd[T, N]`, `end` blocks, `apply Type: Trait` |
 | Identifiers | **snake_case** functions/modules; **PascalCase** types (not camelCase product default) |
 | Visibility | **`public`** (not `pub`) |
 | Memory | ARC + cooperative cycle collection |
