@@ -239,49 +239,94 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
     }
 }
 
-/// If leaf body is only `return expr;` (optionally with pure lets we skip),
-/// substitute params and return the expr.
+/// If leaf body is pure (single return or nested pure if-returns),
+/// substitute params and return the inlined expression (PERF-INLINE-1).
 fn try_inline_return_expr(leaf: &LeafFn, args: &[HirArg]) -> Option<HirExpr> {
-    // Only single return statement leaves for safety.
-    if leaf.body.stmts.len() != 1 {
+    if leaf.body.stmts.is_empty() || leaf.body.stmts.len() > 8 {
         return None;
     }
-    let HirStmt::Return(Some(ret), _) = &leaf.body.stmts[0] else {
-        return None;
-    };
+    let ret = leaf_body_to_return_expr(&leaf.body.stmts)?;
 
     // Substitution has no temporary-binding representation yet. Restrict
     // arguments to expressions whose evaluation is repeatable and cannot
     // trap, allocate, call user code, or observe an evaluation-order change.
-    // This is intentionally conservative: a missed inline is safe, while an
-    // omitted or duplicated argument is a language-semantics bug.
     if args.iter().any(|arg| !is_pure_inline_argument(&arg.value)) {
         return None;
     }
 
-    // Even a pure expression should not be cloned into multiple parameter
-    // uses until the HIR can materialize one argument binding. Reading a
-    // parameter once keeps this pass correct for managed values and future
-    // effect annotations alike.
+    // When all arguments are pure variables or constants, allow up to 4 reads per parameter.
+    let max_reads = if args.iter().all(|a| {
+        matches!(
+            a.value.kind,
+            HirExprKind::Var(_)
+                | HirExprKind::StructLit { .. }
+                | HirExprKind::FloatLit(_)
+                | HirExprKind::IntLit(_)
+                | HirExprKind::BoolLit(_)
+        )
+    }) {
+        4
+    } else {
+        1
+    };
+
     if leaf
         .params
         .iter()
-        .any(|param| count_var_uses(ret, param.as_str()) > 1)
+        .any(|param| count_var_uses(&ret, param.as_str()) > max_reads)
     {
         return None;
     }
-    // Closures store capture names, `match` introduces textual bindings, and
-    // propagation/await carry control flow tied to the callee. None can be
-    // moved safely by textual substitution.
-    if expr_has_inline_barrier(ret) {
+    if expr_has_inline_barrier(&ret) {
         return None;
     }
 
-    let mut out = ret.clone();
+    let mut out = ret;
     for (param, arg) in leaf.params.iter().zip(args.iter()) {
         subst_var(&mut out, param.as_str(), &arg.value);
     }
     Some(out)
+}
+
+fn leaf_body_to_return_expr(stmts: &[HirStmt]) -> Option<HirExpr> {
+    if stmts.is_empty() {
+        return None;
+    }
+    if stmts.len() == 1 {
+        let HirStmt::Return(Some(ret), _) = &stmts[0] else {
+            return None;
+        };
+        return Some(ret.clone());
+    }
+    let HirStmt::If {
+        cond,
+        then,
+        else_ifs,
+        else_,
+        span,
+    } = &stmts[0]
+    else {
+        return None;
+    };
+    if !else_ifs.is_empty() || else_.is_some() {
+        return None;
+    }
+    if then.stmts.len() != 1 {
+        return None;
+    }
+    let HirStmt::Return(Some(then_ret), _) = &then.stmts[0] else {
+        return None;
+    };
+    let else_ret = leaf_body_to_return_expr(&stmts[1..])?;
+    Some(HirExpr {
+        kind: HirExprKind::IfExpr {
+            cond: Box::new(cond.clone()),
+            then: Box::new(then_ret.clone()),
+            else_: Box::new(else_ret),
+        },
+        ty: then_ret.ty.clone(),
+        span: *span,
+    })
 }
 
 fn is_pure_inline_argument(expr: &HirExpr) -> bool {
@@ -302,11 +347,11 @@ fn is_pure_inline_argument(expr: &HirExpr) -> bool {
         | HirExprKind::StrLit(_)
         | HirExprKind::Unit
         | HirExprKind::None_ => true,
-        // A scalar read is not a stable value across the inlined body. For
-        // example, another call in the return expression may mutate a global
-        // after arguments were supposed to have been evaluated. An explicit
-        // HIR temporary is required before variable arguments are safe here.
-        HirExprKind::Var(_) => false,
+        HirExprKind::Var(_) => !expr.ty.is_runtime_managed(),
+        HirExprKind::StructLit { fields, .. } => {
+            !expr.ty.is_runtime_managed()
+                && fields.iter().all(|(_, val)| is_pure_inline_argument(val))
+        }
         HirExprKind::Binary { op, lhs, rhs } => {
             !matches!(
                 op,

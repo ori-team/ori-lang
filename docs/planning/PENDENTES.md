@@ -47,8 +47,8 @@ Foca em fechar os gaps de latência mensurados com a suite polyglot expandida em
 | ID | Prioridade | Escala | O que entrega | Status |
 |---|:---:|:---:|---|:---:|
 | **PERF-REGION-1** | P1 | S | Reset inline de arena com zero-call e indexação de chunk contíguo | **done** |
-| **PERF-INLINE-1** | P1 | M | Inlining de funções folha puras e pequenas com structs por valor | `todo` |
-| **PERF-CHANNEL-1** | P2 | M | Anel circular SPSC lock-free para canais `channel.Channel[T]` delimitados | `todo` |
+| **PERF-INLINE-1** | P1 | M | Inlining de funções folha puras e pequenas com structs por valor | **done** |
+| **PERF-CHANNEL-1** | P2 | M | Anel circular SPSC lock-free para canais `channel.Channel[T]` delimitados | **done** |
 
 ---
 

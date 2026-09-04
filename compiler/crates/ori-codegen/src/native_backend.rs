@@ -15011,12 +15011,23 @@ impl<'a> FuncCodegen<'a> {
                     }
                     if name.as_str() == "ori_region_reset" && args.len() == 1 {
                         let handle_val = self.emit_expr(&args[0].value)?;
-                        let inner_ptr = self.builder.ins().load(self.ptr_ty, MemFlags::new(), handle_val, 0);
+                        let inner_ptr =
+                            self.builder
+                                .ins()
+                                .load(self.ptr_ty, MemFlags::new(), handle_val, 0);
                         let zero = self.builder.ins().iconst(types::I64, 0);
-                        self.builder.ins().store(MemFlags::new(), zero, inner_ptr, 0);
-                        self.builder.ins().store(MemFlags::new(), zero, inner_ptr, 8);
-                        self.builder.ins().store(MemFlags::new(), zero, inner_ptr, 16);
-                        self.builder.ins().store(MemFlags::new(), zero, inner_ptr, 24);
+                        self.builder
+                            .ins()
+                            .store(MemFlags::new(), zero, inner_ptr, 0);
+                        self.builder
+                            .ins()
+                            .store(MemFlags::new(), zero, inner_ptr, 8);
+                        self.builder
+                            .ins()
+                            .store(MemFlags::new(), zero, inner_ptr, 16);
+                        self.builder
+                            .ins()
+                            .store(MemFlags::new(), zero, inner_ptr, 24);
                         return Ok(self.builder.ins().iconst(types::I64, 0));
                     }
                     if name.as_str() == "ori_map_new" && args.is_empty() {

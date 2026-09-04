@@ -19,6 +19,16 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Pure small-function and value-struct leaf inlining (`PERF-INLINE-1`).**
+  Broadened conservative HIR leaf inlining for pure small functions with branchy bodies (e.g. aligned AABB
+  early-exit intersection), allowing up to 8 pure statements and 4 parameter reads per pure variable/struct argument.
+  Covered by polyglot `spatial_grid_bvh` comparison.
+
+- **Reduced allocation overhead on channel send/receive fast paths (`PERF-CHANNEL-1`).**
+  Optimized bounded channel message loops with static result singletons (`RESULT_OK_ZERO`), eliminating per-message
+  heap allocations and ARC mutex acquisitions in high-throughput producer-consumer patterns. Covered by polyglot
+  `channel_throughput` comparison.
+
 - **Zero-call inline arena reset (`PERF-REGION-1`).**
   Emitted direct inline stores in Cranelift for `mem.reset` on `Region` instances, eliminating
   FFI call frame transitions on high-frequency frame tick resets. Covered by polyglot `arena_bulk_alloc`

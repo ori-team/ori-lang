@@ -1753,7 +1753,12 @@ unsafe fn alloc_async_spawn_job(
     job
 }
 
+static RESULT_OK_ZERO: [u8; 16] = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
 unsafe fn new_result_raw(is_ok: bool, raw: i64) -> *mut u8 {
+    if is_ok && raw == 0 {
+        return RESULT_OK_ZERO.as_ptr() as *mut u8;
+    }
     let ptr_size = std::mem::size_of::<*mut u8>();
     let total = ptr_size * 2;
     let ptr = ori_alloc(total, None);
