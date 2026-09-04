@@ -220,6 +220,10 @@ pub struct ApplyDecl {
     /// Methods / binds before any `use` section (inherent-style on the type).
     pub free_members: Vec<ApplyMember>,
     pub uses: Vec<ApplyUseSection>,
+    /// `apply Type: TraitA, TraitB` — members are trait-owned and assigned to
+    /// their declaring trait by name during resolution. `false` for the `use`
+    /// forms, where each section already owns its members.
+    pub colon_multi_trait: bool,
     pub span: Span,
 }
 

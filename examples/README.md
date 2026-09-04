@@ -98,9 +98,9 @@ that constructor path is supported by the backend.
 
 ## Policy
 
-- Prefer **`import ori.X = alias`** and selective imports on the parent.
-- **Two or more imports** → use the S3 **`imports … end`** block (not a stack of bare
-  `import` lines). Single import may stay as `import ori.io = io`.
+- Prefer **`import ori.X as alias`** and selective imports on the parent.
+- **Two or more imports** → use the **`imports … end`** block (or sequential `import ... as ...` lines).
+  Single import may stay as `import ori.io as io`.
 - Keep examples **runnable** and S3-clean; pre-S3 forms are hard errors (`ori migrate-syntax`).
 - One concern per example when possible; deep collection APIs live in `collections_demo`, not separate demos.
 - `tests_demo` has **no `main`** — required so the test harness can inject the entry point.

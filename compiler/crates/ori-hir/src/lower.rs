@@ -2242,7 +2242,24 @@ pub fn lower(
                         .iter()
                         .map(|(name, ty)| (name.text.clone(), ty.clone()))
                         .collect();
+                    let trait_methods: Option<HashSet<SmolStr>> = if apply.colon_multi_trait {
+                        l.resolve_def_path(&use_sec.trait_name.to_string())
+                            .and_then(|path| def_map.lookup(&path))
+                            .and_then(|tid| {
+                                trait_sigs
+                                    .iter()
+                                    .find(|sig| sig.def_id == tid)
+                                    .map(|ts| ts.methods.iter().map(|m| m.name.clone()).collect())
+                            })
+                    } else {
+                        None
+                    };
                     for member in &use_sec.members {
+                        if let Some(valid_methods) = &trait_methods {
+                            if !valid_methods.contains(&member.slot_name().text) {
+                                continue;
+                            }
+                        }
                         if let ori_ast::item::ApplyMember::Method(m) = member {
                             lower_apply_method(
                                 &mut l,

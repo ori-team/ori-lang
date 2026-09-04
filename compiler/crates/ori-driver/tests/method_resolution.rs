@@ -792,3 +792,92 @@ end
     let out = run_check(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
 }
+
+#[test]
+fn build_lowers_multi_trait_colon_generic_dispatch() {
+    let dir = TestDir::new("multi_trait_colon_dispatch");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io as io
+
+trait Labelled
+    label(self) -> string
+end
+
+trait Scored
+    score(self) -> int
+end
+
+struct Player
+    tag: string
+    pts: int
+end
+
+apply Player: Labelled, Scored
+    label(self) -> string
+        return self.tag
+    end
+
+    score(self) -> int
+        return self.pts
+    end
+end
+
+get_label for T: Labelled (item: T) -> string
+    return item.label()
+end
+
+get_score for T: Scored (item: T) -> int
+    return item.score()
+end
+
+main()
+    const p: Player = Player { tag: "ada", pts: 100 }
+    check get_label(p) == "ada", "label dispatch"
+    check get_score(p) == 100, "score dispatch"
+end
+"#,
+    );
+
+    let check_out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!check_out.has_errors, "{:?}", check_out.diagnostics);
+
+    let build_out = run_build(&dir.path("main.orl")).unwrap();
+    assert!(!build_out.has_errors, "{:?}", build_out.diagnostics);
+}
+
+#[test]
+fn check_rejects_unexpected_method_in_colon_multi_trait() {
+    let dir = TestDir::new("unexpected_colon_member");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+trait Alpha
+    alpha(self) -> int
+end
+
+struct Thing
+end
+
+apply Thing: Alpha
+    alpha(self) -> int
+        return 1
+    end
+
+    extra(self) -> int
+        return 2
+    end
+end
+
+main()
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors);
+    assert!(diagnostic_codes(&out).contains(&"impl.unexpected_member"));
+}

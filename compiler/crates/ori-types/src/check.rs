@@ -888,6 +888,7 @@ impl<'a> Checker<'a> {
                             self.check_func(m, &tp, implicit_self_ty.clone());
                         }
                     }
+                    let mut checked_methods = HashSet::new();
                     for use_sec in &apply.uses {
                         // `type Item = int` in this section names a type for
                         // the signatures inside it, and only inside it.
@@ -898,6 +899,11 @@ impl<'a> Checker<'a> {
                             .collect();
                         for member in &use_sec.members {
                             if let ApplyMember::Method(m) = member {
+                                if apply.colon_multi_trait
+                                    && !checked_methods.insert(m.name.text.clone())
+                                {
+                                    continue;
+                                }
                                 self.check_func(m, &tp, implicit_self_ty.clone());
                             }
                         }
@@ -1957,6 +1963,41 @@ impl<'a> Checker<'a> {
         }
 
         let self_ty = Ty::Named(type_def_id, Vec::new());
+        if apply.colon_multi_trait {
+            let mut all_expected = HashSet::new();
+            for use_sec in &apply.uses {
+                let trait_name = use_sec.trait_name.to_string();
+                if let Some(trait_def_id) = self.resolve_def_id(&trait_name) {
+                    if let Some(sig) = self.trait_sig(trait_def_id) {
+                        for m in &sig.methods {
+                            all_expected.insert(m.name.clone());
+                        }
+                    }
+                }
+            }
+            if let Some(first_sec) = apply.uses.first() {
+                for member in &first_sec.members {
+                    if !all_expected.contains(&member.slot_name().text) {
+                        self.sink.emit(
+                            Diagnostic::error(
+                                "impl.unexpected_member",
+                                format!(
+                                    "method `{}` in `apply {}` is not declared by any applied trait",
+                                    member.slot_name().text,
+                                    type_name
+                                ),
+                            )
+                            .with_label(Label::primary(
+                                self.file_id,
+                                member.span(),
+                                "unexpected method here",
+                            ))
+                            .with_action("declare inherent methods inside the `struct` body"),
+                        );
+                    }
+                }
+            }
+        }
         for use_sec in &apply.uses {
             // Signature comparison lowers the method's types, so this section's
             // `type Item = …` has to be in scope for it too.

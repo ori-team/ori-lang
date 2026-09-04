@@ -437,8 +437,23 @@ pub fn resolve_many<S: Into<SmolStr>>(
                             .iter()
                             .map(|(name, ty)| (name.text.clone(), ty.clone()))
                             .collect();
+                        let trait_methods: Option<HashSet<SmolStr>> = if apply.colon_multi_trait {
+                            trait_def_id.and_then(|tid| {
+                                trait_sigs
+                                    .iter()
+                                    .find(|sig| sig.def_id == tid)
+                                    .map(|ts| ts.methods.iter().map(|m| m.name.clone()).collect())
+                            })
+                        } else {
+                            None
+                        };
                         let mut impl_methods = Vec::new();
                         for member in &use_sec.members {
+                            if let Some(valid_methods) = &trait_methods {
+                                if !valid_methods.contains(&member.slot_name().text) {
+                                    continue;
+                                }
+                            }
                             match member {
                                 ori_ast::item::ApplyMember::Method(m) => {
                                     let m_path = format!(

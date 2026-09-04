@@ -1322,6 +1322,7 @@ impl<'src> Parser<'src> {
                     associated_types,
                     span: use_span,
                 }],
+                colon_multi_trait: false,
                 span: start.cover(end),
             });
         }
@@ -1361,6 +1362,7 @@ impl<'src> Parser<'src> {
                 where_clause,
                 free_members: Vec::new(),
                 uses,
+                colon_multi_trait: true,
                 span: start.cover(end),
             });
         }
@@ -1393,6 +1395,7 @@ impl<'src> Parser<'src> {
                     associated_types,
                     span: use_start.cover(end),
                 }],
+                colon_multi_trait: false,
                 span: start.cover(end),
             });
         }
@@ -1469,6 +1472,7 @@ impl<'src> Parser<'src> {
             where_clause,
             free_members,
             uses,
+            colon_multi_trait: false,
             span: start.cover(end),
         })
     }
@@ -1504,6 +1508,7 @@ impl<'src> Parser<'src> {
                 associated_types,
                 span: use_span,
             }],
+            colon_multi_trait: false,
             span: start.cover(end),
         })
     }

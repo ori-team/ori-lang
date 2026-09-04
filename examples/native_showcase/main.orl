@@ -33,16 +33,13 @@ enum Event
     Pair(data: tuple[int, string])
 end
 
-apply User
-    use Labelled
-        label(self) -> string
-            return self.name + ":" + self.role
-        end
+apply User: Labelled, core.Displayable
+    label(self) -> string
+        return self.name + ":" + self.role
     end
-    use core.Displayable
-        display(self) -> string
-            return self.name + " <" + self.role + ">"
-        end
+
+    display(self) -> string
+        return self.name + " <" + self.role + ">"
     end
 end
 
