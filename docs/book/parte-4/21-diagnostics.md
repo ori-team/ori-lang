@@ -88,7 +88,7 @@ print "Olá, Mundo!"
 ```
 **A Solução:**
 ```ori
-import ori.io = io
+import ori.io as io
 -- ...
 io.print "Olá, Mundo!"
 ```
@@ -102,7 +102,7 @@ io.println(f"{items.length}")
 ```
 **A Solução:**
 ```ori
-import ori.list = lists
+import ori.list as lists
 -- ...
 io.println(f"{lists.len(items)}")
 ```

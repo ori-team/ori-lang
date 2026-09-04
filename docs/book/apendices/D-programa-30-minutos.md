@@ -17,7 +17,7 @@ Crie um arquivo `src/main.orl` e adicione o seguinte:
 -- Todo arquivo começa declarando seu módulo
 module app.todo
 
--- Importação em bloco para organização (sempre caminho = alias)
+-- Importação em bloco para organização (sempre caminho + alias)
 -- ('ori.fs' entra só na seção de expansão mais abaixo, para persistência)
 imports
     ori.io = io

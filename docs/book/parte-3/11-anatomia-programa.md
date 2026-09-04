@@ -12,7 +12,7 @@ Todo arquivo começa com `module`. A entrada principal do programa é a função
 module app.hello
 
 -- Importa a biblioteca de entrada e saída
-import ori.io = io
+import ori.io as io
 
 -- Função principal do programa
 main()
@@ -36,7 +36,7 @@ A primeira linha de qualquer arquivo Ori **deve** ser `module nome.do.modulo`. I
 ### O sistema de Imports
 Para usar funções de outros arquivos, você precisa importá-las. Existem algumas formas de fazer isso:
 
-*   **Import com apelido (alias):** `import ori.io = io`. O caminho fica à esquerda e o apelido à direita.
+*   **Import com apelido (alias):** `import ori.io as io`. O caminho fica à esquerda e o apelido à direita.
 *   **Import seletivo:** `import ori.fs (read_text)`. Traz apenas funções específicas daquele caminho.
 *   **Import direto:** `import ori.math`. Sem apelido, você precisará digitar o caminho completo ao usar as funções (ex: `ori.math.add()`).
 *   **Bloco de imports:** Quando precisar trazer muitas coisas, agrupe para ficar mais limpo:

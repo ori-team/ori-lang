@@ -19,7 +19,7 @@ Antes da teoria, veja dois jeitos de declarar a mesma função. O primeiro escon
 module app.config
 
 -- Importamos o módulo de sistema de arquivos do sistema
-import ori.fs = fs
+import ori.fs as fs
 
 -- O contrato deixa claro: recebe uma string e retorna um "result"
 -- Isso avisa que a operação pode dar certo (string) ou falhar (string de erro)

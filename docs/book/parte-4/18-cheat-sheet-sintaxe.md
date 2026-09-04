@@ -11,16 +11,16 @@ Uma referência completa e rápida de toda a sintaxe da linguagem Ori, no padrã
 ## 1. Módulos e Imports
 
 Todo arquivo precisa de um cabeçalho de módulo na primeira linha. Imports
-sempre na ordem **caminho = alias** (nunca o contrário).
+sempre na ordem **caminho + alias** (nunca o contrário), com `as` ou `=`.
 
 ```ori
 module app.main
 
--- Importação simples (caminho = alias)
-import ori.io = io
+-- Importação simples (caminho + alias: as ou =)
+import ori.io as io
 
 -- Importação pública (re-exporta o módulo para quem importar o seu)
-public import ori.net = net
+public import ori.net as net
 
 -- Múltiplos imports em bloco
 imports
@@ -210,33 +210,24 @@ trait Printable
     print(self)
 end
 
--- Uma trait só: cabeçalho compacto ('use' na MESMA linha) — forma obrigatória
-apply User use Printable
+-- Uma ou várias traits: cabeçalho direto com dois-pontos
+apply User: Printable
     print(self)
         io.println(self.name)
     end
 end
 
--- Duas traits (ou trait + método próprio): aí a forma aninhada é a exigida
-apply User
-    use Printable
-        print(self)
-            io.println(self.name)
-        end
+apply User: Printable, Comparable
+    print(self)
+        io.println(self.name)
     end
-    use Comparable
-        compare(self, other: User) -> int
-            return self.age - other.age
-        end
+    compare(self, other: User) -> int
+        return self.age - other.age
     end
 end
 
--- Método que ALTERA a struct precisa de 'mut' na assinatura
-apply User
-    mut rename(self, new_name: string)
-        self.name = new_name
-    end
-end
+-- Método próprio (sem trait) vive dentro do bloco struct;
+-- método que ALTERA a struct precisa de 'mut' na assinatura
 ```
 
 ## 7. Tratamento de Erros
@@ -333,7 +324,7 @@ identity[T](value: T) -> T => value
 
 ## O que memorizar
 - Não existe `func`. Não existe chaves `{}` para blocos (é `end`).
-- Import é sempre **caminho = alias** (`import ori.io = io`), nunca o contrário.
+- Import é sempre **caminho + alias** (`import ori.io as io`), nunca o contrário.
 - `match`: sem ponto antes da variante, sempre `case ... :`.
 - `using` é uma declaração simples — não abre bloco próprio.
 - `is` não estreita tipo e não funciona com enum.

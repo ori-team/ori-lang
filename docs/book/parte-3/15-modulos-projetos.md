@@ -47,7 +47,7 @@ Isso é fundamental porque obriga você a dar um nome explícito, deixando o có
 
 ```ori
 -- Importando um único módulo
-import ori.fs = fs
+import ori.fs as fs
 import app.utils = utils
 ```
 
@@ -147,7 +147,7 @@ db.save(u)
 
 ## O que memorizar
 - Cada arquivo `.orl` começa com `module namespace.nome`.
-- Todos os imports exigem um alias (ex: `import ori.fs = fs`), sempre na ordem **caminho = alias**.
+- Todos os imports exigem um alias (ex: `import ori.fs as fs`), sempre na ordem **caminho + alias** (`as` ou `=`).
 - Elementos são privados por padrão. Use `public` para expô-los.
 - Use blocos `imports ... end` para organizar múltiplas dependências.
 - O `ori.proj` é **TOML**, não sintaxe Ori — ele define nome, tipo de projeto (`kind`), ponto de entrada (`entry`) e o namespace raiz.

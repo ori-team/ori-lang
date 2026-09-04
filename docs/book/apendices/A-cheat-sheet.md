@@ -7,9 +7,9 @@ Esta é uma versão super compacta e imprimível da sintaxe do Ori.
 ### Estrutura e Módulos
 ```ori
 module app.name
--- SEMPRE caminho = alias, nunca o contrário
-import ori.net = net
-public import ori.net = net
+-- SEMPRE caminho + alias (as ou =), nunca o contrário
+import ori.net as net
+public import ori.net as net
 imports
     ori.net = net
     ori.fs = fs

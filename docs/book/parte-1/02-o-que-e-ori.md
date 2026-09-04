@@ -14,7 +14,7 @@ Antes da teoria, veja como é a "cara" de um programa em Ori:
 ```ori
 module app.hello
 
-import ori.io = io
+import ori.io as io
 
 main()
     -- Escrevemos na tela de forma simples

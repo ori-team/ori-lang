@@ -9,7 +9,7 @@
 ```ori
 module app.ex1
 
-import ori.io = io
+import ori.io as io
 
 main()
     const name: string = "Raillen"
@@ -22,7 +22,7 @@ end
 ```ori
 module app.ex2
 
-import ori.io = io
+import ori.io as io
 
 add(a: int, b: int) -> int
     return a + b
@@ -38,7 +38,7 @@ end
 ```ori
 module app.ex3
 
-import ori.io = io
+import ori.io as io
 
 divide(a: int, b: int) -> result[int, string]
     if b == 0
@@ -62,7 +62,7 @@ end
 ```ori
 module app.ex4
 
-import ori.io = io
+import ori.io as io
 
 find(id: int) -> optional[string]
     if id == 1
@@ -85,7 +85,7 @@ end
 ```ori
 module app.ex5
 
-import ori.io = io
+import ori.io as io
 
 double(n: int) -> int => n * 2
 inc(n: int) -> int => n + 1
@@ -101,7 +101,7 @@ end
 ```ori
 module app.ex6
 
-import ori.io = io
+import ori.io as io
 
 struct Point
     x: int
@@ -149,14 +149,14 @@ end
 ```
 
 `ori check` deve apontar algo na família `name.*` (nome `io` indefinido).  
-Depois corrija com `import ori.io = io`.
+Depois corrija com `import ori.io as io`.
 
 ## 17 — Guards no match
 
 ```ori
 module app.ex17
 
-import ori.io = io
+import ori.io as io
 
 classify(n: int) -> string
     match n

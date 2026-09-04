@@ -250,7 +250,7 @@ chama pelo alias do import:
 
 ```ori
 -- 'list' já é o nome do tipo (list[T]); o alias do módulo precisa de outro nome
-import ori.list = lists
+import ori.list as lists
 
 main()
     var nums: list[int] = [1, 2, 3]

@@ -21,19 +21,19 @@ todas aparecem juntas ao importar `ori.X`.
 
 ## Como importar
 
-Sempre no formato **caminho = alias**:
+Sempre no formato **caminho + alias** (`as` ou `=`):
 
 ```ori
-import ori.io = io
-import ori.fs = fs
-import ori.string = str
+import ori.io as io
+import ori.fs as fs
+import ori.string as str
 ```
 
 ## Módulos de uso diário
 
 ### `ori.io` — Entrada e Saída
 ```ori
-import ori.io = io
+import ori.io as io
 
 main()
     io.print("Digite seu nome: ")
@@ -45,8 +45,8 @@ end
 
 ### `ori.fs` — Sistema de Arquivos
 ```ori
-import ori.io = io
-import ori.fs = fs
+import ori.io as io
+import ori.fs as fs
 
 run() -> result[void, string]
     const config: string = try fs.read_text("config.txt")
@@ -59,12 +59,12 @@ end
 ### `ori.string` — Texto
 Funções de manipulação de `string` (busca, transformação, particionamento). Importe como `str` por convenção:
 ```ori
-import ori.string = str
+import ori.string as str
 ```
 
 ### `ori.list` — Listas
 ```ori
-import ori.list = lists   -- 'list' já é o nome do tipo; use outro alias
+import ori.list as lists   -- 'list' já é o nome do tipo; use outro alias
 
 main()
     var nums: list[int] = [1, 2, 3]
@@ -78,7 +78,7 @@ Operações sobre `map[K, V]` e `set[T]` — checagem de chave, união, interse�
 
 ### `ori.test` — Testes
 ```ori
-import ori.test = test
+import ori.test as test
 
 @test
 test_math()
@@ -99,7 +99,7 @@ Variáveis de ambiente (`env_or`, `has_env`) e detecção de plataforma (`is_win
 
 ### `ori.args` — Argumentos de Linha de Comando
 ```ori
-import ori.args = args
+import ori.args as args
 
 main()
     const primeiro: string = args.get_or(1, "padrao")
@@ -108,7 +108,7 @@ end
 
 ### `ori.json` — JSON
 ```ori
-import ori.json = json
+import ori.json as json
 
 run() -> result[void, string]
     const value: json.Value = try json.read("dados.json")

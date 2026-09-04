@@ -22,17 +22,18 @@ end
 
 Traits podem, opcionalmente, conter métodos com **corpos padrão** (default method bodies), que serão usados se você não fornecer um método específico.
 
-## O Padrão "Apply + Use"
+## O Padrão "Apply"
 
-No Ori, para adicionar métodos a um tipo, usamos a palavra-chave `apply`. Para dizer que estamos cumprindo o contrato de uma trait, colocamos `use Trait` dentro desse bloco.
+No Ori, para dizer que um tipo cumpre o contrato de uma trait, usamos `apply`
+com dois-pontos listando as traits (uma ou várias, separadas por vírgula):
 
 ```ori
 struct Circle
   radius: float
 end
 
--- Uma trait só: use o cabeçalho compacto (o 'use' na MESMA linha do 'apply')
-apply Circle use Drawable
+-- Uma ou várias traits no mesmo bloco, sem indentação extra
+apply Circle: Drawable
   -- Aqui implementamos o método exigido
   draw(self)
     -- código para desenhar um círculo
@@ -40,43 +41,31 @@ apply Circle use Drawable
 end
 ```
 
-> **Quando é uma trait só, essa é a única forma aceita.** Escrever o `use`
-> numa linha separada, sozinho no bloco, dá erro (`apply.redundant_use_block`)
-> — seria a mesma coisa com um nível de indentação a mais. O compilador
-> escolhe a forma pelo conteúdo; você nunca decide entre duas.
->
-> Já tem código na forma antiga? `ori migrate-syntax` reescreve sozinho.
-
-Quando há **mais de uma trait** — ou métodos próprios junto com a trait — aí
-sim a forma aninhada é a exigida, porque o cabeçalho compacto não conseguiria
-expressar isso:
-
 ```ori
-apply Circle
-  use Drawable
-    draw(self)
-      -- ...
-    end
-  end
-
-  use Comparable
+apply Circle: Drawable, Comparable
+  draw(self)
     -- ...
   end
 end
 ```
 
+> A forma antiga com `use` (`apply Circle use Drawable`, ou `use` aninhado)
+> continua compilando. Escrever `use` sozinho num bloco que só tem isso dá
+> erro (`apply.redundant_use_block`) — seria a mesma coisa com um nível de
+> indentação a mais.
+>
+> Já tem código na forma antiga? `ori migrate-syntax` reescreve sozinho.
+
 ## Métodos Inerentes (Sem Trait)
 
-Você não precisa de uma trait para tudo. Você pode adicionar métodos próprios e diretos à struct, que são chamados de **métodos inerentes**.
+Você não precisa de uma trait para tudo. Métodos próprios e diretos à struct —
+os **métodos inerentes** — vivem dentro do próprio bloco `struct`:
 
 ```ori
 struct Point
   x: float
   y: float
-end
 
-apply Point
-  -- Não há "use" aqui, apenas funções normais
   distance(self) -> float
     -- calcula distância
     return 0.0
@@ -161,8 +150,7 @@ A biblioteca padrão traz traits fundamentais:
 
 ## O que memorizar
 - Use `trait` para definir um contrato de comportamento.
-- **Uma trait só:** `apply Tipo use Trait` — cabeçalho compacto, `use` na mesma linha (forma obrigatória).
-- **Duas ou mais traits, ou trait + método próprio:** aí a forma aninhada é a exigida.
-- Só métodos próprios, sem trait: `apply Tipo` com os métodos direto no bloco.
+- **Uma ou várias traits:** `apply Tipo: TraitA, TraitB` — cabeçalho direto com dois-pontos.
+- Só métodos próprios, sem trait: declare dentro do bloco `struct`.
 - Se o método altera a struct, ele deve começar com `mut`.
 - Restrinja genéricos com `for T: NomeDaTrait`.
