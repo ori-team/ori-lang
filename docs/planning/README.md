@@ -78,5 +78,5 @@ Do **not** treat `historico/` or closed PR plans as the current language surface
 Normative syntax: [../spec/](../spec/README.md).
 
 The current implementation baseline is the Cargo workspace `0.3.8-dev` after
-the `v0.3.7` release. The older maturity plan is only available under
+the `v0.3.8` release. The older maturity plan is only available under
 [`historico/PLANO-MATURIDADE-COMPLETO.md`](historico/PLANO-MATURIDADE-COMPLETO.md).

@@ -2,7 +2,7 @@
 
 > **This file is the only active “what remains to implement” list.**  
 > Surface baseline: **S3 `0.3.0`** + inference B **`0.3.1`** + released package
-> **`0.3.7`** + living workspace **`0.3.8-dev`**.
+> **`0.3.8`** + living workspace **`0.3.8-dev`**.
 > Last consolidated: **2026-09-01** — §2 contains the real remaining work.
 > Historical delivery rows are retained as dated evidence and are superseded by
 > any open `AUD-*` finding that narrows or invalidates their original claim.

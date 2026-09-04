@@ -12,7 +12,7 @@
 > inventory. For current language status and documentation coverage, use
 > [`docs/ATLAS.md`](../ATLAS.md) and [`docs/atlas/features.yaml`](../atlas/features.yaml).
 > Current surface: **S3 / 0.3.0** + inference **0.3.1**; workspace **0.3.8-dev**;
-> latest release **v0.3.7**. Auk9 = arquivada.
+> latest release **v0.3.8**. Auk9 = arquivada.
 
 ---
 
