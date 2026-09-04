@@ -2,10 +2,10 @@ module app.native_showcase
 
 -- Custom traits, any[Trait], generics, enums, using+dispose.
 imports
-    ori.core = core
-    ori.io = io
-    ori.list = lists
-    ori.map = maps
+    ori.core as core
+    ori.io as io
+    ori.list as lists
+    ori.map as maps
 end
 
 trait Labelled
@@ -46,7 +46,7 @@ apply User
     end
 end
 
-apply Resource use Disposable
+apply Resource: Disposable
     mut dispose(self)
         io.print("disposed-" + string(int(self.id)))
     end

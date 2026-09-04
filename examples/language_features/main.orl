@@ -114,7 +114,7 @@ struct Animal
     legs: int
 end
 
-apply Animal use core.Equatable
+apply Animal: core.Equatable
     equals(self, other: Animal) -> bool
         return self.name == other.name
     end

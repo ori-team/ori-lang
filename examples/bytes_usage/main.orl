@@ -1,6 +1,6 @@
 module app.bytes_demo
 
-import ori.io = io
+import ori.io as io
 
 main()
     io.println("Bytes Primitive Demonstration")

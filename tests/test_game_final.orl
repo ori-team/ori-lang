@@ -1,7 +1,7 @@
 module test.game_final
 
-import ori.math.vec2 = vec2
-import ori.test = test
+import ori.math.vec2 as vec2
+import ori.test as test
 
 struct Rectangle
     x: float

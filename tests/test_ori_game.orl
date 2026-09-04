@@ -1,10 +1,10 @@
 module test.ori_game
 
-import ori.game.shape = shape
-import ori.game.color = color
-import ori.game.collision = collision
-import ori.game.engine = engine
-import ori.math.vec2 = vec2
+import ori.game.shape as shape
+import ori.game.color as color
+import ori.game.collision as collision
+import ori.game.engine as engine
+import ori.math.vec2 as vec2
 
 test_shape_creation() -> void
     var rect = shape.Rectangle {x: 10.0, y: 20.0, width: 100.0, height: 50.0}
