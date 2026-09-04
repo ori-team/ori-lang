@@ -69,6 +69,14 @@ cargo --manifest-path compiler/Cargo.toml test -p ori-driver --test multifile_im
 cargo --manifest-path compiler/Cargo.toml test -p ori-driver --test jit_run
 ```
 
+### Sanitizers
+
+```bash
+sh tools/qa/sanitizer_smoke.sh
+```
+
+Runs the runtime and embed suites under AddressSanitizer and ThreadSanitizer.
+
 ## Runtime staging
 
 Runtime source lives in `compiler/crates/ori-runtime`. Staged artifacts live under `runtime/<target-triple>/`.
