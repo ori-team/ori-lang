@@ -502,3 +502,84 @@ end
     assert_eq!(stdout.trim(), "100000:108890");
     assert_strict_budget("ORI_PERF_PARTIAL_PASS_100K_BUDGET_MS", elapsed, 10_000);
 }
+
+#[test]
+fn run_simd_vector_addition_speed_guard() {
+    let dir = TestDir::new("perf_simd_vector_math");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    var v: simd[float32, 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32]
+    const step: simd[float32, 4] = [0.1f32, 0.2f32, 0.3f32, 0.4f32]
+    var i: int = 0
+    while i < 1_000_000
+        v = v + step
+        i = i + 1
+    end
+    io.print("SIMD_OK")
+end
+"#,
+    );
+
+    let main_path = dir.path("main.orl");
+    let started = Instant::now();
+    let output = std::process::Command::new(common::ori_exe())
+        .args(["run", main_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn `ori` subprocess");
+    let elapsed = started.elapsed();
+    let stdout = common::normalize_stdout(output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "`ori run` failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_eq!(stdout.trim(), "SIMD_OK");
+    assert_strict_budget("ORI_PERF_SIMD_VECTOR_BUDGET_MS", elapsed, 3_000);
+}
+
+#[test]
+fn run_region_arena_bulk_reset_speed_guard() {
+    let dir = TestDir::new("perf_region_arena");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+import ori.mem = mem
+
+main()
+    using r: mem.Region = mem.region()
+    var i: int = 0
+    while i < 1_000
+        mem.reset(r)
+        check mem.count(r) == 0
+        i = i + 1
+    end
+    io.print("REGION_OK")
+end
+"#,
+    );
+
+    let main_path = dir.path("main.orl");
+    let started = Instant::now();
+    let output = std::process::Command::new(common::ori_exe())
+        .args(["run", main_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn `ori` subprocess");
+    let elapsed = started.elapsed();
+    let stdout = common::normalize_stdout(output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "`ori run` failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_eq!(stdout.trim(), "REGION_OK");
+    assert_strict_budget("ORI_PERF_REGION_ARENA_BUDGET_MS", elapsed, 3_000);
+}

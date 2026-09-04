@@ -1,0 +1,19 @@
+module app.region_arena_churn
+
+-- Measures MEM-REGION-1 bump-arena reset throughput: O(1) bulk resets
+-- on deterministic frame-temporary objects without ARC registry overhead.
+
+import ori.io = io
+import ori.mem = mem
+
+main()
+    using r: mem.Region = mem.region()
+    var i: int = 0
+    while i < 200
+        mem.reset(r)
+        check mem.count(r) == 0
+        check mem.size(r) == 0
+        i = i + 1
+    end
+    io.println(string(mem.count(r)))
+end

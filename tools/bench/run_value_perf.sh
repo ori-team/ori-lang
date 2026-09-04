@@ -13,7 +13,7 @@ fi
 
 echo "=== Running VALUE-PERF-1 Benchmarks ==="
 
-for bench in vec3_add_loop mat3_multiply optional_scalar_loop; do
+for bench in vec3_add_loop mat3_multiply optional_scalar_loop simd_vector_math region_arena_churn; do
     bench_file="${SCRIPT_DIR}/${bench}.orl"
     echo ""
     echo ">> Benchmark: ${bench}"
