@@ -2,6 +2,32 @@ module ori.image
 
 -- PPM & BMP image export helpers for software rendering (GFX-ECO-1).
 
+public enum ImageFormat
+    Bmp
+    Ppm
+end
+
+public struct Image
+    width: int
+    height: int
+    pixels: list[int]
+
+    pixel_count(self) -> int
+        return self.width * self.height
+    end
+
+    get_pixel(self, x: int, y: int) -> int
+        if x < 0 or x >= self.width or y < 0 or y >= self.height
+            return 0
+        end
+        const idx: int = y * self.width + x
+        if idx < ori.list.len(self.pixels)
+            return ori.list.get(self.pixels, idx)
+        end
+        return 0
+    end
+end
+
 public encode_ppm(width: int, height: int, pixels: list[int]) -> string
     var out: string = "P3\n"
     out = ori.string.concat(out, string(width))

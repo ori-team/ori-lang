@@ -4,24 +4,35 @@ import ori.list as lists
 import ori.map as maps
 import ori.set as sets
 
-public copy_int(value: int) -> int
+-- Generic value copy for primitives and transferable values
+public copy[T](value: T) -> T
     return value
+end
+
+-- Generic value transfer helper
+public transfer[T](value: T) -> T
+    return value
+end
+
+-- Specific monomorphic helpers (maintained for silent backwards compatibility)
+public copy_int(value: int) -> int
+    return copy(value)
 end
 
 public copy_bool(value: bool) -> bool
-    return value
+    return copy(value)
 end
 
 public copy_float(value: float) -> float
-    return value
+    return copy(value)
 end
 
 public copy_string(value: string) -> string
-    return value
+    return copy(value)
 end
 
 public copy_bytes(value: bytes) -> bytes
-    return value
+    return copy(value)
 end
 
 public copy_list_int(value: list[int]) -> list[int]
@@ -41,11 +52,11 @@ public copy_set_string(value: set[string]) -> set[string]
 end
 
 public transfer_int(value: int) -> int
-    return copy_int(value)
+    return transfer(value)
 end
 
 public transfer_string(value: string) -> string
-    return copy_string(value)
+    return transfer(value)
 end
 
 public transfer_list_string(value: list[string]) -> list[string]

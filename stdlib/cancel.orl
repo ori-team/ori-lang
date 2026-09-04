@@ -64,7 +64,7 @@ apply TaskScope: core.Disposable
     mut dispose(self) -> void
         task.cancel(self.token)
         for job in self.jobs
-            task.join(job)
+            const _: result[void, task.JoinError] = task.join(job)
         end
     end
 end
@@ -79,6 +79,6 @@ end
 
 public join_tasks(scope: TaskScope) -> void
     for job in scope.jobs
-        task.join(job)
+        const _: result[void, task.JoinError] = task.join(job)
     end
 end

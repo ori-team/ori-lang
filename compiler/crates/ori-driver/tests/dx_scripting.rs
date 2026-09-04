@@ -982,6 +982,16 @@ public main() -> void
         panic("transfer_string failed")
     end
 
+    const gen_val: int = conc.transfer(99)
+    if gen_val != 99
+        panic("generic transfer failed")
+    end
+
+    const gen_cp: string = conc.copy("copied")
+    if gen_cp != "copied"
+        panic("generic copy failed")
+    end
+
     io.println("STRUCT_CONC_OK")
 end
 "#,

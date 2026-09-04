@@ -2,7 +2,6 @@ module ori.validate
 
 import ori.list as lists
 import ori.string as str
-import ori.string as su
 
 public between(value: int, min_val: int, max_val: int) -> bool
     if value < min_val
@@ -56,7 +55,7 @@ public one_of_string(value: string, candidates: list[string]) -> bool
 end
 
 public not_empty(value: string) -> bool
-    return not su.is_empty(value)
+    return not str.is_empty(value)
 end
 
 public not_empty_text(value: string) -> bool
@@ -100,7 +99,7 @@ public in_range(value: int, min_val: int, max_val: int) -> bool
 end
 
 public blank(value: string) -> bool
-    return su.blank(value)
+    return str.blank(value)
 end
 
 public length_equal(value: string, expected: int) -> bool
@@ -108,7 +107,7 @@ public length_equal(value: string, expected: int) -> bool
 end
 
 public all_digits(value: string) -> bool
-    return su.is_digits(value)
+    return str.is_digits(value)
 end
 
 public matches_length(value: string, exact: int) -> bool
