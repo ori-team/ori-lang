@@ -1,6 +1,6 @@
 module ori.time.utils
 
-import ori.time = time
+import ori.time as time
 
 public milliseconds(n: int) -> int
     return n

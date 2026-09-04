@@ -2,7 +2,7 @@ module ori.slotmap
 
 -- Generational SlotMap container rejecting stale keys upon slot reuse (RUNTIME-CTRL-1.7).
 
-import ori.list = lists
+import ori.list as lists
 
 public struct SlotKey
     index: int

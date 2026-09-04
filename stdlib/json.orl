@@ -1,7 +1,7 @@
 module ori.json
 
-import ori.fs = fs
-import ori.string = str
+import ori.fs as fs
+import ori.string as str
 
 public enum JsonError
     ParseError(message: string)

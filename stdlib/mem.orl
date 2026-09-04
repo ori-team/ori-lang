@@ -5,7 +5,7 @@ module ori.mem
 -- Enables bulk O(1) resets for frame-temporary objects (game loops, culling lists,
 -- command queues, temporary buffers) replacing per-object ARC retain/release operations.
 
-import ori.core = core
+import ori.core as core
 
 public struct Region
     _handle: handle[Region]
@@ -18,7 +18,7 @@ public region() -> Region
     }
 end
 
-apply Region use core.Disposable
+apply Region: core.Disposable
     mut dispose(self) -> void
         ori.mem.region_free(self._handle)
     end

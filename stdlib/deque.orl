@@ -1,6 +1,6 @@
 module ori.deque
 
-import ori.list = lists
+import ori.list as lists
 
 public from_list[T](items: list[T]) -> ori.deque.Deque[T]
     var d: ori.deque.Deque[T] = ori.deque.new()

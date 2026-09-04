@@ -1,7 +1,7 @@
 module ori.random.utils
 
-import ori.list = lists
-import ori.random = rnd
+import ori.list as lists
+import ori.random as rnd
 
 public int_range(min_val: int, max_val: int) -> int
     return rnd.int(min_val, max_val)

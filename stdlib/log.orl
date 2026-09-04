@@ -1,6 +1,6 @@
 module ori.log
 
-import ori.io = io
+import ori.io as io
 
 public info(message: string)
     io.println(ori.string.concat("[info] ", message))

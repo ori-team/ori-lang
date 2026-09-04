@@ -1,6 +1,6 @@
 module ori.linked_list
 
-import ori.list = lists
+import ori.list as lists
 
 public from_list[T](items: list[T]) -> ori.linked_list.LinkedList[T]
     var node: ori.linked_list.LinkedList[T] = ori.linked_list.new()

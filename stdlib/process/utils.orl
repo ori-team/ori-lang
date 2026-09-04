@@ -2,7 +2,7 @@ module ori.process.utils
 
 -- Compatibility module. Keep the implementation in the canonical parent
 -- (`ori.process`) and forward the legacy path so the two APIs cannot drift.
-import ori.process = base
+import ori.process as base
 
 public exit_code(capture: map[string, string]) -> int
     return base.exit_code(capture)

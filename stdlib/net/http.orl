@@ -3,11 +3,11 @@ module ori.net.http
 -- STDLIB-2: low-level HTTP/1.1 helpers over ori.net TCP/TLS.
 -- Build requests, parse responses, thin blocking GET/POST clients.
 
-import ori.net = net
-import ori.string = str
-import ori.bytes = bytes_mod
-import ori.convert = conv
-import ori.list = lists
+import ori.net as net
+import ori.string as str
+import ori.bytes as bytes_mod
+import ori.convert as conv
+import ori.list as lists
 
 public alias ResponseResult = result[Response, string]
 public alias RequestResult = result[Request, string]

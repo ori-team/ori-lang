@@ -1,6 +1,6 @@
 module ori.os
 
-import ori.string = su
+import ori.string as su
 
 public env_or(name: string, fallback: string) -> string
     if some(value) = ori.os.env(name)

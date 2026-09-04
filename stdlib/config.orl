@@ -1,7 +1,7 @@
 module ori.config
 
-import ori.fs = fs
-import ori.json = json
+import ori.fs as fs
+import ori.json as json
 
 -- Public domain aliases (S3 culture 1.3 / 2.4)
 public alias TextResult = result[string, string]

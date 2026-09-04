@@ -2,8 +2,8 @@ module ori.cancel
 
 -- Structured cancellation scopes and task lifecycle combinators (ASYNC-STRUCT-1, CONC-THREADS-1).
 
-import ori.core = core
-import ori.task = task
+import ori.core as core
+import ori.task as task
 
 public struct CancelScope
     token: task.CancelToken
@@ -22,7 +22,7 @@ public create_scope_with(token: task.CancelToken) -> CancelScope
     }
 end
 
-apply CancelScope use core.Disposable
+apply CancelScope: core.Disposable
     mut dispose(self) -> void
         task.cancel(self.token)
     end
@@ -60,7 +60,7 @@ public create_task_scope_with(token: task.CancelToken) -> TaskScope
     }
 end
 
-apply TaskScope use core.Disposable
+apply TaskScope: core.Disposable
     mut dispose(self) -> void
         task.cancel(self.token)
         for job in self.jobs

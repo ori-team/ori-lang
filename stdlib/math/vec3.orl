@@ -1,7 +1,7 @@
 module ori.math.vec3
 
-import ori.math = math
-import ori.core = core
+import ori.math as math
+import ori.core as core
 
 public struct Vec3
     x: float
@@ -9,31 +9,23 @@ public struct Vec3
     z: float
 end
 
-apply Vec3 use core.Addable
+apply Vec3: core.Addable, core.Subtractable, core.Multiplicable, core.Divisible, core.Equatable
     add(self, other: Vec3) -> Vec3
         return Vec3 { x: self.x + other.x, y: self.y + other.y, z: self.z + other.z }
     end
-end
 
-apply Vec3 use core.Subtractable
     subtract(self, other: Vec3) -> Vec3
         return Vec3 { x: self.x - other.x, y: self.y - other.y, z: self.z - other.z }
     end
-end
 
-apply Vec3 use core.Multiplicable
     multiply(self, other: Vec3) -> Vec3
         return Vec3 { x: self.x * other.x, y: self.y * other.y, z: self.z * other.z }
     end
-end
 
-apply Vec3 use core.Divisible
     divide(self, other: Vec3) -> Vec3
         return Vec3 { x: self.x / other.x, y: self.y / other.y, z: self.z / other.z }
     end
-end
 
-apply Vec3 use core.Equatable
     equals(self, other: Vec3) -> bool
         return self.x == other.x and self.y == other.y and self.z == other.z
     end

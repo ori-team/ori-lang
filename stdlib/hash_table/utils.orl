@@ -1,7 +1,7 @@
 module ori.hash_table.utils
 
-import ori.hash_table = hash_table
-import ori.map = maps
+import ori.hash_table as hash_table
+import ori.map as maps
 
 public get_or_string_int(table: hash_table.HashTable[string, int], key: string, fallback: int) -> int
     if some(value) = hash_table.get(table, key)

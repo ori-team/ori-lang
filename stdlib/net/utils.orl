@@ -1,8 +1,8 @@
 module ori.net.utils
 
-import ori.net = net
-import ori.string = str
-import ori.task = task
+import ori.net as net
+import ori.string as str
+import ori.task as task
 
 public alias ConnectionResult = result[net.Connection, string]
 public alias ListenerResult = result[net.Listener, string]

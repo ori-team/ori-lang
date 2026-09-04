@@ -1,7 +1,7 @@
 module ori.json.utils
 
-import ori.fs = fs
-import ori.json = json
+import ori.fs as fs
+import ori.json as json
 
 public alias ValueResult = result[json.Value, string]
 public alias TextResult = result[string, string]

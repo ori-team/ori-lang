@@ -2,7 +2,7 @@ module ori.span
 
 -- Mutable views / spans over contiguous buffer regions without copying (GFX-VIEW-1).
 
-import ori.buffer = buffer_mod
+import ori.buffer as buffer_mod
 
 public struct Span
     _buf: buffer[int]

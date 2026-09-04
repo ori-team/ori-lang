@@ -1,6 +1,6 @@
 module ori.tree
 
-import ori.list = lists
+import ori.list as lists
 
 public is_leaf[T](t: ori.tree.Tree[T], node: ori.tree.NodeId) -> bool
     const kids: list[ori.tree.NodeId] = ori.tree.children(t, node)

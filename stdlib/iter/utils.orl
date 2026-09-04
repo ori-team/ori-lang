@@ -1,7 +1,7 @@
 module ori.iter.utils
 
-import ori.iter = iter
-import ori.list = lists
+import ori.iter as iter
+import ori.list as lists
 
 public count[T](items: list[T]) -> int
     return lists.len(items)

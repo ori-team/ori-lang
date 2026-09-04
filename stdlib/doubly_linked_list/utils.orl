@@ -1,7 +1,7 @@
 module ori.doubly_linked_list.utils
 
-import ori.doubly_linked_list = doubly_linked_list
-import ori.list = lists
+import ori.doubly_linked_list as doubly_linked_list
+import ori.list as lists
 
 public from_list[T](items: list[T]) -> doubly_linked_list.DoublyLinkedList[T]
     var node: doubly_linked_list.DoublyLinkedList[T] = doubly_linked_list.new()

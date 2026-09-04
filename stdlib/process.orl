@@ -1,9 +1,9 @@
 module ori.process
 
-import ori.bytes = bytes_mod
-import ori.convert = conv
-import ori.map = maps
-import ori.string = string_mod
+import ori.bytes as bytes_mod
+import ori.convert as conv
+import ori.map as maps
+import ori.string as string_mod
 
 public struct ProcessOutput
     status: int

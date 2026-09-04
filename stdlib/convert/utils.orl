@@ -1,6 +1,6 @@
 module ori.convert.utils
 
-import ori.convert = conv
+import ori.convert as conv
 
 public parse_int_or(s: string, default: int) -> int
     if some(n) = conv.string_to_int(s)

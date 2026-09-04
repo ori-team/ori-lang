@@ -1,9 +1,9 @@
 module ori.path
 
-import ori.bytes = bytes_mod
-import ori.list = lists
-import ori.string = str
-import ori.string = su
+import ori.bytes as bytes_mod
+import ori.list as lists
+import ori.string as str
+import ori.string as su
 
 normalize_separators(value: string) -> string
     var backslash: string = "/"

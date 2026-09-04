@@ -2,7 +2,7 @@ module ori.concurrent.utils
 
 -- Compatibility module. Keep the implementation in the canonical parent
 -- (`ori.concurrent`) and forward the legacy path so the two APIs cannot drift.
-import ori.concurrent = base
+import ori.concurrent as base
 
 public copy_int(value: int) -> int
     return base.copy_int(value)

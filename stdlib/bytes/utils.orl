@@ -1,6 +1,6 @@
 module ori.bytes.utils
 
-import ori.bytes = bytes_mod
+import ori.bytes as bytes_mod
 
 -- Avoid importing ori.string: parent string.orl imports ori.bytes (cycle risk).
 

@@ -1,8 +1,8 @@
 module ori.concurrent
 
-import ori.list = lists
-import ori.map = maps
-import ori.set = sets
+import ori.list as lists
+import ori.map as maps
+import ori.set as sets
 
 public copy_int(value: int) -> int
     return value

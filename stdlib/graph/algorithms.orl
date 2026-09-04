@@ -1,8 +1,8 @@
 module ori.graph.algorithms
 
-import ori.graph = graph
-import ori.queue = queue
-import ori.set = sets
+import ori.graph as graph
+import ori.queue as queue
+import ori.set as sets
 
 public has_path(g: graph.Graph[string], start: string, goal: string) -> bool
     if start == goal

@@ -1,7 +1,7 @@
 module ori.io.utils
 
-import ori.io = io
-import ori.string = str
+import ori.io as io
+import ori.string as str
 
 public alias OptionalBytesResult = result[optional[bytes], string]
 public alias OptionalTextResult = result[optional[string], string]

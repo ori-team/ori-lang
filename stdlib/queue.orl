@@ -1,6 +1,6 @@
 module ori.queue
 
-import ori.list = lists
+import ori.list as lists
 
 public from_list[T](items: list[T]) -> ori.queue.Queue[T]
     var q: ori.queue.Queue[T] = ori.queue.new()

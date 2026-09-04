@@ -1,38 +1,30 @@
 module ori.math.vec2
 
-import ori.math = math
-import ori.core = core
+import ori.math as math
+import ori.core as core
 
 public struct Vec2
     x: float
     y: float
 end
 
-apply Vec2 use core.Addable
+apply Vec2: core.Addable, core.Subtractable, core.Multiplicable, core.Divisible, core.Equatable
     add(self, other: Vec2) -> Vec2
         return Vec2 { x: self.x + other.x, y: self.y + other.y }
     end
-end
 
-apply Vec2 use core.Subtractable
     subtract(self, other: Vec2) -> Vec2
         return Vec2 { x: self.x - other.x, y: self.y - other.y }
     end
-end
 
-apply Vec2 use core.Multiplicable
     multiply(self, other: Vec2) -> Vec2
         return Vec2 { x: self.x * other.x, y: self.y * other.y }
     end
-end
 
-apply Vec2 use core.Divisible
     divide(self, other: Vec2) -> Vec2
         return Vec2 { x: self.x / other.x, y: self.y / other.y }
     end
-end
 
-apply Vec2 use core.Equatable
     equals(self, other: Vec2) -> bool
         return self.x == other.x and self.y == other.y
     end

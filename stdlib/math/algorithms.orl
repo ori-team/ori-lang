@@ -1,7 +1,7 @@
 module ori.math.algorithms
 
-import ori.math = math
-import ori.math.utils = mu
+import ori.math as math
+import ori.math.utils as mu
 
 public clamp_float(value: float, min_val: float, max_val: float) -> float
     if value < min_val

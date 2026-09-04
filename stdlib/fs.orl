@@ -1,6 +1,6 @@
 module ori.fs
 
-import ori.string = strings
+import ori.string as strings
 
 public enum FsError
     NotFound

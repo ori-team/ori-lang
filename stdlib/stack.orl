@@ -1,6 +1,6 @@
 module ori.stack
 
-import ori.list = lists
+import ori.list as lists
 
 public from_list[T](items: list[T]) -> ori.stack.Stack[T]
     var s: ori.stack.Stack[T] = ori.stack.new()

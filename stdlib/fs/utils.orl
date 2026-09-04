@@ -1,6 +1,6 @@
 module ori.fs.utils
 
-import ori.fs = fs
+import ori.fs as fs
 
 public alias TextResult = result[string, string]
 public alias BoolResult = result[bool, string]

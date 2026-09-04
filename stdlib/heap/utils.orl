@@ -1,6 +1,6 @@
 module ori.heap.utils
 
-import ori.heap = heap
+import ori.heap as heap
 
 public from_list_int(items: list[int]) -> heap.Heap[int]
     return heap.from_list(items)

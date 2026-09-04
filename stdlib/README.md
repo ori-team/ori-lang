@@ -39,11 +39,11 @@ future as errors.
 ## Import (canonical)
 
 ```ori
-import ori.io = io
-import ori.fs = fs
-import ori.string = str
-import ori.queue = queue
-import ori.bytes = bytes_mod
+import ori.io as io
+import ori.fs as fs
+import ori.string as str
+import ori.queue as queue
+import ori.bytes as bytes_mod
 
 import ori.string (is_empty)
 import ori.fs (read_text_or)

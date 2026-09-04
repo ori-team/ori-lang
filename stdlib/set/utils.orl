@@ -1,6 +1,6 @@
 module ori.set.utils
 
-import ori.set = sets
+import ori.set as sets
 
 public contains_all(s: set[string], items: list[string]) -> bool
     for item in items
