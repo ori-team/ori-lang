@@ -22,14 +22,14 @@ irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.
 Pin a version or force reinstall via **environment variables** (work with `| iex`):
 
 ```powershell
-$env:ORI_VERSION = "0.3.5"
+$env:ORI_VERSION = "0.3.8"
 $env:ORI_FORCE = "1"
 irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
 ```
 
 | Variable | Meaning |
 |----------|---------|
-| `ORI_VERSION` | e.g. `0.3.5` or `v0.3.5` (default: latest GitHub release) |
+| `ORI_VERSION` | e.g. `0.3.8` or `v0.3.8` (default: latest GitHub release) |
 | `ORI_INSTALL_DIR` | Custom install folder |
 | `ORI_FORCE` | `1` overwrite existing install |
 | `ORI_SYSTEM` | `1` → Program Files + Machine PATH (admin) |
@@ -39,10 +39,10 @@ With parameters (download the script first, or use a scriptblock):
 
 ```powershell
 irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 -OutFile get-ori.ps1
-.\get-ori.ps1 -Version 0.3.5 -Force
+.\get-ori.ps1 -Version 0.3.8 -Force
 
 # or without a file:
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1))) -Version 0.3.5 -Force
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1))) -Version 0.3.8 -Force
 ```
 
 `get.ps1` downloads `Install-Ori.ps1` from the same branch and runs it (full PATH logic).  
@@ -126,8 +126,8 @@ Select workload **Desktop development with C++**.
 On a Windows machine (or GHA `windows-latest`):
 
 ```powershell
-pwsh -File tools/ci_package_windows.ps1 -Tag v0.3.5
-# → compiler\target\dist\ori-v0.3.5-x86_64-pc-windows-msvc.zip
+pwsh -File tools/ci_package_windows.ps1 -Tag v0.3.8
+# → compiler\target\dist\ori-v0.3.8-x86_64-pc-windows-msvc.zip
 ```
 
 The package scripts copy these installers into the package root automatically

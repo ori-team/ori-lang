@@ -7,8 +7,8 @@ Portuguese: [README.pt-BR.md](README.pt-BR.md).
 - Language config (`.orl`, `--` and `--| |--` comments, all Ori delimiters)
 - **LSP** via `ori-lsp` on `PATH`
 
-Extension artifact **0.3.5**. The compiler workspace is `0.3.8-dev` (latest
-release `v0.3.7`); extension artifacts are versioned separately until rebuilt.
+Extension artifact is versioned separately from the compiler workspace
+(`0.3.8-dev`, latest release `v0.3.8`).
 
 ## Install
 

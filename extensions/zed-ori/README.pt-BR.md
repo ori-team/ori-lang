@@ -3,7 +3,8 @@
 Suporte da linguagem **Ori** (`.orl`) no [Zed](https://zed.dev): configuração
 da linguagem e LSP por meio do `ori-lsp` disponível no `PATH`.
 
-O artefato atual é o **0.3.5**. Ele ainda não está na loja do Zed; instale o
+A extensão é versionada separadamente do compilador (`0.3.8-dev`, release mais recente `v0.3.8`).
+Ela ainda não está na loja do Zed; instale o
 zip da release como extensão de desenvolvimento ou selecione diretamente
 `extensions/zed-ori` com **zed: install dev extension**.
 

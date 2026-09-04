@@ -1,9 +1,7 @@
 # Ori editor extensions
 
-Extension artifacts are currently **0.3.5**. They are compatible with the
-current S3 + inference-B language surface; the compiler workspace itself is
-`0.3.8-dev` (latest release `v0.3.7`). Artifact and compiler versions are
-tracked separately until the next extension rebuild.
+Extension artifacts are compatible with the current S3/0.4 language surface;
+the compiler workspace itself is `0.3.8-dev` (latest release `v0.3.8`).
 **GitHub Release assets** ship the installers — not the VS Marketplace / Zed store yet.
 
 | Path | Editor | Release asset |
@@ -36,9 +34,8 @@ locals.
 2. Zed command palette → **zed: install dev extension** → select the extracted folder.
 3. Ensure `ori-lsp` is on `PATH`.
 
-The Zed extension API currently exposes only language-server integration. The
-same debugger can be started manually with `ori debug --dap`, but Zed does not
-yet receive an automatic debug configuration from this extension.
+The Zed extension exposes language-server integration and DAP debugger integration
+(`ori-dap`), launching `ori debug --dap` for breakpoints, step debugging, and inspection.
 
 ## Build locally
 
