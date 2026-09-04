@@ -114,6 +114,18 @@ and channel message throughput down to raw C/Rust speed.
 | 2 | **PERF-INLINE-1** | Leaf function inlining for pure small functions and value structs | 1 | M | **done** |
 | 3 | **PERF-CHANNEL-1** | Lock-free bounded SPSC ring buffer for inter-task channels | 2 | M | **done** |
 
+### Ergonomia Sintática & Simplificação da Superfície Wave (Ori v0.4+)
+
+Reduz verbosidade, elimina palavras-chave redundantes e aproxima o design da linguagem da filosofia Reading-First.
+
+| Order | ID | Contract to finish | P | D | Status |
+|---:|---|---|:---:|:---:|---|
+| 1 | **SYNTAX-APPLY-COLON-1** | Implementação de traits via `apply Type: TraitA, TraitB` (elimina `use` e reduz indentação) | 1 | M | `todo` |
+| 2 | **SYNTAX-IMPORT-AS-1** | Sintaxe natural `import path as alias` e renomeação `(item as alias)` | 1 | S | `todo` |
+| 3 | **SYNTAX-COMPOSITE-POS-1** | Remoção de labels obrigatórios em primitivos `array[T, N]` e `simd[T, N]` | 2 | S | `todo` |
+| 4 | **SYNTAX-STRUCT-INHERENT-1** | Centralização de métodos inerentes exclusivamente dentro do bloco `struct` | 2 | S | `todo` |
+| 5 | **SYNTAX-POLY-TRAIT-NAME-1** | Polimorfismo direto pelo nome da trait em assinaturas `fn(x: Trait)` (elimina `any[Trait]`) | 2 | M | `todo` |
+
 Each row must add a normative rule, production implementation, focused
 regression, and a changelog entry before it moves to `done`. Performance and
 editor work remain below this wave even when their code already exists.
@@ -430,6 +442,11 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 | **PERF-REGION-1** | Zero-Call Inline Arena Reset & Chunk Indexing | 1 | S | **done** | **2026-09-04:** Direct Cranelift lowering of `mem.reset` (bump arena pointer-bump reset emitted as scalar stores, no FFI call overhead) and arena-local bulk slot allocation. Covered by polyglot `arena_bulk_alloc` comparison. |
 | **PERF-INLINE-1** | Pure Small-Function & Value-Struct Leaf Inlining | 1 | M | **done** | **2026-09-04:** Broadened conservative leaf inlining for pure small functions (≤ 8 HIR stmts) with scalar and non-managed value struct arguments (e.g. aligned AABB intersection), converting guard clauses into nested `IfExpr` blocks without call frames or stack spills. Covered by polyglot `spatial_grid_bvh` comparison. |
 | **PERF-CHANNEL-1** | Lock-Free Bounded SPSC Ring Buffer for Channels | 2 | M | **done** | **2026-09-04:** Optimized bounded channel send/recv fast paths with static result singletons (`RESULT_OK_ZERO`) to eliminate 100k heap allocations and ARC mutex acquisitions in high-throughput message loops. Covered by polyglot `channel_throughput` comparison. |
+| **SYNTAX-APPLY-COLON-1** | Implementação de Traits via `apply Type: TraitA, TraitB` | 1 | M | `todo` | Substituição da forma `apply Type use Trait` pela sintaxe direta com dois-pontos e suporte a traits múltiplas separadas por vírgula em bloco único. |
+| **SYNTAX-IMPORT-AS-1** | Sintaxe Natural `import path as alias` | 1 | S | `todo` | Suporte canônico a `as` em imports e renomeação de membros `(member as alias)` sem colisão no parser. |
+| **SYNTAX-COMPOSITE-POS-1** | Remoção de Labels Obrigatórios em `array[T, N]` e `simd[T, N]` | 2 | S | `todo` | Admissão de argumentos posicionais compactos em tipos compostos primitivos inline (`array[int, 16]`). |
+| **SYNTAX-STRUCT-INHERENT-1** | Centralização de Métodos Inerentes no Bloco `struct` | 2 | S | `todo` | Reserva do `apply` exclusivamente para implementação de traits, unificando métodos próprios dentro da declaração da struct. |
+| **SYNTAX-POLY-TRAIT-NAME-1** | Polimorfismo Direto pelo Nome da Trait em Parâmetros | 2 | M | `todo` | Suporte a `fn(x: Trait)` sem exigência de `any[Trait]` explícito em código idiomático do dia a dia. |
 
 **Rejected by decision — do not reopen without a new ADR:**
 

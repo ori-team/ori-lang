@@ -50,6 +50,18 @@ Foca em fechar os gaps de latência mensurados com a suite polyglot expandida em
 | **PERF-INLINE-1** | P1 | M | Inlining de funções folha puras e pequenas com structs por valor | **done** |
 | **PERF-CHANNEL-1** | P2 | M | Anel circular SPSC lock-free para canais `channel.Channel[T]` delimitados | **done** |
 
+### Wave de ergonomia sintática e simplificação da superfície (Ori v0.4+)
+
+Reduz verbosidade, elimina keywords redundantes e aproxima o design da linguagem à filosofia Reading-First.
+
+| ID | Prioridade | Escala | O que entrega | Status |
+|---|:---:|:---:|---|:---:|
+| **SYNTAX-APPLY-COLON-1** | P1 | M | Implementação de traits via `apply Type: TraitA, TraitB` sem `use` | `todo` |
+| **SYNTAX-IMPORT-AS-1** | P1 | S | Sintaxe natural `import path as alias` e renomeação `(item as alias)` | `todo` |
+| **SYNTAX-COMPOSITE-POS-1** | P2 | S | Remoção de labels obrigatórios em `array[T, N]` e `simd[T, N]` | `todo` |
+| **SYNTAX-STRUCT-INHERENT-1** | P2 | S | Centralização de métodos inerentes no bloco `struct` | `todo` |
+| **SYNTAX-POLY-TRAIT-NAME-1** | P2 | M | Polimorfismo direto pelo nome da trait em assinatura `fn(x: Trait)` | `todo` |
+
 ---
 
 ## Prioridade 2026-07-13 (curto / médio) — *historical table*
