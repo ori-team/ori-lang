@@ -136,6 +136,12 @@ Validate:
 
 The repository currently uses staged QA scripts under `tools/qa/`. The detailed mapping remains in `docs/planning/qa/test-matrix-ori.md` during migration.
 
+Fast daily gate:
+- `sh tools/qa/daily_fast.sh` (D0 atlas, metadata, ABI exports; S0 check/clippy; S1 unit tests; S2 spec + catalog; S3 memory/security; S8 residual surface).
+
+Sanitizer smoke:
+- `sh tools/qa/sanitizer_smoke.sh` (AddressSanitizer and ThreadSanitizer execution for runtime and embed targets).
+
 Typical progression:
 
 ```text
