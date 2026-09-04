@@ -74,7 +74,7 @@ Long documents should include an entry summary and a clear path to the next docu
 Examples must:
 
 - compile against the current 0.3.8 implementation unless explicitly archived;
-- use canonical S3 syntax;
+- use canonical S3/0.4 syntax;
 - avoid unrelated complexity;
 - use descriptive names;
 - state assumptions such as files, arguments, or environment variables;
