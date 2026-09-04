@@ -19,6 +19,11 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Zero-call inline arena reset (`PERF-REGION-1`).**
+  Emitted direct inline stores in Cranelift for `mem.reset` on `Region` instances, eliminating
+  FFI call frame transitions on high-frequency frame tick resets. Covered by polyglot `arena_bulk_alloc`
+  benchmark.
+
 - **Zed editor DAP debugging integration (`ZED-EXT-1`).**
   Implemented `get_dap_binary` and `dap_request_kind` in `extensions/zed-ori` using `zed_extension_api` 0.7:
   registers `ori-dap` adapter launching `ori debug --dap`, connecting Zed's native debug UI to the compiler's

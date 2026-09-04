@@ -4019,12 +4019,13 @@ struct RegionChunk {
 /// Allocates memory from contiguous chunks by bumping an offset pointer in O(1).
 /// Reset is an O(1) operation: the offset resets to 0 while existing chunks are
 /// retained for subsequent frames.
+#[repr(C)]
 pub struct OriRegion {
+    pub current_offset: usize,
+    pub total_allocated: usize,
+    pub allocation_count: usize,
+    pub current_chunk: usize,
     chunks: Vec<RegionChunk>,
-    current_chunk: usize,
-    current_offset: usize,
-    total_allocated: usize,
-    allocation_count: usize,
 }
 
 unsafe extern "C" fn ori_region_dtor(ptr: *mut u8) {

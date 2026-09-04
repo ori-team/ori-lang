@@ -39,6 +39,17 @@ Após o fechamento integral das auditorias de linguagem (`AUD-*`), a lista de tr
 | **MEM-REGION-1** | P2 | L | Arenas/regiões de memória com escopo seguro (`using region = mem.region()`) e análise de escape | **done** |
 | **LANG-SIMD-1** | P3 | L | Vetores SIMD portáteis (`simd[float32, 4]`) baixados diretamente para instruções vetoriais Cranelift | **done** |
 
+### Wave de correção de hotpaths de performance (2026-09-04)
+
+Foca em fechar os gaps de latência mensurados com a suite polyglot expandida em `vec4_simd`, `arena_bulk_alloc`,
+`channel_throughput` e `spatial_grid_bvh`, trazendo os resultados do Ori até a velocidade bruta do C/Rust.
+
+| ID | Prioridade | Escala | O que entrega | Status |
+|---|:---:|:---:|---|:---:|
+| **PERF-REGION-1** | P1 | S | Reset inline de arena com zero-call e indexação de chunk contíguo | **done** |
+| **PERF-INLINE-1** | P1 | M | Inlining de funções folha puras e pequenas com structs por valor | `todo` |
+| **PERF-CHANNEL-1** | P2 | M | Anel circular SPSC lock-free para canais `channel.Channel[T]` delimitados | `todo` |
+
 ---
 
 ## Prioridade 2026-07-13 (curto / médio) — *historical table*

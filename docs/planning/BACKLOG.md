@@ -103,6 +103,17 @@ In full adherence to the language core principle (AGENTS.md / Roadmap §2), thes
 | 4 | **MEM-REGION-1** | Scoped memory arenas/regions (`using region = mem.region()`) with compile-time escape analysis | 2 | L | **done** |
 | 5 | **LANG-SIMD-1** | Portable fixed-width SIMD vector primitives (`simd[float32, 4]`) with Cranelift vector lowering | 3 | L | **done** |
 
+### High-Performance Kernel & Engine Hot-Paths Wave (2026-09-04)
+
+Focuses on closing the measured latency gaps in arena resets, geometric/spatial struct passing,
+and channel message throughput down to raw C/Rust speed.
+
+| Order | ID | Contract to finish | P | D | Status |
+|---:|---|---|:---:|:---:|---|
+| 1 | **PERF-REGION-1** | Zero-call inline arena reset and contiguous chunk indexing | 1 | S | **done** |
+| 2 | **PERF-INLINE-1** | Leaf function inlining for pure small functions and value structs | 1 | M | `todo` |
+| 3 | **PERF-CHANNEL-1** | Lock-free bounded SPSC ring buffer for inter-task channels | 2 | M | `todo` |
+
 Each row must add a normative rule, production implementation, focused
 regression, and a changelog entry before it moves to `done`. Performance and
 editor work remain below this wave even when their code already exists.
@@ -416,6 +427,9 @@ Follows [`roadmap-code-audit-performance-architecture.md`](roadmap-code-audit-pe
 | **LANG-ALIGN-1** | Explicit Struct and Field Alignment Control (`@align(N)`) | 2 | S | **done** | **2026-09-03:** General-purpose `@align(N)` attribute (power-of-2: 1, 2, 4, 8, 16, 32, 64) for structs, directly lowered through AST, checker, HIR (`HirStruct.explicit_align`), and Cranelift native codegen (`StructLayout`). Enforces minimum alignment and padding, reflected in `ori.mem.align_of` and `ori.mem.size_of`, and emitted into generated C export headers (`alignas(N)` / `__attribute__((aligned(N)))`) for GPU uniform/storage buffers (std140/std430) and foreign engine boundaries (GDExtension). Covered by unit and E2E verification in `dx_scripting.rs` and `multifile_imports.rs`. |
 | **MEM-REGION-1** | Scoped Memory Arenas / Regions (`mem.region`) | 2 | L | **done** | **2026-09-03:** Scoped bump arena in `ori.mem` (`using region = mem.region()`) for frame-temporary allocations (culling lists, command queues, geometry buffers) with O(1) bulk reset (`mem.reset`), deterministic disposal (`core.Disposable`), and static escape analysis (prohibits `return` of using bindings via `using.escape` and task boundary crossing via non-`Transferable`). Backed by native `OriRegion` with chunked memory. Covered by runtime unit tests and E2E verification in `dx_scripting.rs`. |
 | **LANG-SIMD-1** | Portable Fixed-Width SIMD Vector Primitives | 3 | L | **done** | **2026-09-03:** Portable typed vector types (`simd[float32, 4]`, `simd[int32, lanes: 4]`) lowered directly to Cranelift SIMD IR instructions (x86_64 SSE/AVX `F32x4`/`I32x4` and aarch64 NEON) with arithmetic operators (`+`, `-`, `*`, `/`), lane-indexed extraction (`v[i]`), and constant-time vector construction from literals. Verified in both AOT and JIT paths. Covered by E2E verification in `dx_scripting.rs`. |
+| **PERF-REGION-1** | Zero-Call Inline Arena Reset & Chunk Indexing | 1 | S | **done** | **2026-09-04:** Direct Cranelift lowering of `mem.reset` (bump arena pointer-bump reset emitted as scalar stores, no FFI call overhead) and arena-local bulk slot allocation. Covered by polyglot `arena_bulk_alloc` comparison. |
+| **PERF-INLINE-1** | Pure Small-Function & Value-Struct Leaf Inlining | 1 | M | `todo` | Broadened conservative leaf inlining for pure small functions (≤ 15 HIR nodes) with scalar/value struct arguments (e.g. aligned AABB intersection) to close the ~120× gap observed in `spatial_grid_bvh` vs C/Rust full inline. Covered by polyglot `spatial_grid_bvh` comparison. |
+| **PERF-CHANNEL-1** | Lock-Free Bounded SPSC Ring Buffer for Channels | 2 | M | `todo` | Lock-free single-producer single-consumer ring for `channel.Channel[T]` based on atomic head/tail cursors (no global ARC mutex per send/recv) to close the ~15× gap observed in `channel_throughput` vs crossbeam/Go. Covered by polyglot `channel_throughput` comparison. |
 
 **Rejected by decision — do not reopen without a new ADR:**
 

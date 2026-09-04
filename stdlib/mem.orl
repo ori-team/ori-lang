@@ -24,18 +24,17 @@ apply Region use core.Disposable
     end
 end
 
+@inline
 public reset(r: Region) -> void
     ori.mem.region_reset(r._handle)
 end
 
-public free(r: Region) -> void
-    ori.mem.region_free(r._handle)
-end
-
+@inline
 public size(r: Region) -> int
     return ori.mem.region_size(r._handle)
 end
 
+@inline
 public count(r: Region) -> int
     return ori.mem.region_count(r._handle)
 end
