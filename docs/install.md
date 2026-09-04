@@ -107,7 +107,7 @@ irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.
 Pin version / reinstall:
 
 ```powershell
-$env:ORI_VERSION = "0.3.7"
+$env:ORI_VERSION = "0.3.8"
 $env:ORI_FORCE = "1"
 irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
 ```
@@ -156,7 +156,7 @@ Full details: [`tools/windows/README.md`](../tools/windows/README.md).
 #### Option C — `.deb` (Debian / Ubuntu)
 
 ```bash
-sudo dpkg -i ori_0.3.7_amd64.deb
+sudo dpkg -i ori_0.3.8_amd64.deb
 # installs /usr/lib/ori + /usr/bin/ori + /usr/bin/ori-lsp
 # AOT fallback only: sudo apt install build-essential
 ```

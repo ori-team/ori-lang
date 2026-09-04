@@ -14,6 +14,7 @@
 | **Performance** | [Microbench Ori / Python / Rust](guides/performance.pt-BR.md) · [EN](guides/performance.md) |
 | **Contrato da linguagem** | [Especificação](spec/README.md) (normativa, **em inglês**) |
 | **Recursos avançados** | [Tipos](language/advanced.pt-BR.md) · [Async](language/concurrency.pt-BR.md) · [ABI C](language/interop.pt-BR.md) |
+| **Sistemas e alta performance** | [Tipos avançados](language/advanced.pt-BR.md): `@noalloc`, `@align(N)`, `mem.region`, `simd[T, N]`, `[native.dependencies]` |
 | **Mantenedores** | **[BACKLOG](planning/BACKLOG.md)** · [Planejamento](planning/README.md) · [AGENTS.md](../AGENTS.md) |
 
 ## Política de idioma
@@ -46,6 +47,8 @@ Ver [README.md](README.md) (mesmo mapa; nomes de arquivo EN).
 | Pipe | `|>` mantido |
 | Inferência local | opção B |
 | Async | `async main()` + `await` (nativo); C/debug rejeita async |
+| Sistemas | `@noalloc`, `@align(N)`, `mem.region()`, `simd[float32, 4]` |
+| Dependências | `[native.dependencies]` com `pkg-config` declarativo |
 | Projeto | raiz-first |
 
 Contrato completo: [spec/01-overview.md](spec/README.md). Migrar pré-S3: `ori migrate-syntax`.

@@ -11,9 +11,10 @@ This tree is the product documentation for Ori. Use it by audience:
 | **New user** | [Install](install.md) → [Language tour](language/tour.md) → [First project](guides/first-project.md) |
 | **Book (draft, PT)** | **[Ori book](book/README.md)** (PDF/HTML distribution is not committed) |
 | **Everyday coding** | [Cookbook](guides/cookbook.md) · [Errors / optional / result](guides/errors-null-void.md) · [Examples](../examples/) |
-| **Performance** | [Performance microbench](guides/performance.md) (Ori vs Python vs Rust) · [PT](guides/performance.pt-BR.md) |
+| **Performance** | [Performance microbench](guides/performance.md) (Ori vs Python vs Rust, expanded 8-workload suite) · [PT](guides/performance.pt-BR.md) |
 | **Language contract** | [Specification](spec/README.md) (normative, English) |
 | **Advanced language** | [Advanced types](language/advanced.md) · [Async](language/concurrency.md) · [C ABI](language/interop.md) |
+| **Systems programming** | [Advanced types](language/advanced.md): `@noalloc`, `@align(N)`, `mem.region`, `simd[T, N]`, `[native.dependencies]` |
 | **Maintainers / planning** | **[BACKLOG](planning/BACKLOG.md)** (only open-work list) · [Planning](planning/README.md) · [AGENTS.md](../AGENTS.md) |
 
 Portuguese index: [README.pt-BR.md](README.pt-BR.md).
@@ -105,7 +106,7 @@ Full contract: [spec/01-overview.md](spec/01-overview.md). Migration from pre-S3
 |----------|---------|
 | Language surface (S3) | `0.3.0` |
 | Local inference + option B | `0.3.1` |
-| Latest release | `v0.3.7` |
-| Cargo workspace | `0.3.8-dev` |
+| Latest release | `v0.3.8` |
+| Cargo workspace | `0.3.8` |
 
 Changelog: [CHANGELOG.md](../CHANGELOG.md).

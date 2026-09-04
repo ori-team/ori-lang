@@ -533,6 +533,13 @@ canonical_documents:
     audience: [contributor, maintainer, agent]
     owns: [historical-migration-report, archive-move-map]
 
+  - id: implementation.documentation-audit-plan
+    path: docs/implementation/documentation-audit-plan.md
+    domain: implementation
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [documentation-audit-tracking, documentation-remediation]
+
 normative_roots:
   - path: docs/spec
     rule: implemented-current-contract-only

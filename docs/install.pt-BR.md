@@ -80,7 +80,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser   # opciona
 irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
 ```
 
-Versão fixa / reinstalar: `$env:ORI_VERSION="0.3.7"; $env:ORI_FORCE="1"; irm …/get.ps1 | iex`.
+Versão fixa / reinstalar: `$env:ORI_VERSION="0.3.8"; $env:ORI_FORCE="1"; irm …/get.ps1 | iex`.
 
 Instala em `%LOCALAPPDATA%\Programs\Ori` e adiciona ao **PATH do usuário**.  
 Sistema: `$env:ORI_SYSTEM="1"` (Administrador).  
@@ -94,7 +94,7 @@ Detalhes: [`tools/windows/README.md`](../tools/windows/README.md).
 **Debian/Ubuntu:**
 
 ```bash
-sudo dpkg -i ori_0.3.7_amd64.deb
+sudo dpkg -i ori_0.3.8_amd64.deb
 # AOT fallback: sudo apt install build-essential
 ```
 

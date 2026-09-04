@@ -15,8 +15,8 @@ update.
 | Item | Value |
 |---|---|
 | Language surface | S3 (`0.3.0`) + local inference B (`0.3.1`) |
-| Workspace baseline | `0.3.8-dev` |
-| Latest released baseline | `v0.3.7` |
+| Workspace baseline | `0.3.8` |
+| Latest released baseline | `v0.3.8` |
 | Native ABI | `ori-native-abi-1` |
 | Execution | Native AOT; `ori run` may use the staged Cranelift JIT |
 | Normative source | [`spec/`](spec/README.md) |
@@ -68,5 +68,5 @@ implemented or experimental slices explicitly.
 | Embedded profile | [`planning/embedded-execution-profile.md`](planning/embedded-execution-profile.md) | Hosted desktop runtime and `EMBEDDED-1` |
 | Native binding generation | [`planning/native-binding-generation.md`](planning/native-binding-generation.md) | Manual `extern c`, generated export headers, and `FFI-BINDGEN-1` |
 | Package ecosystem | [`planning/package-ecosystem-production.md`](planning/package-ecosystem-production.md) | Local/HTTP registry proof, lockfile, and reopened `PKG-REG` |
-| Numeric/CPU graphics evolution | [`planning/ORI_GRAPHICS_LANGUAGE_EVOLUTION.md`](planning/ORI_GRAPHICS_LANGUAGE_EVOLUTION.md) | Inline structs, benchmark suite, bitwise/shift, managed `ori.buffer`, views, and image helpers exist; SIMD remains future and disconnected `ori.window` stubs were removed |
-| Code audit and architecture | [`planning/roadmap-code-audit-performance-architecture.md`](planning/roadmap-code-audit-performance-architecture.md) | External audit reconciled against the current tree on 2026-09-01. Historical enum/bytes/ARC/ABI and LSP position/identity/snapshot findings are closed where code and regressions prove them; task effects now cover receiver/`any[Trait]` method names conservatively, `@c_export` validates opaque-handle provenance, known payload size, and compiler type tags before dereference, and generic graph structs plus non-recursive `Hashable` enums dispatch structural or explicit `Equatable` for node/edge lookup. Direct structural enum equality and generated structural hash callbacks are implemented, with optional user `Hashable.hash` dispatch for map/set/hash-table keys. Bounded channels, the shared blocking-I/O pool, fail-closed custom attributes, and a typed null handle constructor are now implemented. Active language P0/P1 gaps include global mutable task isolation, recursive-key/performance collection contracts, `handle[T]` safe access/lifetime/affinity, async ownership verification, typed errors, and the hostile FFI sanitizer matrix. The ordered wave and evidence live in the roadmap and [`planning/BACKLOG.md`](planning/BACKLOG.md) |
+| Numeric/CPU graphics evolution | [`planning/ORI_GRAPHICS_LANGUAGE_EVOLUTION.md`](planning/ORI_GRAPHICS_LANGUAGE_EVOLUTION.md) | Inline structs, benchmark suite, bitwise/shift, managed `ori.buffer`, views, image helpers, and portable `simd[T, N]` vectors exist (`LANG-SIMD-1`); disconnected `ori.window` stubs were removed |
+| Code audit, architecture, and high-performance systems | [`planning/roadmap-code-audit-performance-architecture.md`](planning/roadmap-code-audit-performance-architecture.md) | External audit and high-performance systems wave reconciled and closed on 2026-09-04. Includes global mutable task isolation (`CONC-THREADS-1`), structured concurrency (`ASYNC-STRUCT-1`), elimination of `DefId::INVALID` (`AUD-FRONT-2`), Unicode case-folding parity (`AUD-UNICODE-1`), typed stdlib errors (`LANG-STD-ERRORS-1`), declarative native dependencies (`PKG-NATIVE-1`), static `@noalloc` (`LANG-NOALLOC-1`), explicit `@align(N)` (`LANG-ALIGN-1`), bump-arenas `mem.region` (`MEM-REGION-1`), portable SIMD vectors (`LANG-SIMD-1`), and inline arena reset (`PERF-REGION-1`). Full evidence lives in [`planning/BACKLOG.md`](planning/BACKLOG.md) |
