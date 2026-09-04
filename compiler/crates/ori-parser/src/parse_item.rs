@@ -181,7 +181,7 @@ impl<'src> Parser<'src> {
         let path = self.parse_qualified_name()?;
         let (alias, selected) = if self.at(&TokenKind::LParen) {
             (None, self.parse_import_selection()?)
-        } else if self.eat(&TokenKind::Eq) {
+        } else if self.eat(&TokenKind::As) || self.eat(&TokenKind::Eq) {
             match self.parse_name() {
                 Some(alias) => (Some(alias), Vec::new()),
                 None => {
@@ -190,19 +190,6 @@ impl<'src> Parser<'src> {
                     }
                     return None;
                 }
-            }
-        } else if self.at(&TokenKind::As) {
-            // S3 cutover: `as` removed in favour of `path = alias`.
-            let as_span = self.current_span();
-            self.advance();
-            self.error(
-                "parse.import_as_removed",
-                "`import path as alias` was removed; use `import path = alias`",
-                as_span,
-            );
-            match self.parse_name() {
-                Some(alias) => (Some(alias), Vec::new()),
-                None => (None, Vec::new()),
             }
         } else if self.at_contextual("only") {
             // S3 cutover: `only` removed; selective form is `path (A, B)`.
@@ -237,17 +224,8 @@ impl<'src> Parser<'src> {
         let mut selected = Vec::new();
         while !self.at(&TokenKind::RParen) && !self.at_eof() {
             let name = self.parse_name()?;
-            let alias = if self.eat(&TokenKind::Eq) {
+            let alias = if self.eat(&TokenKind::As) || self.eat(&TokenKind::Eq) {
                 Some(self.parse_name()?)
-            } else if self.at(&TokenKind::As) {
-                let as_span = self.current_span();
-                self.advance();
-                self.error(
-                    "parse.import_as_removed",
-                    "selected import rename uses `name = alias`, not `as`",
-                    as_span,
-                );
-                self.parse_name()
             } else {
                 None
             };
@@ -1350,6 +1328,42 @@ impl<'src> Parser<'src> {
 
         let for_type = first_name;
         let where_clause = self.parse_where_clause_opt();
+
+        // Canonical colon header: `apply Type: TraitA, TraitB … end`.
+        if self.eat(&TokenKind::Colon) {
+            let mut trait_headers = Vec::new();
+            while !self.at_eof() && !self.at(&TokenKind::End) {
+                let trait_name = self.parse_qualified_name()?;
+                let trait_args = self.parse_trait_args_opt();
+                trait_headers.push((trait_name, trait_args));
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            let (members, associated_types) = self.parse_apply_use_body_members()?;
+            let end = self.expect_block_end(start, "apply")?;
+            let uses = trait_headers
+                .into_iter()
+                .map(|(trait_name, trait_args)| {
+                    let use_span = trait_name.span.cover(end);
+                    ApplyUseSection {
+                        trait_name,
+                        trait_args,
+                        members: members.clone(),
+                        associated_types: associated_types.clone(),
+                        span: use_span,
+                    }
+                })
+                .collect();
+            return Some(ApplyDecl {
+                type_params,
+                for_type,
+                where_clause,
+                free_members: Vec::new(),
+                uses,
+                span: start.cover(end),
+            });
+        }
 
         // Compact header: `apply Type use Trait … end`.
         //

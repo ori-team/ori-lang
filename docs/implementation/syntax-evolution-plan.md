@@ -92,15 +92,16 @@ end
 
 ## 4. Plano de Execução (Fases)
 
-1. **Fase 1 — Parser & AST:**
-   - Habilitar `TokenKind::As` como alias canônico no parser de imports.
-   - Suportar `:` opcional com lista de traits separadas por vírgula em `apply`.
-   - Permitir números literais posicionais em `array[T, N]` e `simd[T, N]`.
-   - Permitir nomes de traits diretamente em anotações de tipo de parâmetros.
-2. **Fase 2 — Resolver & Type Checker:**
-   - Mapear múltiplos contratos no bloco `apply Type: T1, T2`.
-   - Mapear nomes de trait para `any[Trait]` implícito no checker quando usado em parâmetro.
+1. **Fase 1 — Parser & AST:** [CONCLUÍDO]
+   - Habilitado `TokenKind::As` como alias canônico no parser de imports e seleções.
+   - Suportado `:` com lista de traits separadas por vírgula em `apply Type: TraitA, TraitB`.
+   - Permitidos inteiros literais posicionais em `array[T, N]` e `simd[T, N]`.
+   - Permitidos nomes de traits diretamente em anotações de tipo de parâmetros.
+2. **Fase 2 — Resolver & Type Checker:** [CONCLUÍDO]
+   - Mapeados múltiplos contratos no bloco `apply Type: T1, T2` sem conflitos de lookup.
+   - Mapeados nomes de trait para `any[Trait]` implícito no checker via `lower_named` e substituição de `Self` preservada via `substitute_trait_self`.
+   - Métodos inerentes no bloco `struct` plenamente funcionais.
 3. **Fase 3 — Migração Automatizada (`ori migrate-syntax`):**
-   - Atualizar testes e biblioteca padrão automaticamente com o script de reescrita.
+   - Atualizar testes e biblioteca padrão conforme novas fases evolutivas.
 4. **Fase 4 — Documentação & Site:**
    - Atualizar as especificações normativas (`docs/spec/`), guias e site oficial.

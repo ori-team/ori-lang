@@ -366,11 +366,10 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// `array[T, size: N]` — element type, then the length as a named const.
+    /// `array[T, N]` or `array[T, size: N]` — element type, then the length.
     ///
-    /// The length is named for the same reason `Buffer[size: 8]` is: a bare
-    /// `array[int, 4]` puts a loose number between brackets, which reads as an
-    /// index everywhere else in Ori.
+    /// Positional `array[int, 4]` is the compact 0.4+ spelling; the named
+    /// `array[int, size: 4]` form stays valid for explicitness.
     fn parse_array_type(&mut self, start: ori_diagnostics::Span) -> Option<Type> {
         self.advance(); // contextual `array`
         self.expect(&TokenKind::LBracket)?;
@@ -378,28 +377,37 @@ impl<'src> Parser<'src> {
         self.expect(&TokenKind::Comma)?;
 
         let size_span = self.current_span();
-        let Some(size_arg) = self.parse_named_const_arg() else {
+        let value = if self.at(&TokenKind::IntLit) {
+            let tok = self.advance().unwrap().span;
+            let raw = self.slice(tok);
+            ori_ast::ty::ConstExpr::Int {
+                raw: smol_str::SmolStr::new(raw),
+                span: tok,
+            }
+        } else if let Some(size_arg) = self.parse_named_const_arg() {
+            let Type::ConstArg { name, value, .. } = size_arg else {
+                return None;
+            };
+            if name.text.as_str() != "size" {
+                self.error(
+                    "parse.expected_array_size",
+                    format!(
+                        "`array` names its length `size`, not `{}`: write `array[int, 4]` or `array[int, size: 4]`",
+                        name.text
+                    ),
+                    name.span,
+                );
+                return None;
+            }
+            value
+        } else {
             self.error(
                 "parse.expected_array_size",
-                "`array` needs its length as a named const argument: `array[int, size: 4]`",
+                "`array` needs its length: `array[int, 4]` or `array[int, size: 4]`",
                 size_span,
             );
             return None;
         };
-        let Type::ConstArg { name, value, .. } = size_arg else {
-            return None;
-        };
-        if name.text.as_str() != "size" {
-            self.error(
-                "parse.expected_array_size",
-                format!(
-                    "`array` names its length `size`, not `{}`: write `array[int, size: 4]`",
-                    name.text
-                ),
-                name.span,
-            );
-            return None;
-        }
 
         let end = self.current_span();
         self.expect(&TokenKind::RBracket)?;

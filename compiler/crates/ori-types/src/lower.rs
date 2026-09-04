@@ -1,4 +1,6 @@
-use crate::def::{CompileTimeValue, ConstEvalFailure, ConstEvalFailureKind, DefId, DefMap};
+use crate::def::{
+    CompileTimeValue, ConstEvalFailure, ConstEvalFailureKind, DefId, DefKind, DefMap,
+};
 use crate::ty::{OpaqueTy, Ty};
 use ori_ast::common::QualifiedName;
 use ori_ast::ty::{ConstExpr, Type as AstType};
@@ -582,7 +584,13 @@ fn lower_named(
     }
     let span = name.span;
     match resolve_name(name, module_path, def_map, file_id, span, sink, aliases) {
-        Some(id) => Ty::Named(id, args.to_vec()),
+        Some(id) => {
+            if def_map.get(id).kind == DefKind::Trait && args.is_empty() {
+                Ty::Any(id)
+            } else {
+                Ty::Named(id, args.to_vec())
+            }
+        }
         None => Ty::Error,
     }
 }

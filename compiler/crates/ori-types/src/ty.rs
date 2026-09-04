@@ -1010,6 +1010,7 @@ pub fn erase_newtypes(
 pub fn substitute_trait_self(ty: &Ty, trait_def_id: DefId, self_ty: &Ty) -> Ty {
     match ty {
         Ty::Named(id, args) if *id == trait_def_id && args.is_empty() => self_ty.clone(),
+        Ty::Any(id) if *id == trait_def_id => self_ty.clone(),
         Ty::Named(id, args) => Ty::Named(
             *id,
             args.iter()

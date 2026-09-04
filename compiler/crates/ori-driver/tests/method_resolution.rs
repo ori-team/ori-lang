@@ -649,3 +649,146 @@ end
     assert!(out.has_errors);
     assert!(diagnostic_codes(&out).contains(&"bind.duplicate_implement"));
 }
+
+#[test]
+fn check_accepts_apply_colon_single_trait() {
+    let dir = TestDir::new("apply_colon_single");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+trait Entity
+    id(self) -> int
+end
+
+struct Player
+    hp: int
+end
+
+apply Player: Entity
+    id(self) -> int
+        return self.hp
+    end
+end
+
+main()
+    const p: Player = Player { hp: 7 }
+    const v: int = p.id()
+    check v == 7, "colon apply resolves"
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_accepts_apply_colon_multi_trait() {
+    let dir = TestDir::new("apply_colon_multi");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+trait Named
+    name(self) -> string
+end
+
+trait Scored
+    score(self) -> int
+end
+
+struct Player
+    tag: string
+    points: int
+end
+
+apply Player: Named, Scored
+    name(self) -> string
+        return self.tag
+    end
+
+    score(self) -> int
+        return self.points
+    end
+end
+
+main()
+    const p: Player = Player { tag: "ada", points: 3 }
+    const n: string = p.name()
+    const s: int = p.score()
+    check n == "ada", "named"
+    check s == 3, "scored"
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_accepts_bare_trait_name_as_param_type() {
+    let dir = TestDir::new("bare_trait_param");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+trait Named
+    name(self) -> string
+end
+
+struct Player
+    tag: string
+end
+
+apply Player: Named
+    name(self) -> string
+        return self.tag
+    end
+end
+
+greet(who: Named) -> string
+    return who.name()
+end
+
+main()
+    const p: Player = Player { tag: "grace" }
+    const boxed: any[Named] = p
+    const a: string = greet(p)
+    const b: string = greet(boxed)
+    check a == "grace", "direct"
+    check b == "grace", "boxed"
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}
+
+#[test]
+fn check_accepts_inherent_methods_inside_struct() {
+    let dir = TestDir::new("struct_inherent");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+struct Counter
+    value: int
+
+    bump(self) -> int
+        return self.value + 1
+    end
+end
+
+main()
+    const c: Counter = Counter { value: 41 }
+    check c.bump() == 42, "inherent"
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+}

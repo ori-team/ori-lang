@@ -6152,6 +6152,34 @@ end
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "32\n");
 }
 
+#[test]
+fn compile_runs_positional_array_and_simd_types() {
+    let dir = TestDir::new("array_simd_positional");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io as io
+
+main()
+    const xs: array[int, 4] = [10, 20, 30, 40]
+    const v: simd[float32, 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32]
+    check xs[1] == 20, "positional array"
+    check v[0] == 1.0f32, "positional simd"
+    io.println("ok")
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "pos_array_simd");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "ok\n");
+}
+
 // ── Arrays: inline storage, end to end ─────────────────────────────────────
 
 #[test]

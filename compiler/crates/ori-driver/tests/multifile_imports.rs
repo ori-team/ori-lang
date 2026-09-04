@@ -257,7 +257,7 @@ end
 }
 
 #[test]
-fn check_reports_removed_import_as_and_only() {
+fn check_accepts_import_as_but_reports_only_removed() {
     let dir = TestDir::new("import_as_only_removed");
     dir.write(
         "util.orl",
@@ -276,6 +276,7 @@ import app.util as util
 import app.util only (answer)
 
 main()
+    let _ = util.answer()
 end
 "#,
     );
@@ -283,8 +284,8 @@ end
     let out = run_check(&dir.path("main.orl")).unwrap();
     let codes = diagnostic_codes(&out);
     assert!(
-        codes.contains(&"parse.import_as_removed"),
-        "{:?}",
+        !codes.contains(&"parse.import_as_removed"),
+        "`as` should be accepted as canonical import alias syntax: {:?}",
         out.diagnostics
     );
     assert!(

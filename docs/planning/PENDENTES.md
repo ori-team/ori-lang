@@ -56,11 +56,11 @@ Reduz verbosidade, elimina keywords redundantes e aproxima o design da linguagem
 
 | ID | Prioridade | Escala | O que entrega | Status |
 |---|:---:|:---:|---|:---:|
-| **SYNTAX-APPLY-COLON-1** | P1 | M | Implementação de traits via `apply Type: TraitA, TraitB` sem `use` | `todo` |
-| **SYNTAX-IMPORT-AS-1** | P1 | S | Sintaxe natural `import path as alias` e renomeação `(item as alias)` | `todo` |
-| **SYNTAX-COMPOSITE-POS-1** | P2 | S | Remoção de labels obrigatórios em `array[T, N]` e `simd[T, N]` | `todo` |
-| **SYNTAX-STRUCT-INHERENT-1** | P2 | S | Centralização de métodos inerentes no bloco `struct` | `todo` |
-| **SYNTAX-POLY-TRAIT-NAME-1** | P2 | M | Polimorfismo direto pelo nome da trait em assinatura `fn(x: Trait)` | `todo` |
+| **SYNTAX-APPLY-COLON-1** | P1 | M | Implementação de traits via `apply Type: TraitA, TraitB` sem `use` | **done** |
+| **SYNTAX-IMPORT-AS-1** | P1 | S | Sintaxe natural `import path as alias` e renomeação `(item as alias)` | **done** |
+| **SYNTAX-COMPOSITE-POS-1** | P2 | S | Remoção de labels obrigatórios em `array[T, N]` e `simd[T, N]` | **done** |
+| **SYNTAX-STRUCT-INHERENT-1** | P2 | S | Centralização de métodos inerentes no bloco `struct` | **done** |
+| **SYNTAX-POLY-TRAIT-NAME-1** | P2 | M | Polimorfismo direto pelo nome da trait em assinatura `fn(x: Trait)` | **done** |
 
 ---
 

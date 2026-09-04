@@ -71,7 +71,6 @@ when the compiler starts producing it.
 | `parse.fstring_unclosed_expr` | error | Interpolated string expression is not closed |
 | `parse.fstring_unmatched_brace` | error | Interpolated string contains an unmatched brace |
 | `parse.import_after_declaration` | error | Import appears after a top-level declaration |
-| `parse.import_as_removed` | error | Source used removed `import path as alias`; use `import path = alias` |
 | `parse.import_only_removed` | error | Source used removed `import path only (…)`; use `import path (…)` |
 | `parse.invalid_escape` | error | String or byte literal contains an invalid escape |
 | `parse.invalid_lvalue` | error | Assignment target is not assignable |
