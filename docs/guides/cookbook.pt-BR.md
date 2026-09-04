@@ -8,8 +8,8 @@
 ```ori
 module app.main
 
-import ori.args = args
-import ori.io = io
+import ori.args as args
+import ori.io as io
 
 main()
     const name = args.get_or(1, "Ori")
@@ -26,8 +26,8 @@ ori run main.orl
 ```ori
 module app.main
 
-import ori.config = config
-import ori.io = io
+import ori.config as config
+import ori.io as io
 
 main()
     const text: string = config.read_text_or("app.conf", "modo=dev")
@@ -42,8 +42,8 @@ Use `config.read_json(path)` para JSON estruturado (`result` / aliases de domín
 ```ori
 module app.main
 
-import ori.fs = fs
-import ori.io = io
+import ori.fs as fs
+import ori.io as io
 
 main()
     match fs.write_text("out.txt", "pronto")
@@ -68,8 +68,8 @@ Helpers: `fs.read_text_or`, `fs.write_text_result`; aliases `TextResult` via
 ```ori
 module app.main
 
-import ori.io = io
-import ori.time = time
+import ori.io as io
+import ori.time as time
 
 main()
     const start: time.Instant = time.instant_now()
@@ -109,8 +109,8 @@ ori doc check .
 ```ori
 module app.main
 
-import ori.io = io
-import ori.net.http = http
+import ori.io as io
+import ori.net.http as http
 
 main()
     match http.get_plain("127.0.0.1", 8080, "/", 3000)
@@ -131,7 +131,7 @@ Exemplo completo: [`examples/http_get`](../../examples/http_get/).
 ```ori
 module app.main
 
-import ori.io = io
+import ori.io as io
 
 main()
     match io.open_output("out.txt")
@@ -155,8 +155,8 @@ end
 ```ori
 module app.main
 
-import ori.io = io
-import ori.string = str
+import ori.io as io
+import ori.string as str
 
 main()
     const cleaned = "  oi  " |> str.trim

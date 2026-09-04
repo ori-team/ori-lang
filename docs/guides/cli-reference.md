@@ -128,10 +128,10 @@ Manifest fields are specified in
 | From | To |
 |---|---|
 | `namespace` | `module` |
-| `import x as y` / `import x only (…)` | `import x = y` / `import x (…)` |
-| `implement T for X` | `apply X` + `use T` (header only) |
-| `apply Trait to Type` | `apply Type` + `use Trait` |
-| nested single-`use` block | compact `apply T use Trait` header |
+| `import x only (…)` | `import x (…)` |
+| `implement T for X` | `apply X: T` (or `apply X use T`) |
+| `apply Trait to Type` | `apply Type: Trait` (or `apply Type use Trait`) |
+| nested single-`use` block | `apply T: Trait` |
 | `type Name = …` | `alias Name = …` |
 | `Foo<T>` / `list of T` | `Foo[T]` / `list[T]` |
 | `where T is Trait` | `for T: Trait` |

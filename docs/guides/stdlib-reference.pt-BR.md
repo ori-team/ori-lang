@@ -29,7 +29,7 @@ Paths antigos como `.utils` e `.algorithms` existem apenas por compatibilidade.
 | Estruturas | `ori.graph`, `ori.tree` |
 
 ```ori
-import ori.io = io
+import ori.io as io
 import ori.fs (read_text_or)
 
 main()

@@ -10,7 +10,7 @@ Mark tests with `@test` and run:
 ```ori
 module app.main
 
-import ori.test = test
+import ori.test as test
 
 @test
 adds()

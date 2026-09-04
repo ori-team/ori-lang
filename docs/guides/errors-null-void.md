@@ -20,7 +20,7 @@ Ori has **no null**. Use `none` or `err(...)`.
 ```ori
 module app.main
 
-import ori.io = io
+import ori.io as io
 
 greet() -> void
     io.println("hello")
@@ -61,7 +61,7 @@ end
 ```ori
 module app.main
 
-import ori.fs = fs
+import ori.fs as fs
 
 read_config(path: string) -> result[string, string]
     return fs.read_text(path)

@@ -128,10 +128,10 @@ O `ori migrate-syntax` cuida da parte mecânica do corte S3. Ele reescreve:
 | De | Para |
 |---|---|
 | `namespace` | `module` |
-| `import x as y` / `import x only (…)` | `import x = y` / `import x (…)` |
-| `implement T for X` | `apply X` + `use T` (só o cabeçalho) |
-| `apply Trait to Type` | `apply Type` + `use Trait` |
-| bloco aninhado com um só `use` | cabeçalho compacto `apply T use Trait` |
+| `import x only (…)` | `import x (…)` |
+| `implement T for X` | `apply X: T` (ou `apply X use T`) |
+| `apply Trait to Type` | `apply Type: Trait` (ou `apply Type use Trait`) |
+| bloco aninhado com um só `use` | `apply T: Trait` |
 | `type Name = …` | `alias Name = …` |
 | `Foo<T>` / `list of T` | `Foo[T]` / `list[T]` |
 | `where T is Trait` | `for T: Trait` |

@@ -35,7 +35,7 @@ but new code should prefer `ori.string`, `ori.map`, and the other parents.
 Import styles:
 
 ```ori
-import ori.io = io
+import ori.io as io
 import ori.fs (read_text_or)
 
 main()

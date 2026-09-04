@@ -41,7 +41,7 @@ Tests — mark functions with `@test`:
 ```ori
 module demo.main
 
-import ori.test = test
+import ori.test as test
 
 @test
 math_is_stable()
@@ -108,7 +108,7 @@ demo.math = { path = "../math", version = "0.1.0" }
 module demo.app
 
 import demo.math (double)
-import ori.io = io
+import ori.io as io
 
 main()
     io.println(string(double(21)))

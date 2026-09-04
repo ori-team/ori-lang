@@ -8,8 +8,8 @@
 ```ori
 module app.main
 
-import ori.args = args
-import ori.io = io
+import ori.args as args
+import ori.io as io
 
 main()
     const name = args.get_or(1, "Ori")
@@ -26,8 +26,8 @@ ori run main.orl
 ```ori
 module app.main
 
-import ori.config = config
-import ori.io = io
+import ori.config as config
+import ori.io as io
 
 main()
     const text: string = config.read_text_or("app.conf", "mode=dev")
@@ -42,8 +42,8 @@ Use `config.read_json(path)` for structured JSON (`result` / domain aliases).
 ```ori
 module app.main
 
-import ori.fs = fs
-import ori.io = io
+import ori.fs as fs
+import ori.io as io
 
 main()
     match fs.write_text("out.txt", "done")
@@ -68,8 +68,8 @@ Helpers: `fs.read_text_or`, `fs.write_text_result`, domain aliases
 ```ori
 module app.main
 
-import ori.io = io
-import ori.time = time
+import ori.io as io
+import ori.time as time
 
 main()
     const start: time.Instant = time.instant_now()
@@ -111,8 +111,8 @@ Use `.oridoc` sidecars for long descriptions; keep inline comments short.
 ```ori
 module app.main
 
-import ori.io = io
-import ori.net.http = http
+import ori.io as io
+import ori.net.http as http
 
 main()
     match http.get_plain("127.0.0.1", 8080, "/", 3000)
@@ -132,7 +132,7 @@ Also: `build_request`, `parse_response` for manual control.
 ## File streams (STDLIB-3)
 
 ```ori
-import ori.io = io
+import ori.io as io
 
 main()
     match io.open_output("out.txt")
@@ -157,8 +157,8 @@ end
 ```ori
 module app.main
 
-import ori.string = str
-import ori.io = io
+import ori.string as str
+import ori.io as io
 
 main()
     const cleaned = "  hi  " |> str.trim

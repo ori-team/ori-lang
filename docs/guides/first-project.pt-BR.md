@@ -38,7 +38,7 @@ Teste:
 ```ori
 module demo.main
 
-import ori.test = test
+import ori.test as test
 
 @test
 math_is_stable()

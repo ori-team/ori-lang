@@ -9,7 +9,7 @@ Este manual mostra como executar os testes do projeto Ori.
 ```ori
 module app.main
 
-import ori.test = test
+import ori.test as test
 
 @test
 adds()
