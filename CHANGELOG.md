@@ -19,6 +19,14 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Surface ergonomics wave (`SYNTAX-APPLY-COLON-1`, `SYNTAX-IMPORT-AS-1`, `SYNTAX-COMPOSITE-POS-1`, `SYNTAX-STRUCT-INHERENT-1`, `SYNTAX-POLY-TRAIT-NAME-1`).**
+  Canonical `apply Type: TraitA, TraitB` multi-trait header; natural `import path as alias` and `(item as alias)`
+  (legacy `=` still accepted); compact positional `array[T, N]` alongside `array[T, size: N]`;
+  inherent methods directly inside `struct` bodies with `apply` reserved for traits;
+  bare trait names in parameter positions (`p: Trait`) lowering to the same `Ty::Any` as `any[Trait]`.
+  Covered by E2E tests in `method_resolution.rs` (`apply` colon, multi-trait, bare trait params, struct inherents),
+  `ori_spec.rs` (`array`/`simd` positionals), and `multifile_imports.rs` (`as` aliases).
+
 - **Pure small-function and value-struct leaf inlining (`PERF-INLINE-1`).**
   Broadened conservative HIR leaf inlining for pure small functions with branchy bodies (e.g. aligned AABB
   early-exit intersection), allowing up to 8 pure statements and 4 parameter reads per pure variable/struct argument.

@@ -4,7 +4,7 @@
 
 # Ori
 
-**Superfície S3 (`0.3.0`):** sintaxe inspirada na Auk9 sobre o motor Ori. Propósito (estudo, IA, legibilidade ND — **não** competição de mercado): [manifesto](docs/spec/00-manifesto.md). Auk9 lab **aposentada como produto**.
+**Superfície S3/0.4:** sintaxe inspirada na Auk9 sobre o motor Ori. Propósito (estudo, IA, legibilidade ND — **não** competição de mercado): [manifesto](docs/spec/00-manifesto.md). Auk9 lab **aposentada como produto**.
 
 Ori é uma linguagem de programação compilada para código nativo, com tipagem
 explícita e foco em leitura. O compilador é escrito em Rust e foi criado com um
@@ -94,7 +94,7 @@ inferência menores e mensagens de erro mais claras.
 
 | Área | Status |
 |---|---|
-| Versão | **S3 `0.3.0`** · inferência B **`0.3.1`** · workspace **`0.3.8-dev`** (release mais recente `v0.3.7`) |
+| Versão | **S3/0.4** · inferência B **`0.3.1`** · workspace **`0.3.8-dev`** (release mais recente `v0.3.8`) |
 | Estabilidade | pre-1.0; S3 quebra sintaxe pré-0.3 |
 | Compilador | workspace Rust em `compiler/` |
 | Backend nativo | Cranelift AOT + `ori-runtime`; ABI `ori-native-abi-1` |

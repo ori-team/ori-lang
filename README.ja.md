@@ -7,7 +7,7 @@
 Ori は、**読みやすさを優先する明示的型付けのネイティブコンパイル言語**です。コンパイラは Rust で実装され、ネイティブ AOT コンパイルと、互換性のあるランタイム cdylib が利用できる場合のインプロセス JIT (`ori run`) を提供します。
 
 **現在のバージョン: `0.3.8`**  
-**言語サーフェス: S3**  
+**言語サーフェス: S3/0.4**  
 **ネイティブ ABI: `ori-native-abi-1`**  
 **成熟度: pre-1.0、活発に開発中**
 
@@ -36,7 +36,7 @@ Ori は、コンパイラ研究、AI 支援プログラミング、そして認�
 ```ori
 module app.hello
 
-import ori.io = io
+import ori.io as io
 
 divide(a: int, b: int) -> result[int, string]
     if b == 0

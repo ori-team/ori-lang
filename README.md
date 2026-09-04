@@ -7,7 +7,7 @@
 Ori is a reading-first, explicitly typed programming language compiled to native
 code (**AOT**), with optional JIT for `ori run`. Its compiler is written in Rust.
 
-**Surface S3 (`0.3.0`):** Auk9-inspired readable syntax on the Ori feature engine.
+**Surface S3/0.4 (`0.3.0` + ergonomics):** Auk9-inspired readable syntax on the Ori feature engine.
 See [manifesto](docs/spec/00-manifesto.md) — Ori exists for **compiler study**,
 **AI-assisted programming**, and **ND-friendly readability**, **not** market
 competition. The Auk9 lab is **retired as a product**; the living surface is Ori.
@@ -94,7 +94,7 @@ shorter inference chains, fewer hidden rules, and clearer error messages.
 
 | Area | Status |
 |---|---|
-| Version | **S3 surface `0.3.0`** · inference B **`0.3.1`** · workspace **`0.3.8-dev`** (latest release `v0.3.7`) |
+| Version | **S3/0.4 surface** · inference B **`0.3.1`** · workspace **`0.3.8-dev`** (latest release `v0.3.8`) |
 | Stability | pre-1.0; S3 hard-breaks pre-0.3 syntax; further change still possible |
 | Compiler | Rust workspace under `compiler/` (lexer → parser → HIR → types → Cranelift + runtime) |
 | Native backend | Cranelift AOT + packaged `ori-runtime`; ABI tag `ori-native-abi-1` |
@@ -168,10 +168,10 @@ ori doctor
 **Linux** — download from [Releases](https://github.com/raillen/ori-lang/releases), or:
 
 ```bash
-# example with the latest v0.3.7 tarball
-tar -xzf ori-v0.3.7-x86_64-unknown-linux-gnu.tar.gz
-export PATH="$PWD/ori-v0.3.7-x86_64-unknown-linux-gnu:$PATH"
-# or: sudo dpkg -i ori_0.3.7_amd64.deb
+# example with the latest v0.3.8 tarball
+tar -xzf ori-v0.3.8-x86_64-unknown-linux-gnu.tar.gz
+export PATH="$PWD/ori-v0.3.8-x86_64-unknown-linux-gnu:$PATH"
+# or: sudo dpkg -i ori_0.3.8_amd64.deb
 ori doctor
 ```
 
