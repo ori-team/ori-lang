@@ -1,6 +1,6 @@
 # Stdlib maintenance flow
 
-> Status: current as of 2026-08-08.
+> Status: current as of 2026-08-08 (version **0.3.8**).
 > Audience: stdlib implementers, compiler implementers
 > Surface: **S3** (`0.3.0`)
 > See also: [`12-stdlib.md`](12-stdlib.md) — Implementation Architecture (v1.x)

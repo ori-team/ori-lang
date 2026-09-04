@@ -22,6 +22,7 @@ update.
 | Normative source | [`spec/`](spec/README.md) |
 | User guide | [`language/`](language/tour.md) and [`guides/`](guides/README.md) |
 | Open implementation list | [`planning/BACKLOG.md`](planning/BACKLOG.md) |
+| Machine catalog | [`catalog.yaml`](catalog.yaml) |
 
 FREEZE-1 closed on 2026-07-19. The workspace has not been bumped to `0.4.0`,
 so documents must not describe `0.4` as an already released compiler line.

@@ -223,21 +223,21 @@ publish (shelved until language, docs, and performance are solid); self-hosting
 
 ---
 
-## Relationship to Zenith / Auk9
+## Relationship to early prototypes / Auk9
 
-Ori is a new language. Lessons from Zenith informed early design; source is not
-compatible with Zenith.
+Ori is a new language. Lessons from early prototypes informed its design; source is not
+compatible with earlier experiments.
 
-| Historical / lab | Ori S3 |
+| Historical / lab | Ori S3/0.4 |
 |---|---|
-| Zenith `text` | `string` |
-| Zenith / early Ori `apply Trait to Type` | `apply Type` + `use Trait` |
+| Early prototype `text` | `string` |
+| Early Ori `apply Trait to Type` | `apply Type: Trait` (or `apply Type use Trait`) |
 | Early Ori `implement Trait for Type` | same as above |
 | Early Ori `namespace` | `module` |
 | Early Ori `func f(...)` | `f(...)` |
 | Early Ori `list<T>` / `list of T` | `list[T]` |
 | Auk9 (lab) surface | absorbed as S3 on Ori; Auk9 is **not** a product |
-| Auk9 `import io = ori.io` | Ori uses `import ori.io = io` |
+| Auk9 `import io = ori.io` | Ori uses `import ori.io as io` (or `= io`) |
 | Auk9 `do(u) =>` | Ori uses `(u) =>` |
 | Ranges exclusive | Ori ranges are inclusive (`0..9` = 0–9) |
 | `std.*` | `ori.*` |

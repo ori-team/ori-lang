@@ -1,6 +1,6 @@
 # Ori Language Specification — Chapter 18: Stability and Compatibility
 
-> Status: normative for the **S3 / `0.3.0`** surface cycle
+> Status: normative for the **S3 / `0.3.0`** surface cycle (version **0.3.8**)
 > Audience: maintainers, contributors, users maintaining a project
 
 ---
