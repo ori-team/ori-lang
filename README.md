@@ -120,31 +120,34 @@ Package / install without Rust: M1 is complete in the current workspace. Migrate
 
 ## Performance snapshot
 
-Local polyglot microbench of **Ori AOT** against Python, Rust, C, Go,
-JavaScript, TypeScript, Ruby, and Nim on the same `while`-loop shapes
-(2026-07-14, Linux x86_64, median of **5** runs — loop-GC fix + HIR mid-end
-strength reduction). Full write-up and caveats:
+Local polyglot microbench of **Ori AOT** against Python, Rust, C, Go, JavaScript, and Ruby
+(September 2026, Linux x86_64, median of **3** runs — expanded 8-workload suite). Full write-up and caveats:
 **[docs/guides/performance.md](docs/guides/performance.md)**
 ([PT](docs/guides/performance.pt-BR.md)).
 
-| Workload | Ori | Python | Rust | C | Go | JS | TS | Ruby | Nim |
-|----------|-----|--------|------|---|-----|----|----|------|-----|
-| sum `0..10⁷` | **0.002 s**\* | 2.93 s | 0.002 s\* | 0.001 s\* | 0.009 s | 0.081 s | 0.077 s | 0.41 s | 0.007 s |
-| fib 2·10⁷ steps | **0.016 s** | 7.05 s | 0.011 s | 0.015 s | 0.020 s | 1.17 s | 1.22 s | 5.99 s | 0.024 s |
-| list 10⁶ | **0.011 s** | 0.53 s | 0.009 s | 0.010 s | 0.010 s | 0.095 s | 0.093 s | 0.20 s | 0.032 s |
-| nested 2000² | **0.002 s**\* | 0.97 s | 0.002 s | 0.002 s | 0.004 s | 0.061 s | 0.060 s | 0.21 s | 0.002 s |
+| Workload | Ori | Python | Rust | C | Go | JS (Node) | Ruby |
+|---|---|---|---|---|---|---|---|
+| `sum_loop` 10⁷ steps | **0.003 s**\* | 2.558 s | 0.003 s\* | 0.003 s\* | 0.021 s | 0.066 s | 0.351 s |
+| `fib_iter` 2·10⁷ steps | **0.037 s** | 8.486 s | 0.021 s | 0.028 s | 0.041 s | 2.009 s | 9.670 s |
+| `list_sum` 10⁶ push+sum | **0.009 s** | 0.467 s | 0.008 s | 0.009 s | 0.010 s | 0.097 s | 0.178 s |
+| `nested` 2000² steps | **0.002 s**\* | 1.588 s | 0.002 s | 0.002 s | 0.004 s | 0.058 s | 0.239 s |
+| `vec4_simd` 5·10⁶ 4D adds | **0.008 s** | 1.878 s | 0.007 s | 0.007 s | 0.010 s | 0.087 s | 1.496 s |
+| `arena_bulk_alloc` 10⁵ resets | **0.015 s** | 0.032 s | 0.002 s | 0.001 s | 0.003 s | 0.047 s | 0.089 s |
+| `channel_throughput` 10⁵ msgs | **0.114 s** | 0.049 s | 0.006 s | 0.001 s | 0.010 s | 0.060 s | 0.103 s |
+| `spatial_grid_bvh` 10⁶ AABB | **0.543 s** | 0.745 s | 0.003 s | 0.001 s | 0.004 s | 0.060 s | 0.512 s |
 
-\* Pure sum/nested may be strength-reduced to closed form (Ori mid-end Default;
-Rust/C also often eliminate simple reductions). Prefer **`fib_iter`** /
-**`list_sum`** for loop cost.
+\* `sum_loop` and `nested` may be strength-reduced to closed forms by the Ori mid-end. Prefer **`fib_iter`**,
+**`list_sum`**, and **`vec4_simd`** for compiled execution speed comparisons.
 
-**Reading (pre-1.0):** Ori is **~30–1400×** faster than CPython; **beats Go and
-Nim on fib**; about **~1.5× Rust on fib** and **~1.25× on list** (inline scalar
-push/get + `with_capacity`; was ~50× Rust before the loop GC fix). Mid-end:
-`ORI_OPT=none|default|aggressive`. Reproduce:
+**Reading (pre-1.0):**
+- **SIMD vectorization:** Ori lowers `simd[float32, 4]` directly to Cranelift `F32x4` vector registers, completing 5M additions in **8.1 ms** (≈1.1× GCC -O2, ≈1.15× Rust, beating Go and **~230× faster than Python**).
+- **Iterative & scalar loops:** Ori completes 20M fib steps in **37 ms**, near C and Rust, and faster than Go and dynamic interpreters.
+- **Lists & collections:** 1M integer push and sum completes in **9.3 ms**, matching C and Rust.
+
+Reproduce:
 
 ```bash
-SAMPLES=5 ./tools/bench/polyglot/run_polyglot_bench.sh
+SAMPLES=3 ./tools/bench/polyglot/run_polyglot_bench.sh
 ```
 
 ## Quick start
