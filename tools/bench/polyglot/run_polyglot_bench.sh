@@ -25,7 +25,7 @@ stamp=$(date -Iseconds 2>/dev/null || date)
 report="$out_dir/report_$(date +%Y%m%d_%H%M%S).md"
 : >"$out_dir/compile_times.txt"
 
-workloads="sum_loop fib_iter list_sum nested"
+workloads="sum_loop fib_iter list_sum nested vec4_simd arena_bulk_alloc channel_throughput spatial_grid_bvh"
 
 # language id → display name
 langs_all="ori python rust c go javascript typescript ruby nim"
@@ -154,6 +154,10 @@ echo "| sum_loop | sum 0..10_000_000-1 |" >>"$report"
 echo "| fib_iter | iterative fib **20_000_000 steps** (i64 wrap where needed) |" >>"$report"
 echo "| list_sum | push 1_000_000 ints + sum |" >>"$report"
 echo "| nested | nested loops 2000×2000 |" >>"$report"
+echo "| vec4_simd | 5_000_000 4D vector additions (SIMD vs scalar) |" >>"$report"
+echo "| arena_bulk_alloc | 100_000 frame bump-arena resets (O(1) vs GC) |" >>"$report"
+echo "| channel_throughput | 100_000 message send/recv in bounded channel |" >>"$report"
+echo "| spatial_grid_bvh | 1_000_000 @align(16) AABB intersection tests |" >>"$report"
 echo "" >>"$report"
 
 echo "== compile phase =="

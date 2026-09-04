@@ -1,0 +1,40 @@
+module app.bench_bvh
+
+import ori.io = io
+
+@align(16)
+struct AABB
+    min_x: float
+    min_y: float
+    max_x: float
+    max_y: float
+end
+
+intersect(a: AABB, b: AABB) -> bool
+    if a.max_x < b.min_x or a.min_x > b.max_x
+        return false
+    end
+    if a.max_y < b.min_y or a.min_y > b.max_y
+        return false
+    end
+    return true
+end
+
+main()
+    const target: AABB = AABB { min_x: 10.0, min_y: 10.0, max_x: 20.0, max_y: 20.0 }
+    var hits: int = 0
+    var i: int = 0
+    while i < 1_000_000
+        const probe: AABB = AABB {
+            min_x: 15.0,
+            min_y: 15.0,
+            max_x: 25.0,
+            max_y: 25.0,
+        }
+        if intersect(target, probe)
+            hits = hits + 1
+        end
+        i = i + 1
+    end
+    io.print(f"{hits}")
+end

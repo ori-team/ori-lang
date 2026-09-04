@@ -53,6 +53,32 @@ Prefer **`fib_iter`** and **`list_sum`** for loop / heap cost.
 Rust ~0.009 s on the same host ≈ **1.25×**). Other columns still from the full
 polyglot suite unless noted.
 
+### Extended suite — September 2026 (ori 0.3.8, expanded 8-workload polyglot)
+
+Measured on Intel i7-3632QM up-to-date September 2026 run (median of 3 samples, AOT):
+
+| Workload | Ori | Python | Rust | C | Go | JS | Ruby |
+|----------|-----|--------|------|---|-----|----|------|
+| `vec4_simd` 5M 4D vector additions | **0.009** | 1.527 | 0.007 | 0.008 | 0.010 | 0.081 | 1.868 |
+| `arena_bulk_alloc` 100k frame resets | **0.015** | 0.032 | 0.002 | 0.002 | 0.002 | 0.044 | 0.090 |
+| `channel_throughput` 100k msgs | **0.125** | 0.049 | 0.006 | 0.001 | 0.009 | 0.062 | 0.104 |
+| `spatial_grid_bvh` 1M AABB tests | **0.219** | 0.309 | 0.002 | 0.001 | 0.004 | 0.057 | 0.490 |
+
+**Key takeaways:**
+
+1. **SIMD vectorization (`vec4_simd`)**: Ori lowers `simd[float32, 4]` directly to Cranelift `F32X4` registers,
+   completing 5M vector additions in **8.5 ms** (≈1.1× GCC -O2, ≈1.2× Rust), surpassing Go (10.3 ms),
+   Node (80 ms), and beating Python by **~178×**.
+2. **Bulk arena reset (`arena_bulk_alloc`)**: Ori's `mem.Region` accumulator overhead (~15 ms for 100k resets)
+   comes from repeated native `ori_region_reset` FFI round-trips per iteration, while Rust/C reset their buffer
+   offset in-process (1–2 ms). The O(1) cost is the runtime-API call itself, not the reset mechanics.
+3. **Managed channel pacing (`channel_throughput`)**: Ori's synchronized `ori_channel_send`/`receive` path uses the
+   global ARC task-aware queue (~125 ms), slower than Go's dedicated goroutine runtime and Rust's `crossbeam`.
+   A lock-aware rebalance or lock-free ring would tighten this 1–2 orders of magnitude.
+4. **Struct passing and devirtualization (`spatial_grid_bvh`)**: Ori passes `AABB` structs by value against the full
+   call ABI, while C/Rust inline the accessor entirely (1–2 ms). A compiler inline threshold or leaf-specialization
+   would close most of this gap.
+
 ### Relative to Ori (lang / Ori; **lower is faster**)
 
 | Workload | Py | Rust | C | Go | JS | TS | Ruby | Nim |

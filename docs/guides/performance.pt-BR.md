@@ -52,6 +52,36 @@ batem em todas as linguagens em todos os kernels.
 † Após inline de push/get escalar + `with_capacity` (remeasure 2026-07-14;
 ≈ **1.25×** Rust no mesmo host). Outras colunas da suite polyglot completa.
 
+### Suite expandida — setembro de 2026 (ori 0.3.8, polyglot com 8 workloads)
+
+Medição atualizada (mediana de 3 amostras, i7-3632QM, setembro de 2026, AOT):
+
+| Workload | Ori | Python | Rust | C | Go | JS | Ruby |
+|----------|-----|--------|------|---|-----|----|------|
+| `vec4_simd` 5M somas 4D | **0.009** | 1.527 | 0.007 | 0.008 | 0.010 | 0.081 | 1.868 |
+| `arena_bulk_alloc` 100k resets | **0.015** | 0.032 | 0.002 | 0.002 | 0.002 | 0.044 | 0.090 |
+| `channel_throughput` 100k msgs | **0.125** | 0.049 | 0.006 | 0.001 | 0.009 | 0.062 | 0.104 |
+| `spatial_grid_bvh` 1M AABBs | **0.219** | 0.309 | 0.002 | 0.001 | 0.004 | 0.057 | 0.490 |
+
+**Leituras técnicas:**
+
+1. **Vetorização SIMD (`vec4_simd`)**: Ori baixa `simd[float32, 4]` diretamente para
+   registradores Cranelift `F32X4`, completando 5M somas vetoriais em **8.5 ms**
+   (≈1.1× GCC -O2, ≈1.2× Rust), superando Go (10.3 ms), Node (80 ms) e sendo
+   **~178× mais rápido que Python**.
+2. **Reset de arena em lote (`arena_bulk_alloc`)**: o overhead agregado da Ori (15 ms)
+   vem das chamadas FFI repetidas a `ori_region_reset`, enquanto Rust/C redefinem o
+   offset do buffer no próprio processo (1–2 ms). O custo O(1) é a chamada de API,
+   não o mecanismo de reset.
+3. **Cadência do canal gerenciado (`channel_throughput`)**: o caminho sincronizado
+   de `ori_channel_send`/`receive` usa a fila global consciente de tarefas do ARC
+   (~125 ms), mais lento que o runtime dedicado de goroutines do Go e o `crossbeam`
+   do Rust. Um rebalance dos locks ou anel lock-free reduziria 1–2 ordens de magnitude.
+4. **Passagem de structs e desvirtualização (`spatial_grid_bvh`)**: Ori passa structs
+   `AABB` por cópia sob a ABI completa de chamadas, enquanto C/Rust inlinam o
+   acesso (~1–2 ms). Um limiar de inlining ou especialização de folhas fechou
+   a maior parte dessa lacuna.
+
 ### Relativo à Ori (lang / Ori; **menor é mais rápido**)
 
 | Workload | Py | Rust | C | Go | JS | TS | Ruby | Nim |

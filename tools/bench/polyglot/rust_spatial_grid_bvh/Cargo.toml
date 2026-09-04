@@ -1,0 +1,6 @@
+[package]
+name = "rust_spatial_grid_bvh"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

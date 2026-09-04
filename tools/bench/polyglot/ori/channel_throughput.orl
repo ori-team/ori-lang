@@ -1,0 +1,26 @@
+module app.bench_channel
+
+import ori.channel = channel
+import ori.io = io
+
+main()
+    const ch: channel.Channel[int] = channel.create()
+    var count: int = 0
+    var i: int = 0
+    while i < 100_000
+        match channel.send(ch, i)
+            case ok(_):
+                match channel.receive(ch)
+                    case ok(v):
+                        count = count + 1
+                    case err(_):
+                        count = count
+                end
+            case err(_):
+                count = count
+        end
+        i = i + 1
+    end
+    channel.close(ch)
+    io.print(f"{count}")
+end

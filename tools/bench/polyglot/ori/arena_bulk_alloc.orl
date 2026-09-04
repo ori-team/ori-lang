@@ -1,0 +1,16 @@
+module app.bench_arena
+
+import ori.io = io
+import ori.mem = mem
+
+main()
+    using r: mem.Region = mem.region()
+    var total: int = 0
+    var frame: int = 0
+    while frame < 100_000
+        mem.reset(r)
+        total = total + mem.count(r)
+        frame = frame + 1
+    end
+    io.print(f"{total}")
+end
