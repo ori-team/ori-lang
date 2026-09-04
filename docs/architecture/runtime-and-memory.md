@@ -145,6 +145,16 @@ Runtime-backed collections must define:
 
 Managed iterators retain the underlying collection when their contract requires it and release that ownership exactly once.
 
+## Scoped memory arenas (`OriRegion`)
+
+For performance-critical code requiring rapid temporary allocation (game loop frames, visibility culling, command batches), the runtime provides `OriRegion` bump arenas (`mem.region` in stdlib):
+
+- `OriRegion` maintains chunked blocks (64 KiB) allocated from the system;
+- instantaneous O(1) bulk reset via `ori_region_reset` (scalar stores inline in Cranelift without FFI overhead);
+- deterministic teardown via `core.Disposable` (`ori_region_free`);
+- static escape analysis prevents returning values derived from a region outside its declaring `using` block (`using.escape`);
+- regions are non-`Transferable` and cannot be sent across tasks or threads.
+
 ## Concurrency and transferability
 
 Values crossing task or channel boundaries must satisfy the language's transferability rules.
