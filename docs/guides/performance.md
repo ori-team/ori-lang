@@ -59,10 +59,10 @@ Measured on Intel i7-3632QM up-to-date September 2026 run (median of 3 samples, 
 
 | Workload | Ori | Python | Rust | C | Go | JS | Ruby |
 |----------|-----|--------|------|---|-----|----|------|
-| `vec4_simd` 5M 4D vector additions | **0.009** | 1.527 | 0.007 | 0.008 | 0.010 | 0.081 | 1.868 |
-| `arena_bulk_alloc` 100k frame resets | **0.015** | 0.032 | 0.002 | 0.002 | 0.002 | 0.044 | 0.090 |
-| `channel_throughput` 100k msgs | **0.125** | 0.049 | 0.006 | 0.001 | 0.009 | 0.062 | 0.104 |
-| `spatial_grid_bvh` 1M AABB tests | **0.219** | 0.309 | 0.002 | 0.001 | 0.004 | 0.057 | 0.490 |
+| `vec4_simd` 5M 4D vector additions | **0.008** | 1.878 | 0.007 | 0.007 | 0.010 | 0.087 | 1.496 |
+| `arena_bulk_alloc` 100k frame resets | **0.015** | 0.032 | 0.002 | 0.001 | 0.003 | 0.047 | 0.089 |
+| `channel_throughput` 100k msgs | **0.114** | 0.049 | 0.006 | 0.001 | 0.010 | 0.060 | 0.103 |
+| `spatial_grid_bvh` 1M AABB tests | **0.543** | 0.745 | 0.003 | 0.001 | 0.004 | 0.060 | 0.512 |
 
 **Key takeaways:**
 

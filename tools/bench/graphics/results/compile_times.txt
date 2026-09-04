@@ -1,6 +1,6 @@
-ori_compile_gfx01_fill=3.640
-ori_compile_gfx02_gradient=3.646
-ori_compile_gfx03_line=3.639
-ori_compile_gfx04_triangle=3.760
-ori_compile_gfx05_zbuffer=3.889
-ori_compile_gfx06_vertex=3.936
+ori_compile_gfx01_fill=0.915
+ori_compile_gfx02_gradient=0.803
+ori_compile_gfx03_line=0.747
+ori_compile_gfx04_triangle=1.582
+ori_compile_gfx05_zbuffer=0.759
+ori_compile_gfx06_vertex=1.014

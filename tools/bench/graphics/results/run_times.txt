@@ -1,6 +1,6 @@
-gfx01_fill=0.044447
-gfx02_gradient=0.054006
-gfx03_line=0.020101
-gfx04_triangle=0.303415
-gfx05_zbuffer=0.289238
-gfx06_vertex=0.457280
+gfx01_fill=0.011656
+gfx02_gradient=0.034195
+gfx03_line=0.009128
+gfx04_triangle=0.084056
+gfx05_zbuffer=0.113580
+gfx06_vertex=0.013343
