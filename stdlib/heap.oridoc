@@ -1,0 +1,57 @@
+oridoc 1
+
+namespace ori.heap
+
+doc module self
+    summary:
+        Standard library module `ori.heap` for Ori.
+end
+
+doc func from_list_int
+    summary:
+        Performs `from list int` operation on `ori.heap`.
+    param items:
+        The `items` parameter (list[int]).
+    returns:
+        The resulting `ori.heap.Heap[int]` value.
+end
+
+doc func peek_or_int
+    summary:
+        Performs `peek or int` operation on `ori.heap`.
+    param h:
+        The `h` parameter (ori.heap.Heap[int]).
+    param fallback:
+        The `fallback` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func pop_or_int
+    summary:
+        Performs `pop or int` operation on `ori.heap`.
+    param h:
+        The `h` parameter (ori.heap.Heap[int]).
+    param fallback:
+        The `fallback` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func into_sorted_int
+    summary:
+        Performs `into sorted int` operation on `ori.heap`.
+    param h:
+        The `h` parameter (ori.heap.Heap[int]).
+    returns:
+        The resulting `list[int]` value.
+end
+
+doc func is_singleton_int
+    summary:
+        Performs `is singleton int` operation on `ori.heap`.
+    param h:
+        The `h` parameter (ori.heap.Heap[int]).
+    returns:
+        The resulting `bool` value.
+end

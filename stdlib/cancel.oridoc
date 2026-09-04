@@ -1,0 +1,88 @@
+oridoc 1
+
+namespace ori.cancel
+
+doc module self
+    summary:
+        Standard library module `ori.cancel` for Ori.
+end
+
+doc func create_scope
+    summary:
+        Performs `create scope` operation on `ori.cancel`.
+    returns:
+        The resulting `CancelScope` value.
+end
+
+doc func create_scope_with
+    summary:
+        Performs `create scope with` operation on `ori.cancel`.
+    param token:
+        The `token` parameter (task.CancelToken).
+    returns:
+        The resulting `CancelScope` value.
+end
+
+doc func cancel
+    summary:
+        Performs `cancel` operation on `ori.cancel`.
+    param scope:
+        The `scope` parameter (CancelScope).
+end
+
+doc func is_cancelled
+    summary:
+        Performs `is cancelled` operation on `ori.cancel`.
+    param scope:
+        The `scope` parameter (CancelScope).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func defer_cancel
+    summary:
+        Performs `defer cancel` operation on `ori.cancel`.
+    param scope:
+        The `scope` parameter (CancelScope).
+    param millis:
+        The `millis` parameter (int).
+end
+
+doc func create_task_scope
+    summary:
+        Performs `create task scope` operation on `ori.cancel`.
+    returns:
+        The resulting `TaskScope` value.
+end
+
+doc func create_task_scope_with
+    summary:
+        Performs `create task scope with` operation on `ori.cancel`.
+    param token:
+        The `token` parameter (task.CancelToken).
+    returns:
+        The resulting `TaskScope` value.
+end
+
+doc func cancel_tasks
+    summary:
+        Performs `cancel tasks` operation on `ori.cancel`.
+    param scope:
+        The `scope` parameter (TaskScope).
+end
+
+doc func is_tasks_cancelled
+    summary:
+        Performs `is tasks cancelled` operation on `ori.cancel`.
+    param scope:
+        The `scope` parameter (TaskScope).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func join_tasks
+    summary:
+        Performs `join tasks` operation on `ori.cancel`.
+    param scope:
+        The `scope` parameter (TaskScope).
+end

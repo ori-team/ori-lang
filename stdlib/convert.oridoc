@@ -1,0 +1,41 @@
+oridoc 1
+
+namespace ori.convert
+
+doc module self
+    summary:
+        Standard library module `ori.convert` for Ori.
+end
+
+doc func parse_int_or
+    summary:
+        Performs `parse int or` operation on `ori.convert`.
+    param s:
+        The `s` parameter (string).
+    param default:
+        The `default` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func parse_float_or
+    summary:
+        Performs `parse float or` operation on `ori.convert`.
+    param s:
+        The `s` parameter (string).
+    param default:
+        The `default` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func parse_bool_or
+    summary:
+        Performs `parse bool or` operation on `ori.convert`.
+    param s:
+        The `s` parameter (string).
+    param default:
+        The `default` parameter (bool).
+    returns:
+        The resulting `bool` value.
+end

@@ -1,0 +1,39 @@
+oridoc 1
+
+namespace ori.doubly_linked_list
+
+doc module self
+    summary:
+        Standard library module `ori.doubly_linked_list` for Ori.
+end
+
+doc func from_list
+    summary:
+        Performs `from list` operation on `ori.doubly_linked_list`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `ori.doubly_linked_list.DoublyLinkedList[T]` value.
+end
+
+doc func front_or
+    summary:
+        Performs `front or` operation on `ori.doubly_linked_list`.
+    param node:
+        The `node` parameter (ori.doubly_linked_list.DoublyLinkedList[T]).
+    param fallback:
+        The `fallback` parameter (T).
+    returns:
+        The resulting `T` value.
+end
+
+doc func back_or
+    summary:
+        Performs `back or` operation on `ori.doubly_linked_list`.
+    param node:
+        The `node` parameter (ori.doubly_linked_list.DoublyLinkedList[T]).
+    param fallback:
+        The `fallback` parameter (T).
+    returns:
+        The resulting `T` value.
+end

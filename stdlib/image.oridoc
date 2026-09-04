@@ -1,0 +1,64 @@
+oridoc 1
+
+namespace ori.image
+
+doc module self
+    summary:
+        Standard library module `ori.image` for Ori.
+end
+
+doc func encode_ppm
+    summary:
+        Performs `encode ppm` operation on `ori.image`.
+    param width:
+        The `width` parameter (int).
+    param height:
+        The `height` parameter (int).
+    param pixels:
+        The `pixels` parameter (list[int]).
+    returns:
+        The resulting `string` value.
+end
+
+doc func write_ppm
+    summary:
+        Performs `write ppm` operation on `ori.image`.
+    param path:
+        The `path` parameter (string).
+    param width:
+        The `width` parameter (int).
+    param height:
+        The `height` parameter (int).
+    param pixels:
+        The `pixels` parameter (list[int]).
+    returns:
+        The resulting `result[string, string]` value.
+end
+
+doc func encode_bmp
+    summary:
+        Performs `encode bmp` operation on `ori.image`.
+    param width:
+        The `width` parameter (int).
+    param height:
+        The `height` parameter (int).
+    param pixels:
+        The `pixels` parameter (list[int]).
+    returns:
+        The resulting `bytes` value.
+end
+
+doc func write_bmp
+    summary:
+        Performs `write bmp` operation on `ori.image`.
+    param path:
+        The `path` parameter (string).
+    param width:
+        The `width` parameter (int).
+    param height:
+        The `height` parameter (int).
+    param pixels:
+        The `pixels` parameter (list[int]).
+    returns:
+        The resulting `result[string, string]` value.
+end

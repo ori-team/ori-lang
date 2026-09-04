@@ -1,0 +1,88 @@
+oridoc 1
+
+namespace ori.crypto
+
+doc module self
+    summary:
+        Standard library module `ori.crypto` for Ori.
+end
+
+doc func hash_password
+    summary:
+        Performs `hash password` operation on `ori.crypto`.
+    param password:
+        The `password` parameter (string).
+    returns:
+        The resulting `string` value.
+end
+
+doc func verify_password
+    summary:
+        Performs `verify password` operation on `ori.crypto`.
+    param password:
+        The `password` parameter (string).
+    param encoded:
+        The `encoded` parameter (string).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func totp_generate_secret
+    summary:
+        Performs `totp generate secret` operation on `ori.crypto`.
+    returns:
+        The resulting `string` value.
+end
+
+doc func totp_code
+    summary:
+        Performs `totp code` operation on `ori.crypto`.
+    param secret_b32:
+        The `secret_b32` parameter (string).
+    param unix_secs:
+        The `unix_secs` parameter (int).
+    returns:
+        The resulting `string` value.
+end
+
+doc func totp_verify
+    summary:
+        Performs `totp verify` operation on `ori.crypto`.
+    param secret_b32:
+        The `secret_b32` parameter (string).
+    param code:
+        The `code` parameter (string).
+    param unix_secs:
+        The `unix_secs` parameter (int).
+    param window:
+        The `window` parameter (int).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func try_hash_password
+    summary:
+        Performs `try hash password` operation on `ori.crypto`.
+    param password:
+        The `password` parameter (string).
+    returns:
+        The resulting `result[string, string]` value.
+end
+
+doc func try_totp_generate_secret
+    summary:
+        Performs `try totp generate secret` operation on `ori.crypto`.
+    returns:
+        The resulting `result[string, string]` value.
+end
+
+doc func try_totp_code
+    summary:
+        Performs `try totp code` operation on `ori.crypto`.
+    param secret_b32:
+        The `secret_b32` parameter (string).
+    param unix_secs:
+        The `unix_secs` parameter (int).
+    returns:
+        The resulting `result[string, string]` value.
+end

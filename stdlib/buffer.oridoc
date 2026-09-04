@@ -1,0 +1,30 @@
+oridoc 1
+
+namespace ori.buffer
+
+doc module self
+    summary:
+        Standard library module `ori.buffer` for Ori.
+end
+
+doc func from_list
+    summary:
+        Performs `from list` operation on `ori.buffer`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `buffer[T]` value.
+end
+
+doc func get_or
+    summary:
+        Performs `get or` operation on `ori.buffer`.
+    param buf:
+        The `buf` parameter (buffer[T]).
+    param index:
+        The `index` parameter (int).
+    param fallback:
+        The `fallback` parameter (T).
+    returns:
+        The resulting `T` value.
+end

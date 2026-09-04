@@ -1,0 +1,64 @@
+oridoc 1
+
+namespace ori.process
+
+doc module self
+    summary:
+        Standard library module `ori.process` for Ori.
+end
+
+doc func stdout_text
+    summary:
+        Performs `stdout text` operation on `ori.process`.
+    param output:
+        The `output` parameter (ProcessOutput).
+    returns:
+        The resulting `result[string, string]` value.
+end
+
+doc func stderr_text
+    summary:
+        Performs `stderr text` operation on `ori.process`.
+    param output:
+        The `output` parameter (ProcessOutput).
+    returns:
+        The resulting `result[string, string]` value.
+end
+
+doc func run_output
+    summary:
+        Performs `run output` operation on `ori.process`.
+    param program:
+        The `program` parameter (string).
+    param args:
+        The `args` parameter (list[string]).
+    returns:
+        The resulting `result[ProcessOutput, string]` value.
+end
+
+doc func exit_code
+    summary:
+        Performs `exit code` operation on `ori.process`.
+    param capture:
+        The `capture` parameter (map[string, string]).
+    returns:
+        The resulting `int` value.
+end
+
+doc func stdout
+    summary:
+        Performs `stdout` operation on `ori.process`.
+    param capture:
+        The `capture` parameter (map[string, string]).
+    returns:
+        The resulting `string` value.
+end
+
+doc func stderr
+    summary:
+        Performs `stderr` operation on `ori.process`.
+    param capture:
+        The `capture` parameter (map[string, string]).
+    returns:
+        The resulting `string` value.
+end

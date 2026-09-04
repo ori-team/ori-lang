@@ -1,0 +1,37 @@
+oridoc 1
+
+namespace ori.queue
+
+doc module self
+    summary:
+        Standard library module `ori.queue` for Ori.
+end
+
+doc func from_list
+    summary:
+        Performs `from list` operation on `ori.queue`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `ori.queue.Queue[T]` value.
+end
+
+doc func peek_or
+    summary:
+        Performs `peek or` operation on `ori.queue`.
+    param q:
+        The `q` parameter (ori.queue.Queue[T]).
+    param fallback:
+        The `fallback` parameter (T).
+    returns:
+        The resulting `T` value.
+end
+
+doc func drain_count
+    summary:
+        Performs `drain count` operation on `ori.queue`.
+    param q:
+        The `q` parameter (ori.queue.Queue[T]).
+    returns:
+        The resulting `int` value.
+end

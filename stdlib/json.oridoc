@@ -1,0 +1,57 @@
+oridoc 1
+
+namespace ori.json
+
+doc module self
+    summary:
+        Standard library module `ori.json` for Ori.
+end
+
+doc func try_parse
+    summary:
+        Performs `try parse` operation on `ori.json`.
+    param content:
+        The `content` parameter (string).
+    returns:
+        The resulting `result[ori.json.Value, JsonError]` value.
+end
+
+doc func try_read
+    summary:
+        Performs `try read` operation on `ori.json`.
+    param file_path:
+        The `file_path` parameter (string).
+    returns:
+        The resulting `result[ori.json.Value, JsonError]` value.
+end
+
+doc func read
+    summary:
+        Performs `read` operation on `ori.json`.
+    param file_path:
+        The `file_path` parameter (string).
+    returns:
+        The resulting `ValueResult` value.
+end
+
+doc func write
+    summary:
+        Performs `write` operation on `ori.json`.
+    param file_path:
+        The `file_path` parameter (string).
+    param value:
+        The `value` parameter (ori.json.Value).
+    returns:
+        The resulting `TextResult` value.
+end
+
+doc func write_pretty
+    summary:
+        Performs `write pretty` operation on `ori.json`.
+    param file_path:
+        The `file_path` parameter (string).
+    param value:
+        The `value` parameter (ori.json.Value).
+    returns:
+        The resulting `TextResult` value.
+end

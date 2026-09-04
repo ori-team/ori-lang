@@ -1,0 +1,77 @@
+oridoc 1
+
+namespace ori.slotmap
+
+doc module self
+    summary:
+        Standard library module `ori.slotmap` for Ori.
+end
+
+doc func new
+    summary:
+        Performs `new` operation on `ori.slotmap`.
+    returns:
+        The resulting `SlotMap` value.
+end
+
+doc func len
+    summary:
+        Performs `len` operation on `ori.slotmap`.
+    param sm:
+        The `sm` parameter (SlotMap).
+    returns:
+        The resulting `int` value.
+end
+
+doc func is_empty
+    summary:
+        Performs `is empty` operation on `ori.slotmap`.
+    param sm:
+        The `sm` parameter (SlotMap).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func insert
+    summary:
+        Performs `insert` operation on `ori.slotmap`.
+    param sm:
+        The `sm` parameter (SlotMap).
+    param val:
+        The `val` parameter (int).
+    returns:
+        The resulting `SlotKey` value.
+end
+
+doc func get
+    summary:
+        Performs `get` operation on `ori.slotmap`.
+    param sm:
+        The `sm` parameter (SlotMap).
+    param key:
+        The `key` parameter (SlotKey).
+    returns:
+        The resulting `optional[int]` value.
+end
+
+doc func remove
+    summary:
+        Performs `remove` operation on `ori.slotmap`.
+    param sm:
+        The `sm` parameter (SlotMap).
+    param key:
+        The `key` parameter (SlotKey).
+    returns:
+        The resulting `optional[int]` value.
+end
+
+doc func contains
+    summary:
+        Performs `contains` operation on `ori.slotmap`.
+    param sm:
+        The `sm` parameter (SlotMap).
+    param key:
+        The `key` parameter (SlotKey).
+    returns:
+        The resulting `bool` value.
+end

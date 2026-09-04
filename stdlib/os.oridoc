@@ -1,0 +1,58 @@
+oridoc 1
+
+namespace ori.os
+
+doc module self
+    summary:
+        Standard library module `ori.os` for Ori.
+end
+
+doc func env_or
+    summary:
+        Performs `env or` operation on `ori.os`.
+    param name:
+        The `name` parameter (string).
+    param fallback:
+        The `fallback` parameter (string).
+    returns:
+        The resulting `string` value.
+end
+
+doc func has_env
+    summary:
+        Performs `has env` operation on `ori.os`.
+    param name:
+        The `name` parameter (string).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func is_windows
+    summary:
+        Performs `is windows` operation on `ori.os`.
+    returns:
+        The resulting `bool` value.
+end
+
+doc func is_linux
+    summary:
+        Performs `is linux` operation on `ori.os`.
+    returns:
+        The resulting `bool` value.
+end
+
+doc func is_macos
+    summary:
+        Performs `is macos` operation on `ori.os`.
+    returns:
+        The resulting `bool` value.
+end
+
+doc func current_dir_or
+    summary:
+        Performs `current dir or` operation on `ori.os`.
+    param fallback:
+        The `fallback` parameter (string).
+    returns:
+        The resulting `string` value.
+end

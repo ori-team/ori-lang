@@ -1,0 +1,110 @@
+oridoc 1
+
+namespace ori.random
+
+doc module self
+    summary:
+        Standard library module `ori.random` for Ori.
+end
+
+doc func int_range
+    summary:
+        Performs `int range` operation on `ori.random`.
+    param min_val:
+        The `min_val` parameter (int).
+    param max_val:
+        The `max_val` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func float_range
+    summary:
+        Performs `float range` operation on `ori.random`.
+    param min_val:
+        The `min_val` parameter (float).
+    param max_val:
+        The `max_val` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func coin
+    summary:
+        Performs `coin` operation on `ori.random`.
+    returns:
+        The resulting `bool` value.
+end
+
+doc func pick
+    summary:
+        Performs `pick` operation on `ori.random`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `optional[T]` value.
+end
+
+doc func seeded_int
+    summary:
+        Performs `seeded int` operation on `ori.random`.
+    param seed:
+        The `seed` parameter (int).
+    param min_val:
+        The `min_val` parameter (int).
+    param max_val:
+        The `max_val` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func seeded_pick
+    summary:
+        Performs `seeded pick` operation on `ori.random`.
+    param seed:
+        The `seed` parameter (int).
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `optional[T]` value.
+end
+
+doc func is_empty_choice
+    summary:
+        Performs `is empty choice` operation on `ori.random`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func new_rng
+    summary:
+        Performs `new rng` operation on `ori.random`.
+    param seed:
+        The `seed` parameter (int).
+    returns:
+        The resulting `Rng` value.
+end
+
+doc func next_int
+    summary:
+        Performs `next int` operation on `ori.random`.
+    param rng:
+        The `rng` parameter (Rng).
+    returns:
+        The resulting `tuple[int, Rng]` value.
+end
+
+doc func next_range
+    summary:
+        Performs `next range` operation on `ori.random`.
+    param rng:
+        The `rng` parameter (Rng).
+    param min_val:
+        The `min_val` parameter (int).
+    param max_val:
+        The `max_val` parameter (int).
+    returns:
+        The resulting `tuple[int, Rng]` value.
+end

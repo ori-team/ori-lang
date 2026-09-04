@@ -1,0 +1,76 @@
+oridoc 1
+
+namespace ori.net.http
+
+doc module self
+    summary:
+        Standard library module `ori.net.http` for Ori.
+end
+
+doc func parse_response
+    summary:
+        Performs `parse response` operation on `ori.net.http`.
+    param raw:
+        The `raw` parameter (string).
+    returns:
+        The resulting `ResponseResult` value.
+end
+
+doc func parse_request
+    summary:
+        Performs `parse request` operation on `ori.net.http`.
+    param raw:
+        The `raw` parameter (string).
+    returns:
+        The resulting `RequestResult` value.
+end
+
+doc func read_all_text
+    summary:
+        Performs `read all text` operation on `ori.net.http`.
+    param conn:
+        The `conn` parameter (net.Connection).
+    param max_bytes:
+        The `max_bytes` parameter (int).
+    returns:
+        The resulting `TextResult` value.
+end
+
+doc func read_response
+    summary:
+        Performs `read response` operation on `ori.net.http`.
+    param conn:
+        The `conn` parameter (net.Connection).
+    param max_total:
+        The `max_total` parameter (int).
+    returns:
+        The resulting `ResponseResult` value.
+end
+
+doc func get_tls
+    summary:
+        Performs `get tls` operation on `ori.net.http`.
+    param host:
+        The `host` parameter (string).
+    param path:
+        The `path` parameter (string).
+    param timeout_ms:
+        The `timeout_ms` parameter (int).
+    returns:
+        The resulting `ResponseResult` value.
+end
+
+doc func get_plain
+    summary:
+        Performs `get plain` operation on `ori.net.http`.
+    param host:
+        The `host` parameter (string).
+    param port:
+        The `port` parameter (int).
+    param path:
+        The `path` parameter (string).
+    param timeout_ms:
+        The `timeout_ms` parameter (int).
+    returns:
+        The resulting `ResponseResult` value.
+end

@@ -1,0 +1,127 @@
+oridoc 1
+
+namespace ori.set
+
+doc module self
+    summary:
+        Standard library module `ori.set` for Ori.
+end
+
+doc func contains_all
+    summary:
+        Performs `contains all` operation on `ori.set`.
+    param s:
+        The `s` parameter (set[string]).
+    param items:
+        The `items` parameter (list[string]).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func from_list
+    summary:
+        Performs `from list` operation on `ori.set`.
+    param items:
+        The `items` parameter (list[string]).
+    returns:
+        The resulting `set[string]` value.
+end
+
+doc func is_subset
+    summary:
+        Performs `is subset` operation on `ori.set`.
+    param subset:
+        The `subset` parameter (set[string]).
+    param superset:
+        The `superset` parameter (set[string]).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func contains_all_int
+    summary:
+        Performs `contains all int` operation on `ori.set`.
+    param s:
+        The `s` parameter (set[int]).
+    param items:
+        The `items` parameter (list[int]).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func union_string
+    summary:
+        Performs `union string` operation on `ori.set`.
+    param a:
+        The `a` parameter (set[string]).
+    param b:
+        The `b` parameter (set[string]).
+    returns:
+        The resulting `set[string]` value.
+end
+
+doc func intersection_string
+    summary:
+        Performs `intersection string` operation on `ori.set`.
+    param a:
+        The `a` parameter (set[string]).
+    param b:
+        The `b` parameter (set[string]).
+    returns:
+        The resulting `set[string]` value.
+end
+
+doc func difference_string
+    summary:
+        Performs `difference string` operation on `ori.set`.
+    param a:
+        The `a` parameter (set[string]).
+    param b:
+        The `b` parameter (set[string]).
+    returns:
+        The resulting `set[string]` value.
+end
+
+doc func intersection_size_string
+    summary:
+        Performs `intersection size string` operation on `ori.set`.
+    param a:
+        The `a` parameter (set[string]).
+    param b:
+        The `b` parameter (set[string]).
+    returns:
+        The resulting `int` value.
+end
+
+doc func is_disjoint_string
+    summary:
+        Performs `is disjoint string` operation on `ori.set`.
+    param a:
+        The `a` parameter (set[string]).
+    param b:
+        The `b` parameter (set[string]).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func union_int
+    summary:
+        Performs `union int` operation on `ori.set`.
+    param a:
+        The `a` parameter (set[int]).
+    param b:
+        The `b` parameter (set[int]).
+    returns:
+        The resulting `set[int]` value.
+end
+
+doc func intersection_int
+    summary:
+        Performs `intersection int` operation on `ori.set`.
+    param a:
+        The `a` parameter (set[int]).
+    param b:
+        The `b` parameter (set[int]).
+    returns:
+        The resulting `set[int]` value.
+end

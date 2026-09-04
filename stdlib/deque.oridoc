@@ -1,0 +1,48 @@
+oridoc 1
+
+namespace ori.deque
+
+doc module self
+    summary:
+        Standard library module `ori.deque` for Ori.
+end
+
+doc func from_list
+    summary:
+        Performs `from list` operation on `ori.deque`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `ori.deque.Deque[T]` value.
+end
+
+doc func front_or
+    summary:
+        Performs `front or` operation on `ori.deque`.
+    param d:
+        The `d` parameter (ori.deque.Deque[T]).
+    param fallback:
+        The `fallback` parameter (T).
+    returns:
+        The resulting `T` value.
+end
+
+doc func back_or
+    summary:
+        Performs `back or` operation on `ori.deque`.
+    param d:
+        The `d` parameter (ori.deque.Deque[T]).
+    param fallback:
+        The `fallback` parameter (T).
+    returns:
+        The resulting `T` value.
+end
+
+doc func push_all
+    summary:
+        Performs `push all` operation on `ori.deque`.
+    param d:
+        The `d` parameter (ori.deque.Deque[T]).
+    param items:
+        The `items` parameter (list[T]).
+end

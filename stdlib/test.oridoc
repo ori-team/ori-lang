@@ -1,0 +1,58 @@
+oridoc 1
+
+namespace ori.test
+
+doc module self
+    summary:
+        Standard library module `ori.test` for Ori.
+end
+
+doc func is_true
+    summary:
+        Performs `is true` operation on `ori.test`.
+    param value:
+        The `value` parameter (bool).
+end
+
+doc func is_false
+    summary:
+        Performs `is false` operation on `ori.test`.
+    param value:
+        The `value` parameter (bool).
+end
+
+doc func equal_int
+    summary:
+        Performs `equal int` operation on `ori.test`.
+    param actual:
+        The `actual` parameter (int).
+    param expected:
+        The `expected` parameter (int).
+end
+
+doc func equal_text
+    summary:
+        Performs `equal text` operation on `ori.test`.
+    param actual:
+        The `actual` parameter (string).
+    param expected:
+        The `expected` parameter (string).
+end
+
+doc func not_equal_int
+    summary:
+        Performs `not equal int` operation on `ori.test`.
+    param actual:
+        The `actual` parameter (int).
+    param expected:
+        The `expected` parameter (int).
+end
+
+doc func not_equal_text
+    summary:
+        Performs `not equal text` operation on `ori.test`.
+    param actual:
+        The `actual` parameter (string).
+    param expected:
+        The `expected` parameter (string).
+end

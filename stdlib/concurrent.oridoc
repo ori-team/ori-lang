@@ -1,0 +1,134 @@
+oridoc 1
+
+namespace ori.concurrent
+
+doc module self
+    summary:
+        Standard library module `ori.concurrent` for Ori.
+end
+
+doc func copy
+    summary:
+        Performs `copy` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (T).
+    returns:
+        The resulting `T` value.
+end
+
+doc func transfer
+    summary:
+        Performs `transfer` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (T).
+    returns:
+        The resulting `T` value.
+end
+
+doc func copy_int
+    summary:
+        Performs `copy int` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func copy_bool
+    summary:
+        Performs `copy bool` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (bool).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func copy_float
+    summary:
+        Performs `copy float` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func copy_string
+    summary:
+        Performs `copy string` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (string).
+    returns:
+        The resulting `string` value.
+end
+
+doc func copy_bytes
+    summary:
+        Performs `copy bytes` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (bytes).
+    returns:
+        The resulting `bytes` value.
+end
+
+doc func copy_list_int
+    summary:
+        Performs `copy list int` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (list[int]).
+    returns:
+        The resulting `list[int]` value.
+end
+
+doc func copy_list_string
+    summary:
+        Performs `copy list string` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (list[string]).
+    returns:
+        The resulting `list[string]` value.
+end
+
+doc func copy_map_string_string
+    summary:
+        Performs `copy map string string` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (map[string, string]).
+    returns:
+        The resulting `map[string, string]` value.
+end
+
+doc func copy_set_string
+    summary:
+        Performs `copy set string` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (set[string]).
+    returns:
+        The resulting `set[string]` value.
+end
+
+doc func transfer_int
+    summary:
+        Performs `transfer int` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func transfer_string
+    summary:
+        Performs `transfer string` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (string).
+    returns:
+        The resulting `string` value.
+end
+
+doc func transfer_list_string
+    summary:
+        Performs `transfer list string` operation on `ori.concurrent`.
+    param value:
+        The `value` parameter (list[string]).
+    returns:
+        The resulting `list[string]` value.
+end

@@ -1,0 +1,158 @@
+oridoc 1
+
+namespace ori.math.vec3
+
+doc module self
+    summary:
+        Standard library module `ori.math.vec3` for Ori.
+end
+
+doc func dot
+    summary:
+        Performs `dot` operation on `ori.math.vec3`.
+    param a:
+        The `a` parameter (Vec3).
+    param b:
+        The `b` parameter (Vec3).
+    returns:
+        The resulting `float` value.
+end
+
+doc func cross
+    summary:
+        Performs `cross` operation on `ori.math.vec3`.
+    param a:
+        The `a` parameter (Vec3).
+    param b:
+        The `b` parameter (Vec3).
+    returns:
+        The resulting `Vec3` value.
+end
+
+doc func magnitude
+    summary:
+        Performs `magnitude` operation on `ori.math.vec3`.
+    param v:
+        The `v` parameter (Vec3).
+    returns:
+        The resulting `float` value.
+end
+
+doc func magnitude_squared
+    summary:
+        Performs `magnitude squared` operation on `ori.math.vec3`.
+    param v:
+        The `v` parameter (Vec3).
+    returns:
+        The resulting `float` value.
+end
+
+doc func normalize
+    summary:
+        Performs `normalize` operation on `ori.math.vec3`.
+    param v:
+        The `v` parameter (Vec3).
+    returns:
+        The resulting `Vec3` value.
+end
+
+doc func distance
+    summary:
+        Performs `distance` operation on `ori.math.vec3`.
+    param a:
+        The `a` parameter (Vec3).
+    param b:
+        The `b` parameter (Vec3).
+    returns:
+        The resulting `float` value.
+end
+
+doc func distance_squared
+    summary:
+        Performs `distance squared` operation on `ori.math.vec3`.
+    param a:
+        The `a` parameter (Vec3).
+    param b:
+        The `b` parameter (Vec3).
+    returns:
+        The resulting `float` value.
+end
+
+doc func lerp
+    summary:
+        Performs `lerp` operation on `ori.math.vec3`.
+    param a:
+        The `a` parameter (Vec3).
+    param b:
+        The `b` parameter (Vec3).
+    param t:
+        The `t` parameter (float).
+    returns:
+        The resulting `Vec3` value.
+end
+
+doc func negate
+    summary:
+        Performs `negate` operation on `ori.math.vec3`.
+    param v:
+        The `v` parameter (Vec3).
+    returns:
+        The resulting `Vec3` value.
+end
+
+doc func scale
+    summary:
+        Performs `scale` operation on `ori.math.vec3`.
+    param v:
+        The `v` parameter (Vec3).
+    param s:
+        The `s` parameter (float).
+    returns:
+        The resulting `Vec3` value.
+end
+
+doc func min
+    summary:
+        Performs `min` operation on `ori.math.vec3`.
+    param a:
+        The `a` parameter (Vec3).
+    param b:
+        The `b` parameter (Vec3).
+    returns:
+        The resulting `Vec3` value.
+end
+
+doc func max
+    summary:
+        Performs `max` operation on `ori.math.vec3`.
+    param a:
+        The `a` parameter (Vec3).
+    param b:
+        The `b` parameter (Vec3).
+    returns:
+        The resulting `Vec3` value.
+end
+
+doc func clamp
+    summary:
+        Performs `clamp` operation on `ori.math.vec3`.
+    param v:
+        The `v` parameter (Vec3).
+    param min_val:
+        The `min_val` parameter (Vec3).
+    param max_val:
+        The `max_val` parameter (Vec3).
+    returns:
+        The resulting `Vec3` value.
+end
+
+doc func reflect
+    summary:
+        Performs `reflect` operation on `ori.math.vec3`.
+    param v:
+        The `v` parameter (Vec3).
+    param normal:
+        The `normal` parameter (Vec3).
+    returns:
+        The resulting `Vec3` value.
+end

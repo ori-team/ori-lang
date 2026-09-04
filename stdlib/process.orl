@@ -1,6 +1,5 @@
 module ori.process
 
-import ori.bytes as bytes_mod
 import ori.convert as conv
 import ori.map as maps
 import ori.string as string_mod

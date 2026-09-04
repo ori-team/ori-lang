@@ -1,0 +1,147 @@
+oridoc 1
+
+namespace ori.math
+
+doc module self
+    summary:
+        Standard library module `ori.math` for Ori.
+end
+
+doc func sign
+    summary:
+        Performs `sign` operation on `ori.math`.
+    param n:
+        The `n` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func approx_eq
+    summary:
+        Performs `approx eq` operation on `ori.math`.
+    param a:
+        The `a` parameter (float).
+    param b:
+        The `b` parameter (float).
+    param eps:
+        The `eps` parameter (float).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func clamp_int
+    summary:
+        Performs `clamp int` operation on `ori.math`.
+    param value:
+        The `value` parameter (int).
+    param min_val:
+        The `min_val` parameter (int).
+    param max_val:
+        The `max_val` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func lerp
+    summary:
+        Performs `lerp` operation on `ori.math`.
+    param a:
+        The `a` parameter (float).
+    param b:
+        The `b` parameter (float).
+    param t:
+        The `t` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func deg_to_rad
+    summary:
+        Performs `deg to rad` operation on `ori.math`.
+    param degrees:
+        The `degrees` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func rad_to_deg
+    summary:
+        Performs `rad to deg` operation on `ori.math`.
+    param radians:
+        The `radians` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func trunc_float
+    summary:
+        Performs `trunc float` operation on `ori.math`.
+    param value:
+        The `value` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func abs_float
+    summary:
+        Performs `abs float` operation on `ori.math`.
+    param value:
+        The `value` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func clamp_float
+    summary:
+        Performs `clamp float` operation on `ori.math`.
+    param value:
+        The `value` parameter (float).
+    param min_val:
+        The `min_val` parameter (float).
+    param max_val:
+        The `max_val` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func hypot
+    summary:
+        Performs `hypot` operation on `ori.math`.
+    param a:
+        The `a` parameter (float).
+    param b:
+        The `b` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func lerp_float
+    summary:
+        Performs `lerp float` operation on `ori.math`.
+    param a:
+        The `a` parameter (float).
+    param b:
+        The `b` parameter (float).
+    param t:
+        The `t` parameter (float).
+    returns:
+        The resulting `float` value.
+end
+
+doc func is_approx_zero
+    summary:
+        Performs `is approx zero` operation on `ori.math`.
+    param value:
+        The `value` parameter (float).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func sign_float
+    summary:
+        Performs `sign float` operation on `ori.math`.
+    param value:
+        The `value` parameter (float).
+    returns:
+        The resulting `int` value.
+end

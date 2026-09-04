@@ -1,0 +1,70 @@
+oridoc 1
+
+namespace ori.hash_table
+
+doc module self
+    summary:
+        Standard library module `ori.hash_table` for Ori.
+end
+
+doc func get_or_string_int
+    summary:
+        Performs `get or string int` operation on `ori.hash_table`.
+    param table:
+        The `table` parameter (ori.hash_table.HashTable[string, int]).
+    param key:
+        The `key` parameter (string).
+    param fallback:
+        The `fallback` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func set_if_absent_string_int
+    summary:
+        Performs `set if absent string int` operation on `ori.hash_table`.
+    param table:
+        The `table` parameter (ori.hash_table.HashTable[string, int]).
+    param key:
+        The `key` parameter (string).
+    param value:
+        The `value` parameter (int).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func from_map_string_int
+    summary:
+        Performs `from map string int` operation on `ori.hash_table`.
+    param source:
+        The `source` parameter (map[string, int]).
+    returns:
+        The resulting `ori.hash_table.HashTable[string, int]` value.
+end
+
+doc func key_count_string_int
+    summary:
+        Performs `key count string int` operation on `ori.hash_table`.
+    param table:
+        The `table` parameter (ori.hash_table.HashTable[string, int]).
+    returns:
+        The resulting `int` value.
+end
+
+doc func is_empty_string_int
+    summary:
+        Performs `is empty string int` operation on `ori.hash_table`.
+    param table:
+        The `table` parameter (ori.hash_table.HashTable[string, int]).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func keys_string_int
+    summary:
+        Performs `keys string int` operation on `ori.hash_table`.
+    param table:
+        The `table` parameter (ori.hash_table.HashTable[string, int]).
+    returns:
+        The resulting `list[string]` value.
+end

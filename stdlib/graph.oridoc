@@ -1,0 +1,58 @@
+oridoc 1
+
+namespace ori.graph
+
+doc module self
+    summary:
+        Standard library module `ori.graph` for Ori.
+end
+
+doc func has_path
+    summary:
+        Performs `has path` operation on `ori.graph`.
+    param g:
+        The `g` parameter (ori.graph.Graph[string]).
+    param start:
+        The `start` parameter (string).
+    param goal:
+        The `goal` parameter (string).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func reachable_count
+    summary:
+        Performs `reachable count` operation on `ori.graph`.
+    param g:
+        The `g` parameter (ori.graph.Graph[string]).
+    param start:
+        The `start` parameter (string).
+    returns:
+        The resulting `int` value.
+end
+
+doc func is_reachable
+    summary:
+        Performs `is reachable` operation on `ori.graph`.
+    param g:
+        The `g` parameter (ori.graph.Graph[string]).
+    param start:
+        The `start` parameter (string).
+    param goal:
+        The `goal` parameter (string).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func has_path_int
+    summary:
+        Performs `has path int` operation on `ori.graph`.
+    param g:
+        The `g` parameter (ori.graph.Graph[int]).
+    param start:
+        The `start` parameter (int).
+    param goal:
+        The `goal` parameter (int).
+    returns:
+        The resulting `bool` value.
+end

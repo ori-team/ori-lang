@@ -1,0 +1,48 @@
+oridoc 1
+
+namespace ori.tree
+
+doc module self
+    summary:
+        Standard library module `ori.tree` for Ori.
+end
+
+doc func is_leaf
+    summary:
+        Performs `is leaf` operation on `ori.tree`.
+    param t:
+        The `t` parameter (ori.tree.Tree[T]).
+    param node:
+        The `node` parameter (ori.tree.NodeId).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func values_preorder
+    summary:
+        Performs `values preorder` operation on `ori.tree`.
+    param t:
+        The `t` parameter (ori.tree.Tree[T]).
+    returns:
+        The resulting `list[T]` value.
+end
+
+doc func leaf_count
+    summary:
+        Performs `leaf count` operation on `ori.tree`.
+    param t:
+        The `t` parameter (ori.tree.Tree[T]).
+    returns:
+        The resulting `int` value.
+end
+
+doc func max_depth_from
+    summary:
+        Performs `max depth from` operation on `ori.tree`.
+    param t:
+        The `t` parameter (ori.tree.Tree[T]).
+    param node:
+        The `node` parameter (ori.tree.NodeId).
+    returns:
+        The resulting `int` value.
+end

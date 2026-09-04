@@ -1,0 +1,28 @@
+oridoc 1
+
+namespace ori.linked_list
+
+doc module self
+    summary:
+        Standard library module `ori.linked_list` for Ori.
+end
+
+doc func from_list
+    summary:
+        Performs `from list` operation on `ori.linked_list`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `ori.linked_list.LinkedList[T]` value.
+end
+
+doc func front_or
+    summary:
+        Performs `front or` operation on `ori.linked_list`.
+    param node:
+        The `node` parameter (ori.linked_list.LinkedList[T]).
+    param fallback:
+        The `fallback` parameter (T).
+    returns:
+        The resulting `T` value.
+end

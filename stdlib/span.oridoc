@@ -1,0 +1,83 @@
+oridoc 1
+
+namespace ori.span
+
+doc module self
+    summary:
+        Standard library module `ori.span` for Ori.
+end
+
+doc func from_buffer
+    summary:
+        Performs `from buffer` operation on `ori.span`.
+    param buf:
+        The `buf` parameter (buffer[int]).
+    param offset:
+        The `offset` parameter (int).
+    param len:
+        The `len` parameter (int).
+    returns:
+        The resulting `Span` value.
+end
+
+doc func len
+    summary:
+        Performs `len` operation on `ori.span`.
+    param s:
+        The `s` parameter (Span).
+    returns:
+        The resulting `int` value.
+end
+
+doc func is_empty
+    summary:
+        Performs `is empty` operation on `ori.span`.
+    param s:
+        The `s` parameter (Span).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func get
+    summary:
+        Performs `get` operation on `ori.span`.
+    param s:
+        The `s` parameter (Span).
+    param index:
+        The `index` parameter (int).
+    returns:
+        The resulting `int` value.
+end
+
+doc func set_at
+    summary:
+        Performs `set at` operation on `ori.span`.
+    param s:
+        The `s` parameter (Span).
+    param index:
+        The `index` parameter (int).
+    param value:
+        The `value` parameter (int).
+end
+
+doc func fill
+    summary:
+        Performs `fill` operation on `ori.span`.
+    param s:
+        The `s` parameter (Span).
+    param value:
+        The `value` parameter (int).
+end
+
+doc func subspan
+    summary:
+        Performs `subspan` operation on `ori.span`.
+    param s:
+        The `s` parameter (Span).
+    param offset:
+        The `offset` parameter (int).
+    param len:
+        The `len` parameter (int).
+    returns:
+        The resulting `Span` value.
+end

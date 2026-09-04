@@ -1,0 +1,30 @@
+oridoc 1
+
+namespace ori.err_trace
+
+doc module self
+    summary:
+        Standard library module `ori.err_trace` for Ori.
+end
+
+doc func push
+    summary:
+        Performs `push` operation on `ori.err_trace`.
+    param file:
+        The `file` parameter (string).
+    param line:
+        The `line` parameter (int).
+    param message:
+        The `message` parameter (string).
+    returns:
+        The resulting `string` value.
+end
+
+doc func format
+    summary:
+        Performs `format` operation on `ori.err_trace`.
+    param message:
+        The `message` parameter (string).
+    returns:
+        The resulting `string` value.
+end

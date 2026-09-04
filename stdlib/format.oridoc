@@ -1,0 +1,50 @@
+oridoc 1
+
+namespace ori.format
+
+doc module self
+    summary:
+        Standard library module `ori.format` for Ori.
+end
+
+doc func number_with
+    summary:
+        Performs `number with` operation on `ori.format`.
+    param value:
+        The `value` parameter (float).
+    param decimals:
+        The `decimals` parameter (int).
+    returns:
+        The resulting `string` value.
+end
+
+doc func number_int
+    summary:
+        Performs `number int` operation on `ori.format`.
+    param value:
+        The `value` parameter (int).
+    returns:
+        The resulting `string` value.
+end
+
+doc func percent_with
+    summary:
+        Performs `percent with` operation on `ori.format`.
+    param value:
+        The `value` parameter (float).
+    param decimals:
+        The `decimals` parameter (int).
+    returns:
+        The resulting `string` value.
+end
+
+doc func bytes_size_unit
+    summary:
+        Performs `bytes size unit` operation on `ori.format`.
+    param value:
+        The `value` parameter (int).
+    param unit:
+        The `unit` parameter (string).
+    returns:
+        The resulting `string` value.
+end

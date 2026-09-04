@@ -1,0 +1,84 @@
+oridoc 1
+
+namespace ori.iter
+
+doc module self
+    summary:
+        Standard library module `ori.iter` for Ori.
+end
+
+doc func count
+    summary:
+        Performs `count` operation on `ori.iter`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `int` value.
+end
+
+doc func is_empty
+    summary:
+        Performs `is empty` operation on `ori.iter`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func first
+    summary:
+        Performs `first` operation on `ori.iter`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `optional[T]` value.
+end
+
+doc func sum_int
+    summary:
+        Performs `sum int` operation on `ori.iter`.
+    param items:
+        The `items` parameter (list[int]).
+    returns:
+        The resulting `int` value.
+end
+
+doc func contains_int
+    summary:
+        Performs `contains int` operation on `ori.iter`.
+    param items:
+        The `items` parameter (list[int]).
+    param target:
+        The `target` parameter (int).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func all_equal_int
+    summary:
+        Performs `all equal int` operation on `ori.iter`.
+    param items:
+        The `items` parameter (list[int]).
+    param expected:
+        The `expected` parameter (int).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func unique_count_int
+    summary:
+        Performs `unique count int` operation on `ori.iter`.
+    param items:
+        The `items` parameter (list[int]).
+    returns:
+        The resulting `int` value.
+end
+
+doc func reversed_copy
+    summary:
+        Performs `reversed copy` operation on `ori.iter`.
+    param items:
+        The `items` parameter (list[T]).
+    returns:
+        The resulting `list[T]` value.
+end

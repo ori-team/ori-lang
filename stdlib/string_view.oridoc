@@ -1,0 +1,92 @@
+oridoc 1
+
+namespace ori.string_view
+
+doc module self
+    summary:
+        Standard library module `ori.string_view` for Ori.
+end
+
+doc func from_string
+    summary:
+        Performs `from string` operation on `ori.string_view`.
+    param s:
+        The `s` parameter (string).
+    returns:
+        The resulting `StringView` value.
+end
+
+doc func from_sub
+    summary:
+        Performs `from sub` operation on `ori.string_view`.
+    param s:
+        The `s` parameter (string).
+    param start:
+        The `start` parameter (int).
+    param length:
+        The `length` parameter (int).
+    returns:
+        The resulting `StringView` value.
+end
+
+doc func len
+    summary:
+        Performs `len` operation on `ori.string_view`.
+    param view:
+        The `view` parameter (StringView).
+    returns:
+        The resulting `int` value.
+end
+
+doc func is_empty
+    summary:
+        Performs `is empty` operation on `ori.string_view`.
+    param view:
+        The `view` parameter (StringView).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func subview
+    summary:
+        Performs `subview` operation on `ori.string_view`.
+    param view:
+        The `view` parameter (StringView).
+    param start:
+        The `start` parameter (int).
+    param length:
+        The `length` parameter (int).
+    returns:
+        The resulting `StringView` value.
+end
+
+doc func to_string
+    summary:
+        Performs `to string` operation on `ori.string_view`.
+    param view:
+        The `view` parameter (StringView).
+    returns:
+        The resulting `string` value.
+end
+
+doc func starts_with
+    summary:
+        Performs `starts with` operation on `ori.string_view`.
+    param view:
+        The `view` parameter (StringView).
+    param prefix:
+        The `prefix` parameter (string).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func ends_with
+    summary:
+        Performs `ends with` operation on `ori.string_view`.
+    param view:
+        The `view` parameter (StringView).
+    param suffix:
+        The `suffix` parameter (string).
+    returns:
+        The resulting `bool` value.
+end

@@ -1,0 +1,102 @@
+oridoc 1
+
+namespace ori.math.mat3
+
+doc module self
+    summary:
+        Standard library module `ori.math.mat3` for Ori.
+end
+
+doc func identity
+    summary:
+        Performs `identity` operation on `ori.math.mat3`.
+    returns:
+        The resulting `Mat3` value.
+end
+
+doc func zero
+    summary:
+        Performs `zero` operation on `ori.math.mat3`.
+    returns:
+        The resulting `Mat3` value.
+end
+
+doc func translate
+    summary:
+        Performs `translate` operation on `ori.math.mat3`.
+    param tx:
+        The `tx` parameter (float).
+    param ty:
+        The `ty` parameter (float).
+    returns:
+        The resulting `Mat3` value.
+end
+
+doc func rotate
+    summary:
+        Performs `rotate` operation on `ori.math.mat3`.
+    param angle_rad:
+        The `angle_rad` parameter (float).
+    returns:
+        The resulting `Mat3` value.
+end
+
+doc func scale
+    summary:
+        Performs `scale` operation on `ori.math.mat3`.
+    param sx:
+        The `sx` parameter (float).
+    param sy:
+        The `sy` parameter (float).
+    returns:
+        The resulting `Mat3` value.
+end
+
+doc func multiply
+    summary:
+        Performs `multiply` operation on `ori.math.mat3`.
+    param a:
+        The `a` parameter (Mat3).
+    param b:
+        The `b` parameter (Mat3).
+    returns:
+        The resulting `Mat3` value.
+end
+
+doc func transform_point
+    summary:
+        Performs `transform point` operation on `ori.math.mat3`.
+    param m:
+        The `m` parameter (Mat3).
+    param p:
+        The `p` parameter (vec2.Vec2).
+    returns:
+        The resulting `vec2.Vec2` value.
+end
+
+doc func transpose
+    summary:
+        Performs `transpose` operation on `ori.math.mat3`.
+    param m:
+        The `m` parameter (Mat3).
+    returns:
+        The resulting `Mat3` value.
+end
+
+doc func determinant
+    summary:
+        Performs `determinant` operation on `ori.math.mat3`.
+    param m:
+        The `m` parameter (Mat3).
+    returns:
+        The resulting `float` value.
+end
+
+doc func inverse
+    summary:
+        Performs `inverse` operation on `ori.math.mat3`.
+    param m:
+        The `m` parameter (Mat3).
+    returns:
+        The resulting `Mat3` value.
+end

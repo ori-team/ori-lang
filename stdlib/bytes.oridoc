@@ -1,0 +1,130 @@
+oridoc 1
+
+namespace ori.bytes
+
+doc module self
+    summary:
+        Standard library module `ori.bytes` for Ori.
+end
+
+doc func is_empty
+    summary:
+        Performs `is empty` operation on `ori.bytes`.
+    param b:
+        The `b` parameter (bytes).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func equals
+    summary:
+        Performs `equals` operation on `ori.bytes`.
+    param a:
+        The `a` parameter (bytes).
+    param b:
+        The `b` parameter (bytes).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func from_hex_or
+    summary:
+        Performs `from hex or` operation on `ori.bytes`.
+    param hex:
+        The `hex` parameter (string).
+    param fallback:
+        The `fallback` parameter (bytes).
+    returns:
+        The resulting `bytes` value.
+end
+
+doc func empty_bytes
+    summary:
+        Performs `empty bytes` operation on `ori.bytes`.
+    returns:
+        The resulting `bytes` value.
+end
+
+doc func join
+    summary:
+        Performs `join` operation on `ori.bytes`.
+    param left:
+        The `left` parameter (bytes).
+    param right:
+        The `right` parameter (bytes).
+    returns:
+        The resulting `bytes` value.
+end
+
+doc func starts_with
+    summary:
+        Performs `starts with` operation on `ori.bytes`.
+    param value:
+        The `value` parameter (bytes).
+    param prefix:
+        The `prefix` parameter (bytes).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func ends_with
+    summary:
+        Performs `ends with` operation on `ori.bytes`.
+    param value:
+        The `value` parameter (bytes).
+    param suffix:
+        The `suffix` parameter (bytes).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func contains
+    summary:
+        Performs `contains` operation on `ori.bytes`.
+    param value:
+        The `value` parameter (bytes).
+    param part:
+        The `part` parameter (bytes).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func from_list
+    summary:
+        Performs `from list` operation on `ori.bytes`.
+    param values:
+        The `values` parameter (list[int]).
+    returns:
+        The resulting `bytes` value.
+end
+
+doc func to_list
+    summary:
+        Performs `to list` operation on `ori.bytes`.
+    param value:
+        The `value` parameter (bytes).
+    returns:
+        The resulting `list[int]` value.
+end
+
+doc func is_prefix_of
+    summary:
+        Performs `is prefix of` operation on `ori.bytes`.
+    param prefix:
+        The `prefix` parameter (bytes).
+    param value:
+        The `value` parameter (bytes).
+    returns:
+        The resulting `bool` value.
+end
+
+doc func compare_lex
+    summary:
+        Performs `compare lex` operation on `ori.bytes`.
+    param a:
+        The `a` parameter (bytes).
+    param b:
+        The `b` parameter (bytes).
+    returns:
+        The resulting `int` value.
+end
