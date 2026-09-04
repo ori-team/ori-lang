@@ -142,10 +142,11 @@ Expand from real regressions and high-risk code changes.
 - Use timeouts and isolated temporary directories.
 - Track comparison count and uncovered feature families.
 
-## Completion criteria for QA-DIFF-1
+## Completion criteria for QA-DIFF-1 (Delivered 2026-09-04)
 
-- reusable AOT/JIT harness;
-- optimized/unoptimized comparison;
+- reusable AOT/JIT harness implemented in `compiler/crates/ori-driver/tests/differential_testing.rs`;
+- optimized/unoptimized comparison across standard and aggressive Cranelift passes;
+- multi-trait colon dispatch, SIMD vectors, struct alignment, and arena reset differential coverage;
 - clean/incremental comparison for representative projects;
 - explicit C/debug supported-subset route;
 - managed cleanup observations for high-risk fixtures;

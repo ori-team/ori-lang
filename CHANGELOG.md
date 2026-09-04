@@ -19,6 +19,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **AOT/JIT differential test suite with optimization parity (`QA-DIFF-1`).**
+  Implemented `compiler/crates/ori-driver/tests/differential_testing.rs` covering Cranelift Native AOT,
+  in-process JIT, and aggressive optimizer parity across all high-risk language features:
+  multi-trait colon dispatch (`apply Type: TraitA, TraitB` + `for T: Trait`), SIMD vectors, struct alignment,
+  scoped memory arenas, closures with structured captures, enum pattern guards, try-propagation,
+  and fixed-size arrays. Asserted on byte-for-byte identical stdout and exit status across routes.
+
 - **Surface ergonomics wave (`SYNTAX-APPLY-COLON-1`, `SYNTAX-IMPORT-AS-1`, `SYNTAX-COMPOSITE-POS-1`, `SYNTAX-STRUCT-INHERENT-1`, `SYNTAX-POLY-TRAIT-NAME-1`).**
   Canonical `apply Type: TraitA, TraitB` multi-trait header; natural `import path as alias` and `(item as alias)`
   (legacy `=` still accepted); compact positional `array[T, N]` alongside `array[T, size: N]`;

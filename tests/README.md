@@ -13,6 +13,7 @@ a redirect — no test files should be added here.
 | `concurrency_async` | `compiler/crates/ori-driver/tests/concurrency_async.rs` | Async/await, task.spawn, channels, cancel tokens, using+async dispose |
 | `memory_arc` | `compiler/crates/ori-driver/tests/memory_arc.rs` | ARC retain/release, cycle collector, leak check, struct/enum/tuple destructors |
 | `method_resolution` | `compiler/crates/ori-driver/tests/method_resolution.rs` | Trait/impl method resolution, inherent vs trait methods |
+| `differential_testing` | `compiler/crates/ori-driver/tests/differential_testing.rs` | AOT/JIT/opt-parity differential execution (QA-DIFF-1) |
 | `diagnostic_catalog` | `compiler/crates/ori-driver/tests/diagnostic_catalog.rs` | Diagnostic code catalog consistency (emitted ↔ spec) |
 | LSP E2E | `compiler/crates/ori-lsp/tests/e2e.rs` | LSP protocol: hover, definition, completion, rename, formatting, project diagnostics |
 
