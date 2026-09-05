@@ -925,3 +925,36 @@ end
         "percent sequences must stay data: {stderr:?}"
     );
 }
+
+#[test]
+fn aggressive_inlining_materializes_temporaries_for_mutated_globals() {
+    let source = r#"module app.main
+
+import ori.io = io
+
+var state: int = 10
+
+step() -> int
+    state = state + 5
+    return 2
+end
+
+calculate(x: int, y: int) -> int
+    return x * step() + y
+end
+
+main()
+    io.println(f"{calculate(state, state)}")
+    io.println(f"{state}")
+end
+"#;
+
+    // With materialization, `state` (10) is captured into temporaries before `calculate` runs.
+    // Inside calculate: `10 * step() + 10 = 10 * 2 + 10 = 30`.
+    // Then `state` was mutated by `step()` to 15.
+    assert_same_output_at_every_opt_level(
+        "inlining_materialized_temps",
+        source,
+        "30\n15",
+    );
+}

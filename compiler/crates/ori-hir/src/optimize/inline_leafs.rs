@@ -45,8 +45,9 @@ pub(super) fn inline_leafs_module(module: &mut HirModule) {
     if leaves.is_empty() {
         return;
     }
+    let mut temp_counter = 0;
     for f in &mut module.funcs {
-        inline_in_block(&mut f.body, &leaves);
+        inline_in_block(&mut f.body, &leaves, &mut temp_counter);
     }
 }
 
@@ -55,18 +56,36 @@ struct LeafFn {
     body: HirBlock,
 }
 
-fn inline_in_block(block: &mut HirBlock, leaves: &HashMap<SmolStr, LeafFn>) {
-    for stmt in &mut block.stmts {
-        inline_in_stmt(stmt, leaves);
+fn inline_in_block(
+    block: &mut HirBlock,
+    leaves: &HashMap<SmolStr, LeafFn>,
+    temp_counter: &mut usize,
+) {
+    let mut new_stmts = Vec::with_capacity(block.stmts.len());
+    for mut stmt in block.stmts.drain(..) {
+        let mut pre = Vec::new();
+        inline_in_stmt(&mut stmt, leaves, Some(&mut pre), temp_counter);
+        new_stmts.extend(pre);
+        new_stmts.push(stmt);
     }
+    block.stmts = new_stmts;
 }
 
-fn inline_in_stmt(stmt: &mut HirStmt, leaves: &HashMap<SmolStr, LeafFn>) {
+fn inline_in_stmt(
+    stmt: &mut HirStmt,
+    leaves: &HashMap<SmolStr, LeafFn>,
+    pre: Option<&mut Vec<HirStmt>>,
+    temp_counter: &mut usize,
+) {
     match stmt {
-        HirStmt::Let { value, .. } | HirStmt::Assign { value, .. } | HirStmt::Expr(value) => {
-            inline_in_expr(value, leaves);
+        HirStmt::Let { value, .. }
+        | HirStmt::Assign { value, .. }
+        | HirStmt::Expr(value)
+        | HirStmt::Using { value, .. }
+        | HirStmt::Check { condition: value, .. } => {
+            inline_in_expr(value, leaves, pre, temp_counter);
         }
-        HirStmt::Return(Some(e), _) => inline_in_expr(e, leaves),
+        HirStmt::Return(Some(e), _) => inline_in_expr(e, leaves, pre, temp_counter),
         HirStmt::Return(None, _) | HirStmt::Break(_) | HirStmt::Continue(_) => {}
         HirStmt::If {
             cond,
@@ -75,70 +94,75 @@ fn inline_in_stmt(stmt: &mut HirStmt, leaves: &HashMap<SmolStr, LeafFn>) {
             else_,
             ..
         } => {
-            inline_in_expr(cond, leaves);
-            inline_in_block(then, leaves);
+            inline_in_expr(cond, leaves, pre, temp_counter);
+            inline_in_block(then, leaves, temp_counter);
             for (c, b) in else_ifs {
-                inline_in_expr(c, leaves);
-                inline_in_block(b, leaves);
+                inline_in_expr(c, leaves, None, temp_counter);
+                inline_in_block(b, leaves, temp_counter);
             }
             if let Some(b) = else_ {
-                inline_in_block(b, leaves);
+                inline_in_block(b, leaves, temp_counter);
             }
         }
         HirStmt::While { cond, body, .. } => {
-            inline_in_expr(cond, leaves);
-            inline_in_block(body, leaves);
+            // Do not hoist temporaries outside loop condition: condition runs per iteration.
+            inline_in_expr(cond, leaves, None, temp_counter);
+            inline_in_block(body, leaves, temp_counter);
         }
         HirStmt::For { iterable, body, .. } => {
-            inline_in_expr(iterable, leaves);
-            inline_in_block(body, leaves);
+            inline_in_expr(iterable, leaves, pre, temp_counter);
+            inline_in_block(body, leaves, temp_counter);
         }
-        HirStmt::Loop { body, .. } => inline_in_block(body, leaves),
+        HirStmt::Loop { body, .. } => inline_in_block(body, leaves, temp_counter),
         HirStmt::Repeat { count, body, .. } => {
-            inline_in_expr(count, leaves);
-            inline_in_block(body, leaves);
+            inline_in_expr(count, leaves, pre, temp_counter);
+            inline_in_block(body, leaves, temp_counter);
         }
         HirStmt::Match {
             scrutinee, arms, ..
         } => {
-            inline_in_expr(scrutinee, leaves);
+            inline_in_expr(scrutinee, leaves, pre, temp_counter);
             for arm in arms {
                 if let Some(guard) = &mut arm.guard {
-                    inline_in_expr(guard, leaves);
+                    inline_in_expr(guard, leaves, None, temp_counter);
                 }
-                for s in &mut arm.body {
-                    inline_in_stmt(s, leaves);
+                let mut new_arm_stmts = Vec::with_capacity(arm.body.len());
+                for mut s in arm.body.drain(..) {
+                    let mut arm_pre = Vec::new();
+                    inline_in_stmt(&mut s, leaves, Some(&mut arm_pre), temp_counter);
+                    new_arm_stmts.extend(arm_pre);
+                    new_arm_stmts.push(s);
                 }
+                arm.body = new_arm_stmts;
             }
         }
         HirStmt::IfSome {
             value, then, else_, ..
         } => {
-            inline_in_expr(value, leaves);
-            inline_in_block(then, leaves);
+            inline_in_expr(value, leaves, pre, temp_counter);
+            inline_in_block(then, leaves, temp_counter);
             if let Some(b) = else_ {
-                inline_in_block(b, leaves);
+                inline_in_block(b, leaves, temp_counter);
             }
         }
         HirStmt::WhileSome { value, body, .. } => {
-            inline_in_expr(value, leaves);
-            inline_in_block(body, leaves);
-        }
-        HirStmt::Using { value, .. }
-        | HirStmt::Check {
-            condition: value, ..
-        } => {
-            inline_in_expr(value, leaves);
+            inline_in_expr(value, leaves, None, temp_counter);
+            inline_in_block(body, leaves, temp_counter);
         }
     }
 }
 
-fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
+fn inline_in_expr(
+    expr: &mut HirExpr,
+    leaves: &HashMap<SmolStr, LeafFn>,
+    pre: Option<&mut Vec<HirStmt>>,
+    temp_counter: &mut usize,
+) {
     // Recurse first
     match &mut expr.kind {
         HirExprKind::Binary { lhs, rhs, .. } => {
-            inline_in_expr(lhs, leaves);
-            inline_in_expr(rhs, leaves);
+            inline_in_expr(lhs, leaves, None, temp_counter);
+            inline_in_expr(rhs, leaves, None, temp_counter);
         }
         HirExprKind::Unary { operand, .. }
         | HirExprKind::Field {
@@ -152,21 +176,23 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
         | HirExprKind::IsCheck { value: operand, .. }
         | HirExprKind::TupleIndex {
             object: operand, ..
-        } => inline_in_expr(operand, leaves),
+        } => inline_in_expr(operand, leaves, None, temp_counter),
         HirExprKind::Index { object, index } => {
-            inline_in_expr(object, leaves);
-            inline_in_expr(index, leaves);
+            inline_in_expr(object, leaves, None, temp_counter);
+            inline_in_expr(index, leaves, None, temp_counter);
         }
         HirExprKind::Call { callee, args } => {
             for a in args.iter_mut() {
-                inline_in_expr(&mut a.value, leaves);
+                inline_in_expr(&mut a.value, leaves, None, temp_counter);
             }
-            inline_in_expr(callee, leaves);
+            inline_in_expr(callee, leaves, None, temp_counter);
             // Try inline: callee is Var(name) and leaf exists
             if let HirExprKind::Var(name) = &callee.kind {
                 if let Some(leaf) = leaves.get(name) {
                     if args.len() == leaf.params.len() && args.iter().all(|a| !a.spread) {
-                        if let Some(inlined) = try_inline_return_expr(leaf, args) {
+                        if let Some(inlined) =
+                            try_inline_return_expr(leaf, args, pre, temp_counter)
+                        {
                             *expr = inlined;
                         }
                     }
@@ -174,28 +200,28 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
             }
         }
         HirExprKind::MethodCall { receiver, args, .. } => {
-            inline_in_expr(receiver, leaves);
+            inline_in_expr(receiver, leaves, None, temp_counter);
             for a in args {
-                inline_in_expr(a, leaves);
+                inline_in_expr(a, leaves, None, temp_counter);
             }
         }
         HirExprKind::IfExpr { cond, then, else_ } => {
-            inline_in_expr(cond, leaves);
-            inline_in_expr(then, leaves);
-            inline_in_expr(else_, leaves);
+            inline_in_expr(cond, leaves, None, temp_counter);
+            inline_in_expr(then, leaves, None, temp_counter);
+            inline_in_expr(else_, leaves, None, temp_counter);
         }
         HirExprKind::MatchExpr { scrutinee, arms } => {
-            inline_in_expr(scrutinee, leaves);
+            inline_in_expr(scrutinee, leaves, None, temp_counter);
             for arm in arms {
                 if let Some(guard) = &mut arm.guard {
-                    inline_in_expr(guard, leaves);
+                    inline_in_expr(guard, leaves, None, temp_counter);
                 }
-                inline_in_expr(&mut arm.body, leaves);
+                inline_in_expr(&mut arm.body, leaves, None, temp_counter);
             }
         }
         HirExprKind::StructLit { fields, .. } | HirExprKind::EnumVariant { fields, .. } => {
             for (_, e) in fields {
-                inline_in_expr(e, leaves);
+                inline_in_expr(e, leaves, None, temp_counter);
             }
         }
         HirExprKind::ListLit { elements, .. }
@@ -204,34 +230,34 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
         | HirExprKind::TupleLit(elements)
         | HirExprKind::SetLit { elements, .. } => {
             for e in elements {
-                inline_in_expr(e, leaves);
+                inline_in_expr(e, leaves, None, temp_counter);
             }
         }
         HirExprKind::ListSpreadLit { elements, .. } => {
             for el in elements {
-                inline_in_expr(&mut el.value, leaves);
+                inline_in_expr(&mut el.value, leaves, None, temp_counter);
             }
         }
         HirExprKind::MapLit { entries, .. } => {
             for (k, v) in entries {
-                inline_in_expr(k, leaves);
-                inline_in_expr(v, leaves);
+                inline_in_expr(k, leaves, None, temp_counter);
+                inline_in_expr(v, leaves, None, temp_counter);
             }
         }
         HirExprKind::Range { start, end } => {
-            inline_in_expr(start, leaves);
-            inline_in_expr(end, leaves);
+            inline_in_expr(start, leaves, None, temp_counter);
+            inline_in_expr(end, leaves, None, temp_counter);
         }
         HirExprKind::StructUpdate { base, updates, .. } => {
-            inline_in_expr(base, leaves);
+            inline_in_expr(base, leaves, None, temp_counter);
             for (_, e) in updates {
-                inline_in_expr(e, leaves);
+                inline_in_expr(e, leaves, None, temp_counter);
             }
         }
         HirExprKind::InterpolatedStr(parts) => {
             for p in parts {
                 if let HirStrPart::Expr(e) = p {
-                    inline_in_expr(e, leaves);
+                    inline_in_expr(e, leaves, None, temp_counter);
                 }
             }
         }
@@ -241,55 +267,110 @@ fn inline_in_expr(expr: &mut HirExpr, leaves: &HashMap<SmolStr, LeafFn>) {
 
 /// If leaf body is pure (single return or nested pure if-returns),
 /// substitute params and return the inlined expression (PERF-INLINE-1).
-fn try_inline_return_expr(leaf: &LeafFn, args: &[HirArg]) -> Option<HirExpr> {
+fn try_inline_return_expr(
+    leaf: &LeafFn,
+    args: &[HirArg],
+    mut pre: Option<&mut Vec<HirStmt>>,
+    temp_counter: &mut usize,
+) -> Option<HirExpr> {
     if leaf.body.stmts.is_empty() || leaf.body.stmts.len() > 8 {
         return None;
     }
     let ret = leaf_body_to_return_expr(&leaf.body.stmts)?;
-
-    // Substitution has no temporary-binding representation yet. Restrict
-    // arguments to expressions whose evaluation is repeatable and cannot
-    // trap, allocate, call user code, or observe an evaluation-order change.
-    if args.iter().any(|arg| !is_pure_inline_argument(&arg.value)) {
-        return None;
-    }
-
-    // When all arguments are pure variables or constants, allow up to 4 reads per parameter.
-    let max_reads = if args.iter().all(|a| {
-        matches!(
-            a.value.kind,
-            HirExprKind::Var(_)
-                | HirExprKind::StructLit { .. }
-                | HirExprKind::FloatLit(_)
-                | HirExprKind::IntLit(_)
-                | HirExprKind::BoolLit(_)
-        )
-    }) {
-        4
-    } else {
-        1
-    };
-
-    if leaf
-        .params
-        .iter()
-        .any(|param| count_var_uses(&ret, param.as_str()) > max_reads)
-    {
-        return None;
-    }
     if expr_has_inline_barrier(&ret) {
         return None;
     }
-    // If the return expression contains function calls, textual substitution can
-    // evaluate variable arguments across the call boundary, observing side effects
-    // or reading mutated globals. Inlining is only valid when arguments are constants.
-    if expr_has_any_call(&ret) && args.iter().any(|arg| matches!(arg.value.kind, HirExprKind::Var(_))) {
+    // A call boundary currently performs the retain/release bookkeeping for
+    // runtime-managed values. Keep this pass scalar and value-types only.
+    if args.iter().any(|arg| arg.value.ty.is_runtime_managed()) {
         return None;
     }
 
+    let has_calls = expr_has_any_call(&ret);
+    let all_args_pure = args.iter().all(|arg| is_pure_inline_argument(&arg.value));
+    let has_var_args = args.iter().any(|arg| matches!(arg.value.kind, HirExprKind::Var(_)));
+
+    // Fast path: direct textual substitution without temporary bindings.
+    // Safe when:
+    // 1. All arguments are pure (no side-effects, no allocation, no traps).
+    // 2. Either the body has no calls, OR no arguments are variables (constants won't observe mutations).
+    // 3. Number of parameter uses does not exceed max_reads.
+    let can_subst_directly = all_args_pure && (!has_calls || !has_var_args);
+    if can_subst_directly {
+        let max_reads = if args.iter().all(|a| {
+            matches!(
+                a.value.kind,
+                HirExprKind::Var(_)
+                    | HirExprKind::StructLit { .. }
+                    | HirExprKind::FloatLit(_)
+                    | HirExprKind::IntLit(_)
+                    | HirExprKind::BoolLit(_)
+            )
+        }) {
+            4
+        } else {
+            1
+        };
+        if leaf
+            .params
+            .iter()
+            .all(|param| count_var_uses(&ret, param.as_str()) <= max_reads)
+        {
+            let mut out = ret;
+            for (param, arg) in leaf.params.iter().zip(args.iter()) {
+                subst_var(&mut out, param.as_str(), &arg.value);
+            }
+            return Some(out);
+        }
+    }
+
+    // Materialization path (OPT-INLINE-TEMP-1):
+    // Requires a statement list (`pre`) into which we can hoist `HirStmt::Let`.
+    let pre_stmts = pre.as_mut()?;
+
+    // With temporaries, each parameter will be read as a variable, so allow up to 4 reads.
+    if leaf
+        .params
+        .iter()
+        .any(|param| count_var_uses(&ret, param.as_str()) > 4)
+    {
+        return None;
+    }
+
+    // Materialize arguments into temporary let-bindings before the inlined body
+    let mut synthesized_args = Vec::with_capacity(args.len());
+    for arg in args {
+        // Trivial immutable constants do not need a temporary let-binding
+        if matches!(
+            arg.value.kind,
+            HirExprKind::BoolLit(_)
+                | HirExprKind::IntLit(_)
+                | HirExprKind::FloatLit(_)
+                | HirExprKind::Unit
+                | HirExprKind::None_
+        ) {
+            synthesized_args.push(arg.value.clone());
+        } else {
+            let tmp_name = SmolStr::from(format!("__inlined_tmp_{}", *temp_counter));
+            *temp_counter += 1;
+            pre_stmts.push(HirStmt::Let {
+                name: tmp_name.clone(),
+                ty: arg.value.ty.clone(),
+                mutable: false,
+                value: arg.value.clone(),
+                span: arg.value.span,
+            });
+            synthesized_args.push(HirExpr {
+                kind: HirExprKind::Var(tmp_name),
+                ty: arg.value.ty.clone(),
+                span: arg.value.span,
+            });
+        }
+    }
+
     let mut out = ret;
-    for (param, arg) in leaf.params.iter().zip(args.iter()) {
-        subst_var(&mut out, param.as_str(), &arg.value);
+    for (param, arg_expr) in leaf.params.iter().zip(synthesized_args.iter()) {
+        subst_var(&mut out, param.as_str(), arg_expr);
     }
     Some(out)
 }
@@ -856,8 +937,9 @@ mod tests {
             spread: false,
         }];
 
+        let mut counter = 0;
         assert!(
-            try_inline_return_expr(&leaf, &args).is_none(),
+            try_inline_return_expr(&leaf, &args, None, &mut counter).is_none(),
             "a match binding can shadow a parameter and must block textual substitution"
         );
     }
@@ -875,8 +957,9 @@ mod tests {
         };
         let leaf = leaf_returning(propagated, &[]);
 
+        let mut counter = 0;
         assert!(
-            try_inline_return_expr(&leaf, &[]).is_none(),
+            try_inline_return_expr(&leaf, &[], None, &mut counter).is_none(),
             "propagation must remain scoped to the callee"
         );
     }
