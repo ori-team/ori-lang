@@ -99,6 +99,14 @@ pub(super) fn lower_loaded_sources(
 
     ori_hir::insert_default_arguments(&mut merged);
     ori_hir::monomorphize_generics(&mut merged);
+    let violations = ori_hir::verify_module(&merged);
+    if !violations.is_empty() {
+        eprintln!("HIR verifier violations: {violations:?}");
+    }
+    debug_assert!(
+        violations.is_empty(),
+        "HIR verifier failed after lowering: {violations:?}"
+    );
     merged
 }
 

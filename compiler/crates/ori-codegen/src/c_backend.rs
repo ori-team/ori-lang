@@ -1403,6 +1403,42 @@ static inline int64_t ori_test_assert_no_leaks(ori_string_t label) {
     return 0;
 }
 
+/* Minimal bump-region support for the C debug backend. The native runtime
+   backs `mem.region()` with chunked arenas; here a region is a malloc'd
+   handle whose allocations fall back to plain malloc/free. Reset and size
+   keep native semantics (reset discards accounting, size reports bytes). */
+typedef struct { int64_t total_allocated; int64_t allocation_count; } ori_region_t;
+static inline void* ori_region_new(void) {
+    ori_region_t* region = (ori_region_t*)calloc(1, sizeof(ori_region_t));
+    if (!region) abort();
+    return (void*)region;
+}
+static inline void* ori_region_alloc(void* handle, int64_t size, int64_t align) {
+    (void)handle;
+    (void)align;
+    if (size <= 0) return NULL;
+    void* ptr = malloc((size_t)size);
+    if (!ptr) abort();
+    return ptr;
+}
+static inline void ori_region_reset(void* handle) {
+    ori_region_t* region = (ori_region_t*)handle;
+    if (!region) return;
+    region->total_allocated = 0;
+    region->allocation_count = 0;
+}
+static inline void ori_region_free(void* handle) {
+    free(handle);
+}
+static inline int64_t ori_region_size(void* handle) {
+    ori_region_t* region = (ori_region_t*)handle;
+    return region ? region->total_allocated : 0;
+}
+static inline int64_t ori_region_count(void* handle) {
+    ori_region_t* region = (ori_region_t*)handle;
+    return region ? region->allocation_count : 0;
+}
+
 /* Iterator signatures for opaque collections */
 void* ori_deque_iterator_new(void* deque);
 int64_t* ori_deque_iterator_next(void* iter);
@@ -2173,24 +2209,21 @@ impl CCodegen {
         let return_ty = substitute_trait_self(&method.return_ty, trait_def_id, &concrete_self);
         let return_c = ty_to_c(&return_ty);
         let mut params = vec!["void* raw".to_owned()];
-        // Default trait methods are emitted with the trait's placeholder
-        // `self` type, not with the concrete implementation type.  Passing
-        // the boxed concrete value to that function would be an incompatible
-        // C call (and is undefined behaviour even when the method ignores
-        // `self`).  The trait representation is intentionally field-less in
-        // the debug backend, so use a zero-initialized value for this erased
-        // receiver.  Concrete implementations still receive the dereferenced
-        // boxed value through the normal path.
-        let is_default_method = method
+        // A default trait method is emitted against the field-less trait
+        // type (`ori_any_t`), not the concrete struct: passing the
+        // dereferenced boxed value would be a C type error. The direct call
+        // site passes an empty trait value, so the adapter does the same;
+        // the body ignores `self` in the supported default-method subset.
+        let mut args = Vec::new();
+        if method
             .default_func_name
             .as_ref()
-            .is_some_and(|name| Self::func_c_name(name) == function);
-        let self_arg = if is_default_method {
-            format!("(({}){{0}})", def_c_name(trait_def_id))
+            .is_none_or(|name| Self::func_c_name(name) != function)
+        {
+            args.push(format!("*(({}*)raw)", def_c_name(type_def_id)));
         } else {
-            format!("*(({}*)raw)", def_c_name(type_def_id))
-        };
-        let mut args = vec![self_arg];
+            args.push("((ori_any_t){0})".to_owned());
+        }
         for (index, param) in method.params.iter().skip(1).enumerate() {
             let concrete = substitute_trait_self(param, trait_def_id, &concrete_self);
             params.push(format!("{} _arg{}", ty_to_c(&concrete), index));

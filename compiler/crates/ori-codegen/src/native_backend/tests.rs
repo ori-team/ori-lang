@@ -112,6 +112,11 @@ const NATIVE_EXPR_COVERAGE: &[NativeHirCoverage] = &[
         note: "stack slot inline; elementos escalares copiados campo a campo",
     },
     NativeHirCoverage {
+        variant: "SimdLit",
+        evidence: &["HirExprKind::SimdLit"],
+        note: "stack slot vetorial; lanes copiadas por offset",
+    },
+    NativeHirCoverage {
         variant: "ListSpreadLit",
         evidence: &["HirExprKind::ListSpreadLit"],
         note: "ori.list runtime com spread",

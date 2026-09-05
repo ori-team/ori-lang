@@ -280,6 +280,12 @@ fn try_inline_return_expr(leaf: &LeafFn, args: &[HirArg]) -> Option<HirExpr> {
     if expr_has_inline_barrier(&ret) {
         return None;
     }
+    // If the return expression contains function calls, textual substitution can
+    // evaluate variable arguments across the call boundary, observing side effects
+    // or reading mutated globals. Inlining is only valid when arguments are constants.
+    if expr_has_any_call(&ret) && args.iter().any(|arg| matches!(arg.value.kind, HirExprKind::Var(_))) {
+        return None;
+    }
 
     let mut out = ret;
     for (param, arg) in leaf.params.iter().zip(args.iter()) {
@@ -544,6 +550,62 @@ fn expr_has_inline_barrier(expr: &HirExpr) -> bool {
         | HirExprKind::BytesLit(_)
         | HirExprKind::Unit
         | HirExprKind::Var(_) => false,
+    }
+}
+
+fn expr_has_any_call(expr: &HirExpr) -> bool {
+    match &expr.kind {
+        HirExprKind::Call { .. }
+        | HirExprKind::MethodCall { .. }
+        | HirExprKind::AssociatedCall { .. } => true,
+        HirExprKind::Binary { lhs, rhs, .. } => {
+            expr_has_any_call(lhs) || expr_has_any_call(rhs)
+        }
+        HirExprKind::Unary { operand, .. }
+        | HirExprKind::Field {
+            object: operand, ..
+        }
+        | HirExprKind::Some_(operand)
+        | HirExprKind::Ok_(operand)
+        | HirExprKind::Err_(operand)
+        | HirExprKind::IsCheck { value: operand, .. }
+        | HirExprKind::TupleIndex {
+            object: operand, ..
+        } => expr_has_any_call(operand),
+        HirExprKind::Index { object, index } => {
+            expr_has_any_call(object) || expr_has_any_call(index)
+        }
+        HirExprKind::IfExpr { cond, then, else_ } => {
+            expr_has_any_call(cond) || expr_has_any_call(then) || expr_has_any_call(else_)
+        }
+        HirExprKind::StructLit { fields, .. } | HirExprKind::EnumVariant { fields, .. } => {
+            fields.iter().any(|(_, value)| expr_has_any_call(value))
+        }
+        HirExprKind::ListLit { elements, .. }
+        | HirExprKind::ArrayLit { elements, .. }
+        | HirExprKind::SimdLit { elements, .. }
+        | HirExprKind::TupleLit(elements)
+        | HirExprKind::SetLit { elements, .. } => elements.iter().any(expr_has_any_call),
+        HirExprKind::ListSpreadLit { elements, .. } => elements
+            .iter()
+            .any(|element| expr_has_any_call(&element.value)),
+        HirExprKind::MapLit { entries, .. } => entries
+            .iter()
+            .any(|(key, value)| expr_has_any_call(key) || expr_has_any_call(value)),
+        HirExprKind::Range { start, end } => {
+            expr_has_any_call(start) || expr_has_any_call(end)
+        }
+        HirExprKind::StructUpdate { base, updates, .. } => {
+            expr_has_any_call(base)
+                || updates
+                    .iter()
+                    .any(|(_, value)| expr_has_any_call(value))
+        }
+        HirExprKind::InterpolatedStr(parts) => parts.iter().any(|part| match part {
+            HirStrPart::Expr(value) => expr_has_any_call(value),
+            HirStrPart::Literal(_) => false,
+        }),
+        _ => false,
     }
 }
 

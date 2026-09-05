@@ -20694,8 +20694,17 @@ fn link_with_bundled_rust_lld(
         }
         cmd.arg(lib);
     }
-    // Ensure libc is linked on Linux (Windows pulls it via /defaultlib:msvcrt)
-    if !cfg!(windows) {
+    // Ensure libc is linked on Linux (Windows pulls it via /defaultlib:msvcrt).
+    // The bundled rust-lld path bypasses cc, so unwinding and thread helpers
+    // that cc would pull implicitly must be linked explicitly. libgcc_s
+    // provides _Unwind_Resume referenced by the packaged static runtime.
+    if cfg!(target_os = "linux") {
+        cmd.arg("-lc")
+            .arg("-lm")
+            .arg("-lpthread")
+            .arg("-ldl")
+            .arg("-lgcc_s");
+    } else if !cfg!(windows) {
         cmd.arg("-lc");
     }
     // CRT objects that must follow the libs (Linux GNU: crtn.o)

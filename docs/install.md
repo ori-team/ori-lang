@@ -101,7 +101,7 @@ xcode-select --install
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 # Install latest Ori + add User PATH
-irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
+irm https://raw.githubusercontent.com/raillen/ori-lang/main/tools/windows/get.ps1 | iex
 ```
 
 Pin version / reinstall:
@@ -109,7 +109,7 @@ Pin version / reinstall:
 ```powershell
 $env:ORI_VERSION = "0.3.8"
 $env:ORI_FORCE = "1"
-irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
+irm https://raw.githubusercontent.com/raillen/ori-lang/main/tools/windows/get.ps1 | iex
 ```
 
 Default install location: `%LOCALAPPDATA%\Programs\Ori`  
@@ -125,7 +125,7 @@ ori doctor
 Uninstall:
 
 ```powershell
-irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/Uninstall-Ori.ps1 | iex
+irm https://raw.githubusercontent.com/raillen/ori-lang/main/tools/windows/Uninstall-Ori.ps1 | iex
 # or:
 pwsh -File "$env:LOCALAPPDATA\Programs\Ori\uninstall.ps1"
 ```
