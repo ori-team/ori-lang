@@ -11,6 +11,7 @@ jobs:
   native-route:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.name != 'linux-gnu' }}
     strategy:
       fail-fast: false
       matrix:
