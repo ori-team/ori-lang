@@ -10,7 +10,7 @@
 
   Designed to be piped into Invoke-Expression, like Scoop:
 
-      irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
+      irm https://raw.githubusercontent.com/raillen/ori-lang/main/tools/windows/get.ps1 | iex
 
   Optional environment variables (work with irm | iex):
 
@@ -19,7 +19,7 @@
       ORI_FORCE       1 / true → overwrite existing install
       ORI_SYSTEM      1 / true → Program Files + Machine PATH (needs admin)
       ORI_REPO        GitHub owner/repo (default: raillen/ori-lang)
-      ORI_BRANCH      Branch/tag for raw Install-Ori.ps1 (default: master)
+      ORI_BRANCH      Branch/tag for raw Install-Ori.ps1 (default: main)
       ORI_SKIP_DOCTOR 1 / true → skip `ori doctor` after install
 
   With parameters (download first, or use scriptblock):
@@ -38,7 +38,7 @@ param(
     [string]$Version = "",
     [string]$InstallDir = "",
     [string]$Repo = "raillen/ori-lang",
-    [string]$Branch = "master",
+    [string]$Branch = "main",
     [switch]$Force,
     [switch]$System,
     [switch]$SkipDoctor

@@ -4,7 +4,7 @@
 > **Projeto:** Ori Language  
 > **Repositório:** `raillen/ori-lang`  
 > **Base analisada:** Ori `0.3.8`, superfície S3, ABI nativa `ori-native-abi-1`  
-> **Branch de referência:** `master`  
+> **Branch de referência:** `main`  
 > **Commit de referência da análise:** `3c481e6ae28e92093729ccdde5dbffec21cad475`  
 > **Re-auditoria (2026-08-16):** revalidada contra o worktree atual
 > (`cursor/ori-book-pdf`, 0.3.8-dev com `@cfg`/`conditional` e `ori-embed` ainda

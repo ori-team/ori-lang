@@ -16,7 +16,7 @@ Scripts to install a **complete Ori** release on Windows 10/11 and add it to `PA
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 # Install latest Windows package + User PATH
-irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
+irm https://raw.githubusercontent.com/raillen/ori-lang/main/tools/windows/get.ps1 | iex
 ```
 
 Pin a version or force reinstall via **environment variables** (work with `| iex`):
@@ -24,7 +24,7 @@ Pin a version or force reinstall via **environment variables** (work with `| iex
 ```powershell
 $env:ORI_VERSION = "0.3.8"
 $env:ORI_FORCE = "1"
-irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
+irm https://raw.githubusercontent.com/raillen/ori-lang/main/tools/windows/get.ps1 | iex
 ```
 
 | Variable | Meaning |
@@ -38,11 +38,11 @@ irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.
 With parameters (download the script first, or use a scriptblock):
 
 ```powershell
-irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 -OutFile get-ori.ps1
+irm https://raw.githubusercontent.com/raillen/ori-lang/main/tools/windows/get.ps1 -OutFile get-ori.ps1
 .\get-ori.ps1 -Version 0.3.8 -Force
 
 # or without a file:
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1))) -Version 0.3.8 -Force
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/raillen/ori-lang/main/tools/windows/get.ps1))) -Version 0.3.8 -Force
 ```
 
 `get.ps1` downloads `Install-Ori.ps1` from the same branch and runs it (full PATH logic).  
