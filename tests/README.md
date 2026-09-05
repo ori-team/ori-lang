@@ -14,6 +14,9 @@ a redirect — no test files should be added here.
 | `memory_arc` | `compiler/crates/ori-driver/tests/memory_arc.rs` | ARC retain/release, cycle collector, leak check, struct/enum/tuple destructors |
 | `method_resolution` | `compiler/crates/ori-driver/tests/method_resolution.rs` | Trait/impl method resolution, inherent vs trait methods |
 | `differential_testing` | `compiler/crates/ori-driver/tests/differential_testing.rs` | AOT/JIT/opt-parity differential execution (QA-DIFF-1) |
+| `feature_interaction_matrix` | `compiler/crates/ori-driver/tests/feature_interaction_matrix.rs` | Complex pairwise subsystem interactions (@align + array + SIMD + using + closures) |
+| `concurrency_stress` | `compiler/crates/ori-driver/tests/concurrency_stress.rs` | Heavy multithreaded contention, bounded channels, and atomic counters |
+| `incremental_invalidation` | `compiler/crates/ori-driver/tests/incremental_invalidation.rs` | Incremental cache (.ori/incremental.json) interface invalidation |
 | `diagnostic_catalog` | `compiler/crates/ori-driver/tests/diagnostic_catalog.rs` | Diagnostic code catalog consistency (emitted ↔ spec) |
 | LSP E2E | `compiler/crates/ori-lsp/tests/e2e.rs` | LSP protocol: hover, definition, completion, rename, formatting, project diagnostics |
 

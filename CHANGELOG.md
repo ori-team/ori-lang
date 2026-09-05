@@ -19,6 +19,19 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Compiler interaction, stress, and incremental test batteries.**
+  - `compiler/crates/ori-driver/tests/feature_interaction_matrix.rs`: non-trivial pairwise subsystem combinations
+    (`@align(N)` structs inside fixed-size arrays with arithmetic traits, generic traits with closures and `using`
+    cleanup, complex enums with conditional guards and `try` returns, structs with SIMD and array methods, and
+    scoped bump arenas with value batching). Fixed `mem.align_of` evaluation in HIR lowering.
+  - `compiler/crates/ori-driver/tests/concurrency_stress.rs`: heavy multithreaded contention with multi-task
+    producer/consumer bounded-channel ping-pong, concurrent cancellation across sleeping tasks, and atomic counter updates.
+  - `compiler/crates/ori-driver/tests/simd_edge_cases.rs`: IEEE-754 floating-point edge cases (division by zero,
+    Inf/NaN propagation) in SIMD vector lanes, integer vector arithmetic (`simd[int32, 4]`), and bitwise shift boundary tests.
+    Fixed `ori_abort_shift_overflow` runtime reference collection in Cranelift codegen.
+  - `compiler/crates/ori-driver/tests/incremental_invalidation.rs`: verified `.ori/incremental.json` cache hit
+    invariance on unchanged sources, interface modification invalidation on downstream callers, and `ORI_DISABLE_INCREMENTAL=1` bypass.
+
 - **AOT/JIT differential test suite with optimization parity (`QA-DIFF-1`).**
   Implemented `compiler/crates/ori-driver/tests/differential_testing.rs` covering Cranelift Native AOT,
   in-process JIT, and aggressive optimizer parity across all high-risk language features:

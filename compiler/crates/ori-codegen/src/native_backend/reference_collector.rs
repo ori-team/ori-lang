@@ -82,6 +82,10 @@ impl FunctionReferences {
                     self.functions
                         .insert(SmolStr::new("ori_abort_division_overflow"));
                 }
+                if matches!(op, BinaryOp::Shl | BinaryOp::Shr) && lhs.ty.is_integer() {
+                    self.functions
+                        .insert(SmolStr::new("ori_abort_shift_overflow"));
+                }
                 self.collect_expr(lhs);
                 self.collect_expr(rhs);
             }

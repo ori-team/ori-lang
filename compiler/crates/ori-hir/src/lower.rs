@@ -3861,7 +3861,7 @@ impl<'a> Lowerer<'a> {
                             .unwrap_or(Ty::Error);
                         let value = match intrinsic {
                             MemIntrinsic::SizeOf => self.size_of_ty(&value_ty),
-                            MemIntrinsic::AlignOf => ori_mem_align_of_ty(&value_ty),
+                            MemIntrinsic::AlignOf => self.align_of_ty(&value_ty),
                         };
                         return HirExpr {
                             kind: HirExprKind::IntLit(value),
