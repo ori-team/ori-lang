@@ -226,20 +226,18 @@ fn check_expr_refs(
     errors: &mut Vec<String>,
 ) {
     match &expr.kind {
-        HirExprKind::StructLit { def_id, .. } => {
-            if let Some(id) = def_id {
-                if !structs.contains(id) {
-                    errors.push(format!("struct literal references unknown struct `{id:?}`"));
-                }
-            }
+        HirExprKind::StructLit {
+            def_id: Some(id), ..
+        } if !structs.contains(id) => {
+            errors.push(format!("struct literal references unknown struct `{id:?}`"));
         }
-        HirExprKind::EnumVariant { def_id, .. } => {
-            if let Some(id) = def_id {
-                if !enums.contains(id) {
-                    errors.push(format!("enum variant references unknown enum `{id:?}`"));
-                }
-            }
+        HirExprKind::StructLit { .. } => {}
+        HirExprKind::EnumVariant {
+            def_id: Some(id), ..
+        } if !enums.contains(id) => {
+            errors.push(format!("enum variant references unknown enum `{id:?}`"));
         }
+        HirExprKind::EnumVariant { .. } => {}
         HirExprKind::Call { callee, args } => {
             check_expr_refs(callee, structs, enums, errors);
             for arg in args {
