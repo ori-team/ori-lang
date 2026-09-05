@@ -2173,24 +2173,21 @@ impl CCodegen {
         let return_ty = substitute_trait_self(&method.return_ty, trait_def_id, &concrete_self);
         let return_c = ty_to_c(&return_ty);
         let mut params = vec!["void* raw".to_owned()];
-        // Default trait methods are emitted with the trait's placeholder
-        // `self` type, not with the concrete implementation type.  Passing
-        // the boxed concrete value to that function would be an incompatible
-        // C call (and is undefined behaviour even when the method ignores
-        // `self`).  The trait representation is intentionally field-less in
-        // the debug backend, so use a zero-initialized value for this erased
-        // receiver.  Concrete implementations still receive the dereferenced
-        // boxed value through the normal path.
-        let is_default_method = method
+        // A default trait method is emitted against the field-less trait
+        // type (`ori_any_t`), not the concrete struct: passing the
+        // dereferenced boxed value would be a C type error. The direct call
+        // site passes an empty trait value, so the adapter does the same;
+        // the body ignores `self` in the supported default-method subset.
+        let mut args = Vec::new();
+        if method
             .default_func_name
             .as_ref()
-            .is_some_and(|name| Self::func_c_name(name) == function);
-        let self_arg = if is_default_method {
-            format!("(({}){{0}})", def_c_name(trait_def_id))
+            .is_none_or(|name| Self::func_c_name(name) != function)
+        {
+            args.push(format!("*(({}*)raw)", def_c_name(type_def_id)));
         } else {
-            format!("*(({}*)raw)", def_c_name(type_def_id))
-        };
-        let mut args = vec![self_arg];
+            args.push("((ori_any_t){0})".to_owned());
+        }
         for (index, param) in method.params.iter().skip(1).enumerate() {
             let concrete = substitute_trait_self(param, trait_def_id, &concrete_self);
             params.push(format!("{} _arg{}", ty_to_c(&concrete), index));
