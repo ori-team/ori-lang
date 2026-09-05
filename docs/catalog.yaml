@@ -3,7 +3,7 @@ project:
   name: Ori
   version: 0.3.8
   repository: raillen/ori-lang
-  default_branch: master
+  default_branch: main
   language_surface: S3
   native_abi: ori-native-abi-1
 

@@ -159,7 +159,7 @@ Guia completo: [docs/install.pt-BR.md](docs/install.pt-BR.md) · [EN](docs/insta
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser   # opcional, uma vez
-irm https://raw.githubusercontent.com/raillen/ori-lang/master/tools/windows/get.ps1 | iex
+irm https://raw.githubusercontent.com/raillen/ori-lang/main/tools/windows/get.ps1 | iex
 ori --version
 ori doctor
 ```
