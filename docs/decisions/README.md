@@ -10,6 +10,7 @@ This directory is the canonical home for durable Architecture Decision Records (
 | [ADR-0002](adr/0002-arc-single-cascade-owner.md) | Registered ARC edges are the single cascade owner | accepted | 2026-07-17 | — |
 | [ADR-0003](adr/0003-defer-copy-on-write-collections.md) | Defer copy-on-write collection semantics | accepted | 2026-07-18 | — |
 | [ADR-0004](adr/0004-repository-and-project-layout.md) | Keep the Cargo workspace under `compiler/` and use root-first Ori projects | accepted | 2026-07-13 | — |
+| [ADR-0005](adr/0005-deprecate-and-retire-c-backend.md) | Deprecate and retire the C backend; reference pipeline becomes Rust-native, then self-hosted | proposed | 2026-09-05 | — |
 
 ## What belongs in an ADR
 
