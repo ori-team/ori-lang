@@ -1,13 +1,17 @@
 # Backend support matrix
 
 Status: current as of 2026-08-10 (FREEZE-1 / workspace 0.3.8-dev).
+C/debug route: frozen at 0.3.8, deprecation projected by
+[`ADR-0005`](../decisions/adr/0005-deprecate-and-retire-c-backend.md).
 Residual cleanup: [`../planning/qa/residual-cleanup-2026-07-13.md`](../planning/qa/residual-cleanup-2026-07-13.md) · audit `tools/qa/residual_audit.sh`.
 
 This page separates three things:
 
 - Language promise: the feature is part of Ori.
-- Native backend: Cranelift plus packaged Rust runtime.
+- Native backend: Cranelift plus packaged Rust runtime. This is the sole
+  semantic reference; see ADR-0005 for the retirement projection of the C route.
 - C/debug backend: C source emission used for debug and compatibility checks.
+  Frozen: no new language feature receives C lowering after 0.3.8.
 
 Legend:
 

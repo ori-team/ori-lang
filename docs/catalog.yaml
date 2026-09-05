@@ -476,6 +476,13 @@ canonical_documents:
     audience: [contributor, maintainer, agent]
     owns: [decision-repository-layout, decision-project-layout]
 
+  - id: decision.retire-c-backend
+    path: docs/decisions/adr/0005-deprecate-and-retire-c-backend.md
+    domain: decisions
+    status: proposed
+    audience: [contributor, maintainer, agent]
+    owns: [decision-retire-c-backend, pipeline-reference-rust-native, self-host-target]
+
   - id: plans.index
     path: docs/plans/README.md
     domain: planning
