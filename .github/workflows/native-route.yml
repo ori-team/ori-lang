@@ -60,7 +60,7 @@ jobs:
         if: matrix.name == 'linux-gnu'
         run: |
           cargo install cargo-audit --locked --version 0.22.2
-          cargo audit --locked
+          cargo audit
 
       - name: Enforce incremental rustfmt baseline
         if: matrix.name == 'linux-gnu'

@@ -11292,7 +11292,8 @@ unsafe fn spawn_io_result_future(
     }
     if let Err(error) = ensure_io_worker_pool() {
         set_host_error_bytes(ORI_HOST_ERROR_THREAD_SPAWN, error.as_bytes());
-        complete_future_owned(future, OriFutureStatus::Failed, 0);
+        let waiters = set_future_status(future, OriFutureStatus::Failed, 0, false);
+        schedule_future_waiters(waiters);
         return future;
     }
     ori_arc_retain(future as *mut u8);
