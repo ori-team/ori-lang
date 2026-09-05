@@ -1,0 +1,5 @@
+# Ori language — syntax highlighting on GitHub
+# Maps .orl files to Lua highlighting (closest match: end-delimited blocks,
+# if/while/for keywords, -- comments). This is a temporary workaround
+# until Ori is officially registered in github-linguist.
+*.orl linguist-language=Lua
