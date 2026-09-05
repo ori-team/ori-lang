@@ -17,6 +17,8 @@ Scripts for daily / weekly language quality. The current workspace baseline is
 | [`docs_coverage.sh`](docs_coverage.sh) | Atlas paths, canonical documents, and release-blocking P0 closure |
 | [`validate_atlas.py`](validate_atlas.py) | Dependency-free Atlas schema, status, and path validation |
 | [`fuzz_smoke.py`](fuzz_smoke.py) | Deterministic malformed-byte, truncation, and nesting front-end smoke |
+| [`ori_smith.py`](ori_smith.py) | Deterministic semantic program generator (seeded); AOT/JIT differential oracle |
+| [`mutation_score.sh`](mutation_score.sh) | Informational `cargo-mutants` harness for `ori-types`/`ori-hir` (nightly only, never gates) |
 | [`archive_repro_smoke.sh`](archive_repro_smoke.sh) | Byte-identical same-epoch archives across roots; `.ori` caches excluded |
 | [`docs_examples.sh`](docs_examples.sh) | Atlas + canonical example smoke + `ori doc check` |
 | [`web_sec8.sh`](web_sec8.sh) | `ori-web` SEC8 golden suite (CSRF, jail, sessions, middleware, upload) |
