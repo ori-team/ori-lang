@@ -926,30 +926,33 @@ fn run_cli() {
         }
 
         Commands::Emit { action } => match action {
-            EmitAction::C { file, out } => match pipeline::run_emit_c(file) {
-                Err(e) => {
-                    eprintln!("ori: {}", e);
-                    process::exit(2);
-                }
-                Ok(build) => {
-                    let errors = build.diagnostics.iter().filter(|d| d.is_error()).count();
-                    let warnings = build.diagnostics.len() - errors;
-                    emit::render_all(&build.cache, &build.diagnostics, color);
-                    emit::print_summary(errors, warnings, color);
-                    if !build.has_errors {
-                        match out {
-                            Some(p) => {
-                                std::fs::write(p, &build.c_source).unwrap_or_else(|e| {
-                                    eprintln!("ori: {}", e);
-                                    process::exit(2);
-                                });
-                            }
-                            None => print!("{}", build.c_source),
-                        }
+            EmitAction::C { file, out } => {
+                eprintln!("warning: `ori emit c` is deprecated and will be removed in Ori 0.4.0 (see ADR-0005); use the native Cranelift backend instead.");
+                match pipeline::run_emit_c(file) {
+                    Err(e) => {
+                        eprintln!("ori: {}", e);
+                        process::exit(2);
                     }
-                    process::exit(if build.has_errors { 1 } else { 0 });
+                    Ok(build) => {
+                        let errors = build.diagnostics.iter().filter(|d| d.is_error()).count();
+                        let warnings = build.diagnostics.len() - errors;
+                        emit::render_all(&build.cache, &build.diagnostics, color);
+                        emit::print_summary(errors, warnings, color);
+                        if !build.has_errors {
+                            match out {
+                                Some(p) => {
+                                    std::fs::write(p, &build.c_source).unwrap_or_else(|e| {
+                                        eprintln!("ori: {}", e);
+                                        process::exit(2);
+                                    });
+                                }
+                                None => print!("{}", build.c_source),
+                            }
+                        }
+                        process::exit(if build.has_errors { 1 } else { 0 });
+                    }
                 }
-            },
+            }
         },
 
         Commands::Doctor => {

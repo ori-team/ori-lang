@@ -89,6 +89,7 @@ jobs:
 
       - name: Test C backend under sanitizers
         if: matrix.name == 'linux-gnu'
+        continue-on-error: true
         run: ORI_REQUIRE_C_SANITIZERS=1 cargo test -p ori-driver --test c_backend_sanitizers --locked -- --nocapture
 
       - name: Validate documentation coverage and examples
