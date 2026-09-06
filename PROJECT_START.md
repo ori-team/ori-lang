@@ -46,10 +46,10 @@ The Cargo workspace is in `compiler/`, not at the repository root.
 From the repository root:
 
 ```bash
-cargo --manifest-path compiler/Cargo.toml check --workspace
-cargo --manifest-path compiler/Cargo.toml test --workspace
-cargo --manifest-path compiler/Cargo.toml test -p ori-driver --test diagnostic_catalog
-cargo --manifest-path compiler/Cargo.toml test -p ori-lsp
+cargo check --manifest-path compiler/Cargo.toml --workspace
+cargo test --manifest-path compiler/Cargo.toml --workspace
+cargo test --manifest-path compiler/Cargo.toml -p ori-driver --test diagnostic_catalog
+cargo test --manifest-path compiler/Cargo.toml -p ori-lsp
 ```
 
 Fast project validation:
@@ -61,8 +61,8 @@ sh tools/qa/daily_fast.sh
 Run an example through the development compiler:
 
 ```bash
-cargo --manifest-path compiler/Cargo.toml run -p ori-driver -- check examples/hello/main.orl
-cargo --manifest-path compiler/Cargo.toml run -p ori-driver -- run examples/hello/main.orl
+cargo run --manifest-path compiler/Cargo.toml -p ori-driver -- check examples/hello/main.orl
+cargo run --manifest-path compiler/Cargo.toml -p ori-driver -- run examples/hello/main.orl
 ```
 
 ## Before changing anything

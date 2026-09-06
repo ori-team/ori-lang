@@ -49,6 +49,10 @@ Statuses are deliberately conservative:
 The Atlas is not a second language specification. Detailed grammar and
 semantics remain in [`spec/`](spec/README.md).
 
+## Self-host accepted planning
+
+[RFC-0001](rfcs/0001-selfhost-gradual.md) defines the accepted gradual direction; the [active plan](plans/active/selfhost-exec-plan.md) owns all SH task states and Marco A evidence. M4 planning has started; bootstrap and lexer are not implemented. Rust runtime and Cranelift remain.
+
 ## Planned implementation maps
 
 The following documents describe proposed work and incremental implementation.
