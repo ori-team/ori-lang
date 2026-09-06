@@ -1,6 +1,10 @@
 # Implementation Audit and Correction Roadmap
 
-> **Status:** active correction plan; findings are not implementation claims
+> **Status:** closed audit/correction record (2026-09-04); findings and command
+> transcripts below are historical evidence, not current implementation or CI
+> requirements. C source emission and generated-C tests were retired on
+> 2026-09-05; see [Spec 14](../spec/14-backend-support.md). Current work belongs
+> in [BACKLOG.md](BACKLOG.md).
 >
 > **Audit date:** 2026-08-29 (implementation reconciliation: 2026-09-01)
 >

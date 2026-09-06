@@ -341,6 +341,58 @@ end
 }
 
 #[test]
+fn jit_aggressive_inlining_preserves_names_and_compound_snapshots() {
+    let dir = TestDir::new("jit_aggressive_inline_name_capture");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+subtract(first: int, second: int) -> int
+    return first - second
+end
+
+@no_inline
+run(first: int, second: int) -> int
+    return subtract(second, first)
+end
+
+var current: int = 1
+
+change() -> int
+    current = 7
+    return 0
+end
+
+combine(value: int) -> int
+    return change() + value
+end
+
+main()
+    io.println(f"{run(3, 8)}")
+    io.println(f"{combine(current + 2)}")
+    current = 1
+    io.println(f"{combine(-current)}")
+end
+"#,
+    );
+    for level in ["none", "default", "aggressive"] {
+        let output = run_jit_at_opt_level(&dir.path("main.orl"), Some(level));
+        assert!(
+            output.status.success(),
+            "{level}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+            "5\n3\n-1\n",
+            "ORI_OPT={level}"
+        );
+    }
+}
+
+#[test]
 fn jit_aggressive_inlining_keeps_unused_trapping_arguments() {
     let dir = TestDir::new("jit_aggressive_inline_unused_trap");
     dir.write(
@@ -369,6 +421,148 @@ end
         stderr.contains("ori integer division or remainder by zero"),
         "unexpected JIT trap diagnostic: {stderr}"
     );
+}
+
+#[test]
+fn jit_inlining_materialized_arguments_matches_aot() {
+    let dir = TestDir::new("jit_materialized_order");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+import ori.io as io
+var current: int = 1
+var _ori_inline_0: int = 40
+produce(value: int) -> int
+    current = current + 1
+    io.println(f"{value}")
+    return value
+end
+pick(first: int, second: int, ignored: int) -> int
+    return first + second + _ori_inline_0
+end
+@no_inline
+forward(first: int, second: int) -> int
+    return pick(produce(second), produce(first), produce(3))
+end
+main()
+    const _ori_inline_1: int = 9
+    const answer: int = forward(1, 2)
+    const snapshot: int = pick(current, produce(4), produce(5))
+    pick(produce(6), produce(7), produce(8))
+    io.println(f"{answer} {snapshot} {_ori_inline_1} {current}")
+end
+"#,
+    );
+    for level in ["none", "default", "aggressive"] {
+        let executable = dir.path(if cfg!(windows) { "app.exe" } else { "app" });
+        let compiled = Command::new(ori_exe())
+            .env("ORI_OPT", level)
+            .arg("compile")
+            .arg(dir.path("main.orl"))
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let aot = Command::new(&executable).output().unwrap();
+        let jit = run_jit_at_opt_level(&dir.path("main.orl"), Some(level));
+        assert!(
+            aot.status.success() && jit.status.success(),
+            "{level}: {}",
+            String::from_utf8_lossy(&jit.stderr)
+        );
+        assert_eq!(aot.stdout, jit.stdout, "{level}");
+        assert_eq!(
+            String::from_utf8_lossy(&jit.stdout).replace("\r\n", "\n"),
+            "2\n1\n3\n4\n5\n6\n7\n8\n43 48 9 9\n"
+        );
+    }
+}
+
+#[test]
+fn jit_inlining_materialized_arguments_stay_in_loop_body() {
+    let dir = TestDir::new("jit_materialized_loop_body");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+import ori.io as io
+var calls: int = 0
+
+@no_inline
+produce() -> int
+    calls = calls + 1
+    return calls
+end
+
+twice(value: int) -> int
+    return value + value
+end
+
+ignore(value: int) -> int
+    return 1
+end
+
+@no_inline
+run(count: int) -> int
+    var index: int = 0
+    var total: int = 0
+    while index < count
+        const value: int = twice(produce())
+        ignore(produce())
+        io.println(f"{index} {value} {calls}")
+        total = total + value
+        index = index + 1
+    end
+    return total
+end
+
+main()
+    const zero: int = run(0)
+    io.println(f"{zero} {calls}")
+    const multiple: int = run(3)
+    io.println(f"{multiple} {calls}")
+end
+"#,
+    );
+    for level in ["none", "default", "aggressive"] {
+        let output = run_jit_at_opt_level(&dir.path("main.orl"), Some(level));
+        assert!(
+            output.status.success(),
+            "{level}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+            "0 0\n0 2 2\n1 6 4\n2 10 6\n18 6\n",
+            "ORI_OPT={level}"
+        );
+    }
+}
+
+#[test]
+fn jit_inlining_materialized_ignored_arguments_trap() {
+    for statement in [
+        "const answer: int = ignore(1 / 0)",
+        "ignore(1 / 0)",
+        "return ignore(1 / 0)",
+    ] {
+        let dir = TestDir::new("jit_materialized_trap");
+        dir.write("main.orl", &format!("module app.main\nignore(value: int) -> int\n    return 1\nend\n@no_inline\nrun() -> int\n    {statement}\n    return 0\nend\nmain()\n    run()\nend\n"));
+        for level in ["none", "default", "aggressive"] {
+            let output = run_jit_at_opt_level(&dir.path("main.orl"), Some(level));
+            assert!(!output.status.success());
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("ori integer division or remainder by zero"),
+                "{level}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 }
 
 #[test]

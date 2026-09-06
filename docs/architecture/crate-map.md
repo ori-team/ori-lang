@@ -97,7 +97,7 @@ HIR should expose behavior needed by code generation explicitly and discard synt
 
 ## `ori-codegen`
 
-**Owns:** native and JIT code generation, object emission, target-aware layout lowering, linking support, generated headers, debug symbols, and partial C/debug emission.
+**Owns:** native and JIT code generation, object emission, target-aware layout lowering, linking support, generated C FFI headers, and debug symbols.
 
 **Boundary:** consumes valid typed HIR and runtime/ABI metadata. It does not define source-language validity.
 

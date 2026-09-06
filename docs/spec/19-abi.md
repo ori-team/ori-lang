@@ -21,7 +21,6 @@ calling conventions the native pipeline actually uses today, so that:
 
 **Out of scope here:**
 
-- C debug/transpile backend (partial parity; not the semantic reference).
 - Self-hosting / interpreter ABI (none).
 - Guaranteeing that every user-defined Ori function is a stable C export for
   third parties (only entry `main` and `extern "C"` are unmangled exports).
@@ -823,7 +822,6 @@ Until Ori `1.0`, this ABI is **documented and versioned**, not forever frozen:
 | `ori-native-abi-1` layouts in §§4–7 | Breaking → new `ori-native-abi-N` + re-stage |
 | New `ori_*` symbols | Additive OK without bump if old code never needed them |
 | Mangling `ORI__*` | Breaking for tools that parse symbols → document + bump if tools depend |
-| C debug backend | Not covered; may diverge |
 | Opaque stdlib handles | Layout private; only constructor/destructor FFI is public |
 
 Chapter [18-stability-and-compatibility.md](18-stability-and-compatibility.md)
@@ -851,7 +849,7 @@ lists language-surface stability separately from this binary contract.
 - [ ] This chapter updated in the same PR
 - [ ] Runtime re-staged (staticlib + cdylib) for CI/dev host
 - [ ] Relevant `ori-driver` / runtime tests green
-- [ ] No reliance on C debug backend for “truth”
+- [ ] Native AOT/JIT behavior follows the ABI contract
 
 ---
 

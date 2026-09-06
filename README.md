@@ -271,7 +271,6 @@ The `ori` CLI is implemented by `compiler/crates/ori-driver`.
 | `ori summary [path]` | print entry file, modules, imports, and diagnostics count |
 | `ori debug <file.orl>` | run the cooperative debugger; `--dap` serves DAP over stdio |
 | `ori build <path>` | build a file or project through the native backend |
-| `ori emit c <file.orl>` | emit C through the partial debug backend |
 | `ori lex <file.orl>` | print the token stream for compiler debugging |
 | `ori parse <file.orl>` | print the AST for compiler debugging |
 | `ori install <name> --path <dir>` | validate a local `ori.pkg.toml` package and copy it to the package cache |
@@ -394,15 +393,15 @@ The compiler is split into focused crates:
 | `ori-parser` | recursive descent parser |
 | `ori-hir` | name resolution and lowered high-level IR |
 | `ori-types` | type system, stdlib manifest, and checker contracts |
-| `ori-codegen` | Cranelift native backend, JIT path, and C debug backend |
+| `ori-codegen` | Cranelift native backend, JIT path, and native FFI headers |
 | `ori-runtime` | native runtime library and runtime ABI |
 | `ori-diagnostics` | diagnostic codes and rendering support |
 | `ori-lsp` | Language Server Protocol implementation |
 | `ori-driver` | CLI, pipeline orchestration, integration tests |
 
 The native runtime is the semantic reference for `ori compile`, `ori run`, and
-`ori test`. The C backend is kept as a debug route and should not be treated as
-the source of truth for async, ARC, collections, or runtime behavior.
+`ori test`. C source emission has been removed; native C FFI and export
+headers remain supported.
 
 ## Standard library
 
@@ -545,7 +544,7 @@ Current pre-1.0 limitations:
 - The compiler itself is written in Rust, so building Ori from source still
   requires Rust. End users who install via a **Linux** release package do not
   need Rust (multi-OS packages are shelved).
-- C emission is partial and exists for debugging via `ori emit c` (no C async).
+- C source emission has been removed; native AOT/JIT are the supported backends.
 - Packages support path/git/registry protocols; a public hosted marketplace is
   **not** a current product goal.
 - Official extension **stores** (VS Code Marketplace, Zed store) are shelved;

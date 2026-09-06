@@ -41,7 +41,6 @@ Use this checklist for user-visible compiler, language, runtime, stdlib, tooling
 - [ ] Optimization passes reviewed.
 - [ ] Native AOT backend updated.
 - [ ] JIT path updated and compared with AOT.
-- [ ] C/debug backend implemented or explicitly rejects the feature.
 - [ ] Runtime and ABI updated where required.
 - [ ] Incremental cache keys and debug metadata reviewed.
 
@@ -86,7 +85,7 @@ Use this checklist for user-visible compiler, language, runtime, stdlib, tooling
 - [ ] Formatter round-trip/idempotence test.
 - [ ] AOT execution test.
 - [ ] JIT execution test.
-- [ ] C/debug parity or explicit-rejection test.
+- [ ] Unsupported native shapes have explicit-rejection tests.
 - [ ] Multifile/package test when imports or project boundaries are affected.
 - [ ] Memory/ARC test when managed values are affected.
 - [ ] Concurrency test when tasks/channels/transferability are affected.

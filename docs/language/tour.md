@@ -411,7 +411,7 @@ end
 - File/net await helpers: `fs.read_text_async`, `net.connect_async`, …
 - Example: [`examples/async_demo`](../../examples/async_demo/).
 
-C/debug backend **rejects** async (native is the reference).
+Native AOT/JIT supports the [documented async subset](../spec/14-backend-support.md#native-async-subset); unsupported shapes are rejected explicitly.
 
 ---
 

@@ -6,7 +6,6 @@ pub struct StdlibRuntimeFunction {
     pub aliases: &'static [&'static str],
     pub runtime_symbol: &'static str,
     pub native_runtime: bool,
-    pub c_backend_runtime: bool,
 }
 
 fn opaque_collection(kind: OpaqueTy) -> Ty {
@@ -123,16 +122,6 @@ macro_rules! stdlib {
             aliases: &[],
             runtime_symbol: $symbol,
             native_runtime: true,
-            c_backend_runtime: false,
-        }
-    };
-    ($path:literal => $symbol:literal, c_backend) => {
-        StdlibRuntimeFunction {
-            canonical_path: $path,
-            aliases: &[],
-            runtime_symbol: $symbol,
-            native_runtime: true,
-            c_backend_runtime: true,
         }
     };
     ($path:literal, [$($alias:literal),* $(,)?] => $symbol:literal) => {
@@ -141,30 +130,20 @@ macro_rules! stdlib {
             aliases: &[$($alias),*],
             runtime_symbol: $symbol,
             native_runtime: true,
-            c_backend_runtime: false,
-        }
-    };
-    ($path:literal, [$($alias:literal),* $(,)?] => $symbol:literal, c_backend) => {
-        StdlibRuntimeFunction {
-            canonical_path: $path,
-            aliases: &[$($alias),*],
-            runtime_symbol: $symbol,
-            native_runtime: true,
-            c_backend_runtime: true,
         }
     };
 }
 
 pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
-    stdlib!("ori.io.print" => "ori_io_print", c_backend),
-    stdlib!("ori.io.println" => "ori_io_print", c_backend),
-    stdlib!("ori.mem.string_as_ptr" => "ori_mem_string_as_ptr", c_backend),
-    stdlib!("ori.mem.string_len" => "ori_mem_string_len", c_backend),
+    stdlib!("ori.io.print" => "ori_io_print"),
+    stdlib!("ori.io.println" => "ori_io_print"),
+    stdlib!("ori.mem.string_as_ptr" => "ori_mem_string_as_ptr"),
+    stdlib!("ori.mem.string_len" => "ori_mem_string_len"),
     stdlib!("ori.handle.null" => "ori_handle_null"),
-    stdlib!("ori.handle.is_null" => "ori_handle_is_null", c_backend),
-    stdlib!("ori.io.eprint" => "ori_io_eprint", c_backend),
-    stdlib!("ori.io.eprintln" => "ori_io_eprint", c_backend),
-    stdlib!("ori.io.read_line" => "ori_io_read_line", c_backend),
+    stdlib!("ori.handle.is_null" => "ori_handle_is_null"),
+    stdlib!("ori.io.eprint" => "ori_io_eprint"),
+    stdlib!("ori.io.eprintln" => "ori_io_eprint"),
+    stdlib!("ori.io.read_line" => "ori_io_read_line"),
     stdlib!("ori.io.stdin" => "ori_io_stdin"),
     stdlib!("ori.io.stdout" => "ori_io_stdout"),
     stdlib!("ori.io.stderr" => "ori_io_stderr"),
@@ -175,28 +154,28 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.io.flush" => "ori_io_flush"),
     stdlib!("ori.io.close_input" => "ori_io_close_input"),
     stdlib!("ori.io.close_output" => "ori_io_close_output"),
-    stdlib!("ori.string.len" => "ori_string_len", c_backend),
-    stdlib!("ori.string.concat" => "ori_string_concat", c_backend),
-    stdlib!("ori.string.split" => "ori_string_split", c_backend),
-    stdlib!("ori.string.slice" => "ori_string_slice", c_backend),
-    stdlib!("ori.string.contains" => "ori_string_contains", c_backend),
-    stdlib!("ori.string.starts_with" => "ori_string_starts_with", c_backend),
-    stdlib!("ori.string.ends_with" => "ori_string_ends_with", c_backend),
-    stdlib!("ori.string.trim" => "ori_string_trim", c_backend),
-    stdlib!("ori.string.trim_start" => "ori_string_trim_start", c_backend),
-    stdlib!("ori.string.trim_end" => "ori_string_trim_end", c_backend),
-    stdlib!("ori.string.to_upper" => "ori_string_to_upper", c_backend),
-    stdlib!("ori.string.to_lower" => "ori_string_to_lower", c_backend),
-    stdlib!("ori.string.is_ascii" => "ori_string_is_ascii", c_backend),
-    stdlib!("ori.string.case_fold" => "ori_string_case_fold", c_backend),
-    stdlib!("ori.string.replace" => "ori_string_replace", c_backend),
-    stdlib!("ori.string.chars" => "ori_string_chars", c_backend),
-    stdlib!("ori.err_trace.push", ["err_trace.push"] => "ori_err_trace_push", c_backend),
-    stdlib!("ori.err_trace.format", ["err_trace.format"] => "ori_err_trace_format", c_backend),
-    stdlib!("string", [] => "ori_to_string", c_backend),
-    stdlib!("int", [] => "ori_to_int", c_backend),
-    stdlib!("float", [] => "ori_to_float", c_backend),
-    stdlib!("len", [] => "ori_len", c_backend),
+    stdlib!("ori.string.len" => "ori_string_len"),
+    stdlib!("ori.string.concat" => "ori_string_concat"),
+    stdlib!("ori.string.split" => "ori_string_split"),
+    stdlib!("ori.string.slice" => "ori_string_slice"),
+    stdlib!("ori.string.contains" => "ori_string_contains"),
+    stdlib!("ori.string.starts_with" => "ori_string_starts_with"),
+    stdlib!("ori.string.ends_with" => "ori_string_ends_with"),
+    stdlib!("ori.string.trim" => "ori_string_trim"),
+    stdlib!("ori.string.trim_start" => "ori_string_trim_start"),
+    stdlib!("ori.string.trim_end" => "ori_string_trim_end"),
+    stdlib!("ori.string.to_upper" => "ori_string_to_upper"),
+    stdlib!("ori.string.to_lower" => "ori_string_to_lower"),
+    stdlib!("ori.string.is_ascii" => "ori_string_is_ascii"),
+    stdlib!("ori.string.case_fold" => "ori_string_case_fold"),
+    stdlib!("ori.string.replace" => "ori_string_replace"),
+    stdlib!("ori.string.chars" => "ori_string_chars"),
+    stdlib!("ori.err_trace.push", ["err_trace.push"] => "ori_err_trace_push"),
+    stdlib!("ori.err_trace.format", ["err_trace.format"] => "ori_err_trace_format"),
+    stdlib!("string", [] => "ori_to_string"),
+    stdlib!("int", [] => "ori_to_int"),
+    stdlib!("float", [] => "ori_to_float"),
+    stdlib!("len", [] => "ori_len"),
     stdlib!("ori.list.new", ["list.new"] => "ori_list_new"),
     stdlib!("ori.list.with_capacity", ["list.with_capacity"] => "ori_list_with_capacity"),
     stdlib!("ori.list.push", ["list.push"] => "ori_list_push"),
@@ -394,78 +373,69 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.heap.merge", ["heap.merge"] => "ori_heap_merge"),
     stdlib!("ori.heap.remove", ["heap.remove"] => "ori_heap_remove"),
     stdlib!("ori.heap.into_sorted_list", ["heap.into_sorted_list"] => "ori_heap_into_sorted_list"),
-    stdlib!("ori.math.sqrt" => "ori_math_sqrt", c_backend),
-    stdlib!("ori.math.abs" => "ori_math_abs", c_backend),
-    stdlib!("ori.math.min" => "ori_math_min", c_backend),
-    stdlib!("ori.math.max" => "ori_math_max", c_backend),
-    stdlib!("ori.math.clamp" => "ori_math_clamp", c_backend),
-    stdlib!("ori.math.pow" => "ori_math_pow", c_backend),
-    stdlib!("ori.math.floor" => "ori_math_floor", c_backend),
-    stdlib!("ori.math.ceil" => "ori_math_ceil", c_backend),
-    stdlib!("ori.math.round" => "ori_math_round", c_backend),
-    stdlib!("ori.math.log" => "ori_math_log", c_backend),
-    stdlib!("ori.math.log2" => "ori_math_log2", c_backend),
-    stdlib!("ori.math.sin" => "ori_math_sin", c_backend),
-    stdlib!("ori.math.cos" => "ori_math_cos", c_backend),
-    stdlib!("ori.math.tan" => "ori_math_tan", c_backend),
-    stdlib!("ori.math.is_nan" => "ori_math_is_nan", c_backend),
-    stdlib!("ori.math.is_infinite" => "ori_math_is_infinite", c_backend),
-    stdlib!("ori.time.now", ["time.now"] => "ori_time_now", c_backend),
-    stdlib!("ori.time.sleep", ["time.sleep"] => "ori_time_sleep", c_backend),
+    stdlib!("ori.math.sqrt" => "ori_math_sqrt"),
+    stdlib!("ori.math.abs" => "ori_math_abs"),
+    stdlib!("ori.math.min" => "ori_math_min"),
+    stdlib!("ori.math.max" => "ori_math_max"),
+    stdlib!("ori.math.clamp" => "ori_math_clamp"),
+    stdlib!("ori.math.pow" => "ori_math_pow"),
+    stdlib!("ori.math.floor" => "ori_math_floor"),
+    stdlib!("ori.math.ceil" => "ori_math_ceil"),
+    stdlib!("ori.math.round" => "ori_math_round"),
+    stdlib!("ori.math.log" => "ori_math_log"),
+    stdlib!("ori.math.log2" => "ori_math_log2"),
+    stdlib!("ori.math.sin" => "ori_math_sin"),
+    stdlib!("ori.math.cos" => "ori_math_cos"),
+    stdlib!("ori.math.tan" => "ori_math_tan"),
+    stdlib!("ori.math.is_nan" => "ori_math_is_nan"),
+    stdlib!("ori.math.is_infinite" => "ori_math_is_infinite"),
+    stdlib!("ori.time.now", ["time.now"] => "ori_time_now"),
+    stdlib!("ori.time.sleep", ["time.sleep"] => "ori_time_sleep"),
     stdlib!(
         "ori.time.duration_ms",
-        ["time.duration_ms"] => "ori_time_duration_ms",
-        c_backend
+        ["time.duration_ms"] => "ori_time_duration_ms"
     ),
-    stdlib!("ori.format.number", ["format.number"] => "ori_format_number", c_backend),
+    stdlib!("ori.format.number", ["format.number"] => "ori_format_number"),
     stdlib!(
         "ori.format.percent",
-        ["format.percent"] => "ori_format_percent",
-        c_backend
+        ["format.percent"] => "ori_format_percent"
     ),
-    stdlib!("ori.format.hex", ["format.hex"] => "ori_format_hex", c_backend),
+    stdlib!("ori.format.hex", ["format.hex"] => "ori_format_hex"),
     stdlib!(
         "ori.format.binary",
-        ["format.binary"] => "ori_format_binary",
-        c_backend
+        ["format.binary"] => "ori_format_binary"
     ),
-    stdlib!("ori.format.date", ["format.date"] => "ori_format_date", c_backend),
+    stdlib!("ori.format.date", ["format.date"] => "ori_format_date"),
     stdlib!(
         "ori.format.datetime",
-        ["format.datetime"] => "ori_format_datetime",
-        c_backend
+        ["format.datetime"] => "ori_format_datetime"
     ),
     stdlib!(
         "ori.format.bytes_size",
-        ["format.bytes_size"] => "ori_format_bytes_size",
-        c_backend
+        ["format.bytes_size"] => "ori_format_bytes_size"
     ),
-    stdlib!("ori.os.args", ["os.args"] => "ori_os_args", c_backend),
-    stdlib!("ori.os.env", ["os.env"] => "ori_os_env", c_backend),
-    stdlib!("ori.os.exit", ["os.exit"] => "ori_os_exit", c_backend),
-    stdlib!("ori.os.pid", ["os.pid"] => "ori_os_pid", c_backend),
-    stdlib!("ori.os.platform", ["os.platform"] => "ori_os_platform", c_backend),
-    stdlib!("ori.os.arch", ["os.arch"] => "ori_os_arch", c_backend),
-    stdlib!("ori.random.int", ["random.int"] => "ori_random_int", c_backend),
+    stdlib!("ori.os.args", ["os.args"] => "ori_os_args"),
+    stdlib!("ori.os.env", ["os.env"] => "ori_os_env"),
+    stdlib!("ori.os.exit", ["os.exit"] => "ori_os_exit"),
+    stdlib!("ori.os.pid", ["os.pid"] => "ori_os_pid"),
+    stdlib!("ori.os.platform", ["os.platform"] => "ori_os_platform"),
+    stdlib!("ori.os.arch", ["os.arch"] => "ori_os_arch"),
+    stdlib!("ori.random.int", ["random.int"] => "ori_random_int"),
     stdlib!(
         "ori.random.float",
-        ["random.float"] => "ori_random_float",
-        c_backend
+        ["random.float"] => "ori_random_float"
     ),
     stdlib!(
         "ori.random.bool",
-        ["random.bool"] => "ori_random_bool",
-        c_backend
+        ["random.bool"] => "ori_random_bool"
     ),
     stdlib!(
         "ori.random.choice",
-        ["random.choice"] => "ori_random_choice",
-        c_backend
+        ["random.choice"] => "ori_random_choice"
     ),
     stdlib!(
         "ori.random.shuffle",
-        ["random.shuffle"] => "ori_random_shuffle",
-        c_backend
+        ["random.shuffle"] => "ori_random_shuffle"
     ),
     stdlib!("ori.json.parse", ["json.parse"] => "ori_json_parse"),
     stdlib!(
@@ -481,14 +451,12 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
         aliases: &["lazy.once"],
         runtime_symbol: "ori_lazy_once",
         native_runtime: false,
-        c_backend_runtime: false,
     },
     StdlibRuntimeFunction {
         canonical_path: "ori.lazy.force",
         aliases: &["lazy.force"],
         runtime_symbol: "ori_lazy_force",
         native_runtime: false,
-        c_backend_runtime: false,
     },
     stdlib!("ori.task.spawn", ["task.spawn"] => "ori_task_spawn"),
     stdlib!("ori.task.join", ["task.join"] => "ori_task_join"),
@@ -510,10 +478,10 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.atomic.load", ["atomic.load"] => "ori_atomic_load"),
     stdlib!("ori.atomic.store", ["atomic.store"] => "ori_atomic_store"),
     stdlib!("ori.atomic.add", ["atomic.add"] => "ori_atomic_add"),
-    stdlib!("ori.test.assert", ["test.assert"] => "ori_test_assert", c_backend),
-    stdlib!("ori.test.assert_eq", ["test.assert_eq"] => "ori_test_assert_eq", c_backend),
-    stdlib!("ori.test.assert_ne", ["test.assert_ne"] => "ori_test_assert_ne", c_backend),
-    stdlib!("ori.test.fail", ["test.fail"] => "ori_test_fail", c_backend),
+    stdlib!("ori.test.assert", ["test.assert"] => "ori_test_assert"),
+    stdlib!("ori.test.assert_eq", ["test.assert_eq"] => "ori_test_assert_eq"),
+    stdlib!("ori.test.assert_ne", ["test.assert_ne"] => "ori_test_assert_ne"),
+    stdlib!("ori.test.fail", ["test.fail"] => "ori_test_fail"),
     stdlib!("ori.test.live_allocations", ["test.live_allocations"] => "ori_test_live_allocations"),
     stdlib!("ori.test.collect_cycles", ["test.collect_cycles"] => "ori_test_collect_cycles"),
     stdlib!("ori.test.assert_no_leaks", ["test.assert_no_leaks"] => "ori_test_assert_no_leaks"),
@@ -540,41 +508,38 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.set.difference", ["set.difference"] => "ori_set_difference"),
     stdlib!("ori.list.map", ["list.map"] => "ori_list_map"),
     stdlib!("ori.list.filter", ["list.filter"] => "ori_list_filter"),
-    stdlib!("ori.iter.map", ["iter.map"] => "ori_list_map", c_backend),
-    stdlib!("ori.iter.filter", ["iter.filter"] => "ori_list_filter", c_backend),
-    stdlib!("ori.iter.any", ["iter.any"] => "ori_iter_any", c_backend),
-    stdlib!("ori.iter.all", ["iter.all"] => "ori_iter_all", c_backend),
+    stdlib!("ori.iter.map", ["iter.map"] => "ori_list_map"),
+    stdlib!("ori.iter.filter", ["iter.filter"] => "ori_list_filter"),
+    stdlib!("ori.iter.any", ["iter.any"] => "ori_iter_any"),
+    stdlib!("ori.iter.all", ["iter.all"] => "ori_iter_all"),
     stdlib!(
         "ori.iter.count_where",
-        ["iter.count_where"] => "ori_iter_count_where",
-        c_backend
+        ["iter.count_where"] => "ori_iter_count_where"
     ),
-    stdlib!("ori.iter.take", ["iter.take"] => "ori_iter_take", c_backend),
-    stdlib!("ori.iter.skip", ["iter.skip"] => "ori_iter_skip", c_backend),
-    stdlib!("ori.iter.reverse", ["iter.reverse"] => "ori_iter_reverse", c_backend),
-    stdlib!("ori.iter.reduce", ["iter.reduce"] => "ori_iter_reduce", c_backend),
-    stdlib!("ori.iter.find", ["iter.find"] => "ori_iter_find", c_backend),
-    stdlib!("ori.iter.sort", ["iter.sort"] => "ori_iter_sort", c_backend),
-    stdlib!("ori.iter.sort_by", ["iter.sort_by"] => "ori_iter_sort_by", c_backend),
-    stdlib!("ori.iter.unique", ["iter.unique"] => "ori_iter_unique", c_backend),
-    stdlib!("ori.iter.flat_map", ["iter.flat_map"] => "ori_iter_flat_map", c_backend),
-    stdlib!("ori.iter.zip", ["iter.zip"] => "ori_iter_zip", c_backend),
+    stdlib!("ori.iter.take", ["iter.take"] => "ori_iter_take"),
+    stdlib!("ori.iter.skip", ["iter.skip"] => "ori_iter_skip"),
+    stdlib!("ori.iter.reverse", ["iter.reverse"] => "ori_iter_reverse"),
+    stdlib!("ori.iter.reduce", ["iter.reduce"] => "ori_iter_reduce"),
+    stdlib!("ori.iter.find", ["iter.find"] => "ori_iter_find"),
+    stdlib!("ori.iter.sort", ["iter.sort"] => "ori_iter_sort"),
+    stdlib!("ori.iter.sort_by", ["iter.sort_by"] => "ori_iter_sort_by"),
+    stdlib!("ori.iter.unique", ["iter.unique"] => "ori_iter_unique"),
+    stdlib!("ori.iter.flat_map", ["iter.flat_map"] => "ori_iter_flat_map"),
+    stdlib!("ori.iter.zip", ["iter.zip"] => "ori_iter_zip"),
     stdlib!(
         "ori.iter.partition",
-        ["iter.partition"] => "ori_iter_partition",
-        c_backend
+        ["iter.partition"] => "ori_iter_partition"
     ),
     stdlib!(
         "ori.iter.group_by",
-        ["iter.group_by"] => "ori_iter_group_by",
-        c_backend
+        ["iter.group_by"] => "ori_iter_group_by"
     ),
-    stdlib!("ori.iter.flatten", ["iter.flatten"] => "ori_iter_flatten", c_backend),
-    stdlib!("ori.string.index_of", ["string.index_of"] => "ori_string_index_of", c_backend),
-    stdlib!("ori.string.join", ["string.join"] => "ori_string_join", c_backend),
-    stdlib!("ori.string.repeat", ["string.repeat"] => "ori_string_repeat", c_backend),
-    stdlib!("ori.string.pad_left", ["string.pad_left"] => "ori_string_pad_left", c_backend),
-    stdlib!("ori.string.pad_right", ["string.pad_right"] => "ori_string_pad_right", c_backend),
+    stdlib!("ori.iter.flatten", ["iter.flatten"] => "ori_iter_flatten"),
+    stdlib!("ori.string.index_of", ["string.index_of"] => "ori_string_index_of"),
+    stdlib!("ori.string.join", ["string.join"] => "ori_string_join"),
+    stdlib!("ori.string.repeat", ["string.repeat"] => "ori_string_repeat"),
+    stdlib!("ori.string.pad_left", ["string.pad_left"] => "ori_string_pad_left"),
+    stdlib!("ori.string.pad_right", ["string.pad_right"] => "ori_string_pad_right"),
     stdlib!("ori.string.parse_int", ["string.parse_int"] => "ori_string_parse_int"),
     stdlib!("ori.string.parse_float", ["string.parse_float"] => "ori_string_parse_float"),
     stdlib!("ori.string.to_bytes", ["string.to_bytes"] => "ori_string_to_bytes"),
@@ -586,10 +551,9 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     stdlib!("ori.bytes.from_hex", ["bytes.from_hex"] => "ori_bytes_from_hex"),
     stdlib!("ori.bytes.decode_utf8", ["bytes.decode_utf8"] => "ori_bytes_decode_utf8"),
     stdlib!("ori.bytes.get", ["bytes.get"] => "ori_bytes_get"),
-    stdlib!("ori.convert.float_to_string", ["float_to_string"] => "ori_float_to_string", c_backend),
-    stdlib!("ori.convert.bool_to_string", ["bool_to_string"] => "ori_bool_to_string", c_backend),
-    stdlib!("ori.convert.string_to_int", ["string_to_int"] => "ori_string_to_int", c_backend),
-    // float optional return type is emitted by C codegen; body stays native/extern.
+    stdlib!("ori.convert.float_to_string", ["float_to_string"] => "ori_float_to_string"),
+    stdlib!("ori.convert.bool_to_string", ["bool_to_string"] => "ori_bool_to_string"),
+    stdlib!("ori.convert.string_to_int", ["string_to_int"] => "ori_string_to_int"),
     stdlib!("ori.convert.string_to_float", ["string_to_float"] => "ori_string_to_float"),
     stdlib!(
         "ori.fs.read_text",
@@ -692,9 +656,9 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
         "ori.fs.created_at",
         ["fs.created_at"] => "ori_files_created_at"
     ),
-    stdlib!("ori.os.current_dir", ["os.current_dir"] => "ori_os_current_dir", c_backend),
-    stdlib!("ori.os.change_dir", ["os.change_dir"] => "ori_os_change_dir", c_backend),
-    stdlib!("ori.random.seed", ["random.seed"] => "ori_random_seed", c_backend),
+    stdlib!("ori.os.current_dir", ["os.current_dir"] => "ori_os_current_dir"),
+    stdlib!("ori.os.change_dir", ["os.change_dir"] => "ori_os_change_dir"),
+    stdlib!("ori.random.seed", ["random.seed"] => "ori_random_seed"),
     // Password hashing (argon2id PHC) — web C10 / SEC9
     stdlib!(
         "ori.crypto.password_hash",
@@ -717,7 +681,7 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
         "ori.crypto.totp_verify",
         ["crypto.totp_verify"] => "ori_totp_verify"
     ),
-    stdlib!("ori.test.skip", ["test.skip"] => "ori_test_skip", c_backend),
+    stdlib!("ori.test.skip", ["test.skip"] => "ori_test_skip"),
     stdlib!("ori.bytes.from_list", ["bytes.from_list"] => "ori_bytes_from_list"),
     stdlib!("ori.bytes.to_list", ["bytes.to_list"] => "ori_bytes_to_list"),
     stdlib!("ori.process.run", ["process.run"] => "ori_process_run"),
@@ -780,21 +744,20 @@ pub const STDLIB_RUNTIME_FUNCTIONS: &[StdlibRuntimeFunction] = &[
     ),
     stdlib!("ori.net.close", ["net.close"] => "ori_net_close"),
     stdlib!("ori.net.is_closed", ["net.is_closed"] => "ori_net_is_closed"),
-    stdlib!("ori.math.trunc", ["math.trunc"] => "ori_math_trunc", c_backend),
-    stdlib!("ori.math.ln", ["math.ln"] => "ori_math_ln", c_backend),
-    stdlib!("ori.math.exp", ["math.exp"] => "ori_math_exp", c_backend),
-    stdlib!("ori.math.asin", ["math.asin"] => "ori_math_asin", c_backend),
-    stdlib!("ori.math.acos", ["math.acos"] => "ori_math_acos", c_backend),
-    stdlib!("ori.math.atan", ["math.atan"] => "ori_math_atan", c_backend),
-    stdlib!("ori.math.atan2", ["math.atan2"] => "ori_math_atan2", c_backend),
-    stdlib!("ori.math.log10", ["math.log10"] => "ori_math_log10", c_backend),
-    stdlib!("ori.math.is_finite", ["math.is_finite"] => "ori_math_is_finite", c_backend),
+    stdlib!("ori.math.trunc", ["math.trunc"] => "ori_math_trunc"),
+    stdlib!("ori.math.ln", ["math.ln"] => "ori_math_ln"),
+    stdlib!("ori.math.exp", ["math.exp"] => "ori_math_exp"),
+    stdlib!("ori.math.asin", ["math.asin"] => "ori_math_asin"),
+    stdlib!("ori.math.acos", ["math.acos"] => "ori_math_acos"),
+    stdlib!("ori.math.atan", ["math.atan"] => "ori_math_atan"),
+    stdlib!("ori.math.atan2", ["math.atan2"] => "ori_math_atan2"),
+    stdlib!("ori.math.log10", ["math.log10"] => "ori_math_log10"),
+    stdlib!("ori.math.is_finite", ["math.is_finite"] => "ori_math_is_finite"),
     StdlibRuntimeFunction {
         canonical_path: "ori.lazy.is_consumed",
         aliases: &["lazy.is_consumed"],
         runtime_symbol: "ori_lazy_is_consumed",
         native_runtime: false,
-        c_backend_runtime: false,
     },
 ];
 
@@ -2496,96 +2459,6 @@ mod tests {
             assert_eq!(params, vec![json_value.clone()], "{path} params");
             assert_eq!(ret, Ty::String, "{path} return");
         }
-    }
-
-    /// Spec cap. 14 sanity check: the C/debug backend stdlib matrix documents
-    /// which modules carry the `c_backend` flag. This test asserts the flag
-    /// value for representative entries from each matrix row, guarding against
-    /// the spec drifting from the manifest.
-    #[test]
-    fn spec_c_backend_matrix_matches_manifest_flags() {
-        fn flagged(path: &str) -> bool {
-            stdlib_entry_for_path(path)
-                .expect("manifest entry exists")
-                .c_backend_runtime
-        }
-
-        // Rows documented as "yes" (every function carries the flag).
-        assert!(flagged("ori.io.print"), "io.print should be c_backend");
-        assert!(flagged("ori.io.println"), "io.println should be c_backend");
-        assert!(
-            flagged("ori.mem.string_as_ptr"),
-            "mem.string_as_ptr should be c_backend"
-        );
-        assert!(
-            flagged("ori.mem.string_len"),
-            "mem.string_len should be c_backend"
-        );
-        assert!(flagged("ori.math.sqrt"), "math should be c_backend");
-        assert!(flagged("ori.time.now"), "time should be c_backend");
-        assert!(flagged("ori.format.number"), "format should be c_backend");
-        assert!(flagged("ori.os.args"), "os should be c_backend");
-        assert!(flagged("ori.random.int"), "random should be c_backend");
-        assert!(
-            flagged("ori.test.assert"),
-            "test.assert should be c_backend"
-        );
-        assert!(flagged("ori.iter.map"), "iter should be c_backend");
-        assert!(flagged("string"), "string builtin should be c_backend");
-        assert!(flagged("int"), "int builtin should be c_backend");
-        assert!(flagged("float"), "float builtin should be c_backend");
-
-        // LANG-2: io eprint/read_line + string + convert + len now ship C bodies.
-        assert!(flagged("ori.io.eprint"), "io.eprint should be c_backend");
-        assert!(
-            flagged("ori.io.read_line"),
-            "io.read_line should be c_backend"
-        );
-        assert!(flagged("ori.string.len"), "string.len should be c_backend");
-        assert!(
-            flagged("ori.string.contains"),
-            "string.contains should be c_backend"
-        );
-        assert!(
-            flagged("ori.convert.float_to_string"),
-            "convert.float_to_string should be c_backend"
-        );
-        assert!(
-            flagged("ori.convert.bool_to_string"),
-            "convert.bool_to_string should be c_backend"
-        );
-        assert!(
-            flagged("ori.convert.string_to_int"),
-            "convert.string_to_int should be c_backend"
-        );
-        assert!(
-            !flagged("ori.convert.string_to_float"),
-            "string_to_float stays native (optional[float] typedef order)"
-        );
-        assert!(flagged("len"), "len builtin should be c_backend");
-
-        // Rows documented as "no" (native-only or extern stubs).
-        assert!(!flagged("ori.bytes.len"), "bytes.* should NOT be c_backend");
-        assert!(!flagged("ori.list.new"), "list.* should NOT be c_backend");
-        assert!(!flagged("ori.map.new"), "map.* should NOT be c_backend");
-        assert!(!flagged("ori.set.new"), "set.* should NOT be c_backend");
-        assert!(!flagged("ori.tree.new"), "tree.* should NOT be c_backend");
-        assert!(!flagged("ori.json.parse"), "json should NOT be c_backend");
-        assert!(!flagged("ori.fs.read_text"), "fs.* should NOT be c_backend");
-        assert!(!flagged("ori.task.spawn"), "task.* should NOT be c_backend");
-        assert!(
-            !flagged("ori.channel.create"),
-            "channel.* should NOT be c_backend"
-        );
-        assert!(
-            !flagged("ori.atomic.new"),
-            "atomic.* should NOT be c_backend"
-        );
-        assert!(
-            !flagged("ori.test.live_allocations"),
-            "test leak checks NOT c_backend"
-        );
-        assert!(!flagged("ori.panic"), "panic should NOT be c_backend");
     }
 
     /// Parity test: every module prefix derived from the manifest must be

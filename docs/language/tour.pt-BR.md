@@ -355,7 +355,7 @@ end
 - `async main()` + `await` só dentro de funções `async`.
 - Helpers: `fs.read_text_async`, `net.connect_async`, …
 - Exemplo: [`examples/async_demo`](../../examples/async_demo/).
-- Backend C/debug **rejeita** async (referência = nativo).
+- AOT/JIT nativo suporta o [subconjunto async documentado](../spec/14-backend-support.md#native-async-subset); formas não suportadas são rejeitadas explicitamente.
 
 ---
 

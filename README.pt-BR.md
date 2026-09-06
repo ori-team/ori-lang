@@ -249,7 +249,6 @@ A CLI `ori` é implementada em `compiler/crates/ori-driver`.
 | `ori summary [path]` | imprime entry file, módulos, imports e contagem de diagnósticos |
 | `ori debug <file.orl>` | executa o debugger cooperativo; `--dap` serve DAP via stdio |
 | `ori build <file.orl>` | compila pelo backend nativo |
-| `ori emit c <file.orl>` | emite C pelo backend parcial de debug |
 | `ori lex <file.orl>` | imprime tokens para debug do compilador |
 | `ori parse <file.orl>` | imprime AST para debug do compilador |
 | `ori install <name> --path <dir>` | instala pacote local no cache |
@@ -343,15 +342,15 @@ O compilador é dividido em crates focadas:
 | `ori-parser` | parser recursive descent |
 | `ori-hir` | resolução de nomes e HIR |
 | `ori-types` | sistema de tipos, manifesto stdlib e contratos do checker |
-| `ori-codegen` | backend nativo Cranelift, JIT e backend C de debug |
+| `ori-codegen` | backend nativo Cranelift, JIT e headers FFI nativos |
 | `ori-runtime` | biblioteca nativa de runtime e ABI |
 | `ori-diagnostics` | códigos de diagnóstico e apoio de renderização |
 | `ori-lsp` | implementação Language Server Protocol |
 | `ori-driver` | CLI, orquestração do pipeline e testes de integração |
 
 O runtime nativo é a referência semântica para `ori compile`, `ori run` e
-`ori test`. O backend C é uma rota de debug e não deve ser tratado como fonte de
-verdade para async, ARC, coleções ou runtime.
+`ori test`. A emissão de código C foi removida; FFI C nativa e headers de
+exportação continuam suportados.
 
 ## Biblioteca padrão
 
@@ -480,7 +479,7 @@ macOS x86_64 e macOS aarch64. Detalhes de staging ficam em
 - Ori ainda não é self-hosting (M4 adiado).
 - `ori compile` (AOT) precisa do linker do SO; `ori run` usa JIT por padrão.
 - Compilar Ori a partir do fonte exige Rust; package **Linux** de release não.
-- Backend C é parcial (debug); sem async em C.
+- A emissão de código C foi removida; a execução usa o backend nativo.
 - Protocolo de pacotes/registry existe; marketplace público **não** é meta agora.
 - Lojas de extensão (VS Code / Zed) **shelved** — use install local / dev.
 - `ori repl` é deliberadamente pequeno.

@@ -83,9 +83,8 @@ ori fmt src/main.orl
 |---------|-----------|
 | `ori lex <arquivo.orl>` | Imprime o fluxo bruto de tokens (debug do lexer). |
 | `ori parse <arquivo.orl>` | Imprime a AST (debug do parser). |
-| `ori emit c <arquivo.orl>` | Emite o código-fonte em C gerado pelo backend secundário (debug). |
 
-Esses três são voltados para quem quer entender ou depurar o próprio
+Esses dois são voltados para quem quer entender ou depurar o próprio
 compilador — não fazem parte do fluxo normal de escrever programas em Ori.
 
 ## 5. Variáveis de Ambiente

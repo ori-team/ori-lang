@@ -26,7 +26,7 @@ slots e zera bindings gerenciados antes de agendar; a prova completa de
 ownership no HIR ainda está pendente. `using` continua funcionando e libera o
 recurso em retorno, erro, cancelamento, `try` e saída de loop.
 
-O backend C/debug rejeita async. Shapes async fora do subconjunto nativo são
+AOT e JIT nativos compartilham o [subconjunto async documentado](../spec/14-backend-support.md#native-async-subset). Shapes async fora do subconjunto nativo são
 rejeitados antes do codegen.
 
 ## Tasks, channels e atomics

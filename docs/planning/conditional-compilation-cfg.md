@@ -9,8 +9,8 @@
 
 `@cfg` deixou de ser uma anotação inerte. O compilador sempre parseia o arquivo
 completo e, em seguida, remove declarações inativas antes da resolução de nomes
-e da checagem de tipos. O mesmo AST filtrado alimenta documentação, HIR, AOT,
-JIT e backend C/debug.
+e da checagem de tipos. O mesmo AST filtrado alimenta documentação, HIR, AOT
+e JIT.
 
 ```ori
 @cfg(target_os: linux)

@@ -182,23 +182,9 @@ it.
 |---|---|
 | `ori lex <file>` | Print the raw token stream |
 | `ori parse <file>` | Print the AST |
-| `ori emit c <file>` | Emit C source through the partial debug backend |
 
-The C backend is a debug aid, not a semantic reference — the native backend is
-([../spec/14-backend-support.md](../spec/14-backend-support.md)).
-
-Maintainers can compile and run a hostile `check` message through the generated
-C under AddressSanitizer and UndefinedBehaviorSanitizer:
-
-```sh
-cd compiler
-cargo test -p ori-driver --test c_backend_sanitizers -- --nocapture
-```
-
-The test probes `clang` and then `cc`. It prints an explicit `SKIP` when neither
-compiler can compile and run with both sanitizers. Set `ORI_C_SANITIZER_CC` to
-one compiler executable, or set `ORI_REQUIRE_C_SANITIZERS=1` to turn missing
-sanitizer support into a gate failure (recommended in CI).
+C source emission has been removed. Native AOT/JIT are the supported routes;
+see [backend support](../spec/14-backend-support.md).
 
 ## Program debugging
 

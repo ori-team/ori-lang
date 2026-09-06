@@ -67,7 +67,7 @@ const name: string = find_name(id).or("Anonymous")
 ```
 
 Current status: `.or(fallback)` is accepted for `optional[T]` and
-`result[T, E]` in the checker, native backend, and C backend. The fallback is
+`result[T, E]` in the checker and native backend. The fallback is
 evaluated only when the receiver is `none` or `err(_)`.
 
 **`.or_return()`** — unwrap or propagate from the enclosing function:
@@ -149,7 +149,7 @@ If `read_config` returns `err("empty path")`, the result becomes
 `err("loading configuration: empty path")`.
 
 Current status: `.or_wrap(...)` is accepted for `result[T, string]` in the
-checker, HIR lowering, native backend, and C backend. It keeps `ok(v)`
+checker, HIR lowering, native backend. It keeps `ok(v)`
 unchanged and evaluates the context expression only when the receiver is
 `err(_)`. For non-string error types, use explicit conversion or handle the
 error with `match`.
@@ -195,9 +195,6 @@ compile error.
 Backend status:
 
 - The native backend supports `try` propagation.
-- The C backend supports `try` propagation for `optional[T]` and
-  `result[T, E]` when the enclosing function returns a compatible
-  `optional[_]` or `result[_, E]`.
 
 ---
 

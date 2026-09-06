@@ -216,8 +216,7 @@ and `ori.test.assert_no_leaks(label)` for test programs:
   set and the count is non-zero, it prints a diagnostic to stderr and aborts
   with a non-zero exit code so the test fails loudly.
 
-These hooks are available on the native backend. The C debug backend provides
-inline stubs that return 0 (the C backend has no ARC registry). See
+These hooks are available on the native backend. See
 `AGENTS.md` for the `ORI_TEST_LEAK_CHECK` env var convention.
 
 ### Backend Status
@@ -225,9 +224,7 @@ inline stubs that return 0 (the C backend has no ARC registry). See
 - The native backend inserts ARC retain/release calls for managed values.
 - The Rust `ori-runtime` crate provides the runtime symbols consumed by the
   native backend.
-- The standalone C backend remains a debug/transpile backend with partial
-  feature parity. Its inline ARC runtime exists only for generated C output and
-  does not define core language semantics.
+- Native AOT/JIT share the Rust runtime; C source emission has been removed.
 
 ---
 
@@ -378,9 +375,7 @@ destructor in that cycle runs while all cycle payloads are still allocated;
 only then are the payloads freed. Use `using` with `core.Disposable` whenever a
 resource must close at a specific lexical scope boundary.
 
-The C debug backend does not implement this lifecycle and rejects a module that
-applies `core.Destructor` with `backend.c_unsupported`. Native AOT and JIT share
-the same callback semantics.
+Native AOT and JIT share the same callback semantics.
 
 ### Interaction with `try`
 

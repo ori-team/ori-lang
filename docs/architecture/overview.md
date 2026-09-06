@@ -13,10 +13,8 @@ Compiler frontend and semantic analysis
         v
 Typed HIR and optimization
         |
-        +------------------+
-        |                  |
-        v                  v
-Cranelift AOT/JIT      C/debug emission
+        v
+Cranelift AOT/JIT
         |
         v
 Native runtime + platform linker
@@ -25,7 +23,7 @@ Native runtime + platform linker
 Executable, shared library, tests, or in-process JIT result
 ```
 
-The native Cranelift path is the semantic reference. The C backend is a diagnostic and debugging route with an explicitly documented support matrix.
+The native Cranelift AOT/JIT path is the semantic reference. C source emission was removed under [ADR-0005](../decisions/adr/0005-deprecate-and-retire-c-backend.md); generated C FFI headers and native interoperability remain supported.
 
 ## Repository domains
 
@@ -40,7 +38,7 @@ Contains the Cargo workspace and compiler crates.
 | `ori-parser` | Parsing, block structure, recovery, and syntax diagnostics |
 | `ori-types` | Definitions, resolution, signatures, type checking, stdlib semantic manifest |
 | `ori-hir` | Typed lowering, monomorphization support, and optimization passes |
-| `ori-codegen` | Cranelift AOT/JIT, native objects, linking support, C/debug backend |
+| `ori-codegen` | Cranelift AOT/JIT, native objects, linking support, generated C FFI headers |
 | `ori-runtime` | ARC, cycle collection, collections, strings, I/O, network, tasks, FFI symbols |
 | `ori-diagnostics` | Source locations, diagnostic structures, labels, and rendering support |
 | `ori-lsp` | Language Server Protocol integration |

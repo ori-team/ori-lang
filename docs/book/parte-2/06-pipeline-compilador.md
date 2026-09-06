@@ -69,14 +69,9 @@ concretas, uma por combinação de tipo usada no seu programa.
 ### Passo 6: Codegen — dois backends, o mesmo HIR
 
 Se tudo estiver perfeito, o HIR chega ao "Codegen" (Gerador de Código). A
-Ori tem **dois** backends que sabem ler o mesmo HIR:
-
-- **Cranelift** (o padrão): uma biblioteca de geração de código nativa e
-  rápida. É o caminho usado por `ori run`, `ori compile` e `ori build`.
-- **Backend C**: emite código-fonte em C em vez de binário direto. É um
-  caminho secundário, usado por `ori emit c` para depuração — não é o
-  caminho recomendado para uso do dia a dia, e nem toda funcionalidade da
-  stdlib tem paridade garantida nele.
+Ori usa o **Cranelift**, uma biblioteca de geração de código nativo,
+por meio de `ori run`, `ori compile` e `ori build`. A emissão de código C
+foi removida; FFI C e headers de exportação nativos continuam disponíveis.
 
 ## AOT vs JIT: Duas formas de executar
 
@@ -90,5 +85,5 @@ A Ori oferece dois caminhos no final do pipeline, dependendo do que você precis
 * O Lexer transforma texto em tokens; o Parser organiza os tokens numa árvore (AST).
 * O Type Checker resolve nomes e impede que você misture dados incompatíveis.
 * Depois do type check, o código vira HIR e a monomorfização especializa cada genérico usado.
-* O Cranelift (backend padrão) converte o HIR em linguagem de máquina veloz; o backend C é secundário, usado por `ori emit c`.
+* O Cranelift converte o HIR em código de máquina nas rotas nativas AOT/JIT.
 * AOT gera um arquivo final pronto; JIT roda na memória para testes rápidos.

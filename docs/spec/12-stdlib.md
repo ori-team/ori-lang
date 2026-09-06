@@ -43,7 +43,7 @@ ABI contract for primitives; cold ergonomics and algorithms live in `.orl`.
 `compiler/crates/ori-types/src/stdlib.rs` owns the stdlib contract surface:
 
 - `STDLIB_RUNTIME_FUNCTIONS` — every canonical path, alias, runtime symbol,
-  and `c_backend` flag. Adding a stdlib function means adding one entry here.
+  and `native_runtime` flag. Adding a stdlib function means adding one entry here.
 - `stdlib_func_sig()` — semantic type signature per canonical path.
 - `stdlib_native_abi()` — Cranelift ABI metadata per runtime symbol.
 - `is_implemented_stdlib_module()` / `implemented_stdlib_modules()` — the
@@ -80,15 +80,13 @@ The manifest is protected by tests in `ori-types::stdlib::tests`:
   guard against the pre-consolidation hardcoded module list.
 - `unknown_stdlib_modules_are_rejected` — unknown `ori.*` modules are
   rejected so the driver can emit `bind.stdlib_module_unknown`.
-- `spec_c_backend_matrix_matches_manifest_flags` — the C/backend matrix
-  below stays in sync with manifest `c_backend` flags.
 - `spec_fs_and_json_contracts_match_stdlib_sig` — the `ori.fs.File` and
   `ori.json.Value` contracts match `stdlib_func_sig` return types.
 
 ### Adding a stdlib function
 
 1. Add an entry to `STDLIB_RUNTIME_FUNCTIONS` (canonical path, aliases,
-   runtime symbol, `c_backend` flag).
+   runtime symbol, `native_runtime` flag).
 2. Add the semantic type signature to `stdlib_func_sig()`.
 3. Add the native ABI metadata to `stdlib_native_abi()`.
 4. Implement the `extern "C" fn` in `ori-runtime/src/lib.rs`.
@@ -457,7 +455,7 @@ string.from_bytes(b: bytes)                   -> result[string, string]
 String positions use Unicode scalar values, not UTF-8 byte offsets.
 the global `len(string)`, `string.len`, `string.slice`, string indexing,
 `string.index_of`, `string.chars`, and direct string iteration share that index
-space in the native and C/debug backends.
+space in the native backend.
 Extended grapheme clusters can contain multiple scalar values; grapheme
 segmentation is not currently a stdlib API.
 
@@ -824,10 +822,6 @@ list items as word-sized values, so scalar values and runtime handles such as
 strings, tuples, lists, maps, and user values can flow through the same
 operations.
 
-The C backend keeps the original `list[int]` coverage for the full iterator
-surface, with additional string-specialized `sort`, `unique`, and `group_by`
-helpers.
-
 ```text
 import ori.iter = iter
 
@@ -1011,7 +1005,7 @@ random.shuffle[T](items: list[T]) -> list[T]
 Current implementation status:
 
 - `random.int`, `random.float`, and `random.bool` are importable and available
-  in the native backend and the C backend.
+  in the native backend.
 - `random.choice(items)` returns `some(value)` for a random item, or `none` for
   an empty list.
 - `random.shuffle(items)` returns a new shuffled list with the same element
@@ -1097,8 +1091,7 @@ an import.
 
 ## Concurrency Foundation
 
-Status: implemented for the native backend. The C debug backend rejects these
-runtime calls with `backend.c_unsupported`.
+Status: implemented for the native backend.
 
 Values that cross a task or channel boundary must be `Transferable`.
 
@@ -1398,9 +1391,8 @@ statements also work inside `@test` functions. Async tests must have no
 parameters and must return `void`; the test runner waits for their returned
 future before recording the result.
 
-Native runtime coverage is canonical for standard-library behavior. The C
-backend is a debug/transpile backend with partial feature parity; it may reject
-standard-library features when generated C would not preserve Ori semantics.
+Native runtime coverage is canonical for standard-library behavior. AOT and
+JIT must agree on their shared support surface.
 
 ---
 
