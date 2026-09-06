@@ -46,7 +46,7 @@ Ver [README.md](README.md) (mesmo mapa; nomes de arquivo EN).
 | Traits | `import ori.core = core` · `apply` + `use core.Displayable` |
 | Pipe | `|>` mantido |
 | Inferência local | opção B |
-| Async | `async main()` + `await` (nativo); C/debug rejeita async |
+| Async | `async main()` + `await` (AOT/JIT nativo) |
 | Sistemas | `@noalloc`, `@align(N)`, `mem.region()`, `simd[float32, 4]` |
 | Dependências | `[native.dependencies]` com `pkg-config` declarativo |
 | Projeto | raiz-first |

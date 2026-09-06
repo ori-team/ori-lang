@@ -257,7 +257,6 @@ Regression tests: `compile_reports_violated_param_contract`,
 
 | Code | Severity | Description |
 |---|---|---|
-| `backend.c_unsupported` | error | C debug backend cannot generate code for a feature supported by the native route |
 | `backend.native_unsupported` | error | Native backend rejected a typed HIR shape before Cranelift because that codegen path is not implemented yet |
 
 ### `native`

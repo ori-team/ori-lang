@@ -337,6 +337,154 @@ end
 }
 
 #[test]
+fn aggressive_inlining_does_not_capture_argument_names() {
+    let source = r#"module app.main
+import ori.io as io
+
+subtract(first: int, second: int) -> int
+    return first - second
+end
+
+@no_inline
+run(first: int, second: int) -> int
+    return subtract(second, first)
+end
+
+main()
+    io.println(f"{run(3, 8)}")
+end
+"#;
+    assert_same_output_at_every_opt_level("inline_name_capture", source, "5");
+}
+
+#[test]
+fn aggressive_inlining_snapshots_compound_global_arguments() {
+    let source = r#"module app.main
+import ori.io as io
+var current: int = 1
+
+change() -> int
+    current = 7
+    return 0
+end
+
+combine(value: int) -> int
+    return change() + value
+end
+
+main()
+    io.println(f"{combine(current + 2)}")
+    current = 1
+    io.println(f"{combine(-current)}")
+end
+"#;
+    assert_same_output_at_every_opt_level("inline_compound_snapshot", source, "3\n-1");
+}
+
+#[test]
+fn aggressive_inlining_materialized_arguments_preserve_order() {
+    let source = r#"module app.main
+import ori.io as io
+var current: int = 1
+var _ori_inline_0: int = 40
+
+produce(value: int) -> int
+    current = current + 1
+    io.println(f"{value}")
+    return value
+end
+
+pick(first: int, second: int, ignored: int) -> int
+    return first + second + _ori_inline_0
+end
+
+@no_inline
+forward(first: int, second: int) -> int
+    return pick(produce(second), produce(first), produce(3))
+end
+
+main()
+    const _ori_inline_1: int = 9
+    const answer: int = forward(1, 2)
+    const snapshot: int = pick(current, produce(4), produce(5))
+    pick(produce(6), produce(7), produce(8))
+    io.println(f"{answer} {snapshot} {_ori_inline_1} {current}")
+end
+"#;
+    assert_same_output_at_every_opt_level(
+        "inline_materialized_order",
+        source,
+        "2\n1\n3\n4\n5\n6\n7\n8\n43 48 9 9",
+    );
+}
+
+#[test]
+fn aggressive_inlining_materialized_arguments_stay_in_loop_body() {
+    let source = r#"module app.main
+import ori.io as io
+var calls: int = 0
+
+@no_inline
+produce() -> int
+    calls = calls + 1
+    return calls
+end
+
+twice(value: int) -> int
+    return value + value
+end
+
+ignore(value: int) -> int
+    return 1
+end
+
+@no_inline
+run(count: int) -> int
+    var index: int = 0
+    var total: int = 0
+    while index < count
+        const value: int = twice(produce())
+        ignore(produce())
+        io.println(f"{index} {value} {calls}")
+        total = total + value
+        index = index + 1
+    end
+    return total
+end
+
+main()
+    const zero: int = run(0)
+    io.println(f"{zero} {calls}")
+    const multiple: int = run(3)
+    io.println(f"{multiple} {calls}")
+end
+"#;
+    assert_same_output_at_every_opt_level(
+        "inline_materialized_loop_body",
+        source,
+        "0 0\n0 2 2\n1 6 4\n2 10 6\n18 6",
+    );
+}
+
+#[test]
+fn aggressive_inlining_materialized_ignored_arguments_trap() {
+    for statement in ["const answer: int = ignore(1 / 0)", "ignore(1 / 0)"] {
+        let source = format!("module app.main\nignore(value: int) -> int\n    return 1\nend\nmain()\n    {statement}\nend\n");
+        for level in OPT_LEVELS {
+            let (_, stderr) = output_of_aborting_program_at_opt_level(
+                "inline_materialized_trap",
+                &source,
+                Some(level),
+            );
+            assert!(
+                stderr.contains("ori integer division or remainder by zero"),
+                "{level}: {stderr}"
+            );
+        }
+    }
+}
+
+#[test]
 fn aggressive_inlining_keeps_parameter_contract_checks() {
     let source = r#"module app.main
 
@@ -803,18 +951,8 @@ end
 }
 
 #[test]
-fn emitted_c_compiles_under_a_strict_standard_dialect() {
-    if !cfg!(target_os = "linux") {
-        return;
-    }
-    if Command::new("cc").arg("--version").output().is_err() {
-        return;
-    }
-
-    // The generated runtime calls `nanosleep`, `gmtime_r`, and `getline`, which
-    // a strict `-std=c11` hides unless the file requests the POSIX feature set
-    // itself.
-    let dir = TestDir::new("emitted_c_strict_dialect");
+fn native_interpolation_preserves_unsigned_integer_width() {
+    let dir = TestDir::new("native_unsigned_interpolation");
     dir.write(
         "main.orl",
         r#"module app.main
@@ -827,95 +965,17 @@ main()
 end
 "#,
     );
-    let generated = dir.path("main.c");
-    let emitted = Command::new(ori_exe())
-        .arg("emit")
-        .arg("c")
-        .arg(dir.path("main.orl"))
-        .arg("-o")
-        .arg(&generated)
-        .output()
-        .unwrap();
-    assert!(
-        emitted.status.success(),
-        "emitting C failed: {}",
-        String::from_utf8_lossy(&emitted.stderr)
-    );
-
-    let host = exe_path(&dir, "chost");
-    let compiled = Command::new("cc")
-        .arg("-std=c11")
-        .arg("-Werror=implicit-function-declaration")
-        .arg("-o")
-        .arg(&host)
-        .arg(&generated)
-        .arg("-lm")
-        .output()
-        .unwrap();
-    assert!(
-        compiled.status.success(),
-        "emitted C failed under -std=c11:\n{}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-
-    let run = Command::new(&host).output().unwrap();
-    assert!(run.status.success());
-    assert_eq!(normalize_stdout(run.stdout).trim(), "18446744073709551615");
+    for level in OPT_LEVELS {
+        assert_eq!(compile_and_run(&dir, level), "18446744073709551615");
+    }
 }
 
 #[test]
-fn emitted_c_check_message_is_not_a_format_string() {
-    if !cfg!(target_os = "linux") || Command::new("cc").arg("--version").output().is_err() {
-        return;
-    }
-
-    let dir = TestDir::new("emitted_c_check_message");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-main()
-    check false, "quote \" slash \\ line\n %s %n"
-end
-"#,
+fn native_check_message_preserves_special_characters() {
+    let (_stdout, stderr) = output_of_aborting_program(
+        "native_check_message",
+        "module app.main\n\nmain()\n    check false, \"quote \\\" slash \\\\ line\\n %s %n\"\nend\n",
     );
-    let generated = dir.path("main.c");
-    let emitted = Command::new(ori_exe())
-        .arg("emit")
-        .arg("c")
-        .arg(dir.path("main.orl"))
-        .arg("-o")
-        .arg(&generated)
-        .output()
-        .unwrap();
-    assert!(
-        emitted.status.success(),
-        "emitting C failed: {}",
-        String::from_utf8_lossy(&emitted.stderr)
-    );
-    let host = exe_path(&dir, "check_host");
-    let compiled = Command::new("cc")
-        .arg("-std=c11")
-        .arg("-Wformat")
-        .arg("-Werror=format-security")
-        .arg("-o")
-        .arg(&host)
-        .arg(&generated)
-        .arg("-lm")
-        .output()
-        .unwrap();
-    assert!(
-        compiled.status.success(),
-        "emitted C failed to compile:\n{}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-
-    let run = Command::new(&host).output().unwrap();
-    assert!(
-        !run.status.success(),
-        "failed check must terminate the C host"
-    );
-    let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(
         stderr.contains("quote \" slash \\ line\n"),
         "stderr: {stderr:?}"

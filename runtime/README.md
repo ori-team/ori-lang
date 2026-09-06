@@ -83,9 +83,9 @@ A→B→D hybrid for `ori run` — the driver can now execute Ori programs
 without `rustc`, without a linker, and without writing any temporary
 object file.
 
-`ori-runtime` is the source of truth for native runtime semantics. The C backend
-is a debug/transpile route and must not be used as the semantic reference for
-`ori compile`, `ori test`, collections, ARC, or async/concurrency behavior.
+`ori-runtime` is the source of truth for native AOT/JIT runtime semantics,
+including collections, ARC, and async/concurrency. C source emission has been
+removed; native C ABI interoperability remains supported.
 
 Use this command from the repository root to stage the current host runtime:
 

@@ -33,8 +33,7 @@ Rules:
 - positional `array[int, 4]` and named `array[int, size: 4]` represent the same type;
 - literals must have the exact length;
 - out-of-range constant indexes are compile-time errors;
-- the current native backend requires scalar or inline struct array elements;
-- the C/debug backend does not provide full array parity.
+- the current native backend requires scalar or inline struct array elements.
 
 `slice[T]` is a read-only O(1) window over a list. It keeps the owning list
 alive and observes later writes to that list. `lists.slice` copies; a window
@@ -275,6 +274,6 @@ end
 ## What is intentionally not here
 
 Higher-kinded types, explicit ownership-transfer syntax, direct collection ABI
-layouts, and full C-backend parity are not stable S3 features. Their current
+layouts are not stable S3 features. Their current
 status belongs in [BACKLOG.md](../planning/BACKLOG.md) and
 [14-backend-support.md](../spec/14-backend-support.md), not in user examples.

@@ -6,6 +6,9 @@
 > Last consolidated: **2026-09-01** — §2 contains the real remaining work.
 > Historical delivery rows are retained as dated evidence and are superseded by
 > any open `AUD-*` finding that narrows or invalidates their original claim.
+> C-backend delivery evidence below is historical: source emission and its
+> generated-C tests were retired on 2026-09-05 under ADR-0005. These rows do not
+> define current commands or CI requirements; see [Spec 14](../spec/14-backend-support.md).
 
 ---
 
@@ -363,7 +366,7 @@ remains an unconnected stub.
 | **PKG-LOCK** | Dependency lockfile snapshot | 3 | M | **done** | Lock format v2 records source identity, exact Git revision, and SHA-256 tree digest. Resolution restores the locked graph from verified cache in offline mode, rejects drift/tampering, and requires explicit migration from v1. |
 | **PKG-REG** | Package ecosystem protocol | 3 | XL | **done for registry v1** | Registry/publish/get/install/cache/lock now enforce HTTPS by default, authenticated archives, contained extraction, immutable versions, atomic cache publication, and lock-driven reproducibility. Broader ecosystem hosting remains outside this repository; [implementation map](package-ecosystem-production.md). |
 | **PKG-NS** | Cross-package namespace isolation | 3 | M | **done** | **2026-07-25:** local import lookup stops at the owning package boundary and dependency modules must use the package-qualified prefix (`package.module`). Two dependencies can therefore expose the same local module name without an ambiguous bare import. |
-| **BACK-C-1** | C backend parity | 3 | L | **shelved by backend decision 2026-07-23** | Cranelift AOT/JIT is the product and semantic reference; C emission remains under `ori emit c` as a partial synchronous debug/transpile route. It supports eager `ori.iter` and inline generators, but intentionally rejects async/concurrency and `core.Destructor`, while much of the managed stdlib requires the native runtime. Maintenance fixes invalid C, crashes, or wrong semantics inside the documented subset; new language features may report `backend.c_unsupported`. Reopen parity only if C becomes a product backend through a separate decision. |
+| **BACK-C-1** | C backend parity | 3 | L | **retired 2026-09-05** | Cranelift AOT/JIT remains the product and semantic reference. C source emission and `ori emit c` were removed under [ADR-0005](../decisions/adr/0005-deprecate-and-retire-c-backend.md). Historical decision **2026-07-23**: parity was shelved and C retained only as a partial synchronous debug route; that route is no longer available. Native C ABI interoperability remains supported. |
 | **BUG-MAPSET** | `m["k"] = v` silently did nothing | 1 | S | **done** | **2026-07-20**: the index-assignment codegen chain handled only `list` and fell through with no store and no error, so map index assignment compiled and did nothing. Implemented for `map`, and the fallthrough is now a hard error so the class cannot recur. Regression: `compile_runs_map_index_assignment` |
 | **DIAG-DEFID** | `<def DefId(N)>` in backend errors | 3 | S | **done** | **2026-07-23**: both backends now render declared type names from their compact `DefId → name` tables, recursively through containers and function types. The native HIR validator builds the same compact table; backend diagnostics no longer need a full `DefMap`. |
 

@@ -96,7 +96,7 @@ A significant proposal must address:
 - control flow and evaluation order;
 - memory ownership and cleanup;
 - async/concurrency interaction;
-- AOT, JIT, and C/debug support;
+- native AOT/JIT support;
 - runtime and ABI impact;
 - formatter and migration;
 - diagnostics;
@@ -190,7 +190,7 @@ Before behavior is considered stable within the current cycle:
 - conformance evidence is complete;
 - formatter and LSP support are complete;
 - AOT/JIT behavior agrees;
-- C/debug support is implemented or explicitly classified;
+- unsupported native behavior is explicitly classified and rejected;
 - diagnostics and migration are documented;
 - performance and security risks are understood;
 - user examples are current;

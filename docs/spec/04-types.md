@@ -370,8 +370,7 @@ rejected. Use `list[T]` when the elements are managed.
 
 ### Backend support
 
-Native only. The C debug backend declines inline arrays rather than lowering
-them to a heap list that would behave differently (chapter 14).
+Supported by the native backend (chapter 14).
 
 ---
 
@@ -440,7 +439,7 @@ const span: slice[u32] = ori.buffer.as_slice(pixels)
 
 ### Backend support
 
-Native only. The C backend declines `buffer` as `backend.buffer_unsupported`.
+Supported by the native backend (chapter 14).
 
 
 
@@ -462,7 +461,7 @@ try value                  -- unwrap or propagate from enclosing function
 ```
 
 Current status: `.or(fallback)` is accepted for `optional[T]` and
-`result[T, E]` in the checker, native backend, and C backend. The fallback is
+`result[T, E]` in the checker and native backend. The fallback is
 evaluated only when the receiver is `none` or `err(_)`. `.or_return()` is
 accepted as shorthand for propagation. The older `.or_return(expr)` form is
 not implemented.
@@ -696,7 +695,7 @@ Current implementation status:
 - `any[Trait]` values support structural equality via their runtime vtable;
   the concrete payload type still determines whether a meaningful equality
   operation exists.
-- Native and C/debug structural equality for `set[T]` and `map[K, V]` is
+- Native structural equality for `set[T]` and `map[K, V]` is
   implemented when keys/elements implement `Equatable` or builtin equality.
 
 | Type | Current `==` behavior |

@@ -26,7 +26,7 @@ Main entries:
 - `is_implemented_stdlib_module` / `implemented_stdlib_modules`: the importable
   module set, derived from the manifest plus `STDLIB_MODULE_ONLY_PATHS`.
 - `stdlib_runtime_symbol`: canonical-path → runtime symbol lookup (used by
-  `ori-hir::lower::stdlib_c_name` and the C backend).
+  `ori-hir::lower::stdlib_c_name`).
 
 Downstream crates must not keep parallel hardcoded lists. The driver
 (`pipeline::classify_stdlib_import`, `pipeline::append_stdlib_documentation`)
@@ -37,14 +37,13 @@ and HIR lowering (`lower::stdlib_c_name`) delegate to the manifest.
 - [ ] Add the canonical `ori.module.name` path to `STDLIB_RUNTIME_FUNCTIONS`.
 - [ ] Add aliases only when older code or ergonomic short names need them.
 - [ ] Set `native_runtime: true` through the `stdlib!` macro.
-- [ ] Set `c_backend_runtime: true` only when the C/debug backend really supports the call.
 - [ ] Add the semantic signature in `stdlib_func_sig`.
 - [ ] Add the native ABI in `stdlib_native_abi`.
 - [ ] Export the runtime symbol from `compiler/crates/ori-runtime/src/lib.rs`.
 - [ ] Declare or route the symbol in `compiler/crates/ori-codegen/src/native_backend.rs` only when the generic manifest path is not enough.
 - [ ] Add one typecheck test.
 - [ ] Add one native execution test.
-- [ ] Add a C/debug test only if `c_backend_runtime` is true.
+- [ ] Check AOT/JIT parity on the shared support surface.
 
 ## Add a pure compiler intrinsic
 
@@ -77,7 +76,6 @@ Module classification (Etapa 8.1 consolidation):
 
 Spec parity:
 
-- `spec_c_backend_matrix_matches_manifest_flags`
 - `spec_fs_and_json_contracts_match_stdlib_sig`
 
 If one fails, fix the manifest instead of patching the failing backend locally.

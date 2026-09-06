@@ -14,7 +14,7 @@ Define:
 - ownership and resource lifecycle;
 - complexity and allocation behavior;
 - platform differences;
-- native, JIT, and C/debug support;
+- native AOT/JIT support;
 - compatibility or experimental status.
 
 Check whether an existing operation already solves the problem. Do not create a second canonical name for convenience alone.
@@ -105,7 +105,7 @@ Every public operation documents failure, ownership, mutation, and platform beha
 - import/module discovery;
 - native AOT execution;
 - JIT execution;
-- C/debug support or explicit rejection;
+- explicit rejection of unsupported native behavior;
 - docs/LSP visibility.
 
 ### Managed values
@@ -161,7 +161,7 @@ Do not hide ownership or ABI semantics in an unreadable macro expansion. Generat
 - Is ownership explicit?
 - Are failure and cleanup defined?
 - Do AOT and JIT agree?
-- Is C/debug accurately classified?
+- Are unsupported native shapes explicitly classified?
 - Does LSP/docs export see it?
 - Does a duplicate fallback table appear anywhere?
 - Are security and performance costs understood?

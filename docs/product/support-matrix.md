@@ -20,7 +20,6 @@
 |---|---|---|
 | Cranelift native AOT | **Reference** | Semantic reference; produces native objects and linked executables/libraries |
 | Cranelift in-process JIT | **Supported / CI validated where packaged cdylib exists** | Shared language semantics with AOT; no linker required for ordinary `ori run` |
-| C emission | **Partial** | Synchronous debug/transpile subset; unsupported features must reject explicitly |
 | Bytecode VM | **Deferred / not a product** | Ori is AOT-first and does not define a bytecode compatibility contract |
 
 ## Target and package matrix
@@ -58,7 +57,7 @@ General rule:
 
 - native AOT defines reference behavior;
 - JIT matches the shared native surface;
-- C/debug support is explicit and partial;
+- unsupported native shapes must reject explicitly;
 - LSP/formatter support is required for public syntax where applicable.
 
 ## Installation prerequisites
