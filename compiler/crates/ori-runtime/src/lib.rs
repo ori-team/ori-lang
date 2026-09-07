@@ -12010,36 +12010,27 @@ unsafe fn stop_runtime_workers(timeout: Duration) -> bool {
 #[no_mangle]
 unsafe extern "C" fn ori_rt_init() -> i32 {
     ori_host_clear_error();
-    {
-        let mut lifecycle = match RUNTIME_LIFECYCLE.lock() {
-            Ok(state) => state,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        match *lifecycle {
-            RuntimeLifecycle::Running => return 0,
-            RuntimeLifecycle::Stopping => {
-                set_host_error_bytes(
-                    ORI_HOST_ERROR_INIT,
-                    b"runtime shutdown is still in progress; retry initialization later",
-                );
-                return -1;
-            }
-            RuntimeLifecycle::Stopped => {
-                *lifecycle = RuntimeLifecycle::Stopping;
-                RT_INIT_COUNT.store(1, Ordering::SeqCst);
-                RUNTIME_SHUTTING_DOWN.store(false, Ordering::Release);
-            }
+    let mut lifecycle = match RUNTIME_LIFECYCLE.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    match *lifecycle {
+        RuntimeLifecycle::Running => return 0,
+        RuntimeLifecycle::Stopping => {
+            set_host_error_bytes(
+                ORI_HOST_ERROR_INIT,
+                b"runtime shutdown is still in progress; retry initialization later",
+            );
+            return -1;
+        }
+        RuntimeLifecycle::Stopped => {
+            *lifecycle = RuntimeLifecycle::Stopping;
+            RT_INIT_COUNT.store(1, Ordering::SeqCst);
+            RUNTIME_SHUTTING_DOWN.store(false, Ordering::Release);
         }
     }
-    // Ensure ARC state exists (lazy on first alloc, but touch for predictability).
     let _ = ARC_STATE.get_or_init(|| Mutex::new(ArcState::default()));
-    // Explicit initialization is portable and also attaches the calling
-    // thread when a platform loader has already run the process constructor.
     if !crate::stack_guard::install() {
-        let mut lifecycle = match RUNTIME_LIFECYCLE.lock() {
-            Ok(state) => state,
-            Err(poisoned) => poisoned.into_inner(),
-        };
         *lifecycle = RuntimeLifecycle::Stopped;
         RT_INIT_COUNT.store(0, Ordering::SeqCst);
         set_host_error_bytes(
@@ -12048,10 +12039,6 @@ unsafe extern "C" fn ori_rt_init() -> i32 {
         );
         return -1;
     }
-    let mut lifecycle = match RUNTIME_LIFECYCLE.lock() {
-        Ok(state) => state,
-        Err(poisoned) => poisoned.into_inner(),
-    };
     *lifecycle = RuntimeLifecycle::Running;
     0
 }

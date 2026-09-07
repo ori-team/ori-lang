@@ -19,32 +19,59 @@ started: 2026-09-06
 
 ## Marco A — referência Rust reproduzível
 
-**Status:** `partial`, bloqueado por suíte em target limpo, staging/smoke isolado e integração CI. **DoD não satisfeito.** O subcritério de duas builds reproduzíveis está satisfeito neste ambiente para o candidato local **marco-a-paths-1**, não para a baseline b894. A divergência histórica da baseline e a causa original de E0460 permanecem registradas abaixo; a suíte do candidato passou em target reutilizado.
+**Status:** `partial`, com subcritérios locais de reprodução, staging e smoke isolado satisfeitos na branch `feat/selfhost-marco-a` (HEAD `34e5a0b`), mas **Marco A bloqueado e DoD não satisfeito**: suíte em target limpo teve falha flaky em `ori-embed` (37/38 no workspace limpo; passa 100% isolado), e PRs #12/#13 permanecem bloqueadas na integração CI (Linux/macOS falhos no upstream).
 
-**Evidência real, sem concluir Marco A:**
+**Evidência real da rodada (2026-09-07, HEAD 34e5a0b):**
 
-- Commit: `b894ca1` (`feat/retire-c-backend-optimize`).
-- Toolchain: `1.95.0` (`rust-toolchain.toml`).
-- Lockfile base A: `b10f6dde2650e23654cc0fb4327b41dcdc2e5efaf5c37cad1e5de20bfffff475`.
-- Comando worktree A concluído com `Finished release ... in 35m 40s`.
-- Comando worktree B concluído com `Finished release ... in 33m 44s`.
-- Hashes base B:
-  - `ori`: `441c48d9c795d6bc44ade0f03464f1141537e46203da9fe06c52a098c65ef0c2`
-  - `ori-lsp`: `7d728013df83965214e3de758b45e5fefa8f56e32813b7012972a2a6c17f804f`
-  - `libori_runtime.a`: `551ed843ee7965f6e451228fa22963a0587abc941558aa0d6f8a4593a2c00159`
-  - `libori_runtime.so`: `be04cd6220d5fc6c8f0926307412875d49c9a9ee31c04fb6627ed55ee43c2328`
-- Comparação: `cmp` falhou entre worktrees no byte 41 de `ori`; base A relatou outro hash para `ori`/`ori-lsp`; estáticas/dinâmicas coincidiram entre builds.
-- `cargo check --workspace --locked` passou; log `baa6ff1d07d8388ec998ff4a0eac7b944cbdd24a2211108b6e76085536c3fedd`.
-- `cargo clippy ... -- -D warnings` passou; log `fbe3422dd0f4dfa8d55f7413703eb36678d44cac865c5116e38b72fb6a82b885`.
-- `cargo check --manifest-path compiler/Cargo.toml --workspace --locked` passou; log `baa6ff1d07d8388ec998ff4a0eac7b944cbdd24a2211108b6e76085536c3fedd`.
-- `cargo clippy --manifest-path compiler/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings` passou; log `fbe3422dd0f4dfa8d55f7413703eb36678d44cac865c5116e38b72fb6a82b885`.
-- `cargo test --manifest-path compiler/Cargo.toml --workspace --locked` falhou somente no doctest `ori-driver` com `E0460` por metadata mista de `ori-runtime`; log `b67503f52689f1420beac2bc424f5d2f55ca1b57efdef8772460b65ae82645f8`.
-- Correção válida no caminho canônico: usar `cargo check/test/run --manifest-path compiler/Cargo.toml`, não `cargo --manifest-path ... check`.
-- PR de integração proposta: <https://github.com/ori-team/ori-lang/pull/12>.
-- CI da PR ainda não conclusivo: jobs Linux/macOS falharam, Windows pendentes, docs passou; sem logs de falha recuperáveis porque a execução ainda estava em andamento.
-- Primeiro commit local do plano: `ae8721d`; confirmação de publicação deve usar o estado remoto, não inferir sucesso de saída truncada.
+- Commit de referência local: `34e5a0ba3929f52e9b32f1cd649e47a656a845c4` (`feat/selfhost-marco-a`).
+- Diretório de validação autorizado pelo usuário: `/home/raillen/Documentos/Projetos/ori-bootstrap-validation` (107 GiB livres pós-execução; artefatos originais `source-a`/`source-b` e `target-a`/`target-b` rigorosamente preservados, não recompilados nem sobrescritos).
+- Verificação de proveniência (`validate-34e5a0b.py`, `provenance.json`): 904 arquivos do manifesto de snapshot validados em `source-a` e `source-b` contra `snapshot-manifest.json` (SHA256 `c374d77aa789bc29a658688b0655122ae3795360e35fcccca248af944aa11326`). A única divergência em relação ao commit `34e5a0b` foi este plano documental; nenhuma fonte de código diverge.
+- Confirmação dos 4 artefatos reproduzíveis A/B originais (preservados intactos):
+  - `ori`: `2190b77b0925b40eb2c023fcebc9f2809502a0ba057ef28c7da85de2ec665dca` (ambos A e B)
+  - `ori-lsp`: `38e0434f64f12b4860d618c9fdbc798c5b4ca2077cbcbe3f10ed20feb3be9520` (ambos A e B)
+  - `libori_runtime.a`: `551ed843ee7965f6e451228fa22963a0587abc941558aa0d6f8a4593a2c00159` (ambos A e B)
+  - `libori_runtime.so`: `be04cd6220d5fc6c8f0926307412875d49c9a9ee31c04fb6627ed55ee43c2328` (ambos A e B)
+- Target novo exclusivo de testes no diretório autorizado:
+  - `target-tests-clean`: executado com Rust `1.95.0`, `CARGO_BUILD_JOBS=1`, `CARGO_INCREMENTAL=0`, `CARGO_NET_OFFLINE=true`, `CARGO_PROFILE_DEV_DEBUG=0`, timeout 3600s, offline locked contra `x86_64-unknown-linux-gnu`.
+  - Resultado suíte completa `--no-fail-fast`: **1284 testes passaram**, 5 ignored, todos os 10 pacotes de doctests passaram (**0 erros** de doctest, sem `E0460`).
+  - Única falha no workspace em lote: `tests::callback_panic_becomes_a_structured_trap_and_does_not_escape_c_abi` em `ori-embed` (37/38 passaram no pacote). Causa investigada: concorrência/ordem de shutdown de leases do runtime JIT (`native.abi_mismatch: runtime initialization failed before JIT registration`). **Executado isoladamente em processo dedicado, o teste passa 100%** (log `embed-single.log`, SHA256 `cd01f64991b606e85916717dfb307b3fb29f409ac7664f8d62de2bf3ded841d0`).
+  - Log completo da suíte preservado: `workspace-clean-nofailfast.log` (SHA256 `d4a8469cf2dc45b63a14142b1ba61add1d0457ac9133ad679a91ed70252ad593`).
+- Staging oficial do runtime nativo concluído no diretório autorizado:
+  - Script oficial executado: `tools/stage_native_runtime.sh --target x86_64-unknown-linux-gnu --profile release --output-root .../validation-34e5a0b/stage-runtime --skip-bundle-lld`.
+  - Saída: `stage.log` (SHA256 `232f0499a9d425fb6a19b93852909f3c0aff6af0fb7857488de7cbb3db73edb7`), concluído em 3m47s com exit code 0.
+  - Artefatos staged e validados:
+    - `libori_runtime.a`: SHA256 `fc4cc45b828685fcab0475b9b9f6ddc54755a1871c3d153271b1e930bc34c7f7`
+    - `libori_runtime.so`: SHA256 `7d5040f9c6116a549899be0feed2ea31a4b410e4cf9268f30b5d4eebab99839b`
+    - `runtime-link.json`: SHA256 `decaac60e5f7f2f6e09e329f3b9e2d45043b81427abbdfd33ed14b9bc92d69b4`, versão `0.3.8`, ABI `ori-native-abi-1`, profile `release`, static libs `["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc", "-no-pie"]`.
+- Smoke nativo de pacote isolado AOT/JIT concluído com sucesso total:
+  - Script oficial executado: `tools/smoke_native_release.sh --package-root .../validation-34e5a0b/pkg-root --keep-package`.
+  - Saída: `smoke.log` (SHA256 `56dfd378e026effc5ecd63629a11f26ccf8274c81315de962e1c064fa1c99c55`).
+  - Verificações que passaram fora da árvore com `ORI_REQUIRE_PACKAGED_RUNTIME=1`:
+    - `ori compile examples/hello.orl` (AOT nativo via SystemLinker) executado -> saída `The answer is: 42`.
+    - `ori compile examples/async_demo.orl` (AOT assíncrono nativo) executado -> saída `42` / `50`.
+    - `ori compile examples/stdlib_package_smoke.orl` (stdlib empacotada) executado -> saída `hello packaged stdlib`.
+    - `ori compile examples/alias_package_smoke.orl` (aliases públicos stdlib) executado -> saída `alias ok`.
+    - `ori test examples/package_smoke_test.orl` -> 2 passed, 0 failed.
+    - `ori run examples/hello.orl` (JIT nativo com cdylib empacotada) -> saída `The answer is: 42`.
+    - `ori doctor` -> OK em todas as checagens de pacote (stdlib 74 módulos, runtime AOT, runtime JIT, SystemLinker).
+    - `tools/qa/lsp_protocol_smoke.py` handshake JSON-RPC do `ori-lsp` empacotado -> handshake concluído com sucesso.
+- Status das PRs upstream consultado via GitHub CLI (sem merge nem bypass):
+  - **PR #12** (`feat/retire-c-backend-optimize`, head `b894ca1`): `OPEN`, `UNSTABLE`. Checks concluídos: `linux-gnu` falhou (3m37s), `macos-aarch64` falhou (3m5s), `macos-x86_64` falhou (7m55s), `windows-msvc` falhou (timeout 6h), `windows-gnu` falhou (timeout 6h), docs passou (7s).
+  - **PR #13** (`feat/selfhost-marco-a`, head `34e5a0b`): `OPEN`, `UNSTABLE`. Checks concluídos: `linux-gnu` falhou em `Test runtime` (4m21s), `macos-aarch64` falhou em `Test native driver integration` (2m17s), `macos-x86_64` falhou em `Test native driver integration` (6m15s), docs passou (6s), Windows pendentes/em andamento.
 
-### Receita e ambiente registrados
+**Classificação e Bloqueadores restantes para fechar Marco A:**
+
+| Gate | Status | Detalhe |
+|---|---|---|
+| Builds reproduzíveis A/B | **Verificado local** | Hashes de `ori`, `ori-lsp`, `libori_runtime.a`, `libori_runtime.so` idênticos em `target-a` e `target-b` (HEAD 34e5a0b / candidato) |
+| Staging oficial runtime | **Verificado local** | `stage_native_runtime.sh` gerou staticlib + cdylib + metadata com hashes determinísticos em `stage-runtime/` |
+| Smoke isolado pacote AOT/JIT | **Verificado local** | `smoke_native_release.sh` passou completo com AOT, JIT, stdlib, aliases, tests, doctor e LSP handshake |
+| Suíte de testes em target limpo | **Pendente/Bloqueador** | 1284 testes passaram, doctests 100% verdes; 1 teste flaky em `ori-embed` sob concorrência em lote (passa isolado); necessária estabilização sem flakiness |
+| CI de integração upstream | **Bloqueador externo** | PR #12 e PR #13 têm jobs Linux e macOS com falhas nos runners do GitHub Actions; requer correção upstream nos workflows/testes CI antes de merge |
+
+Marco A permanece **em progresso** até que a suíte em lote passe 100% de forma determinística e a CI upstream esteja verde sem bypass.
+
+### Histórico da baseline b894 (registro arquivado)
 
 Duas worktrees detached limpas do commit `b894ca142f11e2e5c8cb69abeb5a3768ed35456a`: `/home/raillen/Documentos/Projetos/ori-selfhost-base-a` e `ori-selfhost-base-b`. `git status --short` vazio após a execução. Targets separados, sem outputs compartilhados. Cache de downloads Cargo compartilhado; não são duas máquinas independentes nem ambiente hermético. `/tmp` era tmpfs com 2,5 GiB livres; worktrees no disco com 120 GiB livres. Builds sequenciais, um job.
 
