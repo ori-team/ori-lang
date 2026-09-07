@@ -19,7 +19,7 @@ started: 2026-09-06
 
 ## Marco A — referência Rust reproduzível
 
-**Status:** `partial`, bloqueado por divergência binária, teste incompleto e CI. **DoD não satisfeito.** Caminhos absolutos na `.rodata` foram confirmados; E0460 não reapareceu na rota release focada, mas sua causa histórica e a suíte completa continuam abertas. Ver diagnóstico abaixo.
+**Status:** `partial`, bloqueado por suíte em target limpo, staging/smoke isolado e integração CI. **DoD não satisfeito.** O subcritério de duas builds reproduzíveis está satisfeito neste ambiente para o candidato local **marco-a-paths-1**, não para a baseline b894. A divergência histórica da baseline e a causa original de E0460 permanecem registradas abaixo; a suíte do candidato passou em target reutilizado.
 
 **Evidência real, sem concluir Marco A:**
 
@@ -84,6 +84,81 @@ PR de documentação confirmada remotamente: <https://github.com/ori-team/ori-la
 
 Validação adicional desta rodada, na worktree A: `env RUSTUP_TOOLCHAIN=1.95.0 CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 timeout 120 cargo check --manifest-path compiler/Cargo.toml --workspace --locked` passou (1m04s); mesmo ambiente com `timeout 120 cargo clippy --manifest-path compiler/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings` passou (1m40s). Logs `/tmp/opencode/selfhost-check-diagnostic.log` e `selfhost-clippy-diagnostic.log`, SHA256 `d7ef31ad12924b2d5eb893c193f6639d6adc0bf76d6dbea524e8982804c5d74e` / `4989c9d94c3e4cb3701c5830748b50a18a0238502ff0f55c0fb786c3172b609c`. Log do doctest final SHA256 `c1a6e3cb8b69719bb352bc02f9f32ea79ee663a6009a0f32f9346e57302cb01e`. `git diff --check` passou. Alteração desta rodada é somente documentação; nenhuma correção de runtime, ABI, semântica ou performance foi entregue.
 
+### Candidato local de correção — retomada de 2026-09-06
+
+Candidato **marco-a-paths-1**, não baseline b894: HEAD `02c462db3957e6054634a9dd69ee239b424e740f` mais alterações não commitadas em `compiler/crates/ori-driver/build.rs`, `tests/build_paths.rs`, `src/pipeline/project.rs` e `src/pipeline/runtime.rs` (caminhos dos três últimos relativos ao crate). Nenhum commit/push nesta retomada. O diff parcial foi lido e preservado, incluindo os dois arquivos ainda não rastreados.
+
+Correção: o build script aplica `--remap-path-prefix` de `CARGO_ENCODED_RUSTFLAGS` ao manifest incorporado, preservando builds dev sem remap. Descoberta de stdlib reutiliza a raiz do runtime. A retomada corrigiu a descoberta a partir da raiz do repositório e subdiretórios fora de `compiler`, inclusive com target externo; regressão cobre esses caminhos, layouts de target e diretório não relacionado. Descoberta de pacote e overrides existentes não foram removidos. Não houve mudança no runtime Rust, ABI, frontend selfhost ou suporte Cranelift. Sem promessa de performance.
+
+Antes de recompilar, `sha256sum` dos oito artefatos A/B existentes confirmou exatamente os hashes históricos: executáveis diferentes e ambos os runtimes iguais. Logs anteriores em `/tmp/opencode/selfhost-candidate-195-tests.log` também foram inspecionados; não tratados como validação do novo diff.
+
+Comandos desta retomada, na raiz de `ori-lang`, todos concluídos com sucesso:
+
+```sh
+env RUSTUP_TOOLCHAIN=1.95.0 cargo fmt --manifest-path compiler/Cargo.toml --all --check
+env RUSTUP_TOOLCHAIN=1.95.0 CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 timeout 1800 cargo check --manifest-path compiler/Cargo.toml --workspace --all-targets --all-features --locked
+env RUSTUP_TOOLCHAIN=1.95.0 CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 timeout 1800 cargo clippy --manifest-path compiler/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
+env RUSTUP_TOOLCHAIN=1.95.0 CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 timeout 2400 cargo test --manifest-path compiler/Cargo.toml --workspace --locked
+env RUSTUP_TOOLCHAIN=1.95.0 CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 RUSTFLAGS=--remap-path-prefix=/home/raillen/Documentos/Projetos/ori-lang=/ori-source timeout 2400 cargo test --manifest-path compiler/Cargo.toml -p ori-driver --lib --test build_paths --test stdlib_fallback --test diagnostic_catalog --locked
+git diff --check
+```
+
+Check 52,31 s; clippy 42,16 s. Workspace completo passou incluindo LSP, catálogo e doctests; E0460 não reapareceu, mas o target foi reutilizado, não limpo. Testes com remap real: 83 unitários driver, 1 build_paths, 3 catálogo e 1 stdlib_fallback passaram, incluindo raízes dev e metadata de pacote.
+
+Logs em `/tmp/opencode/` e SHA256:
+
+| Log | SHA256 |
+|---|---|
+| `selfhost-resume-check.log` | `d74e292019f3a5d137f6fe13dfc91559018dc7007411b9eb4c6ce3a28b022e09` |
+| `selfhost-resume-clippy.log` | `305a434f9e94e1fdff1145fd58e276e3041957e2afd519a257880800f1e051aa` |
+| `selfhost-resume-workspace.log` | `e127af812dcc453d9221aa14d5a988d58fb43f9fe02fa12948ef8cd012ce3596` |
+| `selfhost-resume-remapped.log` | `59bd4ecdf50129dd9e6ba519d43cc07e1c692edcddabfa17054f85568f82b15e` |
+
+**Fatia implementada e validada, Marco A ainda bloqueado.** Na retomada de testes acima ainda faltava a dupla release; a evidência concluída abaixo satisfaz esse subcritério para o candidato/ambiente. Suíte em target limpo, staging/smoke AOT/JIT isolado e integração CI permanecem pendentes. CI não foi reconsultada. Nenhuma impossibilidade técnica foi demonstrada; esses gates não foram dispensados.
+
+### Duas builds concluídas — candidato marco-a-paths-1
+
+**Subcritério builds/reprodução satisfeito neste ambiente e neste candidato. Marco A não completo.** Leitura de `/home/raillen/Documentos/Projetos/ori-bootstrap-validation/build-a.json`, `build-b.json` e `snapshot.sha256` confirma ambas com `exit_code: 0`, A **1496.240 s**, B **1250.343 s**, e SHA256 iguais dos quatro artefatos originais, sem strip ou normalização pós-build.
+
+**Entradas congeladas, mas snapshot Git sujo:** HEAD `02c462db3957e6054634a9dd69ee239b424e740f` mais alterações locais, não checkout limpo da baseline `b894ca142f11e2e5c8cb69abeb5a3768ed35456a`. No diretório autorizado `/home/raillen/Documentos/Projetos/ori-bootstrap-validation`, `source-state.txt` identifica modificações em `compiler/crates/ori-driver/src/pipeline/project.rs`, `compiler/crates/ori-driver/src/pipeline/runtime.rs`, `docs/operations/reproducible-builds.md` e neste plano, além dos **untracked** `compiler/crates/ori-driver/build.rs` e `compiler/crates/ori-driver/tests/build_paths.rs`. `candidate.diff` registra o diff rastreado, não o conteúdo dos untracked; `snapshot-manifest.json` inventaria caminhos, SHA256, modos e tamanhos, incluindo ambos os untracked, copiados para as duas fontes. O manifesto identifica o snapshot anterior a esta atualização documental, não o workspace atual.
+
+- Manifesto: `/home/raillen/Documentos/Projetos/ori-bootstrap-validation/snapshot-manifest.json`; SHA256 registrado em `snapshot.sha256`: `c374d77aa789bc29a658688b0655122ae3795360e35fcccca248af944aa11326`.
+- Lockfile `compiler/Cargo.lock`: `b10f6dde2650e23654cc0fb4327b41dcdc2e5efaf5c37cad1e5de20bfffff475`.
+- Fontes distintas: `/home/raillen/Documentos/Projetos/ori-bootstrap-validation/source-a` e `/home/raillen/Documentos/Projetos/ori-bootstrap-validation/source-b`.
+- Targets inicialmente inexistentes, exigidos por `build.py`: `/home/raillen/Documentos/Projetos/ori-bootstrap-validation/target-a` e `/home/raillen/Documentos/Projetos/ori-bootstrap-validation/target-b`. Artefatos em `x86_64-unknown-linux-gnu/release/` sob cada target.
+- Rust `1.95.0`, commit `59807616e1fa2540724bfbac14d7976d7e4a3860`, LLVM `22.1.2`; Cargo `1.95.0 (f2d3ce0bd)`; GCC `16.2.1 20260810`; GNU ld `2.47`.
+- Ambiente explícito: `HOME=/home/raillen`, `PATH=/home/raillen/.cargo/bin:/usr/bin:/bin`, `RUSTUP_TOOLCHAIN=1.95.0`, `LANG=C`, `LC_ALL=C`, `TZ=UTC`, `CARGO_BUILD_JOBS=1`, `CARGO_INCREMENTAL=0`, `CARGO_NET_OFFLINE=true`. `CARGO_TARGET_DIR` aponta para o target correspondente; `RUSTFLAGS` remapeia a fonte correspondente para `/ori-source` e o target para `/ori-target`.
+
+| Artefato | SHA256 comum A/B |
+|---|---|
+| `ori` | `2190b77b0925b40eb2c023fcebc9f2809502a0ba057ef28c7da85de2ec665dca` |
+| `ori-lsp` | `38e0434f64f12b4860d618c9fdbc798c5b4ca2077cbcbe3f10ed20feb3be9520` |
+| `libori_runtime.a` | `551ed843ee7965f6e451228fa22963a0587abc941558aa0d6f8a4593a2c00159` |
+| `libori_runtime.so` | `be04cd6220d5fc6c8f0926307412875d49c9a9ee31c04fb6627ed55ee43c2328` |
+
+Logs preservados no mesmo diretório autorizado:
+
+| Log | SHA256 |
+|---|---|
+| `build-a.log` | `00452bcd4167c66d27cf3a9d0bb0e58205dabc21f043812a3d9a22316584321d` |
+| `build-b.log` | `ce46458317ba26824f124cbe606e97225cebff5733121ce7651026d794daa5cc` |
+
+Receita dos scripts existentes, **não reexecutada nesta atualização**:
+
+```sh
+python3 /home/raillen/Documentos/Projetos/ori-bootstrap-validation/snapshot.py
+python3 /home/raillen/Documentos/Projetos/ori-bootstrap-validation/build.py a
+python3 /home/raillen/Documentos/Projetos/ori-bootstrap-validation/build.py b
+```
+
+`snapshot.py` exige `source-a`/`source-b` ausentes e lê o workspace vivo; só reproduz estas entradas se seu conteúdo corresponder ao manifesto registrado. `build.py` exige o target correspondente ausente e cria o log exclusivamente. Os caminhos já estão ocupados pela evidência: preservar fontes, targets, manifesto, JSONs e logs antes de preparar qualquer repetição; não apagar ou sobrescrever esta rodada. Para repetir apenas builds, usar as fontes congeladas verificadas e preparar novos outputs sem perder os atuais. Cada chamada executa, com cwd na fonte correspondente e ambiente acima:
+
+```sh
+cargo build --manifest-path compiler/Cargo.toml --workspace --release --locked --offline --target x86_64-unknown-linux-gnu
+```
+
+Limites: mesma máquina, ferramentas e cache de downloads Cargo; targets separados não constituem reconstrução independente/hermética. `--offline` limita Cargo, não demonstra isolamento de rede do sistema. A igualdade cobre estes quatro artefatos, não pacote, `runtime-link.json`, símbolos/ABI, ausência de todo caminho local ou correctness. Tempos são observações, não ganho de performance. Baseline b894 continua historicamente divergente; o candidato sujo ainda não é referência integrada. Faltam suíte em target limpo, staging staticlib/cdylib com metadata/provenance e smoke AOT/JIT fora da árvore sem fallback, CI verde da integração e preservação durável da evidência local. Nenhum commit/push, staging ou smoke foi executado nesta atualização.
+
 ### Integração segura
 
 `main`/`origin/main`: `a920bc0`. Branch de trabalho: `feat/selfhost-marco-a`, baseada em b894ca1 sem merge remoto. Nenhuma branch ou stash apagada. `origin/master` e `origin/legacy-master-backup` excluídas como histórico. Branches de rename/QA/fix têm patches equivalentes já incorporados. `feat/consolidate-all-open-prs` tem b35b2d7/940935b superados pelo inlining conservador e remoção C de b894ca1; não reintroduzir. `fix/ci-linux-link-and-c-any-adapter` contém patch do backend C removido e hashes antigos de runtime; excluído. PR #12 aguarda gates; não houve bypass.
@@ -91,13 +166,13 @@ Validação adicional desta rodada, na worktree A: `env RUSTUP_TOOLCHAIN=1.95.0 
 
 **Bloqueadores para concluir A:**
 
-- Reproduzir segunda build byte-idêntica antes de declarar referência.
+- Promover o candidato identificado a referência integrada verificável; a dupla byte-idêntica já satisfaz o subcritério builds/reprodução no ambiente local, não fecha Marco A.
 - Reexecutar workspace limpo após `E0460` e obter resultado verde rastreável.
 - Obter CI verde na integração antes de merge.
 - Persistir runtime staged com hashes, provenance e smoke isolado.
 - Documentar variâncias remanescentes segundo operações de builds reproduzíveis.
 
-**Sem claim de self-host pronto:** fingerprint de fonte ou build ainda não está completo/verde.
+**Sem claim de self-host pronto:** manifesto de fonte e hashes de build do candidato estão registrados; validação e integração da referência ainda não estão completas/verdes.
 
 ## Marcos restantes
 
@@ -105,7 +180,7 @@ Os artefatos de Marco A vivem nesta seção; não repetir binários grandes no r
 
 | ID | Marco/tarefa | Entradas e dependências | Effort | Status |
 |---|---|---|---:|---|
-| SH-BASE01 | Reprodutibilidade de referência: duas builds limpas `1.95.0`, lockfile, hashes, provenance | stage0 fixado; toolchain/lock/target | M | `blocked` |
+| SH-BASE01 | Reprodutibilidade de referência: duas builds limpas `1.95.0`, lockfile, hashes, provenance; subcritério builds/reprodução satisfeito no candidato marco-a-paths-1/ambiente local, referência integrada pendente | stage0 fixado; toolchain/lock/target | M | `in_progress` |
 | SH-BASE02 | Runtime AOT/JIT staged a partir das entradas verificadas | SH-BASE01 | S | `todo` |
 | SH-BASE03 | Corpus e baseline de testes/goldens da referência | SH-BASE01/02 | M | `todo` |
 | CONTRACT01 | Contrato versionado do protocolo host/processo e fronteira IR | SH-BASE01 | L | `todo` |

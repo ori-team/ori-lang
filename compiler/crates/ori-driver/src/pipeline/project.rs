@@ -1546,8 +1546,7 @@ pub fn find_stdlib_root() -> Option<PathBuf> {
         return None;
     }
 
-    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dev_candidate = manifest_root.join("../../../stdlib");
+    let dev_candidate = super::runtime::repo_root().join("stdlib");
     if let Some(root) = dir_if_stdlib(dev_candidate) {
         return Some(root);
     }

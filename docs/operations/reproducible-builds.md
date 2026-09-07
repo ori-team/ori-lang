@@ -72,6 +72,10 @@ Use a documented clean environment with:
 
 Containers or declarative CI images may improve reproducibility but do not replace recording the underlying versions.
 
+For source-root normalization, pass `RUSTFLAGS="--remap-path-prefix=<absolute-checkout-root>=/ori-source"` to Cargo. The driver build script also applies these mappings to its embedded development manifest path; rustc does not remap `env!("CARGO_MANIFEST_DIR")` string values itself. Both joined and separate flag arguments are supported, with the last matching mapping winning. Without a mapping, ordinary development builds retain their original manifest path.
+
+Remapped builds discover development workspaces through executable and current-directory ancestors, including repository roots and nested example directories. Packaged stdlib/runtime discovery and explicit environment overrides remain available. For an external target directory and an unrelated current directory, use the documented stdlib/runtime overrides or a complete package; the normalized source path is not a locator for the original checkout. Package smoke must run outside a source tree without those development overrides.
+
 ## Runtime artifacts
 
 For each target:
