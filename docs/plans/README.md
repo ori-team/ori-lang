@@ -15,7 +15,7 @@ docs/plans/
 
 ## Active plans
 
-There are currently no active ExecPlans.
+- [Self-host gradual](active/selfhost-exec-plan.md) — accepted RFC-0001; Marco A partial/blocked, no lexer implementation.
 
 The completed documentation-history migration is preserved at:
 

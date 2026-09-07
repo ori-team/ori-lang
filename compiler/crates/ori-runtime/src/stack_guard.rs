@@ -389,4 +389,39 @@ mod tests {
         assert!(can_uninstall_from_current_thread());
         unsafe { uninstall() };
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn concurrent_ori_rt_init_is_idempotent_from_stopped() {
+        let _guard = SIGNAL_TEST_LOCK.lock().unwrap();
+        {
+            let mut lifecycle = match crate::RUNTIME_LIFECYCLE.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *lifecycle = crate::RuntimeLifecycle::Stopped;
+        }
+        crate::RT_INIT_COUNT.store(0, Ordering::SeqCst);
+        crate::RUNTIME_SHUTTING_DOWN.store(false, Ordering::Release);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let mut handles = Vec::with_capacity(8);
+        for _ in 0..8 {
+            let barrier = std::sync::Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || unsafe {
+                barrier.wait();
+                let result = crate::ori_rt_init();
+                ori_rt_thread_detach();
+                result
+            }));
+        }
+        for handle in handles {
+            assert_eq!(handle.join().unwrap(), 0);
+        }
+        let lifecycle = match crate::RUNTIME_LIFECYCLE.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        assert_eq!(*lifecycle, crate::RuntimeLifecycle::Running);
+        assert_eq!(crate::RT_INIT_COUNT.load(Ordering::SeqCst), 1);
+    }
 }

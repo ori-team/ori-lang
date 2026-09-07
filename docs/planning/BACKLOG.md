@@ -17,7 +17,7 @@
 **Until language + docs/examples + performance are solid, do not prioritize:**
 
 - Multi-OS packages / marketplace / registry marketing (DIST-*, TOOL marketplace, ECO demos)
-- Self-host (M4)
+- Self-host (M4): reopened by user acceptance on 2026-09-06 for planning and Marco A only; [RFC-0001](../rfcs/0001-selfhost-gradual.md), [execution evidence](../plans/active/selfhost-exec-plan.md). Not completed.
 
 **LANG-PERF-2 performance work landed, but optimizer correctness is reopened**
 (mid-end + list reserve; see
@@ -264,7 +264,7 @@ only then revisit self-hosting.
 | **RUNTIME-ARC-1** | Native string/ARC lifetime aborts in the full multifile suite | 1 | M | **done** | **2026-07-26:** the managed `optional` wrapper both registered its payload as an ARC edge and released that payload manually in its destructor. The generic ARC cascade then released the same edge again. The wrapper now relies exclusively on the registered edge, matching the single-cascade-owner contract. Runtime, AOT, and JIT regressions cover `path.relative("a/b/c", "a/b")`; S4 passes all 364 `multifile_imports` tests. |
 | **RUST-QUALITY-1** | Restore a warning-free strict Clippy gate | 2 | L | **done** | **2026-09-01:** workspace check, strict Clippy (`--all-targets --all-features`), full `cargo fmt --all -- --check`, and the required `daily_fast.sh` stages are green. |
 | **PROJ-LINUX-1** | Medium real-world Linux project | 2 | L | **done** | 5 — `examples/linux_log_report` exercises multi-module loading, filesystem results, CLI arguments, native run, and a standalone test module on Linux |
-| **M4** | Self-hosting | 4 | XL | deferred | 6 — only after the previous rows and a stable stdlib/ABI window |
+| **M4** | Self-hosting | 4 | XL | partial — planning started | Accepted 2026-09-06; Marco A blocked, no lexer; [plan](../plans/active/selfhost-exec-plan.md) |
 
 **Audit checkpoint (2026-07-26):** the normative grammar now matches the
 implemented S3 spellings for selective-import aliases (`=`) and result
@@ -509,7 +509,7 @@ Do **not** pull these into “what’s next” until the user re-opens them:
 |----|------|-------|
 | DIST-1…4 | Multi-OS packages (Win/macOS), smoke matrix | **CI multi-OS packaging** in `release.yml` + smoke-no-rust Win/mac (2026-07-14); publish on `v*` tags |
 | ECO-1 / ECO-2 | External demos / community extras | **Out of scope** for this repository |
-| M4 | Self-hosting | **Deferred 2026-07-26:** revisit only after compiler/runtime modularization, stable stdlib/ABI contracts, reproducible bootstrap and a no-breaking-change window; not required for user utility |
+| M4 | Self-hosting | **Reopened 2026-09-06:** accepted direction, planning started; Marco A partial/blocked. See active row and plan above. Not completed; not required for user utility. |
 
 ### Cancelled this wave
 

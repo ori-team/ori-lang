@@ -483,6 +483,20 @@ canonical_documents:
     audience: [contributor, maintainer, agent]
     owns: [decision-retire-c-backend, pipeline-reference-rust-native, self-host-target]
 
+  - id: rfc.selfhost-gradual
+    path: docs/rfcs/0001-selfhost-gradual.md
+    domain: governance
+    status: accepted
+    audience: [contributor, maintainer, agent]
+    owns: [selfhost-design]
+
+  - id: plans.selfhost
+    path: docs/plans/active/selfhost-exec-plan.md
+    domain: planning
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [selfhost-execution-evidence]
+
   - id: plans.index
     path: docs/plans/README.md
     domain: planning
