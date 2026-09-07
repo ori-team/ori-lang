@@ -54,7 +54,7 @@ Describe inference, traits, generics, control flow, evaluation order, and cleanu
 
 ## Runtime and ABI
 
-Describe representation, ownership, symbols, layouts, AOT/JIT, and C/debug support.
+Describe representation, ownership, symbols, layouts, native AOT/JIT support, and FFI compatibility.
 
 ## Tooling
 

@@ -9,7 +9,7 @@ a redirect — no test files should be added here.
 | Suite | Path | Coverage |
 |---|---|---|
 | `ori_spec` | `compiler/crates/ori-driver/tests/ori_spec.rs` | Language spec: lexer, parser, type checker, diagnostics, runtime semantics |
-| `multifile_imports` | `compiler/crates/ori-driver/tests/multifile_imports.rs` | Multi-file imports, stdlib execution (native + C backend), bytes/string/collections/JSON/fs |
+| `multifile_imports` | `compiler/crates/ori-driver/tests/multifile_imports.rs` | Multi-file imports, native stdlib execution, bytes/string/collections/JSON/fs |
 | `concurrency_async` | `compiler/crates/ori-driver/tests/concurrency_async.rs` | Async/await, task.spawn, channels, cancel tokens, using+async dispose |
 | `memory_arc` | `compiler/crates/ori-driver/tests/memory_arc.rs` | ARC retain/release, cycle collector, leak check, struct/enum/tuple destructors |
 | `method_resolution` | `compiler/crates/ori-driver/tests/method_resolution.rs` | Trait/impl method resolution, inherent vs trait methods |

@@ -93,7 +93,7 @@ Polyglot harness (sources + runner): [`tools/bench/polyglot/`](../tools/bench/po
 | Traits | `import ori.core = core` · `apply Type` + `use core.Displayable` |
 | Pipe | `x \|> f` (kept; typed as `f(x)`) |
 | Local inference | option B: field / index / call / pipe when type is known |
-| Async | `async main()` + `await` (native); C/debug rejects async |
+| Async | `async main()` + `await` (native AOT/JIT) |
 | Project | `ori.proj` + recommended `main.orl` at project root |
 
 Full contract: [spec/01-overview.md](spec/01-overview.md). Migration from pre-S3: `ori migrate-syntax`.

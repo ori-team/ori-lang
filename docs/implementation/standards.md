@@ -295,7 +295,7 @@ Before merge, reviewers should be able to answer:
 - Are invariants preserved?
 - Is there a competing source of truth?
 - Can invalid input reach `unsafe` or codegen unexpectedly?
-- Are AOT, JIT, C/debug, LSP, formatter, docs, and packages affected?
+- Are AOT, JIT, LSP, formatter, docs, and packages affected?
 - Are tests strong enough to catch the original defect or contract drift?
 - Is the diff one coherent unit?
 - Is any new abstraction justified by current use?

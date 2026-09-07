@@ -172,13 +172,15 @@ cargo test -p ori-types --lib stdlib
 
 Use quando mudar tipos, stdlib manifest, constraints, generics ou diagnosticos semanticos.
 
-### Codegen nativo e C debug
+### Codegen nativo AOT/JIT
 
 ```bash
 cargo test -p ori-codegen
 ```
 
-Use quando mudar Cranelift, linker, JIT, C debug backend ou runtime symbols.
+Use quando mudar Cranelift, linker, JIT, headers C FFI ou runtime symbols.
+Valide a paridade AOT/JIT na superfície compartilhada; sanitizers do host C/FFI
+continuam separados da instrumentação do código nativo gerado.
 
 ### Runtime
 
@@ -222,7 +224,7 @@ Rode uma suite isolada quando a mudanca for focada.
 | Suite | Comando | Quando usar |
 | --- | --- | --- |
 | `ori_spec` | `cargo test -p ori-driver --test ori_spec` | Sintaxe, tipos, statements, generics e contrato geral da linguagem. |
-| `multifile_imports` | `cargo test -p ori-driver --test multifile_imports` | Imports, stdlib `.orl`, projetos multi-arquivo, C backend e features transversais. |
+| `multifile_imports` | `cargo test -p ori-driver --test multifile_imports` | Imports, stdlib `.orl`, projetos multi-arquivo, compilação nativa e features transversais. |
 | `concurrency_async` | `cargo test -p ori-driver --test concurrency_async` | `async`, `await`, task, channel, atomic, cancelamento e formatter async. |
 | `memory_arc` | `cargo test -p ori-driver --test memory_arc` | ARC, destrutores, cycle collector e leak-check. |
 | `jit_run` | `cargo test -p ori-driver --test jit_run` | `ori run` via JIT e fallback default. |

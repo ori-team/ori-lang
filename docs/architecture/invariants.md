@@ -35,7 +35,7 @@ An invariant is stronger than a coding preference. A change that violates one re
 ## Backend invariants
 
 - The Cranelift native backend is the semantic reference.
-- The C/debug backend must explicitly reject unsupported behavior instead of silently generating different semantics.
+- Unsupported native shapes must be rejected explicitly instead of silently generating different semantics.
 - AOT and JIT must agree on accepted behavior, values, failures, cleanup, and runtime symbol contracts for their shared support surface.
 - Optimization may change performance but not observable semantics.
 - Optimization passes must preserve type and control-flow validity.

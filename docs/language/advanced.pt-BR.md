@@ -191,5 +191,6 @@ apply RecursoNativo: core.Destructor
 end
 ```
 
-HKTs, move explícito, layouts diretos de collections na ABI e paridade completa
-do backend C continuam fora do contrato estável.
+HKTs, move explícito e layouts diretos de collections na ABI continuam fora do
+contrato estável. O suporte nativo AOT/JIT está documentado na
+[matriz de backends](../spec/14-backend-support.md).

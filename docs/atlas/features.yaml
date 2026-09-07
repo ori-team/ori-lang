@@ -222,7 +222,7 @@ features:
   - id: stdlib.core
     name: Standard library runtime and source modules
     status: partial
-    implementation: [compiler/crates/ori-types/src/stdlib.rs, compiler/crates/ori-runtime/src/lib.rs, compiler/crates/ori-codegen/src/c_backend.rs, stdlib]
+    implementation: [compiler/crates/ori-types/src/stdlib.rs, compiler/crates/ori-runtime/src/lib.rs, compiler/crates/ori-codegen/src/native_backend.rs, stdlib]
     tests: [compiler/crates/ori-runtime/src/tests.rs, compiler/crates/ori-driver/tests/multifile_imports.rs]
     user_docs: [docs/guides/stdlib-reference.md, stdlib/README.md]
     reference: [docs/spec/12-stdlib.md, docs/spec/15-stdlib-maintenance.md]

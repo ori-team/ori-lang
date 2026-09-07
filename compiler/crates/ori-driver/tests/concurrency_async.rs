@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ori_driver::pipeline::{run_build, run_check, run_compile, run_fmt, run_test, CheckOutput};
+use ori_driver::pipeline::{run_check, run_compile, run_fmt, run_test, CheckOutput};
 
 static NEXT_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -2210,35 +2210,6 @@ end
     assert_eq!(stdout.trim(), "1");
 }
 
-#[test]
-fn c_backend_rejects_async_functions() {
-    let dir = TestDir::new("c_backend_rejects_async_functions");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-async main()
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.has_errors, "{:?}", out.diagnostics);
-    let text = out
-        .diagnostics
-        .iter()
-        .flat_map(|diagnostic| {
-            std::iter::once(diagnostic.message.as_str())
-                .chain(diagnostic.notes.iter().map(|note| note.as_str()))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        text.contains("C backend does not support async functions yet; use the native backend"),
-        "{text}"
-    );
-}
-
 /// LANG-1: non-async permanent exclusion — `for` without iterator ABI → native_unsupported.
 #[test]
 fn compile_rejects_for_iterable_without_native_abi() {
@@ -2397,38 +2368,6 @@ end
     assert!(
         !digits.is_empty() && digits != "0",
         "expected non-zero total from residual surface, stdout={stdout:?}"
-    );
-}
-
-#[test]
-fn c_backend_rejects_concurrency_runtime_calls() {
-    let dir = TestDir::new("c_backend_rejects_concurrency");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.task = task
-
-main()
-    task.block_on(task.sleep(1))
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.has_errors, "{:?}", out.diagnostics);
-    let text = out
-        .diagnostics
-        .iter()
-        .flat_map(|diagnostic| {
-            std::iter::once(diagnostic.message.as_str())
-                .chain(diagnostic.notes.iter().map(|note| note.as_str()))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        text.contains("C backend does not support concurrency/async runtime calls yet"),
-        "{text}"
     );
 }
 

@@ -227,11 +227,6 @@ enum Commands {
         #[arg(long)]
         native_raw: bool,
     },
-    /// Emit secondary debug artifacts.
-    Emit {
-        #[command(subcommand)]
-        action: EmitAction,
-    },
     /// Report environment, stdlib, and native runtime health.
     Doctor,
     /// Update the Ori toolchain to the latest published release.
@@ -283,18 +278,6 @@ enum Commands {
         /// Keep process alive and accept requests on stdin.
         #[arg(long)]
         stdio: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum EmitAction {
-    /// Emit C source through the partial debug backend.
-    C {
-        /// Path to the `.orl` source file.
-        file: PathBuf,
-        /// Write generated C to this file instead of stdout.
-        #[arg(short, long)]
-        out: Option<PathBuf>,
     },
 }
 
@@ -925,33 +908,6 @@ fn run_cli() {
             }
         }
 
-        Commands::Emit { action } => match action {
-            EmitAction::C { file, out } => match pipeline::run_emit_c(file) {
-                Err(e) => {
-                    eprintln!("ori: {}", e);
-                    process::exit(2);
-                }
-                Ok(build) => {
-                    let errors = build.diagnostics.iter().filter(|d| d.is_error()).count();
-                    let warnings = build.diagnostics.len() - errors;
-                    emit::render_all(&build.cache, &build.diagnostics, color);
-                    emit::print_summary(errors, warnings, color);
-                    if !build.has_errors {
-                        match out {
-                            Some(p) => {
-                                std::fs::write(p, &build.c_source).unwrap_or_else(|e| {
-                                    eprintln!("ori: {}", e);
-                                    process::exit(2);
-                                });
-                            }
-                            None => print!("{}", build.c_source),
-                        }
-                    }
-                    process::exit(if build.has_errors { 1 } else { 0 });
-                }
-            },
-        },
-
         Commands::Doctor => {
             let report = pipeline::run_doctor();
             for check in &report.checks {
@@ -1341,11 +1297,7 @@ mod tests {
             .expect("build subcommand should exist")
             .render_long_help()
             .to_string();
-        let emit_help = command
-            .find_subcommand_mut("emit")
-            .expect("emit subcommand should exist")
-            .render_long_help()
-            .to_string();
+        assert!(command.find_subcommand("emit").is_none());
         let run_help = command
             .find_subcommand_mut("run")
             .expect("run subcommand should exist")
@@ -1376,7 +1328,6 @@ mod tests {
         assert!(test_help.contains("native runtime"), "{test_help}");
         assert!(build_help.contains("native backend"), "{build_help}");
         assert!(build_help.contains("--native-raw"), "{build_help}");
-        assert!(emit_help.contains("debug artifacts"), "{emit_help}");
         assert!(
             run_help.contains("Compile and run an Ori source file"),
             "{run_help}"

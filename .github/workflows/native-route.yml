@@ -87,10 +87,6 @@ jobs:
       - name: Test diagnostic catalog
         run: cargo test -p ori-driver --test diagnostic_catalog --locked
 
-      - name: Test C backend under sanitizers
-        if: matrix.name == 'linux-gnu'
-        run: ORI_REQUIRE_C_SANITIZERS=1 cargo test -p ori-driver --test c_backend_sanitizers --locked -- --nocapture
-
       - name: Validate documentation coverage and examples
         if: matrix.name == 'linux-gnu'
         working-directory: ${{ github.workspace }}
@@ -299,7 +295,6 @@ jobs:
       - name: Smoke — package without Rust
         run: |
           sh tools/smoke_no_rust.sh --package-root ~/ori-smoke
-
   smoke-no-rust-macos-arm:
     name: smoke-no-rust (macos-aarch64)
     needs: native-route
@@ -336,12 +331,3 @@ jobs:
       - name: Smoke — package without Rust
         run: |
           sh tools/smoke_no_rust.sh --package-root ~/ori-smoke
-
-  compat-status-check-bridge:
-    name: "Em Required status checks, adicione: native-route / linux-gnu + Validate canonical docs"
-    needs: [native-route]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Acknowledge required status checks
-        run: echo "Status check bridge satisfied"

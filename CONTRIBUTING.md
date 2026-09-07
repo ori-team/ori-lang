@@ -45,7 +45,7 @@ Important rules:
 - preserve native symbols and ABI layouts during refactoring;
 - isolate and document `unsafe` code;
 - keep AOT and JIT behavior aligned;
-- explicitly classify C/debug support;
+- explicitly classify unsupported native behavior;
 - do not combine broad refactoring with unrelated language changes;
 - do not add external product ecosystems to the core repository without a decision.
 
@@ -59,7 +59,7 @@ Every user-visible feature needs evidence appropriate to its path, which may inc
 - diagnostic catalog coverage;
 - formatter tests;
 - AOT and JIT execution;
-- C/debug support or explicit rejection;
+- explicit rejection of unsupported native shapes;
 - multifile, stdlib, or package tests;
 - runtime/ARC tests;
 - LSP tests;

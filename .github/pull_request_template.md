@@ -63,7 +63,7 @@ Check applicable evidence:
 - [ ] Formatter/tooling/LSP evidence
 - [ ] Native AOT execution
 - [ ] JIT execution
-- [ ] C/debug support or explicit rejection
+- [ ] Explicit rejection of unsupported native behavior
 - [ ] Runtime/ARC/resource tests
 - [ ] Package/release smoke
 - [ ] Performance benchmark/guard

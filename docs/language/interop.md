@@ -162,7 +162,7 @@ end
 
 ## Current limits
 
-- `@c_export` is native-backend functionality; the C/debug backend is not an ABI reference;
+- `@c_export` and generated C headers remain native-backend functionality; removal of C source emission does not remove C ABI interoperability;
 - callback registration is currently a Rust `ori-embed` experiment, not part
   of the generated C ABI-1 header;
 - direct collection handles and nested sum types remain outside the contract;

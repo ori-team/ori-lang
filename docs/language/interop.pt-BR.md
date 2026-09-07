@@ -145,8 +145,9 @@ end
 
 ## Limites atuais
 
-`@c_export` pertence ao backend nativo; o backend C/debug não é a referência de
-ABI. Callbacks host→Ori continuam fora do header C da ABI-1; a implementação
+`@c_export` e headers C gerados continuam pertencendo ao backend nativo; a
+remoção da emissão de código C não remove a interoperabilidade pela ABI C.
+Callbacks host→Ori continuam fora do header C da ABI-1; a implementação
 Rust experimental aceita apenas callbacks escalares homogêneos (`int`, `float`
 ou `bool`). Layouts diretos de
 collections também continuam fora da ABI-1. `ori-embed` ainda é uma fronteira

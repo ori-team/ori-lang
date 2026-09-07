@@ -40,7 +40,7 @@ Rules:
 - managed values that remain live across suspension are retained by the async frame;
 - native frame emission verifies slot bounds/layout and zero-initializes managed await bindings before scheduling; full branch-sensitive HIR ownership proof remains future work;
 - `using` is allowed inside async functions and disposes on normal return, failure, cancellation, `try`, and loop exit;
-- the C/debug backend rejects async code with an actionable diagnostic;
+- native AOT and JIT share the documented [async support surface](../spec/14-backend-support.md#native-async-subset);
 - unsupported async shapes are rejected before native code generation rather than silently changing semantics.
 
 The runnable source is [`examples/async_demo/main.orl`](../../examples/async_demo/main.orl).
@@ -136,7 +136,6 @@ contract.
 
 ## Backend boundary
 
-Native AOT/JIT is the semantic reference for async and concurrency. The C
-backend is a debug/transpile route and intentionally rejects async, tasks,
-channels, atomics, and native networking. See the feature matrix in
+Native AOT/JIT is the semantic reference for async and concurrency.
+See the supported native surface and explicit limitations in
 [14-backend-support.md](../spec/14-backend-support.md).

@@ -59,7 +59,7 @@ end
 
 main()
     const player: Player = Player {score: 7}
-    const total: int = player.add(5)
+    check player.add(5) == 12
 end
 "#,
     );
@@ -69,16 +69,11 @@ end
 
     let build = run_build(&dir.path("main.orl")).unwrap();
     assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build
-        .c_source
-        .contains("ORI__app_dot_main_dot_Player_dot_add"));
-    assert!(
-        build
-            .c_source
-            .contains("ORI__app_dot_main_dot_Player_dot_add(player, INT64_C(5))"),
-        "{}",
-        build.c_source
-    );
+    let executable = dir.path(if cfg!(windows) { "main.exe" } else { "main" });
+    let compiled = ori_driver::pipeline::run_compile(&dir.path("main.orl"), &executable).unwrap();
+    assert!(!compiled.has_errors, "{:?}", compiled.diagnostics);
+    let output = std::process::Command::new(executable).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
 }
 
 #[test]
@@ -132,6 +127,7 @@ end
 main()
     const player: Player = Player {score: 42}
     const id: int = player.id()
+    check id == player.score
 end
 "#,
     );
@@ -141,16 +137,11 @@ end
 
     let build = run_build(&dir.path("main.orl")).unwrap();
     assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build
-        .c_source
-        .contains("ORI__app_dot_main_dot_Player_dot_Entity_dot_id"));
-    assert!(
-        build
-            .c_source
-            .contains("ORI__app_dot_main_dot_Player_dot_Entity_dot_id(player)"),
-        "{}",
-        build.c_source
-    );
+    let executable = dir.path(if cfg!(windows) { "main.exe" } else { "main" });
+    let compiled = ori_driver::pipeline::run_compile(&dir.path("main.orl"), &executable).unwrap();
+    assert!(!compiled.has_errors, "{:?}", compiled.diagnostics);
+    let output = std::process::Command::new(executable).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
 }
 
 #[test]
@@ -231,6 +222,8 @@ main()
     const thing: Thing = Thing {name: "x"}
     const alpha: string = Alpha.output(thing)
     const beta: string = Beta.output(thing)
+    check alpha == "alpha"
+    check beta == "beta"
 end
 "#,
     );
@@ -240,12 +233,11 @@ end
 
     let build = run_build(&dir.path("main.orl")).unwrap();
     assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build
-        .c_source
-        .contains("ORI__app_dot_main_dot_Thing_dot_Alpha_dot_output"));
-    assert!(build
-        .c_source
-        .contains("ORI__app_dot_main_dot_Thing_dot_Beta_dot_output"));
+    let executable = dir.path(if cfg!(windows) { "main.exe" } else { "main" });
+    let compiled = ori_driver::pipeline::run_compile(&dir.path("main.orl"), &executable).unwrap();
+    assert!(!compiled.has_errors, "{:?}", compiled.diagnostics);
+    let output = std::process::Command::new(executable).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
 }
 
 #[test]
@@ -271,6 +263,7 @@ end
 main()
     const player: Player = Player {score: 42}
     const id: int = player.id()
+    check id == 7
 end
 "#,
     );
@@ -280,9 +273,11 @@ end
 
     let build = run_build(&dir.path("main.orl")).unwrap();
     assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build
-        .c_source
-        .contains("ORI__app_dot_main_dot_Entity_dot_id"));
+    let executable = dir.path(if cfg!(windows) { "main.exe" } else { "main" });
+    let compiled = ori_driver::pipeline::run_compile(&dir.path("main.orl"), &executable).unwrap();
+    assert!(!compiled.has_errors, "{:?}", compiled.diagnostics);
+    let output = std::process::Command::new(executable).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
 }
 
 #[test]
@@ -417,6 +412,7 @@ end
 main()
     const p: Point = Point { x: 1, y: 2 }
     const name: string = p.debugName()
+    check name == "point"
 end
 "#,
     );
@@ -426,14 +422,11 @@ end
 
     let build = run_build(&dir.path("main.orl")).unwrap();
     assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(
-        build
-            .c_source
-            .contains("ORI__app_dot_main_dot_pointDebugName")
-            || build.c_source.contains("pointDebugName"),
-        "{}",
-        build.c_source
-    );
+    let executable = dir.path(if cfg!(windows) { "main.exe" } else { "main" });
+    let compiled = ori_driver::pipeline::run_compile(&dir.path("main.orl"), &executable).unwrap();
+    assert!(!compiled.has_errors, "{:?}", compiled.diagnostics);
+    let output = std::process::Command::new(executable).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
 }
 
 #[test]
@@ -456,6 +449,7 @@ end
 main()
     const p: Point = Point { x: 3 }
     const v: int = p.freeMethod()
+    check v == 3
 end
 "#,
     );
@@ -465,13 +459,11 @@ end
 
     let build = run_build(&dir.path("main.orl")).unwrap();
     assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(
-        build
-            .c_source
-            .contains("ORI__app_dot_main_dot_Point_dot_freeMethod"),
-        "{}",
-        build.c_source
-    );
+    let executable = dir.path(if cfg!(windows) { "main.exe" } else { "main" });
+    let compiled = ori_driver::pipeline::run_compile(&dir.path("main.orl"), &executable).unwrap();
+    assert!(!compiled.has_errors, "{:?}", compiled.diagnostics);
+    let output = std::process::Command::new(executable).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
 }
 
 #[test]
@@ -529,6 +521,7 @@ end
 main()
     const player: Player = Player { score: 99 }
     const id: int = player.id()
+    check id == player.score
 end
 "#,
     );
@@ -538,13 +531,11 @@ end
 
     let build = run_build(&dir.path("main.orl")).unwrap();
     assert!(!build.has_errors, "{:?}", build.diagnostics);
-    // Bind reuses the free function path (no Type.Trait.method wrapper).
-    assert!(
-        build.c_source.contains("ORI__app_dot_main_dot_playerId")
-            || build.c_source.contains("playerId"),
-        "{}",
-        build.c_source
-    );
+    let executable = dir.path(if cfg!(windows) { "main.exe" } else { "main" });
+    let compiled = ori_driver::pipeline::run_compile(&dir.path("main.orl"), &executable).unwrap();
+    assert!(!compiled.has_errors, "{:?}", compiled.diagnostics);
+    let output = std::process::Command::new(executable).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
 }
 
 #[test]

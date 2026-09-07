@@ -10,7 +10,33 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Aggressive leaf inlining can materialize scalar argument temporaries.**
+  Direct same-module calls used as the complete value of `Let`, `Return`, or
+  `Expr` can bind every numeric/bool argument once in source order, including
+  ignored effects and traps. Substitution remains simultaneous and names use an
+  inaccessible internal namespace. Contracts, async and managed signatures remain
+  excluded; nested expressions, conditions and assignments receive no hoisting.
+  No runtime or ABI contract changes; no general performance-gain claim.
+
+- **Aggressive leaf inlining preserves parameter names and argument snapshots.**
+  Parameter substitution is simultaneous, so caller variables matching another
+  parameter are not substituted again. The conservative expression path keeps
+  calls intact when the return contains calls and an argument is not a scalar
+  literal, preserving compound reads of mutable globals. The statement-level
+  temporary fallback above extends only scalar calls; managed-value support
+  remains excluded.
+
 ### Removed
+
+- **C/debug source backend and `ori emit c`.** Native Cranelift AOT/JIT remain
+  the execution routes. Removed the inline C runtime and stdlib
+  `c_backend_runtime` / `c_backend` support flags. Generated-C scripts no longer
+  work and need explicit migration; native compilation is not a replacement
+  for C-source inspection or GCC instrumentation. `c_header.rs`, generated FFI
+  headers, `extern c`, and `@c_export` remain supported. Workspace version stays
+  **0.3.8**; no future release date or version is assigned (ADR-0005).
 
 - **Disconnected `ori.window` stub and unused `ori_window_*` runtime stubs (`AUD-HYGIENE-1`, `GFX-WINDOW-1`).**
   Removed `stdlib/window.orl` and dead `ori_window_*` functions in `ori-runtime`. Freestanding window

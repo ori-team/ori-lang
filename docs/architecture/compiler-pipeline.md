@@ -165,6 +165,36 @@ Documentation, formatter, migration, summary, doctor, and LSP routes reuse selec
 - disabled optimization remains a reference path for differential testing;
 - no pass changes observable language behavior.
 
+### Scalar argument temporaries
+
+At `ORI_OPT=aggressive`, the existing leaf inliner can materialize arguments
+when a same-module direct call is the complete value of `Let`, `Return`, or
+`Expr`. This fallback applies when conservative expression substitution declines
+the call. Numeric and boolean parameter/return types are eligible; variadics,
+parameter contracts, async functions, closure captures, managed signatures,
+propagation, await, and binding-bearing return expressions remain excluded.
+
+Every argument becomes an immutable typed HIR `Let`, in source order, including
+unused arguments. The return expression receives simultaneous substitutions of
+fresh variable references. DCE may remove unused pure bindings, but preserves
+calls and potentially trapping division, remainder, shifts, and indexing.
+
+Temporary names use `$ori.inline.N`. The lexer identifier grammar cannot contain
+`$` or `.`, so source locals, parameters, and globals cannot occupy this namespace.
+This pass is its only producer; it reserves existing temporary indices recursively
+before assigning module-wide indices, including on repeated optimizer runs.
+
+Only statement-owned blocks receive these bindings. No temporary is hoisted from
+nested calls, expression branches, short-circuit operands, loop conditions,
+match guards, or assignments (including effectful lvalues). Eligible statements
+inside a branch or loop body remain inside that block. The previous conservative
+expression path and its compound-global/call guard remain intact. Native AOT and
+JIT consume the same HIR; no runtime or ABI contract changes.
+
+Structural regressions live in `inline_leafs.rs`; execution and optimization-level
+parity live in `arithmetic_and_optimizer_guards.rs` and `jit_run.rs`. This is not
+ownership-aware general inlining or a claim of universal performance improvement.
+
 ## 8. Native AOT code generation
 
 **Owner:** `ori-codegen` plus the driver compile pipeline.

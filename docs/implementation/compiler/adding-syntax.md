@@ -186,7 +186,7 @@ Validate:
 - target differences;
 - debug information.
 
-The C/debug backend must either support the construct or reject it explicitly with a documented code.
+Unsupported native constructs must be rejected explicitly with a documented code.
 
 ## 11. Runtime
 
@@ -243,7 +243,7 @@ A complete syntax change normally includes:
 - formatter golden/idempotence tests;
 - semantic positive and negative tests;
 - AOT and JIT execution;
-- C/debug parity or rejection;
+- explicit rejection of unsupported native shapes;
 - multifile cases when scope/imports matter;
 - diagnostic catalog entry;
 - normative examples;

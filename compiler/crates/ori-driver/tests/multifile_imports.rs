@@ -70,71 +70,6 @@ fn exe_path(dir: &TestDir, name: &str) -> PathBuf {
     dir.path(&file_name)
 }
 
-fn compile_c_source(dir: &TestDir, name: &str, source: &str) {
-    let c_path = dir.path(&format!("{name}.c"));
-    let obj_path = dir.path(&format!("{name}.o"));
-    std::fs::write(&c_path, source).unwrap();
-    let output = match Command::new("cc")
-        .arg("-std=gnu11")
-        .arg("-c")
-        .arg(&c_path)
-        .arg("-o")
-        .arg(&obj_path)
-        .output()
-    {
-        Ok(output) => output,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
-        Err(err) => panic!("failed to run cc: {err}"),
-    };
-    assert!(
-        output.status.success(),
-        "generated C did not compile\nstderr:\n{}\nsource:\n{}",
-        String::from_utf8_lossy(&output.stderr),
-        source,
-    );
-}
-
-fn compile_and_run_c_source(
-    dir: &TestDir,
-    name: &str,
-    source: &str,
-    stdin: &[u8],
-) -> Option<std::process::Output> {
-    let c_path = dir.path(&format!("{name}.c"));
-    let exe = exe_path(dir, name);
-    std::fs::write(&c_path, source).unwrap();
-    let compiled = match Command::new("cc")
-        .arg("-std=gnu11")
-        .arg(&c_path)
-        .arg("-o")
-        .arg(&exe)
-        .arg("-lm")
-        .arg("-pthread")
-        .output()
-    {
-        Ok(output) => output,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound && cfg!(windows) => return None,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            panic!("`cc` is required to validate generated C on this platform")
-        }
-        Err(err) => panic!("failed to run cc: {err}"),
-    };
-    assert!(
-        compiled.status.success(),
-        "generated C did not link\nstderr:\n{}\nsource:\n{}",
-        String::from_utf8_lossy(&compiled.stderr),
-        source,
-    );
-    let mut child = Command::new(exe)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child.stdin.as_mut().unwrap().write_all(stdin).unwrap();
-    Some(child.wait_with_output().unwrap())
-}
-
 fn normalize_stdout(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).unwrap().replace("\r\n", "\n")
 }
@@ -554,18 +489,14 @@ make_user() -> api.model.User
 end
 
 main()
+    const user: api.model.User = make_user()
+    check user.id == 34
+    check user.name == "Ada"
 end
 "#,
     );
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build.c_source.contains("ORI__app_dot_model_dot_make_user"));
-    assert!(build.c_source.contains("ORI__app_dot_main_dot_make_user"));
-    assert!(!build
-        .c_source
-        .contains("ORI__app_dot_facade_dot_model_dot_make_user"));
-    compile_c_source(&dir, "public_reexport_build", &build.c_source);
+    assert_eq!(compile_and_run(&dir, "public_reexport"), "");
 }
 
 #[test]
@@ -627,7 +558,7 @@ end
 }
 
 #[test]
-fn check_resolves_imported_types_in_signatures_and_builds_c() {
+fn check_resolves_imported_types_in_signatures_and_builds() {
     let dir = TestDir::new("imported_types");
     dir.write(
         "model.orl",
@@ -653,6 +584,8 @@ pass(user: model.User) -> model.User
 end
 
 main()
+    const user: model.User = pass(model.User { id: 17 })
+    check user.id == 17
 end
 "#,
     );
@@ -660,11 +593,7 @@ end
     let check = run_check(&dir.path("main.orl")).unwrap();
     assert!(!check.has_errors, "{:?}", check.diagnostics);
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build.c_source.contains("ORI__app_dot_main_dot_pass"));
-    assert!(build.c_source.contains("ORI__app_dot_model_dot_same"));
-    assert!(build.c_source.contains("int main(int argc, char** argv)"));
+    assert_eq!(compile_and_run(&dir, "imported_signatures"), "");
 }
 
 #[test]
@@ -752,15 +681,14 @@ make_user() -> model.User
 end
 
 main()
+    const user: model.User = make_user()
+    check user.id == 7
+    check user.name == "Ada"
 end
 "#,
     );
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build.c_source.contains("ORI__app_dot_main_dot_make_user"));
-    assert!(build.c_source.contains(".id = INT64_C(7)"));
-    assert!(build.c_source.contains(".name = ORI_STR(\"Ada\")"));
+    assert_eq!(compile_and_run(&dir, "imported_struct_literal"), "");
 }
 
 #[test]
@@ -791,15 +719,18 @@ done() -> model.Status
 end
 
 main()
+    check ready() == model.Status.Ready
+    match done()
+    case Done(code):
+        check code == 2
+    case Ready:
+        check false
+    end
 end
 "#,
     );
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build.c_source.contains("__Ready"));
-    assert!(build.c_source.contains("__Done"));
-    assert!(build.c_source.contains(".payload.Done"));
+    assert_eq!(compile_and_run(&dir, "imported_enum_variant"), "");
 }
 
 #[test]
@@ -867,51 +798,15 @@ take_right(user: right.User) -> right.User
 end
 
 main()
+    const left_user: left.User = take_left(left.User { id: 11 })
+    const right_user: right.User = take_right(right.User { id: 29 })
+    check left_user.id == 11
+    check right_user.id == 29
 end
 "#,
     );
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert_eq!(build.c_source.matches("int64_t id;").count(), 2);
-    assert!(build.c_source.matches("\nstruct ori_def_").count() >= 2);
-    assert!(build.c_source.matches("typedef struct ori_def_").count() >= 2);
-    assert!(build.c_source.contains("ORI__left_dot_user_dot_same"));
-    assert!(build.c_source.contains("ORI__right_dot_user_dot_same"));
-}
-
-#[test]
-fn build_uses_qualified_names_for_imported_constants() {
-    let dir = TestDir::new("imported_constants");
-    dir.write(
-        "config.orl",
-        r#"module app.config
-
-public const LIMIT: int = 21
-"#,
-    );
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import app.config = config
-import ori.io = io
-
-main()
-    const value: int = config.LIMIT
-    io.print(string(value))
-end
-"#,
-    );
-
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build
-        .c_source
-        .contains("static const int64_t app_dot_config_dot_LIMIT = INT64_C(21);"));
-    assert!(build
-        .c_source
-        .contains("int64_t value = app_dot_config_dot_LIMIT;"));
+    assert_eq!(compile_and_run(&dir, "distinct_imported_namespaces"), "");
 }
 
 #[test]
@@ -1247,51 +1142,6 @@ end
     assert_eq!(
         stdout.replace("\r\n", "\n"),
         "Resource#7\nready\nvalue=Resource#7\n"
-    );
-}
-
-#[test]
-fn build_c_backend_displayable_string_conversion() {
-    let dir = TestDir::new("c_backend_displayable_string_conversion");
-    dir.write(
-        "main.orl",
-        r##"module app.main
-
-import ori.core = core
-import ori.io = io
-
-struct Resource
-    id: int
-end
-
-apply Resource use core.Displayable
-    display(self) -> string
-        return "Resource#" + string(self.id)
-    end
-end
-
-main()
-    const resource: Resource = Resource { id: 7 }
-    io.print(string(resource))
-    io.print(string("ready"))
-    io.print(f"value={resource}")
-end
-"##,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source
-            .contains("ORI__app_dot_main_dot_Resource_dot_Displayable_dot_display"),
-        "{}",
-        out.c_source
-    );
-
-    compile_c_source(
-        &dir,
-        "c_backend_displayable_string_conversion",
-        &out.c_source,
     );
 }
 
@@ -1693,49 +1543,6 @@ end
 }
 
 #[test]
-fn build_c_backend_compiles_math_stdlib_surface() {
-    let dir = TestDir::new("c_backend_math_stdlib_surface");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.math = math
-
-main()
-    const floored: int = math.floor(3.9)
-    const clamped: int = math.clamp(15, 0, 10)
-    const absf: float = math.abs(-2.5)
-    const minf: float = math.min(1.0, 2.0)
-    const maxf: float = math.max(1.0, 2.0)
-    const logged: float = math.log2(1.0)
-    const special: bool = math.is_nan(math.nan) and math.is_infinite(math.infinity)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.c_source.contains("ori_math_clamp"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_math_abs_float"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("ori_math_min_float"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("ori_math_max_float"),
-        "{}",
-        out.c_source
-    );
-    assert!(out.c_source.contains("ori_math_log2"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_math_is_nan"), "{}", out.c_source);
-    compile_c_source(&dir, "c_backend_math_stdlib_surface", &out.c_source);
-}
-
-#[test]
 fn compile_runs_string_split_and_chars() {
     let dir = TestDir::new("compile_string_split_chars");
     dir.write(
@@ -2017,41 +1824,6 @@ end
 }
 
 #[test]
-fn build_c_backend_optional_result_or_helper() {
-    let dir = TestDir::new("c_backend_optional_result_or_helper");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-maybe(flag: bool) -> optional[int]
-    if flag
-        return some(1)
-    end
-    return none
-end
-
-parse(flag: bool) -> result[int, string]
-    if flag
-        return ok(2)
-    end
-    return err("bad")
-end
-
-main()
-    const first: int = maybe(false).or(10)
-    const second: int = parse(false).or(20)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains(".has_value ?"), "{}", out.c_source);
-    assert!(out.c_source.contains(".is_ok ?"), "{}", out.c_source);
-    compile_c_source(&dir, "c_backend_optional_result_or_helper", &out.c_source);
-}
-
-#[test]
 fn compile_runs_result_or_wrap_helper_native() {
     let dir = TestDir::new("result_or_wrap_helper_native");
     dir.write(
@@ -2094,37 +1866,6 @@ end
 }
 
 #[test]
-fn build_c_backend_result_or_wrap_helper() {
-    let dir = TestDir::new("c_backend_result_or_wrap_helper");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-parse(flag: bool) -> result[int, string]
-    if flag
-        return ok(1)
-    end
-    return err("bad")
-end
-
-main()
-    const first: result[int, string] = parse(true).or_wrap("load")
-    const second: result[int, string] = parse(false).or_wrap("load")
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source.contains("ori_string_concat"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_result_or_wrap_helper", &out.c_source);
-}
-
-#[test]
 fn check_reports_map_set_literal_element_mismatches() {
     let dir = TestDir::new("map_set_literal_mismatch");
     dir.write(
@@ -2156,7 +1897,7 @@ end
 mod collections;
 
 #[test]
-fn build_lowers_default_parameter_arguments_to_c() {
+fn build_lowers_default_parameter_arguments() {
     let dir = TestDir::new("build_default_parameter");
     dir.write(
         "main.orl",
@@ -2167,20 +1908,13 @@ add(base: int, step: int = 5) -> int
 end
 
 main()
-    const value: int = add(7)
+    check add(7) == 12
+    check add(7, 3) == 10
 end
 "#,
     );
 
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source
-            .contains("ORI__app_dot_main_dot_add(INT64_C(7), INT64_C(5))"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "default_parameter", &out.c_source);
+    assert_eq!(compile_and_run(&dir, "default_arguments"), "");
 }
 
 #[test]
@@ -2273,7 +2007,7 @@ end
 }
 
 #[test]
-fn build_lowers_named_arguments_to_c_order() {
+fn build_lowers_named_arguments_order() {
     let dir = TestDir::new("build_named_arguments");
     dir.write(
         "main.orl",
@@ -2284,53 +2018,12 @@ combine(left: int, right: int) -> int
 end
 
 main()
-    const value: int = combine(right: 2, left: 4)
+    check combine(right: 2, left: 4) == 42
 end
 "#,
     );
 
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source
-            .contains("ORI__app_dot_main_dot_combine(INT64_C(4), INT64_C(2))"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "named_arguments", &out.c_source);
-}
-
-#[test]
-fn build_lowers_variadic_parameters_to_c() {
-    let dir = TestDir::new("build_variadic_parameters");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-sum(seed: int, values: int...) -> int
-    var total: int = seed
-    for value in values
-        total = total + value
-    end
-    return total
-end
-
-main()
-    const parts: list[int] = [2, 3]
-    const value: int = sum(1, ..parts, 4)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source
-            .contains("ORI__app_dot_main_dot_sum(INT64_C(1),"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "variadic_parameters", &out.c_source);
+    assert_eq!(compile_and_run(&dir, "named_arguments"), "");
 }
 
 #[test]
@@ -2827,76 +2520,6 @@ end
 }
 
 #[test]
-fn build_c_backend_compiles_any_trait_dynamic_dispatch() {
-    let dir = TestDir::new("build_any_trait_dispatch");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.io = io
-
-struct Player
-    score: int
-end
-
-struct Booster
-    score: int
-end
-
-trait Scored
-    score(self) -> int
-
-    bonus(self) -> int
-        return 5
-    end
-end
-
-apply Player use Scored
-    score(self) -> int
-        return self.score
-    end
-end
-
-apply Booster use Scored
-    score(self) -> int
-        return self.score
-    end
-
-    bonus(self) -> int
-        return 9
-    end
-end
-
-add_bonus(item: any[Scored]) -> int
-    return item.score() + 5
-end
-
-identity(item: any[Scored]) -> any[Scored]
-    return item
-end
-
-main()
-    const player: Player = Player { score: 37 }
-    const booster: Booster = Booster { score: 20 }
-    const item: any[Scored] = player
-    const boosted: any[Scored] = booster
-    io.print(string(item.score()))
-    io.print(string(add_bonus(player)))
-    io.print(string(identity(player).score()))
-    io.print(string(player.bonus()))
-    io.print(string(item.bonus()))
-    io.print(string(boosted.bonus()))
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-
-    compile_c_source(&dir, "any_trait_dispatch", &out.c_source);
-}
-
-#[test]
 fn check_allows_any_trait_equality() {
     let dir = TestDir::new("any_trait_equality");
     dir.write(
@@ -2920,14 +2543,16 @@ end
 main()
     const a: any[Scored] = Player { score: 1 }
     const b: any[Scored] = Player { score: 1 }
-    const same: bool = a == b
+    const different: any[Scored] = Player { score: 2 }
+    check a == b
+    check a != different
+    check not (a == different)
+    check not (a != b)
 end
 "#,
     );
 
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    compile_c_source(&dir, "any_trait_equality", &out.c_source);
+    assert_eq!(compile_and_run(&dir, "any_trait_equality"), "");
 }
 
 #[test]
@@ -3159,131 +2784,6 @@ end
 }
 
 #[test]
-fn build_c_backend_list_structural_equality() {
-    let dir = TestDir::new("c_backend_list_structural_equality");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-main()
-    const left: list[int] = [1, 2, 3]
-    const same: list[int] = [1, 2, 3]
-    const different: list[int] = [1, 2, 4]
-    const words: list[string] = ["ori", "lang"]
-    const same_words: list[string] = ["ori", "lang"]
-
-    const ints_equal: bool = left == same
-    const ints_different: bool = left != different
-    const words_equal: bool = words == same_words
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source.contains("ori_list_at") && out.c_source.contains("ori_string_eq"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_list_structural_equality", &out.c_source);
-}
-
-#[test]
-fn build_c_backend_struct_structural_equality() {
-    let dir = TestDir::new("c_backend_struct_structural_equality");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-struct Address
-    city: string
-    zip: int
-end
-
-struct User
-    id: int
-    name: string
-    address: Address
-end
-
-main()
-    const left: User = User { id: 1, name: "Ada", address: Address { city: "Recife", zip: 50000 } }
-    const same: User = User { id: 1, name: "Ada", address: Address { city: "Recife", zip: 50000 } }
-    const different: User = User { id: 1, name: "Ada", address: Address { city: "Olinda", zip: 50000 } }
-
-    const users_equal: bool = left == same
-    const users_different: bool = left != different
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source.contains("ori_string_eq")
-            && out.c_source.contains(".address")
-            && out.c_source.contains(".city"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_struct_structural_equality", &out.c_source);
-}
-
-#[test]
-fn build_c_backend_set_map_structural_equality() {
-    let dir = TestDir::new("c_backend_set_map_structural_equality");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.map = maps
-import ori.set = sets
-
-main()
-    const left_set: set[int] = set { 1, 2 }
-    const same_set: set[int] = set { 2, 1 }
-    const different_set: set[int] = set { 1, 3 }
-    const set_same: bool = left_set == same_set
-    const set_different: bool = left_set != different_set
-
-    const words: set[string] = set { "red", "blue" }
-    const same_words: set[string] = set { "blue", "red" }
-    sets.add(same_words, "red")
-    const words_same: bool = words == same_words
-
-    const labels: map[string, int] = { "a": 1, "b": 2 }
-    const same_labels: map[string, int] = { "b": 2, "a": 1 }
-    const labels_same: bool = labels == same_labels
-
-    const buckets: map[int, list[int]] = maps.new()
-    maps.set(buckets, 1, [1, 2])
-
-    const same_buckets: map[int, list[int]] = maps.new()
-    maps.set(same_buckets, 1, [1, 2])
-
-    const changed_buckets: map[int, list[int]] = maps.new()
-    maps.set(changed_buckets, 1, [1, 3])
-
-    const nested_same: bool = buckets == same_buckets
-    const nested_different: bool = buckets != changed_buckets
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source.contains("ori_map_set_string_value")
-            && out.c_source.contains("ori_set_contains_string")
-            && out.c_source.contains("ori_map_value_at"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_set_map_structural_equality", &out.c_source);
-}
-
-#[test]
 fn compile_runs_optional_result_inequality_native() {
     let dir = TestDir::new("optional_result_inequality_native");
     dir.write(
@@ -3350,74 +2850,6 @@ end
             .count(),
         2
     );
-}
-
-#[test]
-fn build_lowers_operator_overloads_through_core_traits() {
-    let dir = TestDir::new("operator_overload_traits");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.core = core
-
-struct Score
-    value: int
-end
-
-apply Score use core.Addable
-    add(self, other: Score) -> Score
-        return Score {value: self.value + other.value}
-    end
-end
-
-apply Score use core.Subtractable
-    subtract(self, other: Score) -> Score
-        return Score {value: self.value - other.value}
-    end
-end
-
-apply Score use core.Equatable
-    equals(self, other: Score) -> bool
-        return self.value == other.value
-    end
-end
-
-apply Score use core.Comparable
-    compare(self, other: Score) -> int
-        return self.value - other.value
-    end
-end
-
-main()
-    const left: Score = Score { value: 3 }
-    const right: Score = Score { value: 5 }
-    const sum: Score = left + right
-    const diff: Score = right - left
-    const same: bool = left == right
-    const different: bool = left != right
-    const smaller: bool = left < right
-    const at_most: bool = left <= right
-    const larger: bool = right > left
-    const at_least: bool = right >= left
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out
-        .c_source
-        .contains("ORI__app_dot_main_dot_Score_dot_Addable_dot_add"));
-    assert!(out
-        .c_source
-        .contains("ORI__app_dot_main_dot_Score_dot_Subtractable_dot_subtract"));
-    assert!(out
-        .c_source
-        .contains("ORI__app_dot_main_dot_Score_dot_Equatable_dot_equals"));
-    assert!(out
-        .c_source
-        .contains("ORI__app_dot_main_dot_Score_dot_Comparable_dot_compare"));
 }
 
 #[test]
@@ -3523,18 +2955,15 @@ main()
     const b: Vec2 = Vec2 { x: 4.0, y: 6.0 }
     const product: Vec2 = a * b
     const quotient: Vec2 = b / a
+    check product.x == 8.0
+    check product.y == 18.0
+    check quotient.x == 2.0
+    check quotient.y == 2.0
 end
 "#,
     );
 
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out
-        .c_source
-        .contains("ORI__app_dot_main_dot_Vec2_dot_Multiplicable_dot_multiply"));
-    assert!(out
-        .c_source
-        .contains("ORI__app_dot_main_dot_Vec2_dot_Divisible_dot_divide"));
+    assert_eq!(compile_and_run(&dir, "float_mul_div_overloads"), "");
 }
 
 #[test]
@@ -3650,147 +3079,6 @@ end
 }
 
 #[test]
-fn build_c_backend_compiles_string_equality() {
-    let dir = TestDir::new("c_string_equality");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-main()
-    const same: bool = "ori" == "ori"
-    const different: bool = "ori" != "ora"
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("ori_string_eq"));
-    compile_c_source(&dir, "c_string_equality", &out.c_source);
-}
-
-#[test]
-fn build_c_backend_rejects_byte_equality_instead_of_emitting_pointer_comparison() {
-    let dir = TestDir::new("c_bytes_equality");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.io = io
-
-main()
-    const same: bool = b"ori" == b"ori"
-    io.println(string(same))
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.has_errors, "C backend must reject byte equality");
-    assert!(
-        out.diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "backend.c_unsupported"),
-        "{:?}",
-        out.diagnostics
-    );
-}
-
-/// LANG-2: C/debug compiles string helpers + int conversion builtins.
-#[test]
-fn build_c_backend_compiles_string_helpers_and_int_to_string() {
-    let dir = TestDir::new("c_string_helpers_int");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.io = io
-import ori.string = str
-
-main()
-    const n: int = 42
-    const text: string = string(n)
-    const upper: string = str.to_upper("ori")
-    const has: bool = str.contains("hello", "ell")
-    io.print(text)
-    io.print(upper)
-    io.print(string(has))
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("ori_string_to_upper"));
-    assert!(out.c_source.contains("ori_string_contains"));
-    compile_c_source(&dir, "c_string_helpers_int", &out.c_source);
-}
-
-/// LANG-2: C/debug compiles convert + eprint + string trim/replace surface.
-#[test]
-fn build_c_backend_compiles_convert_eprint_and_string_surface() {
-    let dir = TestDir::new("c_convert_eprint_string");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.io = io
-import ori.string = str
-
-main()
-    -- Use L1 convert aliases without loading convert.orl helpers
-    -- (param name `default` is a C keyword in generated signatures).
-    const fs: string = float_to_string(1.5)
-    const bs: string = bool_to_string(true)
-    const trimmed: string = str.trim("  hi  ")
-    const replaced: string = str.replace("aa", "a", "b")
-    const n: int = str.len(trimmed)
-    io.eprint(fs)
-    io.eprint(bs)
-    io.print(trimmed)
-    io.print(replaced)
-    io.print(string(n))
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("ori_float_to_string"));
-    assert!(out.c_source.contains("ori_bool_to_string"));
-    assert!(out.c_source.contains("ori_io_eprint"));
-    assert!(out.c_source.contains("ori_string_trim"));
-    assert!(out.c_source.contains("ori_string_replace"));
-    assert!(out.c_source.contains("ori_string_len"));
-    compile_c_source(&dir, "c_convert_eprint_string", &out.c_source);
-}
-
-/// LANG-2: C/debug compiles format + math together (common debug path).
-#[test]
-fn build_c_backend_compiles_format_and_math_combo() {
-    let dir = TestDir::new("c_format_math_combo");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.format = fmt
-import ori.math = math
-
-main()
-    const h: string = fmt.hex(255)
-    const a: float = math.abs(-3.5)
-    const _u: string = h
-    const _b: float = a
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    compile_c_source(&dir, "c_format_math_combo", &out.c_source);
-}
-
-#[test]
 fn check_accepts_lazy_type_and_stdlib_once_force() {
     let dir = TestDir::new("lazy_type_once_force");
     dir.write(
@@ -3809,128 +3097,6 @@ end
     let out = run_check(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
     assert!(!diagnostic_codes(&out).contains(&"type.lazy_not_implemented"));
-}
-
-#[test]
-fn build_c_backend_compiles_lazy_once_force() {
-    let dir = TestDir::new("c_lazy_once_force");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.lazy = lz
-
-main()
-    const delayed: lazy[int] = lz.once(() => 41)
-    const first: int = lz.force(delayed)
-    const second: int = lz.force(delayed)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("ori_lazy_i64_t"));
-    assert!(out.c_source.contains("->forced"));
-    compile_c_source(&dir, "c_lazy_once_force", &out.c_source);
-}
-
-#[test]
-fn build_c_backend_emits_json_parse_extern_without_c_lowering() {
-    let dir = TestDir::new("c_backend_json_extern_only");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.json = json
-
-main()
-    const parsed: result[json.Value, string] = json.parse("{}")
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(
-        !out.has_errors,
-        "C backend may emit JSON calls as runtime FFI stubs: {:?}",
-        out.diagnostics
-    );
-    assert!(
-        out.c_source.contains("ori_json_parse"),
-        "expected C source to reference native JSON runtime symbol"
-    );
-}
-
-#[test]
-fn build_c_backend_reports_unsupported_feature_diagnostic() {
-    let dir = TestDir::new("c_backend_unsupported_feature_diagnostic");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.io = io
-import ori.lazy = lz
-
-main()
-    const delayed: lazy[void] = lz.once(() => io.print("x"))
-    lz.force(delayed)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.has_errors, "expected C backend feature diagnostic");
-    assert!(
-        out.diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "backend.c_unsupported"),
-        "{:?}",
-        out.diagnostics
-    );
-    assert!(out.c_source.is_empty());
-}
-
-#[test]
-fn build_c_backend_rejects_custom_destructor_instead_of_omitting_cleanup() {
-    let dir = TestDir::new("c_backend_custom_destructor_unsupported");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.core = core
-
-struct Resource
-    id: int
-end
-
-apply Resource use core.Destructor
-    mut destroy(self)
-    end
-end
-
-main()
-    const resource: Resource = Resource { id: 1 }
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.has_errors, "expected C backend feature diagnostic");
-    let diagnostic = out
-        .diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.code == "backend.c_unsupported")
-        .expect("expected backend.c_unsupported");
-    assert!(
-        diagnostic
-            .notes
-            .iter()
-            .any(|note| note.contains("core.Destructor")),
-        "{:?}",
-        out.diagnostics
-    );
-    assert!(out.c_source.is_empty());
 }
 
 #[test]
@@ -4423,105 +3589,6 @@ end
 
     let out = run_check(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
-}
-
-#[test]
-fn build_c_backend_compiles_is_check() {
-    let dir = TestDir::new("c_backend_is_check");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-trait Shape
-    area(self) -> int
-end
-
-struct User
-    id: int
-end
-
-struct Circle
-    radius: int
-end
-
-apply Circle use Shape
-    area(self) -> int
-        return self.radius * self.radius
-    end
-end
-
-describe(s: any[Shape]) -> bool
-    return s is Circle
-end
-
-main()
-    const user: User = User { id: 1 }
-    const is_user: bool = user is User
-    const is_circle: bool = user is Circle
-    const is_int: bool = 1 is int
-    const shape: any[Shape] = Circle { radius: 3 }
-    const is_shape_circle: bool = describe(shape)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("vtable)[0]"), "{}", out.c_source);
-    compile_c_source(&dir, "c_backend_is_check", &out.c_source);
-}
-
-#[test]
-fn build_c_backend_compiles_propagation() {
-    let dir = TestDir::new("c_backend_propagation");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-parse(flag: bool) -> result[int, string]
-    if flag
-        return ok(7)
-    end
-    return err("no value")
-end
-
-maybe(flag: bool) -> optional[int]
-    if flag
-        return some(3)
-    end
-    return none
-end
-
-add_one(flag: bool) -> result[int, string]
-    const value: int = try parse(flag)
-    return ok(value + 1)
-end
-
-unwrap_optional(flag: bool) -> optional[int]
-    const value: int = try maybe(flag)
-    return some(value + 1)
-end
-
-main()
-    const a: result[int, string] = add_one(true)
-    const b: optional[int] = unwrap_optional(true)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source.contains("return ((ori_result_"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("return ((ori_opt_"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_propagation", &out.c_source);
 }
 
 #[test]
@@ -5908,40 +4975,6 @@ end
 }
 
 #[test]
-fn build_c_backend_compiles_standard_error_type() {
-    let dir = TestDir::new("c_backend_standard_error_type");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.Error = StdError
-
-main()
-    const err: StdError = StdError { code: "E_C", message: "compiled", cause: "" }
-    const code: string = err.code
-    const message: string = err.message
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.c_source.contains("struct ori_def_"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_string_t code;"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("ori_string_t message;"),
-        "{}",
-        out.c_source
-    );
-    // Verifies that the generated struct includes the string cause field.
-    assert!(out.c_source.contains("cause;"), "{}", out.c_source);
-    compile_c_source(&dir, "c_backend_standard_error_type", &out.c_source);
-}
-
-#[test]
 fn compile_runs_test_assert_stdlib_native() {
     let dir = TestDir::new("compile_test_assert_stdlib_native");
     dir.write(
@@ -6027,74 +5060,6 @@ end
         "{:#?}",
         out.results[0].stderr
     );
-}
-
-#[test]
-fn build_c_backend_compiles_test_assert_stdlib() {
-    let dir = TestDir::new("c_backend_test_assert_stdlib");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.test = test
-
-main()
-    test.assert(true, "ok")
-    test.assert_eq(2 + 2, 4)
-    test.assert_ne(2, 4)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("ori_test_assert"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_test_assert_eq"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("ori_test_assert_ne"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_test_assert_stdlib", &out.c_source);
-}
-
-#[test]
-fn build_c_backend_compiles_generic_test_assert_stdlib() {
-    let dir = TestDir::new("c_backend_generic_test_assert_stdlib");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.test = test
-
-main()
-    test.assert_eq("ori", "ori")
-    test.assert_ne("ori", "lang")
-    test.assert_eq(true, true)
-    test.assert_ne(true, false)
-    test.assert_eq(1.5, 1.5)
-    test.assert_ne(1.5, 2.5)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source.contains("ori_test_assert_eq_string"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("ori_test_assert_ne_float"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_generic_test_assert_stdlib", &out.c_source);
 }
 
 #[test]
@@ -6281,99 +5246,6 @@ end
 }
 
 #[test]
-fn build_c_backend_compiles_iter_stdlib() {
-    let dir = TestDir::new("c_backend_iter_stdlib");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.iter = iter
-
-main()
-    const values: list[int] = [1, 2, 3, 4]
-    const doubled: list[int] = iter.map(values, (x: int) => x * 2)
-    const filtered: list[int] = iter.filter(doubled, (x: int) => x > 4)
-    const has_large: bool = iter.any(values, (x: int) => x > 3)
-    const all_positive: bool = iter.all(values, (x: int) => x > 0)
-    const even_count: int = iter.count_where(values, (x: int) => x % 2 == 0)
-    const first_two: list[int] = iter.take(values, 2)
-    const after_two: list[int] = iter.skip(values, 2)
-    const reversed: list[int] = iter.reverse(values)
-    const sum: int = iter.reduce(values, 0, (acc: int, x: int) => acc + x)
-    const first_even: optional[int] = iter.find(values, (x: int) => x % 2 == 0)
-    const sorted: list[int] = iter.sort([4, 1, 3, 2])
-    const sorted_desc: list[int] = iter.sort_by([4, 1, 3, 2], (a: int, b: int) => b - a)
-    const unique: list[int] = iter.unique([1, 2, 1, 3, 2])
-    const expanded: list[int] = iter.flat_map([1, 2, 3], (x: int) => [x, x * 10])
-    const zipped: list[tuple[int, int]] = iter.zip([1, 2, 3], [10, 20])
-    const first_pair: tuple[int, int] = zipped[0]
-    const second_pair: tuple[int, int] = zipped[1]
-    const first_sum: int = first_pair.0 + first_pair.1
-    const second_sum: int = second_pair.0 + second_pair.1
-    const parts: tuple[list[int], list[int]] = iter.partition(values, (x: int) => x % 2 == 0)
-    const evens: list[int] = parts.0
-    const odds: list[int] = parts.1
-    const partition_first_even: int = evens[0]
-    const partition_first_odd: int = odds[0]
-    const grouped: map[int, list[int]] = iter.group_by(values, (x: int) => x % 2)
-    const nested: list[list[int]] = [[1, 2], [3], [], [4, 5]]
-    const flat: list[int] = iter.flatten(nested)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("ori_list_map"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_list_filter"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_iter_any"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_iter_all"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_iter_count_where"),
-        "{}",
-        out.c_source
-    );
-    assert!(out.c_source.contains("ori_iter_take"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_iter_skip"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_iter_reverse"),
-        "{}",
-        out.c_source
-    );
-    assert!(out.c_source.contains("ori_iter_reduce"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_iter_find"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_iter_sort"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_iter_sort_by"),
-        "{}",
-        out.c_source
-    );
-    assert!(out.c_source.contains("ori_iter_unique"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_iter_flat_map"),
-        "{}",
-        out.c_source
-    );
-    assert!(out.c_source.contains("ori_iter_zip"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_iter_partition"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("ori_iter_group_by"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("ori_iter_flatten"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_iter_stdlib", &out.c_source);
-}
-
-#[test]
 fn compile_runs_format_stdlib_native() {
     let dir = TestDir::new("compile_format_stdlib_native");
     dir.write(
@@ -6410,41 +5282,6 @@ end
         stdout.replace("\r\n", "\n").trim_end(),
         "12.35\n12.5%\nff\n101\n1.5 KiB\n1970-01-01\n1970-01-01T00:00:00Z"
     );
-}
-
-#[test]
-fn build_c_backend_compiles_format_stdlib() {
-    let dir = TestDir::new("c_backend_format_stdlib");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.format = fmt
-
-main()
-    const number: string = fmt.number(12.345, 2)
-    const percent: string = fmt.percent(0.125, 1)
-    const hexed: string = fmt.hex(255)
-    const binary: string = fmt.binary(5)
-    const size: string = fmt.bytes_size(1536, "binary")
-    const date: string = fmt.date(0, "iso")
-    const datetime: string = fmt.datetime(0, "iso", "")
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(
-        out.c_source.contains("ori_format_number"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("ori_format_datetime"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_format_stdlib", &out.c_source);
 }
 
 #[test]
@@ -6500,41 +5337,6 @@ end
     assert_eq!(lines[1], "3");
     assert!(["windows", "linux", "macos", "unknown"].contains(&lines[2].as_str()));
     assert!(!lines[3].is_empty());
-}
-
-#[test]
-fn build_c_backend_compiles_os_stdlib() {
-    let dir = TestDir::new("c_backend_os_stdlib");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.os = os
-
-stop()
-    os.exit(0)
-end
-
-main()
-    const args: list[string] = os.args()
-    const env_value: optional[string] = os.env("PATH")
-    const pid: int = os.pid()
-    const platform: string = os.platform()
-    const arch: string = os.arch()
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.c_source.contains("ori_os_args"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_os_env"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_opt_str_t"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("int main(int argc, char** argv)"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_os_stdlib", &out.c_source);
 }
 
 #[test]
@@ -6678,47 +5480,6 @@ end
 }
 
 #[test]
-fn build_c_backend_compiles_random_stdlib() {
-    let dir = TestDir::new("c_backend_random_stdlib");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.random = rng
-
-main()
-    const number: int = rng.int(1, 3)
-    const ratio: float = rng.float(0.0, 1.0)
-    const flag: bool = rng.bool()
-    const items: list[int] = [10, 20, 30]
-    const picked: optional[int] = rng.choice(items)
-    const shuffled: list[int] = rng.shuffle(items)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.c_source.contains("ori_random_int"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_random_float"),
-        "{}",
-        out.c_source
-    );
-    assert!(out.c_source.contains("ori_random_bool"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_random_choice"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("ori_random_shuffle"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_random_stdlib", &out.c_source);
-}
-
-#[test]
 fn compile_runs_time_stdlib_native() {
     let dir = TestDir::new("compile_time_stdlib_native");
     dir.write(
@@ -6748,34 +5509,6 @@ end
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.replace("\r\n", "\n").trim_end(), "32\ntrue");
-}
-
-#[test]
-fn build_c_backend_compiles_time_stdlib() {
-    let dir = TestDir::new("c_backend_time_stdlib");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.time = time
-
-main()
-    time.sleep(0)
-    const now: int = time.now()
-    const delta: int = time.duration_ms(10, 42)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(out.c_source.contains("ori_time_now"), "{}", out.c_source);
-    assert!(out.c_source.contains("ori_time_sleep"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("ori_time_duration_ms"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_time_stdlib", &out.c_source);
 }
 
 #[test]
@@ -6817,37 +5550,6 @@ end
         stdout.replace("\r\n", "\n").trim_end(),
         "8\n:\n8\n:\n1\n:\n1"
     );
-}
-
-#[test]
-fn build_c_backend_compiles_mem_stdlib_intrinsics() {
-    let dir = TestDir::new("c_backend_mem_stdlib");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.mem = mem
-
-main()
-    const value: int = 41
-    const size: int = mem.size_of(value)
-    const align: int = mem.align_of(value)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(
-        !out.c_source.contains("ori_mem_size_of"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        !out.c_source.contains("ori_mem_align_of"),
-        "{}",
-        out.c_source
-    );
-    compile_c_source(&dir, "c_backend_mem_stdlib", &out.c_source);
 }
 
 #[test]
@@ -7621,17 +6323,6 @@ end
 
     let out = run_build(&dir.path("main.orl")).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("double a = 3.5"), "{}", out.c_source);
-    assert!(
-        out.c_source.contains("int64_t b = INT64_C(42)"),
-        "{}",
-        out.c_source
-    );
-    assert!(
-        out.c_source.contains("uint8_t c = INT64_C(42)"),
-        "{}",
-        out.c_source
-    );
 
     let exe = dir.path(if cfg!(windows) {
         "numeric_literal_suffix_values.exe"
@@ -7705,7 +6396,7 @@ end
 }
 
 #[test]
-fn build_if_some_generates_c() {
+fn build_if_some() {
     let dir = TestDir::new("ifsome_build");
     dir.write(
         "main.orl",
@@ -7723,77 +6414,20 @@ end
 main()
     const maybe: optional[int] = get_value(true)
     if some(n) = maybe
+        check n == 7
         io.print(string(n))
+    else
+        check false
+    end
+    if some(n) = get_value(false)
+        check false
+    else
+        io.print("none")
     end
 end
 "#,
     );
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(
-        out.c_source.contains("has_value"),
-        "expected has_value in generated C: {}",
-        out.c_source
-    );
-}
-
-#[test]
-fn build_c_backend_compiles_runtime_abi_values() {
-    let dir = TestDir::new("c_backend_runtime_abi");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.string = str
-
-maybe(flag: bool) -> optional[int]
-    if flag
-        return some(7)
-    end
-    return none
-end
-
-parse(flag: bool) -> result[int, string]
-    if flag
-        return ok(11)
-    end
-    return err("no value")
-end
-
-main()
-    const bool_text: string = string(true)
-    const float_text: string = string(2.5)
-    const numbers: list[int] = [1, 2, 3]
-    const first: int = numbers[0]
-    const parsed_int: result[int, string] = str.parse_int("12")
-    const parsed_float: result[float, string] = str.parse_float("1.5")
-    const maybe_value: optional[int] = maybe(true)
-    if some(value) = maybe_value
-        const copied: int = value
-    end
-
-    match parse(false)
-    case ok(value):
-        const ok: int = value
-    case err(message):
-        const err: string = message
-    end
-end
-"#,
-    );
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out
-        .c_source
-        .contains("typedef struct { bool has_value; int64_t value; } ori_opt_i64_t;"));
-    assert!(out.c_source.contains("typedef struct ori_result_i64_str_t"));
-    assert!(out.c_source.contains("typedef struct ori_result_f64_str_t"));
-    assert!(out.c_source.contains("ori_list_at"));
-    assert!(out.c_source.contains("ori_bool_to_string"));
-    assert!(out.c_source.contains("ori_float_to_string"));
-    assert!(out.c_source.contains("strtoll"));
-    assert!(out.c_source.contains("strtod"));
-    compile_c_source(&dir, "runtime_abi", &out.c_source);
+    assert_eq!(compile_and_run(&dir, "ifsome_build"), "7\nnone\n");
 }
 
 #[test]
@@ -8230,32 +6864,6 @@ end
 }
 
 #[test]
-fn build_c_backend_compiles_block_closure_with_arc_edges() {
-    let dir = TestDir::new("c_backend_block_closure_arc");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-main()
-    const prefix: string = "value"
-    const format: func(int) -> string = (x: int) -> string
-        const next: int = x + 1
-        return prefix
-    end
-    const rendered: string = format(9)
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("ori_arc_register_edge"));
-    assert!(out.c_source.contains("ori_arc_maybe_collect_cycles();"));
-
-    compile_c_source(&dir, "c_backend_block_closure_arc", &out.c_source);
-}
-
-#[test]
 fn check_type_alias_expands_in_hir_lowering() {
     // A type alias should expand transparently so that the aliased type's
     // codegen properties (e.g. int arithmetic, struct field access) work.
@@ -8665,33 +7273,6 @@ end
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.replace("\r\n", "\n"), "6\n24\n34\n");
-}
-
-#[test]
-fn build_lowers_struct_update_expression_to_c() {
-    let dir = TestDir::new("struct_update_c");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-struct Point
-    x: int
-    y: int
-    z: int
-end
-
-main()
-    const base: Point = Point { x: 1, y: 2, z: 3 }
-    const moved: Point = base with { y: 20 } end
-    const shifted: Point = moved with { x: 7, z: moved.z + 4 } end
-    const total: int = base.x + moved.y + shifted.z
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    compile_c_source(&dir, "struct_update_c", &out.c_source);
 }
 
 #[test]
@@ -9606,60 +8187,6 @@ end
 }
 
 #[test]
-fn c_backend_runs_unicode_string_positions_in_scalar_values() {
-    let dir = TestDir::new("c_unicode_string_positions");
-    dir.write(
-        "main.orl",
-        r#"module app.main
-
-import ori.io = io
-
-main()
-    const text: string = "\u{00e1}\u{00e9}\u{1f642}"
-    io.print("len=" + string(text.len()))
-    io.print("global_len=" + string(len(text)))
-    io.print(text.slice(1, 3))
-    io.print("index=" + string(text.index_of("\u{1f642}")))
-    io.print("get=" + text[0])
-    const chars: list[string] = text.chars()
-    io.print("char=" + chars[2])
-    for char, index in text
-        io.print("iter=" + string(index) + ":" + char)
-    end
-    match io.read_line()
-        case some(_):
-            io.print("input=some")
-        case none:
-            io.print("input=none")
-    end
-    match io.read_line()
-        case some(line):
-            io.print("valid=" + line)
-        case none:
-            io.print("valid=none")
-    end
-end
-"#,
-    );
-
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    let Some(output) = compile_and_run_c_source(
-        &dir,
-        "c_unicode_positions",
-        &out.c_source,
-        &[0xC0, 0xAF, b'\n', b'o', b'l', 0xC3, 0xA1, b'\n'],
-    ) else {
-        return;
-    };
-    assert!(output.status.success(), "{:?}", output);
-    assert_eq!(
-        normalize_stdout(output.stdout),
-        "len=3\nglobal_len=3\n\u{00e9}\u{1f642}\nindex=2\nget=\u{00e1}\nchar=\u{1f642}\niter=0:\u{00e1}\niter=1:\u{00e9}\niter=2:\u{1f642}\ninput=none\nvalid=ol\u{00e1}\n"
-    );
-}
-
-#[test]
 fn compile_runtime_panics_on_list_index_out_of_bounds() {
     let dir = TestDir::new("runtime_list_index_oob");
     dir.write(
@@ -10325,7 +8852,7 @@ end
 }
 
 #[test]
-fn cfg_filters_the_same_hir_for_c_and_documentation_routes() {
+fn cfg_filters_the_same_hir_for_build_and_documentation_routes() {
     let dir = TestDir::new("cfg_backend_docs_parity");
     dir.write(
         "ori.proj",
@@ -10356,22 +8883,20 @@ end
 Inactive API.
 |--
 public inactive_api() -> int
-    return 2
+    return missing_name
 end
 
 main()
+    check active_api() == 1
 end
 "#,
     );
 
-    let built = run_build(&dir.path("ori.proj")).unwrap();
+    let executable = exe_path(&dir, "cfg_native_docs");
+    let built = run_compile(&dir.path("ori.proj"), &executable).unwrap();
     assert!(!built.has_errors, "{:?}", built.diagnostics);
-    assert!(built.c_source.contains("active_api"), "{}", built.c_source);
-    assert!(
-        !built.c_source.contains("inactive_api"),
-        "{}",
-        built.c_source
-    );
+    let output = Command::new(&executable).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
 
     let docs = run_doc(&dir.path("ori.proj")).unwrap();
     assert!(!docs.has_errors, "{:?}", docs.diagnostics);
@@ -13353,30 +11878,6 @@ end
 }
 
 #[test]
-fn build_c_backend_compiles_err_trace() {
-    let dir = TestDir::new("c_backend_err_trace");
-    let source = r#"module app.main
-
-import ori.err_trace = trace
-
-level1() -> string
-    return trace.push("main.orl", 10, "err")
-end
-
-main()
-    const s = level1()
-    const f = trace.format(s)
-end
-"#;
-    dir.write("main.orl", source);
-
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build.c_source.contains("ori_err_trace_push"));
-    assert!(build.c_source.contains("ori_err_trace_format"));
-}
-
-#[test]
 fn compile_runs_inline_and_no_inline_attributes_native() {
     let dir = TestDir::new("inline_no_inline_attrs");
     let source = r#"module app.main
@@ -13457,108 +11958,36 @@ end
 }
 
 #[test]
-fn build_c_backend_compiles_anon_struct_and_struct_update_option_def_id() {
-    let dir = TestDir::new("c_backend_option_def_id");
-    let source = r#"module app.main
-
-struct Config
-    port: int
-    debug: bool
-end
-
-enum Status
-    Active
-    Pending(code: int)
-end
-
-update_config(c: Config) -> Config
-    return c with { port: 9000 } end
-end
-
-main()
-    const c: Config = { port: 8080, debug: true }
-    const c2 = update_config(c)
-    const s1: Status = Status.Active
-    const s2: Status = Status.Pending(code: 123)
-end
-"#;
-    dir.write("main.orl", source);
-
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-}
-
-#[test]
-fn unicode_case_fold_conformance_native_and_c_backend() {
+fn unicode_case_fold_conformance_native() {
     let dir = TestDir::new("unicode_case_fold_conformance");
-    let source = r#"module app.main
+    dir.write(
+        "main.orl",
+        r#"module app.main
 
 import ori.io = io
 import ori.string = str
 
 main()
-    -- 1. German sharp S (multi-char full fold: ß -> ss)
     io.println(str.case_fold("STRAßE"))
     io.println(str.case_fold("groß"))
-
-    -- 2. Umlauts and accented Latin
     io.println(str.case_fold("GRÜSSEN"))
     io.println(str.case_fold("CAFÉ"))
     io.println(str.case_fold("MAÑANA"))
     io.println(str.case_fold("ÉLÈVE"))
-
-    -- 3. Ligatures (multi-char full folds: ﬁ -> fi, ﬂ -> fl, ﬃ -> ffi)
     io.println(str.case_fold("ﬁle"))
     io.println(str.case_fold("ﬂow"))
     io.println(str.case_fold("oﬃce"))
-
-    -- 4. Greek and Cyrillic
     io.println(str.case_fold("ΟΔΥΣΣΕΥΣ"))
     io.println(str.case_fold("ПРИВЕТ"))
-
-    -- 5. Fullwidth & emoji preservation
     io.println(str.case_fold("ＨＥＬＬＯ"))
-    io.println(str.case_fold("Ori 🚀 2026"))
+    io.println(str.case_fold("Ori \u{1f680} 2026"))
 end
-"#;
-    dir.write("main.orl", source);
-
-    // Run native Cranelift AOT
-    let native_stdout = compile_and_run(&dir, "casefold_native");
-    assert!(native_stdout.contains("strasse"), "native: {native_stdout}");
-    assert!(native_stdout.contains("gross"), "native: {native_stdout}");
-    assert!(native_stdout.contains("grüssen"), "native: {native_stdout}");
-    assert!(native_stdout.contains("café"), "native: {native_stdout}");
-    assert!(native_stdout.contains("mañana"), "native: {native_stdout}");
-    assert!(native_stdout.contains("élève"), "native: {native_stdout}");
-    assert!(native_stdout.contains("file"), "native: {native_stdout}");
-    assert!(native_stdout.contains("flow"), "native: {native_stdout}");
-    assert!(native_stdout.contains("office"), "native: {native_stdout}");
-    assert!(
-        native_stdout.contains("\u{03BF}\u{03B4}\u{03C5}\u{03C3}\u{03C3}\u{03B5}\u{03C5}\u{03C3}"),
-        "native: {native_stdout}"
+"#,
     );
-    assert!(native_stdout.contains("привет"), "native: {native_stdout}");
-    assert!(
-        native_stdout.contains("ｈｅｌｌｏ"),
-        "native: {native_stdout}"
+    assert_eq!(
+        compile_and_run(&dir, "casefold_native"),
+        "strasse\ngross\ngrüssen\ncafé\nmañana\nélève\nfile\nflow\noffice\nοδυσσευσ\nпривет\nｈｅｌｌｏ\nori \u{1f680} 2026\n"
     );
-    assert!(
-        native_stdout.contains("ori 🚀 2026"),
-        "native: {native_stdout}"
-    );
-
-    // Run C backend and verify exact bit-for-bit parity
-    let out = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!out.has_errors, "{:?}", out.diagnostics);
-    if let Some(c_out) = compile_and_run_c_source(&dir, "casefold_c", &out.c_source, b"") {
-        let c_stdout = String::from_utf8_lossy(&c_out.stdout);
-        assert_eq!(
-            native_stdout.trim(),
-            c_stdout.trim(),
-            "Native and C backend case folding outputs must match identically"
-        );
-    }
 }
 
 #[test]

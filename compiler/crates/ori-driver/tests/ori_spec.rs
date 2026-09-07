@@ -4221,21 +4221,19 @@ end
 }
 
 #[test]
-fn crosscut_build_generates_c_source_with_entry_point() {
-    let dir = TestDir::new("crosscut_build_c");
+fn crosscut_build_lowers_entry_point() {
+    let dir = TestDir::new("build_entry_point");
     dir.write(
         "main.orl",
         r#"module app.main
 import ori.io = io
 main()
-    io.print("c build")
+    io.print("native build")
 end
 "#,
     );
     let build = run_build(&dir.path("main.orl")).unwrap();
     assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(build.c_source.contains("int main(int argc, char** argv)"));
-    assert!(build.c_source.contains("ori_io_print"));
 }
 
 // ─── Regression: duplicate struct fields and enum variants ────────────────────
@@ -4494,8 +4492,8 @@ end
 }
 
 #[test]
-fn build_c_backend_structural_equality_advanced() {
-    let dir = TestDir::new("c_backend_structural_equality_advanced");
+fn build_structural_equality_advanced() {
+    let dir = TestDir::new("structural_equality_advanced");
     dir.write(
         "main.orl",
         r#"module app.main
@@ -4510,14 +4508,18 @@ end
 main()
     const p1: Pair[string, int] = { first: "hello", second: 42 }
     const p2: Pair[string, int] = { first: "hello", second: 42 }
-    const is_equal: bool = p1 == p2
+    check p1 == p2
+    const p3: Pair[string, int] = { first: "world", second: 42 }
+    check p1 != p3
 end
 "#,
     );
 
-    let out = run_build(&dir.path("main.orl")).unwrap();
+    let exe = exe_path(&dir, "structural_equality_advanced");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
     assert!(!out.has_errors, "{:?}", out.diagnostics);
-    assert!(out.c_source.contains("ori_string_eq"), "{}", out.c_source);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
 }
 
 /// Regression: ABI zero-extension of sub-32-bit args to extern symbols.
@@ -4753,8 +4755,8 @@ end
 }
 
 #[test]
-fn build_c_match_guard_falls_through_to_next_arm() {
-    let dir = TestDir::new("build_c_match_guard");
+fn build_match_guard_falls_through_to_next_arm() {
+    let dir = TestDir::new("build_match_guard");
     dir.write(
         "main.orl",
         r#"module app.main
@@ -4774,28 +4776,21 @@ end
 
 main()
     io.println(grade(50))
+    io.println(grade(90))
 end
 "#,
     );
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    // Guarded matches emit the goto shape: a false guard jumps past the arm
-    // to the next pattern test instead of running the first binding arm.
-    assert!(
-        build.c_source.contains("_next0:;"),
-        "guard reject label missing:\n{}",
-        build.c_source
-    );
-    assert!(
-        build.c_source.contains("_end:;"),
-        "match end label missing:\n{}",
-        build.c_source
-    );
-    assert!(
-        build.c_source.contains("if (!("),
-        "guard condition missing:\n{}",
-        build.c_source
+    let exe = exe_path(&dir, "match_guard");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "C\nA\n"
     );
 }
 
@@ -4948,8 +4943,8 @@ end
 }
 
 #[test]
-fn build_c_match_expression_emits_result_temporary() {
-    let dir = TestDir::new("match_expr_c");
+fn build_match_expression_lowers_result() {
+    let dir = TestDir::new("match_expr_native");
     dir.write(
         "main.orl",
         r#"module app.main
@@ -4969,20 +4964,12 @@ end
 "#,
     );
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    // C has no multi-arm conditional expression: the arms assign one result
-    // temporary and jump to a shared end label.
-    assert!(
-        build.c_source.contains("_end:;"),
-        "match end label missing:\n{}",
-        build.c_source
-    );
-    assert!(
-        build.c_source.contains("goto "),
-        "arm jump missing:\n{}",
-        build.c_source
-    );
+    let exe = exe_path(&dir, "match_expression");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "um\n");
 }
 
 // ── `if ok(v) =` / `if err(e) =` (0.4 surface) ──────────────────────────────
@@ -5084,8 +5071,8 @@ end
 }
 
 #[test]
-fn build_c_if_err_inverts_the_ok_flag() {
-    let dir = TestDir::new("if_err_c");
+fn build_if_err_lowers_cleanly() {
+    let dir = TestDir::new("if_err_native");
     dir.write(
         "main.orl",
         r#"module app.main
@@ -5104,18 +5091,12 @@ end
 "#,
     );
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(
-        build.c_source.contains(".is_ok)") && build.c_source.contains("if (!"),
-        "expected an inverted is_ok test:\n{}",
-        build.c_source
-    );
-    assert!(
-        build.c_source.contains(".value.err"),
-        "expected the err side of the payload union:\n{}",
-        build.c_source
-    );
+    let exe = exe_path(&dir, "if_err");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "boom\n");
 }
 
 // ── Or-patterns: `case North or South:` (0.4 surface) ───────────────────────
@@ -5275,8 +5256,8 @@ end
 }
 
 #[test]
-fn build_c_or_pattern_emits_disjunction() {
-    let dir = TestDir::new("or_pattern_c");
+fn build_or_pattern_lowers_cleanly() {
+    let dir = TestDir::new("or_pattern_native");
     dir.write(
         "main.orl",
         r#"module app.main
@@ -5298,13 +5279,12 @@ end
 "#,
     );
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    assert!(
-        build.c_source.contains("||"),
-        "expected a disjunction for the or-pattern:\n{}",
-        build.c_source
-    );
+    let exe = exe_path(&dir, "or_pattern");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "small\n");
 }
 
 // ── `newtype` — nominal type over an existing representation (0.4 surface) ──
@@ -5429,8 +5409,8 @@ end
 }
 
 #[test]
-fn build_c_newtype_is_erased_entirely() {
-    let dir = TestDir::new("newtype_erased_c");
+fn compile_newtype_preserves_underlying_value() {
+    let dir = TestDir::new("newtype_erased_native");
     dir.write(
         "main.orl",
         r#"module app.main
@@ -5446,13 +5426,16 @@ end
 "#,
     );
 
-    let build = run_build(&dir.path("main.orl")).unwrap();
-    assert!(!build.has_errors, "{:?}", build.diagnostics);
-    // Zero cost means zero trace: no constructor function, no wrapper struct.
-    assert!(
-        !build.c_source.contains("UserId"),
-        "newtype must leave no trace in generated C:\n{}",
-        build.c_source
+    let exe = exe_path(&dir, "newtype_native");
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "7\n"
     );
 }
 

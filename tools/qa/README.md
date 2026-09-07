@@ -59,6 +59,10 @@ export PATH="$PWD/compiler/target/release:$PATH"
 ./tools/qa/perf_polyglot_smoke.sh
 ```
 
+C source emission and generated-C sanitizer tests have been removed. Native
+FFI C-host sanitizer coverage remains part of the native integration tests;
+C export headers and host interoperability are still supported.
+
 ## Related
 
 | Doc / skill | Role |

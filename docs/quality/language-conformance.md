@@ -60,7 +60,7 @@ Shows formatter, LSP, docs extraction, migration, and syntax highlighting agree 
 
 ### Backend evidence
 
-Shows AOT, JIT, and C/debug behavior matches the support matrix.
+Shows native AOT/JIT behavior matches the support matrix.
 
 ### Runtime evidence
 

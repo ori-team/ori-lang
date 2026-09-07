@@ -89,14 +89,10 @@ For shared support, compile and execute the same program through AOT and JIT and
 - cleanup effects;
 - resource behavior.
 
-### C/debug backend tests
+### Native support boundary tests
 
-The C/debug backend has two valid outcomes:
-
-- behavior matches the documented supported subset;
-- unsupported behavior is rejected explicitly.
-
-Silent semantic divergence is a failure.
+Supported behavior must match the native support matrix. Unsupported native
+shapes must reject explicitly; silent semantic divergence is a failure.
 
 ### LSP tests
 

@@ -29,7 +29,6 @@ pub struct CompileOutput {
 
 pub struct BuildOutput {
     pub cache: SourceCache,
-    pub c_source: String,
     pub diagnostics: Vec<Diagnostic>,
     pub has_errors: bool,
 }
@@ -41,13 +40,8 @@ pub struct CompileOptions {
     pub lib: bool,
 }
 
-/// Compatibility route for the historical `ori build` command.
+/// Pipeline up to HIR lowering and validation (used by tests and compiler passes).
 pub fn run_build(path: &Path) -> Result<BuildOutput, String> {
-    run_emit_c(path)
-}
-
-/// Full pipeline + HIR lowering + C code generation for `ori emit c`.
-pub fn run_emit_c(path: &Path) -> Result<BuildOutput, String> {
     let mut cache = SourceCache::default();
     let mut sink = DiagnosticSink::default();
     let sources = load_and_resolve(path, &mut cache, &mut sink)?;
@@ -58,42 +52,17 @@ pub fn run_emit_c(path: &Path) -> Result<BuildOutput, String> {
         check_loaded_sources(&loaded, &resolved, &mut sink);
     }
 
-    let c_source = if !sink.has_errors() {
+    if !sink.has_errors() {
         let mut hir = lower_loaded_sources(&loaded, &resolved, &mut sink);
-        if sink.has_errors() {
-            // Lowering itself rejected the program; emit no C at all.
-            String::new()
-        } else {
+        if !sink.has_errors() {
             ori_hir::optimize_module(&mut hir, ori_hir::OptLevel::from_env());
-            match ori_codegen::emit_c(&hir) {
-                Ok(source) => source,
-                Err(error) => {
-                    sink.emit(
-                        Diagnostic::error(
-                            "backend.c_unsupported",
-                            "the C debug backend cannot generate this program correctly",
-                        )
-                        .with_why(
-                            "the C backend is a secondary debug/transpile route with partial feature parity",
-                        )
-                        .with_action(
-                            "use `ori compile` for the native backend, or remove the unsupported feature before generating C",
-                        )
-                        .with_note(error),
-                    );
-                    String::new()
-                }
-            }
         }
-    } else {
-        String::new()
-    };
+    }
 
     let has_errors = sink.has_errors();
     let diagnostics = sink.into_diagnostics();
     Ok(BuildOutput {
         cache,
-        c_source,
         diagnostics,
         has_errors,
     })

@@ -71,7 +71,7 @@ The vertical change normally includes:
 9. positive type-check test;
 10. negative semantic test where relevant;
 11. native execution test;
-12. C/debug test or explicit unsupported classification;
+12. AOT/JIT parity test on their shared support surface;
 13. Spec 12/15 update;
 14. changelog entry when user-visible.
 
@@ -126,7 +126,7 @@ Stdlib changes should validate:
 - native and JIT execution;
 - ownership and cleanup for managed values;
 - error behavior;
-- C/debug support matrix;
+- native support matrix and explicit rejection of unsupported shapes;
 - generated docs and LSP visibility;
 - realistic example behavior.
 

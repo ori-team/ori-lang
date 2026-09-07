@@ -56,6 +56,10 @@ ORI_TEST_LEAK_CHECK=1 ori test main.orl
 
 ## As a compiler contributor
 
+Codegen coverage targets native AOT/JIT, linking, generated C FFI headers, and
+runtime symbols. Validate AOT/JIT parity on their shared support surface;
+C/FFI host sanitizers remain distinct from instrumenting generated native code.
+
 From the repository root:
 
 ```bash

@@ -32,9 +32,9 @@ Validate:
 - async/iterator/control-flow results;
 - debug source mapping where the optimization promises preservation.
 
-### Native versus C/debug subset
+### Native support boundaries
 
-For the documented C/debug subset, compare behavior. For unsupported features, assert the explicit diagnostic rather than attempting comparison.
+Compare AOT/JIT behavior on their shared supported surface. For unsupported native features, assert the explicit diagnostic rather than attempting comparison.
 
 ### Compiler versus reference model
 
@@ -148,7 +148,7 @@ Expand from real regressions and high-risk code changes.
 - optimized/unoptimized comparison across standard and aggressive Cranelift passes;
 - multi-trait colon dispatch, SIMD vectors, struct alignment, and arena reset differential coverage;
 - clean/incremental comparison for representative projects;
-- explicit C/debug supported-subset route;
+- explicit native support-boundary rejection tests;
 - managed cleanup observations for high-risk fixtures;
 - scheduled broader matrix;
 - minimized-regression workflow.

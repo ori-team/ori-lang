@@ -42,7 +42,7 @@ When implementation contradicts a higher contract, classify the conflict instead
 - New diagnostics require catalog entries and negative tests.
 - Runtime/stdlib changes keep semantic signatures, ABI metadata, exported symbols, docs, LSP, and tests synchronized.
 - The native backend is the semantic reference.
-- C/debug behavior must match its support matrix or reject explicitly.
+- Unsupported native behavior must reject explicitly according to the support matrix.
 - AOT and JIT must agree on their shared support surface.
 - Do not weaken a quality gate to make a change pass without an explicit recorded decision.
 - Do not add product-specific frameworks or external ecosystems to the core repository without an explicit decision.
@@ -72,7 +72,7 @@ Inspect all applicable layers:
 
 ```text
 lexer -> AST -> parser -> resolution/signatures -> type checker
--> HIR -> optimization -> AOT/JIT/C-debug -> runtime/ABI
+-> HIR -> optimization -> AOT/JIT -> runtime/ABI
 -> formatter -> LSP/editor -> diagnostics -> tests -> spec -> changelog
 ```
 

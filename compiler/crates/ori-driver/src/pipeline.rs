@@ -26,7 +26,7 @@ mod runtime;
 mod timing;
 
 pub use compile::{
-    run_build, run_compile_with_options, run_emit_c, BuildOutput, CompileOptions, CompileOutput,
+    run_build, run_compile_with_options, BuildOutput, CompileOptions, CompileOutput,
 };
 pub use daemon::run_daemon;
 pub use docs::{
@@ -139,8 +139,7 @@ pub fn run_build_native(
     run_compile_with_options(source_path, output, options)
 }
 
-// The native route now links against the Rust ori-runtime static library. C
-// emission remains available only as the explicit debug route `ori emit c`.
+// The native route links against the Rust ori-runtime static library.
 
 #[cfg(test)]
 mod tests {
