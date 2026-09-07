@@ -76,7 +76,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test runtime
-        run: cargo test -p ori-runtime --locked
+        run: cargo test -p ori-runtime --locked -- --test-threads=1
 
       - name: Test native driver integration
         run: cargo test -p ori-driver --test multifile_imports --locked
