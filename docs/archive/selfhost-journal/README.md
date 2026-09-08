@@ -153,15 +153,19 @@ Finalizamos a implementação dos Módulos 3, 4 e 5 com verificação integral:
 
 ---
 
-## Post 15: O Binário Fala — Chamadas com Argumentos e Impressão Real no Terminal
+## Post 16: Parser de Tipos Compostos Modular e Fechamento Total da Gramática
 
-Completamos o elo que faltava entre as chamadas de alto nível e o runtime do sistema:
-1. **Argumentos de Chamada na Pós-Fixa (`postfix.orl`)**: O parser consome os argumentos de métodos encadeados (`io.println("Hello, Ori...")`) e salva os identificadores de expressão no `ExprPool`.
-2. **Deslocamento e Tratamento de Strings no Emitter**: Implementamos `sanitize_json_str` em `body_emitter.orl` para tratar aspas e prefixos sem recorrer a interpolações de chaves problemáticas.
-3. **Mapeamento de Impressão Nativa (`ori_io_print`)**: No `ori-bridge-server`, convertemos chamadas a `println` para a função de runtime `ori_io_print` com assinatura `(ptr, len)`. Chamadas sem argumentos recebem fallback para string vazia para preservar a aridade estrita exigida pelo Cranelift.
-4. **Resultado**: O executável nativo `/tmp/opencode/hello_talks.bin` compilado pelo compilador em Ori foi executado e imprimiu texto diretamente no stdout do terminal, finalizando com status 0.
-
-O compilador self-host agora gera programas com efeitos colaterais visíveis de E/S.
+Finalizamos o refinamento de robustez de parsing e tipos:
+1. **`parse_ty.orl` Desacoplado**:
+   - `parse_bracketed_type` decomposto com balanceamento estrito de colchetes `[` / `]`.
+   - Suporte canônico para `list[T]`, `optional[T]`, `result[T, E]`, `map[K, V]`, `set[T]`, `buffer[T]`, `slice[T]`, `channel[T]` e `range[T]`.
+2. **Top-Level Decl Scanner**:
+   - `file_parser.orl` consome blocos `extern "C" ... end` e declarações `const` de nível de módulo sem desalinhamento de cursores.
+3. **Catálogo de Superfície Expandido**:
+   - `stdlib_broad.orl` expandido para registrar 58 APIs da biblioteca padrão cobrindo coleções (deque, queue, stack, heap, map, set), strings, math (abs, sqrt, min, max), time, crypto, fs, net e test harness.
+4. **Validação Contínua**:
+   - Todos os 9 harnesses de frontend e todos os 5 harnesses dos módulos principais executam com sucesso 100% verde.
+   - O pipeline inteiro do compilador Ori (`selfhost/compiler/main.orl`) executa os comandos `check` e `compile` sobre arquivos reais do repositório em tempos de 0,04s a 1,29s.
 
 ---
 
