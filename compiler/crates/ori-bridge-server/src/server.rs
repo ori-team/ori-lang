@@ -203,7 +203,13 @@ fn collect_callees_stmt(s: &SerializedStmt, out: &mut Vec<String>) {
 fn collect_callees_expr(e: &SerializedExpr, out: &mut Vec<String>) {
     match e {
         SerializedExpr::Call { callee, args } => {
-            if !out.contains(callee) {
+            let is_builtin_print = callee == "println"
+                || callee == "io.println"
+                || callee == "ori.io.println"
+                || callee == "ori.io.print"
+                || callee == "ori_io_print"
+                || callee == "ori_io_eprint";
+            if !is_builtin_print && !out.contains(callee) {
                 out.push(callee.clone());
             }
             for a in args {
@@ -371,24 +377,54 @@ fn lower_expr(se: &SerializedExpr) -> HirExpr {
             ty: Ty::Int,
             span: Span::DUMMY,
         },
-        SerializedExpr::Call { callee, args } => HirExpr {
-            kind: HirExprKind::Call {
-                callee: Box::new(HirExpr {
-                    kind: HirExprKind::Var(SmolStr::new(callee)),
-                    ty: Ty::Void,
-                    span: Span::DUMMY,
-                }),
-                args: args
-                    .iter()
-                    .map(|a| HirArg {
-                        value: lower_expr(a),
+        SerializedExpr::Call { callee, args } => {
+            let is_print = callee == "println" || callee == "io.println" || callee == "ori.io.println";
+            let (actual_callee, callee_ty) = if is_print {
+                (
+                    SmolStr::new("ori_io_print"),
+                    Ty::Func {
+                        params: vec![Ty::String],
+                        ret: Box::new(Ty::Void),
+                    },
+                )
+            } else {
+                (SmolStr::new(callee), Ty::Void)
+            };
+
+            let mut final_args = args.clone();
+            // If it's a print call with 0 arguments, provide an empty string so Cranelift
+            // receives the required (ptr, len) pair instead of 0 arguments.
+            if is_print && final_args.is_empty() {
+                final_args.push(SerializedExpr::StrLit(String::new()));
+            }
+
+            let lowered_args = final_args
+                .iter()
+                .map(|a| {
+                    let mut le = lower_expr(a);
+                    if is_print {
+                        le.ty = Ty::String;
+                    }
+                    HirArg {
+                        value: le,
                         label: None,
                         spread: false,
-                    })
-                    .collect(),
-            },
-            ty: Ty::Void,
-            span: Span::DUMMY,
+                    }
+                })
+                .collect();
+
+            HirExpr {
+                kind: HirExprKind::Call {
+                    callee: Box::new(HirExpr {
+                        kind: HirExprKind::Var(actual_callee),
+                        ty: callee_ty,
+                        span: Span::DUMMY,
+                    }),
+                    args: lowered_args,
+                },
+                ty: Ty::Void,
+                span: Span::DUMMY,
+            }
         },
     }
 }

@@ -9,4 +9,7 @@ pub use protocol::{
     SerializedFunc, SerializedModule, SerializedParam, SerializedStmt, SerializedTy,
     CURRENT_PROTOCOL_VERSION,
 };
+pub const RUNTIME_IO_PRINT: &str = "ori_io_print";
+pub const RUNTIME_IO_EPRINT: &str = "ori_io_eprint";
+
 pub use server::BridgeServer;

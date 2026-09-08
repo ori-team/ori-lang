@@ -153,20 +153,15 @@ Finalizamos a implementação dos Módulos 3, 4 e 5 com verificação integral:
 
 ---
 
-## Post 14: O Compilador Ori Compila e Executa Binários Nativo Ponta a Ponta
+## Post 15: O Binário Fala — Chamadas com Argumentos e Impressão Real no Terminal
 
-Atingimos a materialização física completa:
-O compilador autônomo em Ori (`ori-stage1`) executou o comando:
-`ori-stage1 compile examples/hello/main.orl -o /tmp/opencode/hello_aot_emitted.bin`
-1. O pipeline em Ori abriu e analisou as fontes no disco.
-2. O `file_parser` extraiu a função real `main` com `name` qualificado para entrypoint (`app.hello.main`).
-3. O `serde_full.orl` serializou a carga com a função real e enviou via subprocesso para o binário `runtime/bin/ori-bridge-server`.
-4. O Cranelift gerou o objeto ELF real `.tmp.o` contendo o símbolo `main` exportado (`T main`).
-5. O linker nativo do sistema empacotou o objeto com o runtime estático `libori_runtime.a` e gerou o binário de 31 MiB.
-6. O sistema operacional executou o binário gerado retornando `exit=0`!
-`NATIVE_BINARY_EMITTED: /tmp/opencode/hello_aot_emitted.bin`
+Completamos o elo que faltava entre as chamadas de alto nível e o runtime do sistema:
+1. **Argumentos de Chamada na Pós-Fixa (`postfix.orl`)**: O parser consome os argumentos de métodos encadeados (`io.println("Hello, Ori...")`) e salva os identificadores de expressão no `ExprPool`.
+2. **Deslocamento e Tratamento de Strings no Emitter**: Implementamos `sanitize_json_str` em `body_emitter.orl` para tratar aspas e prefixos sem recorrer a interpolações de chaves problemáticas.
+3. **Mapeamento de Impressão Nativa (`ori_io_print`)**: No `ori-bridge-server`, convertemos chamadas a `println` para a função de runtime `ori_io_print` com assinatura `(ptr, len)`. Chamadas sem argumentos recebem fallback para string vazia para preservar a aridade estrita exigida pelo Cranelift.
+4. **Resultado**: O executável nativo `/tmp/opencode/hello_talks.bin` compilado pelo compilador em Ori foi executado e imprimiu texto diretamente no stdout do terminal, finalizando com status 0.
 
-O compilador em Ori é agora plenamente capaz de produzir binários nativos executáveis do início ao fim.
+O compilador self-host agora gera programas com efeitos colaterais visíveis de E/S.
 
 ---
 

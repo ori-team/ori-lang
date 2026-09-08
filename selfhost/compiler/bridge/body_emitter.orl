@@ -15,7 +15,7 @@ public emit_expr_json(pool: exprs.ExprPool, id: int) -> string
         const raw = lists.get(pool.str_vals, id)
         return "{\"IntLit\":" + raw + "}"
     elif tag == 2 -- StrLit
-        const val = lists.get(pool.str_vals, id)
+        const val = sanitize_json_str(lists.get(pool.str_vals, id))
         return "{\"StrLit\":\"" + val + "\"}"
     elif tag == 3 -- BoolLit
         const val = lists.get(pool.str_vals, id)
@@ -55,10 +55,27 @@ public emit_expr_json(pool: exprs.ExprPool, id: int) -> string
         end
     elif tag == 6 -- Call
         const callee = lists.get(pool.str_vals, id)
-        return "{\"Call\":{\"callee\":\"" + callee + "\",\"args\":[]}}"
+        const arg_id = lists.get(pool.left_ids, id)
+        if arg_id == -1
+            return "{\"Call\":{\"callee\":\"" + callee + "\",\"args\":[]}}"
+        else
+            const arg_json = emit_expr_json(pool, arg_id)
+            return "{\"Call\":{\"callee\":\"" + callee + "\",\"args\":[" + arg_json + "]}}"
+        end
     end
 
     return "{\"IntLit\":0}"
+end
+
+sanitize_json_str(s: string) -> string
+    -- Strip outer quotes or f"..." prefix if present
+    var clean = s
+    if su.starts_with(clean, "f\"") and su.ends_with(clean, "\"")
+        clean = su.slice(clean, 2, su.len(clean) - 1)
+    elif su.starts_with(clean, "\"") and su.ends_with(clean, "\"")
+        clean = su.slice(clean, 1, su.len(clean) - 1)
+    end
+    return su.replace(clean, "\"", "\\\"")
 end
 
 public emit_stmt_json(sp: stmts.StmtPool, pool: exprs.ExprPool, id: int) -> string

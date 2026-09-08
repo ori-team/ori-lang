@@ -35,27 +35,33 @@ public parse_postfix_chain(tokens: list[tok.Token], cursor: int, pool: exprs.Exp
                         const after_field = lists.get(tokens, cur + 2)
                         match after_field.kind
                         case LParen:
-                            -- Consume args with full expression parsing until matching ')'
+                            var first_arg_id = -1
                             var a_cur = cur + 3
-                            var depth = 1
-                            while a_cur < lists.len(tokens) and depth > 0
-                                const at = lists.get(tokens, a_cur)
-                                match at.kind
-                                case LParen:
-                                    depth = depth + 1
-                                    a_cur = a_cur + 1
+                            -- Parse first argument if not immediately ')'
+                            if a_cur < lists.len(tokens)
+                                const probe = lists.get(tokens, a_cur)
+                                match probe.kind
                                 case RParen:
-                                    depth = depth - 1
                                     a_cur = a_cur + 1
                                 case else:
-                                    a_cur = a_cur + 1
+                                    match exprs.parse_primary(tokens, a_cur, pool)
+                                    case some(arg_out):
+                                        first_arg_id = arg_out.expr_id
+                                        a_cur = arg_out.next_cursor
+                                        if a_cur < lists.len(tokens)
+                                            const close_tok = lists.get(tokens, a_cur)
+                                            match close_tok.kind
+                                            case RParen:
+                                                a_cur = a_cur + 1
+                                            case else:
+                                            end
+                                        end
+                                    case none:
+                                        a_cur = a_cur + 1
+                                    end
                                 end
                             end
-                            const next_id = exprs.alloc_expr(pool, node.ExprKind.MethodCall(
-                                receiver_id: current,
-                                method: m_name,
-                                arg_ids: []
-                            ), t.span)
+                            const next_id = exprs.alloc_expr_raw(pool, 6, first_arg_id, -1, m_name)
                             current = next_id
                             cur = a_cur
                         case else:

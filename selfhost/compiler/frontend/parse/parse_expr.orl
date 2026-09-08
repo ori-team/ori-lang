@@ -128,19 +128,21 @@ end
 
 parse_call(tokens: list[tok.Token], cursor: int, pool: ExprPool, fn_name: string, span: tok.Span) -> optional[ParseExprOut]
     var cur = cursor + 2 -- Skip ident and '('
-    var arg_count = 0
+    var first_arg_id = -1
     while cur < lists.len(tokens)
         const t = lists.get(tokens, cur)
         match t.kind
         case RParen:
-            const id = alloc_expr_raw(pool, 6, arg_count, -1, fn_name)
+            const id = alloc_expr_raw(pool, 6, first_arg_id, -1, fn_name)
             return some(ParseExprOut { expr_id: id, next_cursor: cur + 1 })
         case Comma:
             cur = cur + 1
         case else:
             match parse_primary(tokens, cur, pool)
             case some(out):
-                arg_count = arg_count + 1
+                if first_arg_id == -1
+                    first_arg_id = out.expr_id
+                end
                 cur = out.next_cursor
             case none:
                 return none
