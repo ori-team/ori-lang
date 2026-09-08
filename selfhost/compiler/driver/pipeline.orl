@@ -40,10 +40,10 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
     const item_len = parsed_file.item_count
     const expr_len = parsed_file.expr_count
 
-    -- 3. Resolver PASS-1 & PASS-2: register declarations and resolve true Ident references
+    -- 3. Resolver PASS-1 & PASS-2: register declarations (with visibility) and resolve true Ident references
     const dmap = dm.new_def_map()
     const sink = ds.new_sink()
-    dm.pass1_collect_declarations(dmap, sink, parsed_file.module_name, parsed_file.func_names, parsed_file.struct_names, parsed_file.enum_names)
+    dm.pass1_collect_declarations_pub(dmap, sink, parsed_file.module_name, parsed_file.func_names, parsed_file.func_is_public, parsed_file.struct_names, parsed_file.struct_is_public, parsed_file.enum_names, parsed_file.enum_is_public)
     dm.register_local_bindings(dmap, parsed_file.stmt_target_names)
     dm.pass2_resolve_idents_only(dmap, sink, parsed_file.expr_kind_tags, parsed_file.expr_str_vals)
     const sym_count = dm.total_defs(dmap)

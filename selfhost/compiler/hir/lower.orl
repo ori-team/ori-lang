@@ -20,21 +20,27 @@ end
 public lower_item(ctx: LowerContext, item: node.ItemNode)
     match item
     case Func(decl):
-        const body_json = f"{{\"Return\":{{\"IntLit\":0}}}}"
+        const body_stub = "{\"Return\":{\"IntLit\":0}}"
         if decl.ret_ty == "T"
             const args_int: list[string] = ["int"]
             const mono_int = mo.intern_instance(ctx.mono_table, decl.name.text, args_int)
             lists.push(ctx.module_ir.func_names, mono_int)
             lists.push(ctx.module_ir.func_ret_tys, "int")
-            lists.push(ctx.module_ir.func_body_jsons, body_json)
+            lists.push(ctx.module_ir.func_body_jsons, body_stub)
         else
             lists.push(ctx.module_ir.func_names, decl.name.text)
             lists.push(ctx.module_ir.func_ret_tys, decl.ret_ty)
-            lists.push(ctx.module_ir.func_body_jsons, body_json)
+            lists.push(ctx.module_ir.func_body_jsons, body_stub)
         end
     case else:
         -- Structs and enums do not lower to executable functions directly
     end
+end
+
+public lower_body_statements(ctx: LowerContext, fn_name: string, fn_ret_ty: string, body_json: string)
+    lists.push(ctx.module_ir.func_names, fn_name)
+    lists.push(ctx.module_ir.func_ret_tys, fn_ret_ty)
+    lists.push(ctx.module_ir.func_body_jsons, body_json)
 end
 
 public module_func_count(ctx: LowerContext) -> int

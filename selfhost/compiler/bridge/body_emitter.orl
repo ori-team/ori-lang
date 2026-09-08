@@ -70,12 +70,13 @@ end
 sanitize_json_str(s: string) -> string
     -- Strip outer quotes or f"..." prefix if present
     var clean = s
-    if su.starts_with(clean, "f\"") and su.ends_with(clean, "\"")
+    if su.starts_with(clean, "f\"") and su.ends_with(clean, "\"") and su.len(clean) >= 3
         clean = su.slice(clean, 2, su.len(clean) - 1)
-    elif su.starts_with(clean, "\"") and su.ends_with(clean, "\"")
+    elif su.starts_with(clean, "\"") and su.ends_with(clean, "\"") and su.len(clean) >= 2
         clean = su.slice(clean, 1, su.len(clean) - 1)
     end
-    return su.replace(clean, "\"", "\\\"")
+    const no_backslash = su.replace(clean, "\\", "\\\\")
+    return su.replace(no_backslash, "\"", "\\\"")
 end
 
 public emit_stmt_json(sp: stmts.StmtPool, pool: exprs.ExprPool, id: int) -> string

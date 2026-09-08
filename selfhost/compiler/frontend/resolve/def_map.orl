@@ -175,8 +175,43 @@ is_expr_noise(name: string) -> bool
     return false
 end
 
-public total_defs(dmap: DefMap) -> int
-    return lists.len(dmap.names)
+public pass1_collect_declarations_pub(
+    dmap: DefMap,
+    sink: ds.DiagnosticSink,
+    module_name: string,
+    func_names: list[string],
+    func_is_pub: list[int],
+    struct_names: list[string],
+    struct_is_pub: list[int],
+    enum_names: list[string],
+    enum_is_pub: list[int]
+)
+    -- 1. Register Structs
+    var s_idx = 0
+    while s_idx < lists.len(struct_names)
+        const sname = lists.get(struct_names, s_idx)
+        const pub_flag = if s_idx < lists.len(struct_is_pub) and lists.get(struct_is_pub, s_idx) == 1 then true else false
+        register_def(dmap, sink, sname, module_name + "." + sname, 1, pub_flag)
+        s_idx = s_idx + 1
+    end
+
+    -- 2. Register Enums
+    var e_idx = 0
+    while e_idx < lists.len(enum_names)
+        const ename = lists.get(enum_names, e_idx)
+        const pub_flag = if e_idx < lists.len(enum_is_pub) and lists.get(enum_is_pub, e_idx) == 1 then true else false
+        register_def(dmap, sink, ename, module_name + "." + ename, 2, pub_flag)
+        e_idx = e_idx + 1
+    end
+
+    -- 3. Register Functions
+    var f_idx = 0
+    while f_idx < lists.len(func_names)
+        const fname = lists.get(func_names, f_idx)
+        const pub_flag = if f_idx < lists.len(func_is_pub) and lists.get(func_is_pub, f_idx) == 1 then true else false
+        register_def(dmap, sink, fname, module_name + "." + fname, 4, pub_flag)
+        f_idx = f_idx + 1
+    end
 end
 
 public register_local_bindings(
@@ -199,5 +234,28 @@ public register_local_bindings(
             end
         end
         i = i + 1
+    end
+end
+
+public total_defs(dmap: DefMap) -> int
+    return lists.len(dmap.names)
+end
+
+public is_def_public(dmap: DefMap, name: string) -> optional[bool]
+    match lookup_def_id(dmap, name)
+    case some(idx):
+        return some(lists.get(dmap.is_public_flags, idx) == 1)
+    case none:
+        return none
+    end
+end
+
+public check_cross_module_access(dmap: DefMap, sink: ds.DiagnosticSink, name: string)
+    match lookup_def_id(dmap, name)
+    case some(idx):
+        if lists.get(dmap.is_public_flags, idx) == 0
+            ds.emit_error(sink, "name.private", "item is private and cannot be accessed from another module", "declare it as public or keep usage within the owning module")
+        end
+    case none:
     end
 end
