@@ -147,7 +147,11 @@ scan_word(lex: Lexer) -> TokenOut
         const step = advance_byte(cur)
         cur = step.next
     end
-    const text = su.slice(lex.source, start, cur.cursor)
+    const text_bytes = bs.slice(lex.byte_data, start, cur.cursor)
+    const text = match bs.decode_utf8(text_bytes)
+        case ok(s): s
+        case err(_): ""
+        end
     const span = tok.Span {
         start_pos: tok.ByteOffset(start),
         end_pos: tok.ByteOffset(cur.cursor)
@@ -162,7 +166,7 @@ end
 
 scan_number(lex: Lexer) -> TokenOut
     const start = lex.cursor
-    const res = nscan.scan_number_full(lex.source, start, lex.length)
+    const res = nscan.scan_number_full(lex.byte_data, start, lex.length)
     const next_lex = Lexer {
         source: lex.source,
         byte_data: lex.byte_data,

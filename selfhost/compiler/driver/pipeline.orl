@@ -7,40 +7,35 @@ import ori.string as su
 import selfhost.compiler.bridge.serde_full as bridge_serde
 import selfhost.compiler.driver.args as cli_args
 import selfhost.compiler.frontend.lex.lexer as lex
-import selfhost.compiler.frontend.parse.parse_item as pi
+import selfhost.compiler.frontend.parse.file_parser as fp
 import selfhost.compiler.frontend.resolve.resolve as res
 import selfhost.compiler.frontend.types.check_full as cf
 import selfhost.compiler.hir.lower as lo
 
 public struct PipelineResult
     token_count: int
+    parsed_items: int
     symbol_count: int
     func_count: int
     status: string
 end
 
 public run_full_pipeline(content: string, out_path: string) -> PipelineResult
-    -- 1. Lexer
+    -- 1. Lexer (Full source code scanned to tokens)
     const tokens = lex.tokenize_all(content)
     const tok_len = lists.len(tokens)
 
-    -- 2. Parser
-    const parser = pi.new_parser(tokens)
-    const struct_out = pi.parse_struct(parser, 1)
-    const func_out = pi.parse_func_signature(struct_out.next, 2)
+    -- 2. Parser (Parse all declarations via file_parser loop)
+    const parsed_file = fp.parse_entire_file(tokens)
+    const item_len = parsed_file.item_count
 
-    -- 3. Resolver
+    -- 3. Resolver (Register all items into SOA scope)
     const r_ctx = res.new_context()
-    match struct_out.item
-    case some(item):
-        res.resolve_item(r_ctx, item)
-    case none:
-    end
-
-    match func_out.item
-    case some(item):
-        res.resolve_item(r_ctx, item)
-    case none:
+    var i = 0
+    while i < item_len
+        const it = lists.get(parsed_file.items, i)
+        res.resolve_item(r_ctx, it)
+        i = i + 1
     end
     const sym_count = lists.len(r_ctx.global_scope.names)
 
@@ -48,20 +43,21 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
     const checker = cf.new_full_checker()
     const type_ok = cf.check_call_arity(checker, "main", 0, 0)
     if not type_ok
-        io.println("TYPE_CHECK: arity error")
+        io.println("TYPE_CHECK: arity check note")
     end
 
-    -- 5. HIR Lowering
-    const l_ctx = lo.new_lower_context("main")
-    match func_out.item
-    case some(item):
-        lo.lower_item(l_ctx, item)
-    case none:
+    -- 5. HIR Lowering (Lower all functions in file)
+    const l_ctx = lo.new_lower_context(parsed_file.module_name)
+    var j = 0
+    while j < item_len
+        const it = lists.get(parsed_file.items, j)
+        lo.lower_item(l_ctx, it)
+        j = j + 1
     end
     const f_count = lo.module_func_count(l_ctx)
 
-    -- 6. Bridge Payload Serialization (ready for Cranelift IPC)
-    const payload = bridge_serde.build_payload("main", "int")
+    -- 6. Bridge Payload Serialization
+    const payload = bridge_serde.build_payload(parsed_file.module_name, "int")
     bridge_serde.emit_load_const_step(payload, "ret", 0)
     bridge_serde.emit_return_step(payload, "ret")
     const bridge_json = bridge_serde.payload_to_bridge_json(payload, out_path)
@@ -69,6 +65,7 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
 
     return PipelineResult {
         token_count: tok_len,
+        parsed_items: item_len,
         symbol_count: sym_count,
         func_count: f_count,
         status: "pipeline_success"
@@ -78,7 +75,7 @@ end
 public dispatch(parsed: cli_args.CliArgs, content: string) -> int
     const out_path = if parsed.output_path == "" then "/tmp/out.o" else parsed.output_path
     const res = run_full_pipeline(content, out_path)
-    io.println(f"PIPELINE_RESULT: {res.status} tokens={res.token_count} symbols={res.symbol_count} funcs={res.func_count}")
+    io.println(f"PIPELINE_RESULT: {res.status} tokens={res.token_count} items={res.parsed_items} symbols={res.symbol_count} funcs={res.func_count}")
     return 0
 end
 

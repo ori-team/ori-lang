@@ -1,0 +1,103 @@
+module selfhost.compiler.frontend.parse.file_parser
+
+import ori.list as lists
+import selfhost.compiler.frontend.lex.token as tok
+import selfhost.compiler.frontend.parse.decl_and_recovery as dr
+import selfhost.compiler.frontend.parse.node as node
+import selfhost.compiler.frontend.parse.parse_import as pi
+import selfhost.compiler.frontend.parse.parse_item as pitem
+
+public struct ParsedFile
+    module_name: string
+    items: list[node.ItemNode]
+    item_count: int
+end
+
+public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
+    var cur = 0
+    const total = lists.len(tokens)
+    const items: list[node.ItemNode] = []
+    var mod_name = "main"
+
+    -- 1. Check for optional module declaration
+    match pi.parse_module_header(tokens, cur)
+    case some(name):
+        mod_name = name
+        cur = cur + 2
+    case none:
+    end
+
+    -- 2. Fast declaration scanner loop (O(N) skipping function/struct bodies via end-sync)
+    var next_id = 1
+    while cur < total
+        const t = lists.get(tokens, cur)
+        match t.kind
+        case Import:
+            match pi.parse_import_decl(tokens, cur)
+            case some(out):
+                lists.push(items, node.ItemNode.Import(decl: out.import_node))
+                cur = out.next_cursor
+            case none:
+                cur = cur + 1
+            end
+        case Struct:
+            const s_parser = pitem.Parser { tokens: tokens, cursor: cur, length: total }
+            const s_out = pitem.parse_struct(s_parser, next_id)
+            match s_out.item
+            case some(item):
+                lists.push(items, item)
+                cur = s_out.next.cursor
+                next_id = next_id + 1
+            case none:
+                cur = dr.skip_to_sync(tokens, cur + 1)
+            end
+        case Enum:
+            const e_parser = pitem.Parser { tokens: tokens, cursor: cur, length: total }
+            const e_out = pitem.parse_enum(e_parser, next_id)
+            match e_out.item
+            case some(item):
+                lists.push(items, item)
+                cur = e_out.next.cursor
+                next_id = next_id + 1
+            case none:
+                cur = dr.skip_to_sync(tokens, cur + 1)
+            end
+        case Ident(name):
+            -- Fast check: only a function if immediately followed by '('
+            if cur + 1 < total
+                const next_tok = lists.get(tokens, cur + 1)
+                match next_tok.kind
+                case LParen:
+                    const f_parser = pitem.Parser { tokens: tokens, cursor: cur, length: total }
+                    const f_out = pitem.parse_func_signature(f_parser, next_id)
+                    match f_out.item
+                    case some(item):
+                        lists.push(items, item)
+                        next_id = next_id + 1
+                        -- Fast-forward past the function body to next sync point (guard forward progress)
+                        const sync_pos = dr.skip_to_sync(tokens, f_out.next.cursor)
+                        if sync_pos > cur
+                            cur = sync_pos
+                        else
+                            cur = cur + 1
+                        end
+                    case none:
+                        cur = cur + 1
+                    end
+                case else:
+                    cur = cur + 1
+                end
+            else
+                cur = cur + 1
+            end
+        case else:
+            cur = cur + 1
+        end
+    end
+
+    return ParsedFile {
+        module_name: mod_name,
+        items: items,
+        item_count: lists.len(items)
+    }
+end

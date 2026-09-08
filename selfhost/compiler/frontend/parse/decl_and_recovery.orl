@@ -9,7 +9,6 @@ end
 
 public new_recovery() -> RecoveryPoint
     const sync: list[int] = []
-    -- 1 = End, 2 = Semicolon, 3 = Module, 4 = Import
     lists.push(sync, 1)
     lists.push(sync, 3)
     lists.push(sync, 4)
@@ -19,15 +18,44 @@ end
 public skip_to_sync(tokens: list[tok.Token], cursor: int) -> int
     var cur = cursor
     const total = lists.len(tokens)
-    while cur < total
+    var depth = 1
+
+    while cur < total and depth > 0
         const t = lists.get(tokens, cur)
         match t.kind
         case End:
-            return cur + 1
-        case Module:
-            return cur
-        case Import:
-            return cur
+            depth = depth - 1
+            cur = cur + 1
+        case If:
+            depth = depth + 1
+            cur = cur + 1
+        case While:
+            depth = depth + 1
+            cur = cur + 1
+        case For:
+            depth = depth + 1
+            cur = cur + 1
+        case Match:
+            depth = depth + 1
+            cur = cur + 1
+        case Loop:
+            depth = depth + 1
+            cur = cur + 1
+        case Repeat:
+            depth = depth + 1
+            cur = cur + 1
+        case Struct:
+            depth = depth + 1
+            cur = cur + 1
+        case Enum:
+            depth = depth + 1
+            cur = cur + 1
+        case Trait:
+            depth = depth + 1
+            cur = cur + 1
+        case Apply:
+            depth = depth + 1
+            cur = cur + 1
         case else:
             cur = cur + 1
         end
@@ -37,7 +65,7 @@ end
 
 public struct TopLevelItem
     name: string
-    kind_tag: int -- 1=Module, 2=Import, 3=Struct, 4=Enum, 5=Trait, 6=Apply, 7=Func
+    kind_tag: int
 end
 
 public parse_decl_tag(t: tok.Token) -> int

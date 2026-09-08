@@ -1,7 +1,6 @@
 module selfhost.compiler.frontend.lex.number_scan
 
 import ori.bytes as bs
-import ori.string as su
 
 public struct NumScanResult
     raw: string
@@ -21,82 +20,81 @@ is_bin_digit(b: int) -> bool
     return b == 48 or b == 49
 end
 
-public scan_number_full(source: string, start: int, len: int) -> NumScanResult
+public scan_number_full(data: bytes, start: int, len: int) -> NumScanResult
     var cur = start
     var is_float = false
 
     -- Check prefix 0x, 0b, 0o
     if cur + 1 < len
-        const b0 = byte_at(source, cur)
-        const b1 = byte_at(source, cur + 1)
+        const b0 = int(bs.get(data, cur))
+        const b1 = int(bs.get(data, cur + 1))
         if b0 == 48 -- '0'
             if b1 == 120 or b1 == 88 -- 'x' or 'X'
                 cur = cur + 2
-                while cur < len and (is_hex_digit(byte_at(source, cur)) or byte_at(source, cur) == 95)
+                while cur < len and (is_hex_digit(int(bs.get(data, cur))) or int(bs.get(data, cur)) == 95)
                     cur = cur + 1
                 end
-                cur = skip_suffix(source, cur, len)
-                return NumScanResult { raw: su.slice(source, start, cur), is_float: false, end_cursor: cur }
+                cur = skip_suffix(data, cur, len)
+                return make_num_res(data, start, cur, false)
             elif b1 == 98 or b1 == 66 -- 'b' or 'B'
                 cur = cur + 2
-                while cur < len and (is_bin_digit(byte_at(source, cur)) or byte_at(source, cur) == 95)
+                while cur < len and (is_bin_digit(int(bs.get(data, cur))) or int(bs.get(data, cur)) == 95)
                     cur = cur + 1
                 end
-                cur = skip_suffix(source, cur, len)
-                return NumScanResult { raw: su.slice(source, start, cur), is_float: false, end_cursor: cur }
+                cur = skip_suffix(data, cur, len)
+                return make_num_res(data, start, cur, false)
             elif b1 == 111 or b1 == 79 -- 'o' or 'O'
                 cur = cur + 2
-                while cur < len and (is_oct_digit(byte_at(source, cur)) or byte_at(source, cur) == 95)
+                while cur < len and (is_oct_digit(int(bs.get(data, cur))) or int(bs.get(data, cur)) == 95)
                     cur = cur + 1
                 end
-                cur = skip_suffix(source, cur, len)
-                return NumScanResult { raw: su.slice(source, start, cur), is_float: false, end_cursor: cur }
+                cur = skip_suffix(data, cur, len)
+                return make_num_res(data, start, cur, false)
             end
         end
     end
 
     -- Decimal integer or float
-    while cur < len and ((byte_at(source, cur) >= 48 and byte_at(source, cur) <= 57) or byte_at(source, cur) == 95)
+    while cur < len and ((int(bs.get(data, cur)) >= 48 and int(bs.get(data, cur)) <= 57) or int(bs.get(data, cur)) == 95)
         cur = cur + 1
     end
 
     -- Check fractional point (must be followed by a digit to not collide with '..' range)
-    if cur + 1 < len and byte_at(source, cur) == 46 and (byte_at(source, cur + 1) >= 48 and byte_at(source, cur + 1) <= 57)
+    if cur + 1 < len and int(bs.get(data, cur)) == 46 and (int(bs.get(data, cur + 1)) >= 48 and int(bs.get(data, cur + 1)) <= 57)
         is_float = true
         cur = cur + 1 -- consume '.'
-        while cur < len and ((byte_at(source, cur) >= 48 and byte_at(source, cur) <= 57) or byte_at(source, cur) == 95)
+        while cur < len and ((int(bs.get(data, cur)) >= 48 and int(bs.get(data, cur)) <= 57) or int(bs.get(data, cur)) == 95)
             cur = cur + 1
         end
     end
 
     -- Check scientific exponent e/E with optional sign
-    if cur < len and (byte_at(source, cur) == 101 or byte_at(source, cur) == 69) -- 'e' or 'E'
+    if cur < len and (int(bs.get(data, cur)) == 101 or int(bs.get(data, cur)) == 69) -- 'e' or 'E'
         const next_pos = cur + 1
         var exp_start = next_pos
-        if next_pos < len and (byte_at(source, next_pos) == 43 or byte_at(source, next_pos) == 45) -- '+' or '-'
+        if next_pos < len and (int(bs.get(data, next_pos)) == 43 or int(bs.get(data, next_pos)) == 45)
             exp_start = next_pos + 1
         end
-        if exp_start < len and (byte_at(source, exp_start) >= 48 and byte_at(source, exp_start) <= 57)
+        if exp_start < len and (int(bs.get(data, exp_start)) >= 48 and int(bs.get(data, exp_start)) <= 57)
             is_float = true
             cur = exp_start + 1
-            while cur < len and ((byte_at(source, cur) >= 48 and byte_at(source, cur) <= 57) or byte_at(source, cur) == 95)
+            while cur < len and ((int(bs.get(data, cur)) >= 48 and int(bs.get(data, cur)) <= 57) or int(bs.get(data, cur)) == 95)
                 cur = cur + 1
             end
         end
     end
 
-    cur = skip_suffix(source, cur, len)
-    return NumScanResult { raw: su.slice(source, start, cur), is_float: is_float, end_cursor: cur }
+    cur = skip_suffix(data, cur, len)
+    return make_num_res(data, start, cur, is_float)
 end
 
-skip_suffix(source: string, cur: int, len: int) -> int
+skip_suffix(data: bytes, cur: int, len: int) -> int
     var p = cur
-    -- Suffix: i8, i16, i32, i64, u8, u16, u32, u64, f32, f64
     if p < len
-        const b = byte_at(source, p)
+        const b = int(bs.get(data, p))
         if b == 105 or b == 117 or b == 102 -- 'i', 'u', 'f'
             p = p + 1
-            while p < len and ((byte_at(source, p) >= 48 and byte_at(source, p) <= 57) or byte_at(source, p) == 95)
+            while p < len and ((int(bs.get(data, p)) >= 48 and int(bs.get(data, p)) <= 57) or int(bs.get(data, p)) == 95)
                 p = p + 1
             end
         end
@@ -104,11 +102,11 @@ skip_suffix(source: string, cur: int, len: int) -> int
     return p
 end
 
-byte_at(source: string, idx: int) -> int
-    if idx < 0 or idx >= su.len(source)
-        return -1
-    end
-    const s = su.slice(source, idx, idx + 1)
-    const b = su.to_bytes(s)
-    return int(bs.get(b, 0))
+make_num_res(data: bytes, start: int, end_idx: int, is_float: bool) -> NumScanResult
+    const sub = bs.slice(data, start, end_idx)
+    const raw = match bs.decode_utf8(sub)
+        case ok(s): s
+        case err(_): ""
+        end
+    return NumScanResult { raw: raw, is_float: is_float, end_cursor: end_idx }
 end
