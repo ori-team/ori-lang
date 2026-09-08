@@ -1,0 +1,246 @@
+module selfhost.compiler.frontend.lex.lexer
+
+import ori.bytes as bs
+import ori.list as lists
+import ori.string as su
+import selfhost.compiler.frontend.lex.token as tok
+
+public struct Lexer
+    source: string
+    byte_data: bytes
+    cursor: int
+    length: int
+end
+
+public new_lexer(source: string) -> Lexer
+    const data = su.to_bytes(source)
+    return Lexer {
+        source: source,
+        byte_data: data,
+        cursor: 0,
+        length: bs.len(data)
+    }
+end
+
+is_eof(lex: Lexer) -> bool
+    return lex.cursor >= lex.length
+end
+
+peek_byte(lex: Lexer) -> int
+    if is_eof(lex)
+        return -1
+    end
+    const b: int = int(bs.get(lex.byte_data, lex.cursor))
+    return b
+end
+
+is_alpha_byte(b: int) -> bool
+    return is_range(b, 65, 90) or is_range(b, 97, 122) or b == 95
+end
+
+is_digit_byte(b: int) -> bool
+    return is_range(b, 48, 57)
+end
+
+is_range(b: int, lo: int, hi: int) -> bool
+    return b >= lo and b <= hi
+end
+
+is_whitespace_byte(b: int) -> bool
+    return b == 32 or b == 9 or b == 10 or b == 13
+end
+
+public struct AdvanceOut
+    ch: int
+    next: Lexer
+end
+
+advance_byte(lex: Lexer) -> AdvanceOut
+    const ch = peek_byte(lex)
+    const moved = Lexer {
+        source: lex.source,
+        byte_data: lex.byte_data,
+        cursor: lex.cursor + 1,
+        length: lex.length
+    }
+    return AdvanceOut { ch: ch, next: moved }
+end
+
+public struct TokenOut
+    token: tok.Token
+    next: Lexer
+end
+
+keyword_kind(text: string) -> optional[tok.TokenKind]
+    if text == "module"
+        return some(tok.TokenKind.Module)
+    elif text == "import"
+        return some(tok.TokenKind.Import)
+    elif text == "as"
+        return some(tok.TokenKind.As)
+    elif text == "public"
+        return some(tok.TokenKind.Public)
+    elif text == "struct"
+        return some(tok.TokenKind.Struct)
+    elif text == "enum"
+        return some(tok.TokenKind.Enum)
+    elif text == "trait"
+        return some(tok.TokenKind.Trait)
+    elif text == "apply"
+        return some(tok.TokenKind.Apply)
+    elif text == "const"
+        return some(tok.TokenKind.Const)
+    elif text == "var"
+        return some(tok.TokenKind.Var)
+    elif text == "if"
+        return some(tok.TokenKind.If)
+    elif text == "else"
+        return some(tok.TokenKind.Else)
+    elif text == "elif"
+        return some(tok.TokenKind.Elif)
+    elif text == "end"
+        return some(tok.TokenKind.End)
+    elif text == "return"
+        return some(tok.TokenKind.Return)
+    elif text == "match"
+        return some(tok.TokenKind.Match)
+    elif text == "case"
+        return some(tok.TokenKind.Case)
+    elif text == "true"
+        return some(tok.TokenKind.True)
+    elif text == "false"
+        return some(tok.TokenKind.False)
+    elif text == "newtype"
+        return some(tok.TokenKind.Newtype)
+    elif text == "alias"
+        return some(tok.TokenKind.Alias)
+    end
+    return none
+end
+
+scan_word(lex: Lexer) -> TokenOut
+    const start = lex.cursor
+    var cur = lex
+    while not is_eof(cur) and (is_alpha_byte(peek_byte(cur)) or is_digit_byte(peek_byte(cur)))
+        const step = advance_byte(cur)
+        cur = step.next
+    end
+    const text = su.slice(lex.source, start, cur.cursor)
+    const span = tok.Span {
+        start_pos: tok.ByteOffset(start),
+        end_pos: tok.ByteOffset(cur.cursor)
+    }
+    match keyword_kind(text)
+    case some(kind):
+        return TokenOut { token: tok.Token { kind: kind, span: span }, next: cur }
+    case none:
+        return TokenOut { token: tok.Token { kind: tok.TokenKind.Ident(name: text), span: span }, next: cur }
+    end
+end
+
+scan_number(lex: Lexer) -> TokenOut
+    const start = lex.cursor
+    var cur = lex
+    while not is_eof(cur) and is_digit_byte(peek_byte(cur))
+        const step = advance_byte(cur)
+        cur = step.next
+    end
+    const text = su.slice(lex.source, start, cur.cursor)
+    const span = tok.Span {
+        start_pos: tok.ByteOffset(start),
+        end_pos: tok.ByteOffset(cur.cursor)
+    }
+    return TokenOut { token: tok.Token { kind: tok.TokenKind.IntLit(raw: text), span: span }, next: cur }
+end
+
+public struct NextOut
+    token: optional[tok.Token]
+    next: Lexer
+end
+
+skip_ws(lex: Lexer) -> Lexer
+    var cur = lex
+    while not is_eof(cur) and is_whitespace_byte(peek_byte(cur))
+        const step = advance_byte(cur)
+        cur = step.next
+    end
+    return cur
+end
+
+public next_token(lex: Lexer) -> NextOut
+    const clean = skip_ws(lex)
+    if is_eof(clean)
+        return NextOut { token: none, next: clean }
+    end
+
+    const start = clean.cursor
+    const ch = peek_byte(clean)
+
+    if is_alpha_byte(ch)
+        const out = scan_word(clean)
+        return NextOut { token: some(out.token), next: out.next }
+    elif is_digit_byte(ch)
+        const out = scan_number(clean)
+        return NextOut { token: some(out.token), next: out.next }
+    end
+
+    const step = advance_byte(clean)
+    const cur = step.next
+    const span = tok.Span {
+        start_pos: tok.ByteOffset(start),
+        end_pos: tok.ByteOffset(cur.cursor)
+    }
+
+    if ch == 58
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Colon, span: span }), next: cur }
+    elif ch == 44
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Comma, span: span }), next: cur }
+    elif ch == 46
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Dot, span: span }), next: cur }
+    elif ch == 40
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.LParen, span: span }), next: cur }
+    elif ch == 41
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.RParen, span: span }), next: cur }
+    elif ch == 91
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.LBracket, span: span }), next: cur }
+    elif ch == 93
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.RBracket, span: span }), next: cur }
+    elif ch == 123
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.LBrace, span: span }), next: cur }
+    elif ch == 125
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.RBrace, span: span }), next: cur }
+    elif ch == 43
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Plus, span: span }), next: cur }
+    elif ch == 45
+        if peek_byte(cur) == 62
+            const arrow_step = advance_byte(cur)
+            const after = arrow_step.next
+            const arrow_span = tok.Span {
+                start_pos: tok.ByteOffset(start),
+                end_pos: tok.ByteOffset(after.cursor)
+            }
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.Arrow, span: arrow_span }), next: after }
+        end
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Minus, span: span }), next: cur }
+    end
+
+    return NextOut { token: none, next: cur }
+end
+
+public tokenize_all(source: string) -> list[tok.Token]
+    const tokens: list[tok.Token] = []
+    var cur = new_lexer(source)
+    while true
+        const out = next_token(cur)
+        cur = out.next
+        match out.token
+        case some(t):
+            lists.push(tokens, t)
+        case none:
+            if is_eof(cur)
+                return tokens
+            end
+        end
+    end
+    return tokens
+end

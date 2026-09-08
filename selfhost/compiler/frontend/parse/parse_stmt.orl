@@ -1,0 +1,155 @@
+module selfhost.compiler.frontend.parse.parse_stmt
+
+import ori.list as lists
+import selfhost.compiler.frontend.lex.token as tok
+import selfhost.compiler.frontend.parse.node as node
+import selfhost.compiler.frontend.parse.parse_expr as exprs
+
+public struct StmtPool
+    stmts: list[node.StmtNode]
+end
+
+public new_stmt_pool() -> StmtPool
+    const empty_stmts: list[node.StmtNode] = []
+    return StmtPool { stmts: empty_stmts }
+end
+
+public alloc_stmt(pool: StmtPool, kind: node.StmtKind, span: tok.Span) -> int
+    const id = lists.len(pool.stmts)
+    lists.push(pool.stmts, node.StmtNode {
+        id: node.NodeId(id),
+        kind: kind,
+        span: span
+    })
+    return id
+end
+
+public struct ParseStmtOut
+    stmt_id: int
+    next_cursor: int
+end
+
+public parse_let(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp: StmtPool) -> optional[ParseStmtOut]
+    if cursor + 3 >= lists.len(tokens)
+        return none
+    end
+
+    const name_tok = lists.get(tokens, cursor + 1)
+    match name_tok.kind
+    case Ident(name):
+        const ty_tok = lists.get(tokens, cursor + 2)
+        const val_tok = lists.get(tokens, cursor + 3)
+        match ty_tok.kind
+        case Colon:
+            const val_name = name
+            match exprs.parse_binary(tokens, cursor + 4, pool)
+            case some(val_out):
+                const stmt_id = alloc_stmt(sp, node.StmtKind.Const(
+                    name: node.Name { text: val_name, span: name_tok.span },
+                    ty_annot: "inferred",
+                    expr_id: val_out.expr_id
+                ), val_tok.span)
+                return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: val_out.next_cursor })
+            case none:
+                return none
+            end
+        case else:
+            return none
+        end
+    case else:
+        return none
+    end
+end
+
+public parse_return(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp: StmtPool) -> optional[ParseStmtOut]
+    const ret_tok = lists.get(tokens, cursor)
+    match exprs.parse_binary(tokens, cursor + 1, pool)
+    case some(out):
+        const stmt_id = alloc_stmt(sp, node.StmtKind.Return(expr_id: out.expr_id), ret_tok.span)
+        return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: out.next_cursor })
+    case none:
+        return none
+    end
+end
+
+public parse_if(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp: StmtPool) -> optional[ParseStmtOut]
+    const if_tok = lists.get(tokens, cursor)
+    match exprs.parse_binary(tokens, cursor + 1, pool)
+    case some(cond_out):
+        const then_ids: list[int] = []
+        const else_ids: list[int] = []
+        var cur = cond_out.next_cursor
+
+        while cur < lists.len(tokens)
+            const t = lists.get(tokens, cur)
+            match t.kind
+            case End:
+                const stmt_id = alloc_stmt(sp, node.StmtKind.If(
+                    cond_id: cond_out.expr_id,
+                    then_stmt_ids: then_ids,
+                    else_stmt_ids: else_ids
+                ), if_tok.span)
+                return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: cur + 1 })
+            case Else:
+                -- Parse else branch (flat support)
+                cur = cur + 1
+                while cur < lists.len(tokens)
+                    const inner = lists.get(tokens, cur)
+                    match inner.kind
+                    case End:
+                        const stmt_id = alloc_stmt(sp, node.StmtKind.If(
+                            cond_id: cond_out.expr_id,
+                            then_stmt_ids: then_ids,
+                            else_stmt_ids: else_ids
+                        ), if_tok.span)
+                        return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: cur + 1 })
+                    case else:
+                        match parse_statement(tokens, cur, pool, sp)
+                        case some(inner_out):
+                            lists.push(else_ids, inner_out.stmt_id)
+                            cur = inner_out.next_cursor
+                        case none:
+                            cur = cur + 1
+                        end
+                    end
+                end
+                return none
+            case else:
+                match parse_statement(tokens, cur, pool, sp)
+                case some(inner_out):
+                    lists.push(then_ids, inner_out.stmt_id)
+                    cur = inner_out.next_cursor
+                case none:
+                    cur = cur + 1
+                end
+            end
+        end
+        return none
+    case none:
+        return none
+    end
+end
+
+public parse_statement(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp: StmtPool) -> optional[ParseStmtOut]
+    if cursor >= lists.len(tokens)
+        return none
+    end
+
+    const t = lists.get(tokens, cursor)
+    match t.kind
+    case Const:
+        return parse_let(tokens, cursor, pool, sp)
+    case Return:
+        return parse_return(tokens, cursor, pool, sp)
+    case If:
+        return parse_if(tokens, cursor, pool, sp)
+    case else:
+        match exprs.parse_binary(tokens, cursor, pool)
+        case some(out):
+            const stmt_id = alloc_stmt(sp, node.StmtKind.Expr(expr_id: out.expr_id), t.span)
+            return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: out.next_cursor })
+        case none:
+            return none
+        end
+    end
+end

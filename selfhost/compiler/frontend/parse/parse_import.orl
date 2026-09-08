@@ -1,0 +1,98 @@
+module selfhost.compiler.frontend.parse.parse_import
+
+import ori.list as lists
+import selfhost.compiler.frontend.lex.token as tok
+import selfhost.compiler.frontend.parse.node as node
+
+public struct ParseImportOut
+    import_node: node.ImportNode
+    next_cursor: int
+end
+
+public parse_module_header(tokens: list[tok.Token], cursor: int) -> optional[string]
+    if cursor + 1 >= lists.len(tokens)
+        return none
+    end
+
+    const mod_tok = lists.get(tokens, cursor)
+    match mod_tok.kind
+    case Module:
+        const path_tok = lists.get(tokens, cursor + 1)
+        match path_tok.kind
+        case Ident(name):
+            return some(name)
+        case else:
+            return none
+        end
+    case else:
+        return none
+    end
+end
+
+public parse_import_decl(tokens: list[tok.Token], cursor: int) -> optional[ParseImportOut]
+    if cursor + 2 >= lists.len(tokens)
+        return none
+    end
+
+    const imp_tok = lists.get(tokens, cursor)
+    match imp_tok.kind
+    case Import:
+        const path_tok = lists.get(tokens, cursor + 1)
+        match path_tok.kind
+        case Ident(name):
+            var full_path: string = name
+            var path_cur = cursor + 2
+            var scanning = true
+            while scanning and path_cur + 1 < lists.len(tokens)
+                const dot_tok = lists.get(tokens, path_cur)
+                match dot_tok.kind
+                case Dot:
+                    const seg_tok = lists.get(tokens, path_cur + 1)
+                    match seg_tok.kind
+                    case Ident(name):
+                        full_path = full_path + "." + name
+                        path_cur = path_cur + 2
+                    case else:
+                        scanning = false
+                    end
+                case else:
+                    scanning = false
+                end
+            end
+            if path_cur >= lists.len(tokens)
+                return none
+            end
+            const alias_tok = lists.get(tokens, path_cur)
+            match alias_tok.kind
+            case As:
+                if path_cur + 1 >= lists.len(tokens)
+                    return none
+                end
+                const final_tok = lists.get(tokens, path_cur + 1)
+                match final_tok.kind
+                case Ident(name):
+                    const imp_alias: string = name
+                    const imp = node.ImportNode {
+                        module_path: full_path,
+                        alias_name: imp_alias,
+                        span: imp_tok.span
+                    }
+                    return some(ParseImportOut { import_node: imp, next_cursor: path_cur + 2 })
+                case else:
+                    return none
+                end
+            case else:
+                const imp = node.ImportNode {
+                    module_path: full_path,
+                    alias_name: full_path,
+                    span: imp_tok.span
+                }
+                return some(ParseImportOut { import_node: imp, next_cursor: path_cur })
+            end
+        case else:
+            return none
+        end
+    case else:
+        return none
+    end
+end

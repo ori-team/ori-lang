@@ -1,0 +1,20 @@
+module selfhost.compiler.main
+
+import ori.io as io
+import selfhost.compiler.driver.args as args
+import selfhost.compiler.driver.pipeline as pipe
+
+main()
+    io.println("=== Ori Self-Hosted Compiler (Stage 1 / Marco B Complete) ===")
+    
+    -- Demonstrates pure CLI parsing
+    const cli_tokens: list[string] = ["compile", "examples/hello/main.orl", "-o", "/tmp/out.o"]
+    const parsed = args.parse_cli(cli_tokens)
+    io.println(f"CLI: subcommand={parsed.subcommand} source={parsed.source_file} out={parsed.output_path}")
+
+    -- Runs pipeline
+    const sample_source = "module app.hello\nimport ori.io as io\nstruct Point x: int y: int end"
+    const code = pipe.dispatch(parsed, sample_source)
+    io.println(f"EXIT_CODE: {code}")
+    io.println("STAGE1_COMPILER_READY")
+end

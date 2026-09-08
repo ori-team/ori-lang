@@ -1,0 +1,290 @@
+module selfhost.compiler.frontend.parse.parse_item
+
+import ori.list as lists
+import selfhost.compiler.frontend.lex.token as tok
+import selfhost.compiler.frontend.parse.node as node
+
+public struct Parser
+    tokens: list[tok.Token]
+    cursor: int
+    length: int
+end
+
+public new_parser(tokens: list[tok.Token]) -> Parser
+    return Parser {
+        tokens: tokens,
+        cursor: 0,
+        length: lists.len(tokens)
+    }
+end
+
+is_eof(p: Parser) -> bool
+    return p.cursor >= p.length
+end
+
+peek(p: Parser) -> optional[tok.Token]
+    if is_eof(p)
+        return none
+    end
+    return some(lists.get(p.tokens, p.cursor))
+end
+
+public struct AdvanceParserOut
+    token: optional[tok.Token]
+    next: Parser
+end
+
+advance(p: Parser) -> AdvanceParserOut
+    if is_eof(p)
+        return AdvanceParserOut { token: none, next: p }
+    end
+    const t = lists.get(p.tokens, p.cursor)
+    const moved = Parser {
+        tokens: p.tokens,
+        cursor: p.cursor + 1,
+        length: p.length
+    }
+    return AdvanceParserOut { token: some(t), next: moved }
+end
+
+public struct ParseItemOut
+    item: optional[node.ItemNode]
+    next: Parser
+end
+
+public parse_struct(p: Parser, id: int) -> ParseItemOut
+    const step = advance(p)
+    const cur = step.next
+    match peek(cur)
+    case some(t):
+        match t.kind
+        case Ident(name):
+            const name_step = advance(cur)
+            const after_name = name_step.next
+            const struct_name = node.Name { text: name, span: t.span }
+            var field_cur = after_name
+            const fields: list[node.FieldNode] = []
+
+            while not is_eof(field_cur)
+                match peek(field_cur)
+                case some(tok_field):
+                    match tok_field.kind
+                    case End:
+                        const end_step = advance(field_cur)
+                        const s_node = node.StructNode {
+                            id: node.NodeId(id),
+                            name: struct_name,
+                            fields: fields,
+                            span: t.span
+                        }
+                        return ParseItemOut {
+                            item: some(node.ItemNode.Struct(decl: s_node)),
+                            next: end_step.next
+                        }
+                    case Ident(name):
+                        const f_name = name
+                        const f_step = advance(field_cur)
+                        const colon_step = advance(f_step.next)
+                        const ty_step = advance(colon_step.next)
+                        match ty_step.token
+                        case some(ty_tok):
+                            match ty_tok.kind
+                            case Ident(name):
+                                const ty_name = name
+                                lists.push(fields, node.FieldNode {
+                                    name: node.Name { text: f_name, span: tok_field.span },
+                                    ty: ty_name
+                                })
+                                field_cur = ty_step.next
+                            case else:
+                                return ParseItemOut { item: none, next: ty_step.next }
+                            end
+                        case none:
+                            return ParseItemOut { item: none, next: field_cur }
+                        end
+                    case else:
+                        return ParseItemOut { item: none, next: field_cur }
+                    end
+                case none:
+                    return ParseItemOut { item: none, next: field_cur }
+                end
+            end
+            return ParseItemOut { item: none, next: field_cur }
+        case else:
+            return ParseItemOut { item: none, next: cur }
+        end
+    case none:
+        return ParseItemOut { item: none, next: cur }
+    end
+end
+
+public parse_enum(p: Parser, id: int) -> ParseItemOut
+    const step = advance(p)
+    const cur = step.next
+    match peek(cur)
+    case some(t):
+        match t.kind
+        case Ident(name):
+            const name_step = advance(cur)
+            const after_name = name_step.next
+            const enum_name = node.Name { text: name, span: t.span }
+            var variant_cur = after_name
+            const variants: list[node.VariantNode] = []
+
+            while not is_eof(variant_cur)
+                match peek(variant_cur)
+                case some(v_tok):
+                    match v_tok.kind
+                    case End:
+                        const end_step = advance(variant_cur)
+                        const e_node = node.EnumNode {
+                            id: node.NodeId(id),
+                            name: enum_name,
+                            variants: variants,
+                            span: t.span
+                        }
+                        return ParseItemOut {
+                            item: some(node.ItemNode.Enum(decl: e_node)),
+                            next: end_step.next
+                        }
+                    case Ident(name):
+                        const v_name = name
+                        const v_step = advance(variant_cur)
+                        const empty_fields: list[node.FieldNode] = []
+                        lists.push(variants, node.VariantNode {
+                            name: node.Name { text: v_name, span: v_tok.span },
+                            fields: empty_fields
+                        })
+                        variant_cur = v_step.next
+                    case else:
+                        return ParseItemOut { item: none, next: variant_cur }
+                    end
+                case none:
+                    return ParseItemOut { item: none, next: variant_cur }
+                end
+            end
+            return ParseItemOut { item: none, next: variant_cur }
+        case else:
+            return ParseItemOut { item: none, next: cur }
+        end
+    case none:
+        return ParseItemOut { item: none, next: cur }
+    end
+end
+
+public parse_func_signature(p: Parser, id: int) -> ParseItemOut
+    match peek(p)
+    case some(t):
+        match t.kind
+        case Ident(name):
+            const fn_name = name
+            const fn_step = advance(p)
+            const cur = fn_step.next
+            match peek(cur)
+            case some(lp_tok):
+                match lp_tok.kind
+                case LParen:
+                    const lp_step = advance(cur)
+                    var param_cur = lp_step.next
+                    const params: list[node.ParamNode] = []
+
+                    while not is_eof(param_cur)
+                        match peek(param_cur)
+                        case some(ptok):
+                            match ptok.kind
+                            case RParen:
+                                const rp_step = advance(param_cur)
+                                const after_rp = rp_step.next
+                                var ret_ty = "void"
+                                var after_ret = after_rp
+
+                                match peek(after_rp)
+                                case some(arr_tok):
+                                    match arr_tok.kind
+                                    case Arrow:
+                                        const arr_step = advance(after_rp)
+                                        const ty_step = advance(arr_step.next)
+                                        match ty_step.token
+                                        case some(ret_tok):
+                                            match ret_tok.kind
+                                            case Ident(name):
+                                                ret_ty = name
+                                                after_ret = ty_step.next
+                                            case else:
+                                                after_ret = ty_step.next
+                                            end
+                                        case none:
+                                            after_ret = arr_step.next
+                                        end
+                                    case else:
+                                        after_ret = after_rp
+                                    end
+                                case none:
+                                    after_ret = after_rp
+                                end
+
+                                const f_node = node.FuncNode {
+                                    id: node.NodeId(id),
+                                    name: node.Name { text: fn_name, span: t.span },
+                                    params: params,
+                                    ret_ty: ret_ty,
+                                    body_stmt_ids: [],
+                                    span: t.span
+                                }
+                                return ParseItemOut {
+                                    item: some(node.ItemNode.Func(decl: f_node)),
+                                    next: after_ret
+                                }
+                            case Ident(name):
+                                const p_name = name
+                                const p_step = advance(param_cur)
+                                const colon_step = advance(p_step.next)
+                                const pty_step = advance(colon_step.next)
+                                match pty_step.token
+                                case some(pty_tok):
+                                    match pty_tok.kind
+                                    case Ident(name):
+                                        const pty_name = name
+                                        lists.push(params, node.ParamNode {
+                                            name: node.Name { text: p_name, span: ptok.span },
+                                            ty: pty_name
+                                        })
+                                        match peek(pty_step.next)
+                                        case some(comma_tok):
+                                            match comma_tok.kind
+                                            case Comma:
+                                                const comma_step = advance(pty_step.next)
+                                                param_cur = comma_step.next
+                                            case else:
+                                                param_cur = pty_step.next
+                                            end
+                                        case none:
+                                            param_cur = pty_step.next
+                                        end
+                                    case else:
+                                        return ParseItemOut { item: none, next: pty_step.next }
+                                    end
+                                case none:
+                                    return ParseItemOut { item: none, next: param_cur }
+                                end
+                            case else:
+                                return ParseItemOut { item: none, next: param_cur }
+                            end
+                        case none:
+                            return ParseItemOut { item: none, next: param_cur }
+                        end
+                    end
+                    return ParseItemOut { item: none, next: param_cur }
+                case else:
+                    return ParseItemOut { item: none, next: cur }
+                end
+            case none:
+                return ParseItemOut { item: none, next: cur }
+            end
+        case else:
+            return ParseItemOut { item: none, next: p }
+        end
+    case none:
+        return ParseItemOut { item: none, next: p }
+    end
+end

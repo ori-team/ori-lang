@@ -1,0 +1,158 @@
+module selfhost.compiler.frontend.parse.parse_expr
+
+import ori.list as lists
+import selfhost.compiler.frontend.lex.token as tok
+import selfhost.compiler.frontend.parse.node as node
+
+public struct ExprPool
+    nodes: list[node.ExprNode]
+end
+
+public new_pool() -> ExprPool
+    const empty_nodes: list[node.ExprNode] = []
+    return ExprPool { nodes: empty_nodes }
+end
+
+public alloc_expr(pool: ExprPool, kind: node.ExprKind, span: tok.Span) -> int
+    const id = lists.len(pool.nodes)
+    lists.push(pool.nodes, node.ExprNode {
+        id: node.NodeId(id),
+        kind: kind,
+        span: span
+    })
+    return id
+end
+
+public struct ParseExprOut
+    expr_id: int
+    next_cursor: int
+end
+
+public parse_primary(tokens: list[tok.Token], cursor: int, pool: ExprPool) -> optional[ParseExprOut]
+    if cursor >= lists.len(tokens)
+        return none
+    end
+
+    const t = lists.get(tokens, cursor)
+    match t.kind
+    case IntLit(raw):
+        const lit = node.LiteralKind.Int(raw: raw)
+        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+    case FloatLit(raw):
+        const lit = node.LiteralKind.Float(raw: raw)
+        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+    case StrLit(value):
+        const lit = node.LiteralKind.Str(val: value)
+        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+    case True:
+        const lit = node.LiteralKind.Bool(val: true)
+        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+    case False:
+        const lit = node.LiteralKind.Bool(val: false)
+        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+    case None:
+        const id = alloc_expr(pool, node.ExprKind.Lit(lit: node.LiteralKind.NoneLit), t.span)
+        return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+    case Ident(name):
+        -- Check if followed by call `(`
+        if cursor + 1 < lists.len(tokens)
+            const next_tok = lists.get(tokens, cursor + 1)
+            match next_tok.kind
+            case LParen:
+                return parse_call(tokens, cursor, pool, name, t.span)
+            case else:
+                const id = alloc_expr(pool, node.ExprKind.Ident(name: name), t.span)
+                return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+            end
+        end
+        const id = alloc_expr(pool, node.ExprKind.Ident(name: name), t.span)
+        return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+    case else:
+        return none
+    end
+end
+
+parse_call(tokens: list[tok.Token], cursor: int, pool: ExprPool, fn_name: string, span: tok.Span) -> optional[ParseExprOut]
+    const args: list[int] = []
+    var cur = cursor + 2 -- Skip ident and `(`
+    while cur < lists.len(tokens)
+        const t = lists.get(tokens, cur)
+        match t.kind
+        case RParen:
+            const id = alloc_expr(pool, node.ExprKind.Call(callee: fn_name, arg_ids: args), span)
+            return some(ParseExprOut { expr_id: id, next_cursor: cur + 1 })
+        case Comma:
+            cur = cur + 1
+        case else:
+            match parse_primary(tokens, cur, pool)
+            case some(out):
+                lists.push(args, out.expr_id)
+                cur = out.next_cursor
+            case none:
+                return none
+            end
+        end
+    end
+    return none
+end
+
+public parse_binary(tokens: list[tok.Token], cursor: int, pool: ExprPool) -> optional[ParseExprOut]
+    match parse_primary(tokens, cursor, pool)
+    case some(left_out):
+        var cur = left_out.next_cursor
+        var current_id = left_out.expr_id
+
+        while cur < lists.len(tokens)
+            const t = lists.get(tokens, cur)
+            match t.kind
+            case Plus:
+                match parse_primary(tokens, cur + 1, pool)
+                case some(right_out):
+                    current_id = alloc_expr(pool, node.ExprKind.Binary(
+                        op: node.BinaryOpKind.Add,
+                        left_id: current_id,
+                        right_id: right_out.expr_id
+                    ), t.span)
+                    cur = right_out.next_cursor
+                case none:
+                    return some(ParseExprOut { expr_id: current_id, next_cursor: cur })
+                end
+            case Minus:
+                match parse_primary(tokens, cur + 1, pool)
+                case some(right_out):
+                    current_id = alloc_expr(pool, node.ExprKind.Binary(
+                        op: node.BinaryOpKind.Sub,
+                        left_id: current_id,
+                        right_id: right_out.expr_id
+                    ), t.span)
+                    cur = right_out.next_cursor
+                case none:
+                    return some(ParseExprOut { expr_id: current_id, next_cursor: cur })
+                end
+            case Pipe:
+                -- Pipeline operator `x |> f`
+                match parse_primary(tokens, cur + 1, pool)
+                case some(right_out):
+                    current_id = alloc_expr(pool, node.ExprKind.Binary(
+                        op: node.BinaryOpKind.Pipe,
+                        left_id: current_id,
+                        right_id: right_out.expr_id
+                    ), t.span)
+                    cur = right_out.next_cursor
+                case none:
+                    return some(ParseExprOut { expr_id: current_id, next_cursor: cur })
+                end
+            case else:
+                return some(ParseExprOut { expr_id: current_id, next_cursor: cur })
+            end
+        end
+        return some(ParseExprOut { expr_id: current_id, next_cursor: cur })
+    case none:
+        return none
+    end
+end

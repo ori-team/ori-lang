@@ -1,0 +1,96 @@
+module selfhost.compiler.frontend.lex.token
+
+public newtype ByteOffset = int
+
+public struct Span
+    start_pos: ByteOffset
+    end_pos: ByteOffset
+end
+
+public span_len(s: Span) -> int
+    const lo: int = int(s.start_pos)
+    const hi: int = int(s.end_pos)
+    return hi - lo
+end
+
+public enum TokenKind
+    LineComment
+    BlockComment
+    Module
+    Import
+    As
+    Public
+    Func
+    Return
+    End
+    Const
+    Var
+    If
+    Else
+    Elif
+    While
+    For
+    In
+    Repeat
+    Break
+    Continue
+    Match
+    Case
+    Loop
+    Struct
+    Trait
+    Apply
+    Enum
+    Where
+    Is
+    Alias
+    Newtype
+    Do
+    And
+    Or
+    Not
+    True
+    False
+    None
+    Some
+    Mut
+    SelfKw
+    Attr
+    Extern
+    Ident(name: string)
+    IntLit(raw: string)
+    FloatLit(raw: string)
+    StrLit(value: string)
+    FStrLit(raw: string)
+    FatArrow
+    Arrow
+    Pipe
+    EqEq
+    BangEq
+    LtEq
+    GtEq
+    Lt
+    Gt
+    Plus
+    Minus
+    Star
+    Slash
+    Percent
+    Caret
+    Bang
+    Colon
+    Comma
+    Dot
+    DotDot
+    LParen
+    RParen
+    LBracket
+    RBracket
+    LBrace
+    RBrace
+end
+
+public struct Token
+    kind: TokenKind
+    span: Span
+end

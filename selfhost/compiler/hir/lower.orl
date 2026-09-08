@@ -1,0 +1,29 @@
+module selfhost.compiler.hir.lower
+
+import ori.list as lists
+import selfhost.compiler.frontend.parse.node as node
+import selfhost.compiler.hir.hir_node as hn
+
+public struct LowerContext
+    module_ir: hn.HirModule
+end
+
+public new_lower_context(module_name: string) -> LowerContext
+    return LowerContext {
+        module_ir: hn.new_hir_module(module_name)
+    }
+end
+
+public lower_item(ctx: LowerContext, item: node.ItemNode)
+    match item
+    case Func(decl):
+        lists.push(ctx.module_ir.func_names, decl.name.text)
+        lists.push(ctx.module_ir.func_ret_tys, decl.ret_ty)
+    case else:
+        -- Structs and enums do not lower to executable functions directly
+    end
+end
+
+public module_func_count(ctx: LowerContext) -> int
+    return lists.len(ctx.module_ir.func_names)
+end
