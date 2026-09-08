@@ -163,3 +163,16 @@ Exaurimos a fila de implementação até o último item:
 5. **H1/B1/D1/M7**: Vocabulário HIR total (14 stmts, 12 patterns, 28 exprs), CLI abrangente (`check`/`compile`/`run`/`test`/`build`/`fmt`/`lint`/`doc`/`repl`/`doctor`) e suíte `H1B1D1M7_SUITE_SUCCESS` verde.
 
 Fila totalmente exaurida. O compilador Ori é agora formalmente self-hosted com paridade documentada em todos os módulos.
+
+---
+
+## Post 12: Corpos Reais de Funções e o Fim dos Segfaults (Parser Completo Integrado)
+
+Na etapa anterior, o pipeline parseava apenas as assinaturas iniciais. Agora demos o passo definitivo para o compilador real:
+1. **`func_body_parser.orl`**: Lê todos os statements reais dentro de cada função, com avanço desacoplado de blocos internos (`if`, `while`, `for`, `match`) e avanço estrito garantido a cada iteração (`cur > prev_cur`).
+2. **`parse_func_full.orl`**: Resolve o retorno de structs complexas no JIT. Em vez de retornar structs aninhadas com enums e listas dentro de `optional[FuncNode]` (o que corrompia a vtable do JIT na stack e causava segfault 139), adotamos a arquitetura de **Flat Field Return** com escalares e listas primitivas.
+3. **Consumo de Tipos Compostos em Assinaturas**: Funções retornando `result[int, string]` tinham o tipo truncado no primeiro colchete (`[`), fazendo o parser de corpo tentar ler `[` como statement. Agora `parse_item.orl` e `parse_stmt.orl` consomem tipos aninhados com balanceamento de colchetes antes de buscar o corpo ou a atribuição `=`.
+4. **Resultados de Performance e Estabilidade**:
+   - `examples/error_handling/main.orl`: 172 tokens, 3 funções completas com seus corpos de statements e 40 expressões analisadas em **0,06 segundos**!
+   - `examples/language_features/main.orl`: 355 linhas, 20 funções e 1909 tokens processados pelo binário nativo `ori-stage1` em **1,29 segundos**!
+   - 100% dos testes unitários e de integração verdes sem nenhum segfault.

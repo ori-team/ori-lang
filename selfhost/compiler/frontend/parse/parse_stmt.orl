@@ -4,24 +4,45 @@ import ori.list as lists
 import selfhost.compiler.frontend.lex.token as tok
 import selfhost.compiler.frontend.parse.node as node
 import selfhost.compiler.frontend.parse.parse_expr as exprs
+import selfhost.compiler.frontend.parse.parse_ty as pty
 
 public struct StmtPool
-    stmts: list[node.StmtNode]
+    kind_tags: list[int] -- 1=Const, 2=Return, 3=Expr, 4=If
+    expr_ids: list[int]
+    target_names: list[string]
 end
 
 public new_stmt_pool() -> StmtPool
-    const empty_stmts: list[node.StmtNode] = []
-    return StmtPool { stmts: empty_stmts }
+    const empty_k: list[int] = []
+    const empty_e: list[int] = []
+    const empty_t: list[string] = []
+    return StmtPool {
+        kind_tags: empty_k,
+        expr_ids: empty_e,
+        target_names: empty_t
+    }
 end
 
-public alloc_stmt(pool: StmtPool, kind: node.StmtKind, span: tok.Span) -> int
-    const id = lists.len(pool.stmts)
-    lists.push(pool.stmts, node.StmtNode {
-        id: node.NodeId(id),
-        kind: kind,
-        span: span
-    })
+public alloc_stmt_raw(pool: StmtPool, kind: int, expr_id: int, target: string) -> int
+    const id = lists.len(pool.kind_tags)
+    lists.push(pool.kind_tags, kind)
+    lists.push(pool.expr_ids, expr_id)
+    lists.push(pool.target_names, target)
     return id
+end
+
+-- Backward compatible alloc_stmt
+public alloc_stmt(pool: StmtPool, kind: node.StmtKind, span: tok.Span) -> int
+    match kind
+    case Const(name, ty_annot, expr_id):
+        return alloc_stmt_raw(pool, 1, expr_id, name.text)
+    case Return(expr_id):
+        return alloc_stmt_raw(pool, 2, expr_id, "")
+    case Expr(expr_id):
+        return alloc_stmt_raw(pool, 3, expr_id, "")
+    case else:
+        return alloc_stmt_raw(pool, 0, -1, "")
+    end
 end
 
 public struct ParseStmtOut
@@ -38,20 +59,30 @@ public parse_let(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp:
     match name_tok.kind
     case Ident(name):
         const ty_tok = lists.get(tokens, cursor + 2)
-        const val_tok = lists.get(tokens, cursor + 3)
         match ty_tok.kind
         case Colon:
             const val_name = name
-            match exprs.parse_binary(tokens, cursor + 4, pool)
-            case some(val_out):
-                const stmt_id = alloc_stmt(sp, node.StmtKind.Const(
-                    name: node.Name { text: val_name, span: name_tok.span },
-                    ty_annot: "inferred",
-                    expr_id: val_out.expr_id
-                ), val_tok.span)
-                return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: val_out.next_cursor })
+            const ty_pool = pty.new_ty_pool()
+            match pty.parse_type_ref(tokens, cursor + 3, ty_pool)
             case none:
                 return none
+            case some(ty_out):
+                if ty_out.next_cursor >= lists.len(tokens)
+                    return none
+                end
+                const eq_tok = lists.get(tokens, ty_out.next_cursor)
+                match eq_tok.kind
+                case Colon:
+                    return none
+                case else:
+                    match exprs.parse_binary(tokens, ty_out.next_cursor + 1, pool)
+                    case some(val_out):
+                        const stmt_id = alloc_stmt_raw(sp, 1, val_out.expr_id, val_name)
+                        return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: val_out.next_cursor })
+                    case none:
+                        return none
+                    end
+                end
             end
         case else:
             return none
@@ -62,10 +93,9 @@ public parse_let(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp:
 end
 
 public parse_return(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp: StmtPool) -> optional[ParseStmtOut]
-    const ret_tok = lists.get(tokens, cursor)
     match exprs.parse_binary(tokens, cursor + 1, pool)
     case some(out):
-        const stmt_id = alloc_stmt(sp, node.StmtKind.Return(expr_id: out.expr_id), ret_tok.span)
+        const stmt_id = alloc_stmt_raw(sp, 2, out.expr_id, "")
         return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: out.next_cursor })
     case none:
         return none
@@ -73,55 +103,17 @@ public parse_return(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, 
 end
 
 public parse_if(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp: StmtPool) -> optional[ParseStmtOut]
-    const if_tok = lists.get(tokens, cursor)
     match exprs.parse_binary(tokens, cursor + 1, pool)
     case some(cond_out):
-        const then_ids: list[int] = []
-        const else_ids: list[int] = []
         var cur = cond_out.next_cursor
-
         while cur < lists.len(tokens)
             const t = lists.get(tokens, cur)
             match t.kind
             case End:
-                const stmt_id = alloc_stmt(sp, node.StmtKind.If(
-                    cond_id: cond_out.expr_id,
-                    then_stmt_ids: then_ids,
-                    else_stmt_ids: else_ids
-                ), if_tok.span)
+                const stmt_id = alloc_stmt_raw(sp, 4, cond_out.expr_id, "")
                 return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: cur + 1 })
-            case Else:
-                -- Parse else branch (flat support)
-                cur = cur + 1
-                while cur < lists.len(tokens)
-                    const inner = lists.get(tokens, cur)
-                    match inner.kind
-                    case End:
-                        const stmt_id = alloc_stmt(sp, node.StmtKind.If(
-                            cond_id: cond_out.expr_id,
-                            then_stmt_ids: then_ids,
-                            else_stmt_ids: else_ids
-                        ), if_tok.span)
-                        return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: cur + 1 })
-                    case else:
-                        match parse_statement(tokens, cur, pool, sp)
-                        case some(inner_out):
-                            lists.push(else_ids, inner_out.stmt_id)
-                            cur = inner_out.next_cursor
-                        case none:
-                            cur = cur + 1
-                        end
-                    end
-                end
-                return none
             case else:
-                match parse_statement(tokens, cur, pool, sp)
-                case some(inner_out):
-                    lists.push(then_ids, inner_out.stmt_id)
-                    cur = inner_out.next_cursor
-                case none:
-                    cur = cur + 1
-                end
+                cur = cur + 1
             end
         end
         return none
@@ -146,10 +138,14 @@ public parse_statement(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPoo
     case else:
         match exprs.parse_binary(tokens, cursor, pool)
         case some(out):
-            const stmt_id = alloc_stmt(sp, node.StmtKind.Expr(expr_id: out.expr_id), t.span)
+            const stmt_id = alloc_stmt_raw(sp, 3, out.expr_id, "")
             return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: out.next_cursor })
         case none:
             return none
         end
     end
+end
+
+public total_stmts(sp: StmtPool) -> int
+    return lists.len(sp.kind_tags)
 end

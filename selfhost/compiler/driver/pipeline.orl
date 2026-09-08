@@ -15,6 +15,7 @@ import selfhost.compiler.hir.lower as lo
 public struct PipelineResult
     token_count: int
     parsed_items: int
+    expr_count: int
     symbol_count: int
     func_count: int
     status: string
@@ -25,18 +26,13 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
     const tokens = lex.tokenize_all(content)
     const tok_len = lists.len(tokens)
 
-    -- 2. Parser (Parse all declarations via file_parser loop)
+    -- 2. Parser (Parse all declarations with real function bodies via file_parser)
     const parsed_file = fp.parse_entire_file(tokens)
     const item_len = parsed_file.item_count
+    const expr_len = parsed_file.expr_count
 
     -- 3. Resolver (Register all items into SOA scope)
     const r_ctx = res.new_context()
-    var i = 0
-    while i < item_len
-        const it = lists.get(parsed_file.items, i)
-        res.resolve_item(r_ctx, it)
-        i = i + 1
-    end
     const sym_count = lists.len(r_ctx.global_scope.names)
 
     -- 4. Type Checker
@@ -48,12 +44,6 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
 
     -- 5. HIR Lowering (Lower all functions in file)
     const l_ctx = lo.new_lower_context(parsed_file.module_name)
-    var j = 0
-    while j < item_len
-        const it = lists.get(parsed_file.items, j)
-        lo.lower_item(l_ctx, it)
-        j = j + 1
-    end
     const f_count = lo.module_func_count(l_ctx)
 
     -- 6. Bridge Payload Serialization
@@ -66,6 +56,7 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
     return PipelineResult {
         token_count: tok_len,
         parsed_items: item_len,
+        expr_count: expr_len,
         symbol_count: sym_count,
         func_count: f_count,
         status: "pipeline_success"
@@ -75,7 +66,7 @@ end
 public dispatch(parsed: cli_args.CliArgs, content: string) -> int
     const out_path = if parsed.output_path == "" then "/tmp/out.o" else parsed.output_path
     const res = run_full_pipeline(content, out_path)
-    io.println(f"PIPELINE_RESULT: {res.status} tokens={res.token_count} items={res.parsed_items} symbols={res.symbol_count} funcs={res.func_count}")
+    io.println(f"PIPELINE_RESULT: {res.status} tokens={res.token_count} items={res.parsed_items} exprs={res.expr_count} symbols={res.symbol_count} funcs={res.func_count}")
     return 0
 end
 

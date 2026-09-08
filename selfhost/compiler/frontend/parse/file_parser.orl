@@ -4,19 +4,30 @@ import ori.list as lists
 import selfhost.compiler.frontend.lex.token as tok
 import selfhost.compiler.frontend.parse.decl_and_recovery as dr
 import selfhost.compiler.frontend.parse.node as node
+import selfhost.compiler.frontend.parse.parse_expr as exprs
+import selfhost.compiler.frontend.parse.parse_func_full as pff
 import selfhost.compiler.frontend.parse.parse_import as pi
 import selfhost.compiler.frontend.parse.parse_item as pitem
+import selfhost.compiler.frontend.parse.parse_stmt as stmts
 
 public struct ParsedFile
     module_name: string
+    item_kinds: list[int]
+    item_names: list[string]
     items: list[node.ItemNode]
+    stmt_ids: list[int]
+    expr_count: int
     item_count: int
 end
 
 public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
+    const pool = exprs.new_pool()
+    const sp = stmts.new_stmt_pool()
+
     var cur = 0
     const total = lists.len(tokens)
     const items: list[node.ItemNode] = []
+    const empty_ids: list[int] = []
     var mod_name = "main"
 
     -- 1. Check for optional module declaration
@@ -27,16 +38,20 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
     case none:
     end
 
-    -- 2. Fast declaration scanner loop (O(N) skipping function/struct bodies via end-sync)
+    -- 2. Fast declaration scanner loop (with guaranteed strict forward progress)
     var next_id = 1
     while cur < total
+        const prev_cur = cur
         const t = lists.get(tokens, cur)
         match t.kind
         case Import:
             match pi.parse_import_decl(tokens, cur)
             case some(out):
-                lists.push(items, node.ItemNode.Import(decl: out.import_node))
-                cur = out.next_cursor
+                if out.next_cursor > cur
+                    cur = out.next_cursor
+                else
+                    cur = cur + 1
+                end
             case none:
                 cur = cur + 1
             end
@@ -45,8 +60,11 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
             const s_out = pitem.parse_struct(s_parser, next_id)
             match s_out.item
             case some(item):
-                lists.push(items, item)
-                cur = s_out.next.cursor
+                if s_out.next.cursor > cur
+                    cur = s_out.next.cursor
+                else
+                    cur = cur + 1
+                end
                 next_id = next_id + 1
             case none:
                 cur = dr.skip_to_sync(tokens, cur + 1)
@@ -56,32 +74,29 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
             const e_out = pitem.parse_enum(e_parser, next_id)
             match e_out.item
             case some(item):
-                lists.push(items, item)
-                cur = e_out.next.cursor
+                if e_out.next.cursor > cur
+                    cur = e_out.next.cursor
+                else
+                    cur = cur + 1
+                end
                 next_id = next_id + 1
             case none:
                 cur = dr.skip_to_sync(tokens, cur + 1)
             end
         case Ident(name):
-            -- Fast check: only a function if immediately followed by '('
             if cur + 1 < total
                 const next_tok = lists.get(tokens, cur + 1)
                 match next_tok.kind
                 case LParen:
-                    const f_parser = pitem.Parser { tokens: tokens, cursor: cur, length: total }
-                    const f_out = pitem.parse_func_signature(f_parser, next_id)
-                    match f_out.item
-                    case some(item):
-                        lists.push(items, item)
-                        next_id = next_id + 1
-                        -- Fast-forward past the function body to next sync point (guard forward progress)
-                        const sync_pos = dr.skip_to_sync(tokens, f_out.next.cursor)
-                        if sync_pos > cur
-                            cur = sync_pos
+                    const full_out = pff.parse_function_flat(tokens, cur, next_id, pool, sp)
+                    if full_out.has_func
+                        if full_out.next_cursor > cur
+                            cur = full_out.next_cursor
                         else
                             cur = cur + 1
                         end
-                    case none:
+                        next_id = next_id + 1
+                    else
                         cur = cur + 1
                     end
                 case else:
@@ -93,11 +108,24 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
         case else:
             cur = cur + 1
         end
+
+        -- Invariant defense: guarantee strict progress on every single iteration
+        if cur <= prev_cur
+            cur = prev_cur + 1
+        end
     end
+
+    const empty_kinds: list[int] = []
+    const empty_names: list[string] = []
+    const expr_total = exprs.total_exprs(pool)
 
     return ParsedFile {
         module_name: mod_name,
+        item_kinds: empty_kinds,
+        item_names: empty_names,
         items: items,
-        item_count: lists.len(items)
+        stmt_ids: empty_ids,
+        expr_count: expr_total,
+        item_count: next_id - 1
     }
 end

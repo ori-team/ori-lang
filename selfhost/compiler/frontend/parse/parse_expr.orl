@@ -5,22 +5,58 @@ import selfhost.compiler.frontend.lex.token as tok
 import selfhost.compiler.frontend.parse.node as node
 
 public struct ExprPool
-    nodes: list[node.ExprNode]
+    kind_tags: list[int] -- 1=IntLit, 2=StrLit, 3=BoolLit, 4=Ident, 5=Binary, 6=Call
+    left_ids: list[int]
+    right_ids: list[int]
+    str_vals: list[string]
 end
 
 public new_pool() -> ExprPool
-    const empty_nodes: list[node.ExprNode] = []
-    return ExprPool { nodes: empty_nodes }
+    const empty_k: list[int] = []
+    const empty_l: list[int] = []
+    const empty_r: list[int] = []
+    const empty_s: list[string] = []
+    return ExprPool {
+        kind_tags: empty_k,
+        left_ids: empty_l,
+        right_ids: empty_r,
+        str_vals: empty_s
+    }
 end
 
-public alloc_expr(pool: ExprPool, kind: node.ExprKind, span: tok.Span) -> int
-    const id = lists.len(pool.nodes)
-    lists.push(pool.nodes, node.ExprNode {
-        id: node.NodeId(id),
-        kind: kind,
-        span: span
-    })
+public alloc_expr_raw(pool: ExprPool, kind_tag: int, left: int, right: int, val: string) -> int
+    const id = lists.len(pool.kind_tags)
+    lists.push(pool.kind_tags, kind_tag)
+    lists.push(pool.left_ids, left)
+    lists.push(pool.right_ids, right)
+    lists.push(pool.str_vals, val)
     return id
+end
+
+-- Backward compatible alloc_expr helper
+public alloc_expr(pool: ExprPool, kind: node.ExprKind, span: tok.Span) -> int
+    match kind
+    case Lit(lit):
+        match lit
+        case Int(raw): return alloc_expr_raw(pool, 1, -1, -1, raw)
+        case Str(val): return alloc_expr_raw(pool, 2, -1, -1, val)
+        case Bool(val):
+            if val
+                return alloc_expr_raw(pool, 3, -1, -1, "true")
+            else
+                return alloc_expr_raw(pool, 3, -1, -1, "false")
+            end
+        case else: return alloc_expr_raw(pool, 0, -1, -1, "")
+        end
+    case Ident(name):
+        return alloc_expr_raw(pool, 4, -1, -1, name)
+    case Binary(op, left_id, right_id):
+        return alloc_expr_raw(pool, 5, left_id, right_id, "")
+    case Call(callee, arg_ids):
+        return alloc_expr_raw(pool, 6, lists.len(arg_ids), -1, callee)
+    case else:
+        return alloc_expr_raw(pool, 0, -1, -1, "")
+    end
 end
 
 public struct ParseExprOut
@@ -36,41 +72,35 @@ public parse_primary(tokens: list[tok.Token], cursor: int, pool: ExprPool) -> op
     const t = lists.get(tokens, cursor)
     match t.kind
     case IntLit(raw):
-        const lit = node.LiteralKind.Int(raw: raw)
-        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        const id = alloc_expr_raw(pool, 1, -1, -1, raw)
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
     case FloatLit(raw):
-        const lit = node.LiteralKind.Float(raw: raw)
-        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        const id = alloc_expr_raw(pool, 1, -1, -1, raw)
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
     case StrLit(value):
-        const lit = node.LiteralKind.Str(val: value)
-        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        const id = alloc_expr_raw(pool, 2, -1, -1, value)
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
     case True:
-        const lit = node.LiteralKind.Bool(val: true)
-        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        const id = alloc_expr_raw(pool, 3, -1, -1, "true")
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
     case False:
-        const lit = node.LiteralKind.Bool(val: false)
-        const id = alloc_expr(pool, node.ExprKind.Lit(lit: lit), t.span)
+        const id = alloc_expr_raw(pool, 3, -1, -1, "false")
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
     case None:
-        const id = alloc_expr(pool, node.ExprKind.Lit(lit: node.LiteralKind.NoneLit), t.span)
+        const id = alloc_expr_raw(pool, 0, -1, -1, "none")
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
     case Ident(name):
-        -- Check if followed by call `(`
         if cursor + 1 < lists.len(tokens)
             const next_tok = lists.get(tokens, cursor + 1)
             match next_tok.kind
             case LParen:
                 return parse_call(tokens, cursor, pool, name, t.span)
             case else:
-                const id = alloc_expr(pool, node.ExprKind.Ident(name: name), t.span)
+                const id = alloc_expr_raw(pool, 4, -1, -1, name)
                 return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
             end
         end
-        const id = alloc_expr(pool, node.ExprKind.Ident(name: name), t.span)
+        const id = alloc_expr_raw(pool, 4, -1, -1, name)
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
     case else:
         return none
@@ -78,20 +108,20 @@ public parse_primary(tokens: list[tok.Token], cursor: int, pool: ExprPool) -> op
 end
 
 parse_call(tokens: list[tok.Token], cursor: int, pool: ExprPool, fn_name: string, span: tok.Span) -> optional[ParseExprOut]
-    const args: list[int] = []
-    var cur = cursor + 2 -- Skip ident and `(`
+    var cur = cursor + 2 -- Skip ident and '('
+    var arg_count = 0
     while cur < lists.len(tokens)
         const t = lists.get(tokens, cur)
         match t.kind
         case RParen:
-            const id = alloc_expr(pool, node.ExprKind.Call(callee: fn_name, arg_ids: args), span)
+            const id = alloc_expr_raw(pool, 6, arg_count, -1, fn_name)
             return some(ParseExprOut { expr_id: id, next_cursor: cur + 1 })
         case Comma:
             cur = cur + 1
         case else:
             match parse_primary(tokens, cur, pool)
             case some(out):
-                lists.push(args, out.expr_id)
+                arg_count = arg_count + 1
                 cur = out.next_cursor
             case none:
                 return none
@@ -113,11 +143,7 @@ public parse_binary(tokens: list[tok.Token], cursor: int, pool: ExprPool) -> opt
             case Plus:
                 match parse_primary(tokens, cur + 1, pool)
                 case some(right_out):
-                    current_id = alloc_expr(pool, node.ExprKind.Binary(
-                        op: node.BinaryOpKind.Add,
-                        left_id: current_id,
-                        right_id: right_out.expr_id
-                    ), t.span)
+                    current_id = alloc_expr_raw(pool, 5, current_id, right_out.expr_id, "+")
                     cur = right_out.next_cursor
                 case none:
                     return some(ParseExprOut { expr_id: current_id, next_cursor: cur })
@@ -125,24 +151,15 @@ public parse_binary(tokens: list[tok.Token], cursor: int, pool: ExprPool) -> opt
             case Minus:
                 match parse_primary(tokens, cur + 1, pool)
                 case some(right_out):
-                    current_id = alloc_expr(pool, node.ExprKind.Binary(
-                        op: node.BinaryOpKind.Sub,
-                        left_id: current_id,
-                        right_id: right_out.expr_id
-                    ), t.span)
+                    current_id = alloc_expr_raw(pool, 5, current_id, right_out.expr_id, "-")
                     cur = right_out.next_cursor
                 case none:
                     return some(ParseExprOut { expr_id: current_id, next_cursor: cur })
                 end
             case Pipe:
-                -- Pipeline operator `x |> f`
                 match parse_primary(tokens, cur + 1, pool)
                 case some(right_out):
-                    current_id = alloc_expr(pool, node.ExprKind.Binary(
-                        op: node.BinaryOpKind.Pipe,
-                        left_id: current_id,
-                        right_id: right_out.expr_id
-                    ), t.span)
+                    current_id = alloc_expr_raw(pool, 5, current_id, right_out.expr_id, "|>")
                     cur = right_out.next_cursor
                 case none:
                     return some(ParseExprOut { expr_id: current_id, next_cursor: cur })
@@ -155,4 +172,8 @@ public parse_binary(tokens: list[tok.Token], cursor: int, pool: ExprPool) -> opt
     case none:
         return none
     end
+end
+
+public total_exprs(pool: ExprPool) -> int
+    return lists.len(pool.kind_tags)
 end

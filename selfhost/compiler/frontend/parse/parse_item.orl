@@ -204,15 +204,45 @@ public parse_func_signature(p: Parser, id: int) -> ParseItemOut
                                     case Arrow:
                                         const arr_step = advance(after_rp)
                                         const ty_step = advance(arr_step.next)
-                                        match ty_step.token
-                                        case some(ret_tok):
-                                            match ret_tok.kind
-                                            case Ident(name):
-                                                ret_ty = name
-                                                after_ret = ty_step.next
-                                            case else:
-                                                after_ret = ty_step.next
-                                            end
+                                         match ty_step.token
+                                         case some(ret_tok):
+                                             match ret_tok.kind
+                                             case Ident(name):
+                                                 ret_ty = name
+                                                 after_ret = ty_step.next
+                                                 -- Consume composite generic brackets [T, E] if present
+                                                 match peek(after_ret)
+                                                 case some(bracket_tok):
+                                                     match bracket_tok.kind
+                                                     case LBracket:
+                                                         var b_cur = after_ret
+                                                         var depth = 1
+                                                         b_cur = advance(b_cur).next
+                                                         while not is_eof(b_cur) and depth > 0
+                                                             match peek(b_cur)
+                                                             case some(in_tok):
+                                                                 match in_tok.kind
+                                                                 case LBracket:
+                                                                     depth = depth + 1
+                                                                     b_cur = advance(b_cur).next
+                                                                 case RBracket:
+                                                                     depth = depth - 1
+                                                                     b_cur = advance(b_cur).next
+                                                                 case else:
+                                                                     b_cur = advance(b_cur).next
+                                                                 end
+                                                             case none:
+                                                                 b_cur = advance(b_cur).next
+                                                             end
+                                                         end
+                                                         after_ret = b_cur
+                                                     case else:
+                                                     end
+                                                 case none:
+                                                 end
+                                             case else:
+                                                 after_ret = ty_step.next
+                                             end
                                         case none:
                                             after_ret = arr_step.next
                                         end
