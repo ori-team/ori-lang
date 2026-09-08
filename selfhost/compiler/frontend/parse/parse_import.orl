@@ -9,7 +9,12 @@ public struct ParseImportOut
     next_cursor: int
 end
 
-public parse_module_header(tokens: list[tok.Token], cursor: int) -> optional[string]
+public struct ModuleHeaderOut
+    name: string
+    next_cursor: int
+end
+
+public parse_module_header(tokens: list[tok.Token], cursor: int) -> optional[ModuleHeaderOut]
     if cursor + 1 >= lists.len(tokens)
         return none
     end
@@ -20,7 +25,26 @@ public parse_module_header(tokens: list[tok.Token], cursor: int) -> optional[str
         const path_tok = lists.get(tokens, cursor + 1)
         match path_tok.kind
         case Ident(name):
-            return some(name)
+            var full: string = name
+            var p_cur = cursor + 2
+            var scanning = true
+            while scanning and p_cur + 1 < lists.len(tokens)
+                const dot_tok = lists.get(tokens, p_cur)
+                match dot_tok.kind
+                case Dot:
+                    const seg_tok = lists.get(tokens, p_cur + 1)
+                    match seg_tok.kind
+                    case Ident(name):
+                        full = full + "." + name
+                        p_cur = p_cur + 2
+                    case else:
+                        scanning = false
+                    end
+                case else:
+                    scanning = false
+                end
+            end
+            return some(ModuleHeaderOut { name: full, next_cursor: p_cur })
         case else:
             return none
         end

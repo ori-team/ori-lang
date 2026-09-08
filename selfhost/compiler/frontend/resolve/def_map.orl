@@ -1,0 +1,135 @@
+module selfhost.compiler.frontend.resolve.def_map
+
+import ori.list as lists
+import selfhost.compiler.frontend.diag.sink as ds
+
+public struct DefItem
+    id: int
+    name: string
+    canonical_path: string
+    kind_code: int -- 1=Struct, 2=Enum, 3=Trait, 4=Func, 5=Const, 6=Var, 7=TypeAlias, 8=Newtype, 9=Extern
+    is_public: bool
+end
+
+public struct DefMap
+    names: list[string]
+    paths: list[string]
+    kinds: list[int]
+    is_public_flags: list[int]
+end
+
+public new_def_map() -> DefMap
+    const empty_n: list[string] = []
+    const empty_p: list[string] = []
+    const empty_k: list[int] = []
+    const empty_pub: list[int] = []
+    return DefMap {
+        names: empty_n,
+        paths: empty_p,
+        kinds: empty_k,
+        is_public_flags: empty_pub
+    }
+end
+
+public lookup_def_id(dmap: DefMap, name: string) -> optional[int]
+    var i = 0
+    const count = lists.len(dmap.names)
+    while i < count
+        if lists.get(dmap.names, i) == name
+            return some(i)
+        end
+        i = i + 1
+    end
+    return none
+end
+
+public register_def(
+    dmap: DefMap,
+    sink: ds.DiagnosticSink,
+    name: string,
+    canonical_path: string,
+    kind_code: int,
+    is_pub: bool
+) -> int
+    match lookup_def_id(dmap, name)
+    case some(_):
+        ds.emit_error(sink, "name.duplicate_definition", "duplicate definition: " + name, "rename one of the items or qualify with module")
+        return -1
+    case none:
+        const id = lists.len(dmap.names)
+        lists.push(dmap.names, name)
+        lists.push(dmap.paths, canonical_path)
+        lists.push(dmap.kinds, kind_code)
+        lists.push(dmap.is_public_flags, if is_pub then 1 else 0)
+        return id
+    end
+end
+
+public pass1_collect_declarations(
+    dmap: DefMap,
+    sink: ds.DiagnosticSink,
+    module_name: string,
+    func_names: list[string],
+    struct_names: list[string],
+    enum_names: list[string]
+)
+    -- 1. Register Structs (kind 1)
+    var s_idx = 0
+    while s_idx < lists.len(struct_names)
+        const sname = lists.get(struct_names, s_idx)
+        register_def(dmap, sink, sname, module_name + "." + sname, 1, true)
+        s_idx = s_idx + 1
+    end
+
+    -- 2. Register Enums (kind 2)
+    var e_idx = 0
+    while e_idx < lists.len(enum_names)
+        const ename = lists.get(enum_names, e_idx)
+        register_def(dmap, sink, ename, module_name + "." + ename, 2, true)
+        e_idx = e_idx + 1
+    end
+
+    -- 3. Register Functions (kind 4)
+    var f_idx = 0
+    while f_idx < lists.len(func_names)
+        const fname = lists.get(func_names, f_idx)
+        register_def(dmap, sink, fname, module_name + "." + fname, 4, true)
+        f_idx = f_idx + 1
+    end
+end
+
+public pass2_resolve_references(
+    dmap: DefMap,
+    sink: ds.DiagnosticSink,
+    referenced_names: list[string]
+)
+    var i = 0
+    const total = lists.len(referenced_names)
+    while i < total
+        const ref_name = lists.get(referenced_names, i)
+        match lookup_def_id(dmap, ref_name)
+        case some(_):
+        case none:
+            -- Ignore built-in primitive types/operators, report true unknown names
+            if not is_builtin_or_primitive(ref_name)
+                ds.emit_error(sink, "name.undefined", "undefined identifier: " + ref_name, "ensure it is defined in this module or imported")
+            end
+        end
+        i = i + 1
+    end
+end
+
+is_builtin_or_primitive(name: string) -> bool
+    if name == "int" or name == "string" or name == "bool" or name == "float" or name == "void"
+        return true
+    elif name == "list" or name == "result" or name == "optional" or name == "map" or name == "set"
+        return true
+    elif name == "io" or name == "println" or name == "print" or name == "ok" or name == "err" or name == "some" or name == "none"
+        return true
+    end
+    return false
+end
+
+public total_defs(dmap: DefMap) -> int
+    return lists.len(dmap.names)
+end

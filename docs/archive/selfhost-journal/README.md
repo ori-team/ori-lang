@@ -153,19 +153,14 @@ Finalizamos a implementação dos Módulos 3, 4 e 5 com verificação integral:
 
 ---
 
-## Post 16: Parser de Tipos Compostos Modular e Fechamento Total da Gramática
+## Post 17: Resolução em Duas Passagens e Checagem de Tipos Conectadas ao Pipeline
 
-Finalizamos o refinamento de robustez de parsing e tipos:
-1. **`parse_ty.orl` Desacoplado**:
-   - `parse_bracketed_type` decomposto com balanceamento estrito de colchetes `[` / `]`.
-   - Suporte canônico para `list[T]`, `optional[T]`, `result[T, E]`, `map[K, V]`, `set[T]`, `buffer[T]`, `slice[T]`, `channel[T]` e `range[T]`.
-2. **Top-Level Decl Scanner**:
-   - `file_parser.orl` consome blocos `extern "C" ... end` e declarações `const` de nível de módulo sem desalinhamento de cursores.
-3. **Catálogo de Superfície Expandido**:
-   - `stdlib_broad.orl` expandido para registrar 58 APIs da biblioteca padrão cobrindo coleções (deque, queue, stack, heap, map, set), strings, math (abs, sqrt, min, max), time, crypto, fs, net e test harness.
-4. **Validação Contínua**:
-   - Todos os 9 harnesses de frontend e todos os 5 harnesses dos módulos principais executam com sucesso 100% verde.
-   - O pipeline inteiro do compilador Ori (`selfhost/compiler/main.orl`) executa os comandos `check` e `compile` sobre arquivos reais do repositório em tempos de 0,04s a 1,29s.
+Alcançamos a integração semântica profunda do frontend:
+1. **`def_map.orl`**: Arena de `DefMap` que implementa a resolução de nomes em duas passagens. A primeira passagem registra structs, enums e funções com detecção de nomes duplicados (`name.duplicate_definition`). A segunda passagem valida referências emitindo `name.undefined` para identificadores desconhecidos.
+2. **`type_engine.orl`**: Motor de inferência e checagem de tipos que valida statements reais da AST, verificando condições de `if` (`type.condition_not_bool`) e alimentando o ambiente léxico de tipos (`TypeEnv`).
+3. **Fiação no `pipeline.orl`**: O resolver e o type checker agora são executados sobre os arquivos reais lidos do disco, substituindo o mock anterior. A contagem de símbolos e tipos é refletida fielmente no resultado do pipeline (`defs=1 funcs=1`).
+4. **Resolução de Strings em Enums**: Eliminamos a leitura corrompida de strings aninhadas no JIT (`NAME: \x0c`) através da extração direta do identificador do token head em `parse_func_full.orl`.
+5. **Todos os Testes Verdes**: 24 harnesses em Ori e 9 testes em Rust continuam passando com zero regressões.
 
 ---
 

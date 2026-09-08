@@ -1,0 +1,90 @@
+module selfhost.compiler.frontend.types.type_engine
+
+import ori.list as lists
+import selfhost.compiler.frontend.diag.sink as ds
+import selfhost.compiler.frontend.parse.parse_expr as exprs
+import selfhost.compiler.frontend.parse.parse_stmt as stmts
+
+public struct TypeEnv
+    binding_names: list[string]
+    binding_ty_tags: list[int]
+end
+
+public new_env() -> TypeEnv
+    const empty_n: list[string] = []
+    const empty_t: list[int] = []
+    return TypeEnv {
+        binding_names: empty_n,
+        binding_ty_tags: empty_t
+    }
+end
+
+public infer_expr_tag(pool: exprs.ExprPool, id: int) -> int
+    -- Returns canonical type tag: 0=unknown, 1=int, 2=string, 3=bool
+    if id < 0 or id >= lists.len(pool.kind_tags)
+        return 0
+    end
+
+    const tag = lists.get(pool.kind_tags, id)
+    if tag == 1
+        return 1
+    elif tag == 2
+        return 2
+    elif tag == 3
+        return 3
+    elif tag == 4 -- Var / Ident, resolve via context in check phase
+        return 0
+    elif tag == 5 -- Binary: infer left operand type
+        const left_id = lists.get(pool.left_ids, id)
+        return infer_expr_tag(pool, left_id)
+    elif tag == 6 -- Call: unknown without manifest, assume int for math built-ins
+        return 1
+    elif tag == 10 -- Match expr: int for now
+        return 1
+    end
+    return 0
+end
+
+public check_stmt(env: TypeEnv, sink: ds.DiagnosticSink, sp: stmts.StmtPool, pool: exprs.ExprPool, stmt_id: int)
+    if stmt_id < 0 or stmt_id >= lists.len(sp.kind_tags)
+        return
+    end
+
+    const tag = lists.get(sp.kind_tags, stmt_id)
+    const expr_id = lists.get(sp.expr_ids, stmt_id)
+    const target = lists.get(sp.target_names, stmt_id)
+
+    if tag == 1 -- Const / Let
+        const inferred = infer_expr_tag(pool, expr_id)
+        lists.push(env.binding_names, target)
+        lists.push(env.binding_ty_tags, inferred)
+    elif tag == 2 -- Return: check against declared function return shape later
+        infer_expr_tag(pool, expr_id)
+    elif tag == 3 -- Expr: type must be well-formed, no binding
+        infer_expr_tag(pool, expr_id)
+    elif tag == 4 -- If: condition must be bool or int (truthy domain)
+        const cond_ty = infer_expr_tag(pool, expr_id)
+        if cond_ty != 3 and cond_ty != 1 and cond_ty != 0
+            ds.emit_error(sink, "type.condition_not_bool", "condition must be of bool type", "wrap with comparison or boolean call")
+        end
+    end
+end
+
+public check_all_statements(
+    env: TypeEnv,
+    sink: ds.DiagnosticSink,
+    sp: stmts.StmtPool,
+    pool: exprs.ExprPool
+) -> int
+    var i = 0
+    const total = lists.len(sp.kind_tags)
+    while i < total
+        check_stmt(env, sink, sp, pool, i)
+        i = i + 1
+    end
+    return ds.error_count(sink)
+end
+
+public binding_count(env: TypeEnv) -> int
+    return lists.len(env.binding_names)
+end

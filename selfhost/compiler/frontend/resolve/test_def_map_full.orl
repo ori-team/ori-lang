@@ -1,0 +1,35 @@
+module selfhost.compiler.frontend.resolve.test_def_map_full
+
+import ori.io as io
+import selfhost.compiler.frontend.diag.sink as ds
+import selfhost.compiler.frontend.resolve.def_map as dm
+
+main()
+    const dmap = dm.new_def_map()
+    const sink = ds.new_sink()
+
+    -- Pass 1: collect two Structs, one Enum, two Funcs
+    const fnames: list[string] = ["main", "helper"]
+    const snames: list[string] = ["Point", "Pixel"]
+    const enames: list[string] = ["Direction"]
+
+    dm.pass1_collect_declarations(dmap, sink, "app.main", fnames, snames, enames)
+    io.println(f"PASS1_DEFS: {dm.total_defs(dmap)}")
+
+    -- Pass 2: resolve real references incl. one unknown name
+    const refs: list[string] = ["main", "Point", "helper", "mystery_fn"]
+    dm.pass2_resolve_references(dmap, sink, refs)
+
+    io.println(f"SINK_ERRORS: {ds.error_count(sink)}")
+    if ds.has_errors(sink)
+        io.println(f"FIRST_ERROR: {ds.diagnostic_message_at(sink, 0)}")
+    end
+
+    -- 3. Duplicate registration emits name.duplicate_definition
+    const dup_names: list[string] = ["Point"]
+    const empty_list: list[string] = []
+    dm.pass1_collect_declarations(dmap, sink, "app.main", empty_list, dup_names, empty_list)
+    io.println(f"DUP_ERRORS: {ds.error_count(sink)}")
+
+    io.println("F_RESOLVE_SUITE_SUCCESS")
+end

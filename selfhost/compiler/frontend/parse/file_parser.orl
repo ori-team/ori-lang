@@ -1,6 +1,5 @@
 module selfhost.compiler.frontend.parse.file_parser
 
-import ori.io as io
 import ori.list as lists
 import selfhost.compiler.frontend.lex.token as tok
 import selfhost.compiler.frontend.parse.decl_and_recovery as dr
@@ -15,6 +14,8 @@ public struct ParsedFile
     module_name: string
     func_names: list[string]
     func_ret_tys: list[string]
+    struct_names: list[string]
+    enum_names: list[string]
     item_kinds: list[int]
     item_names: list[string]
     items: list[node.ItemNode]
@@ -40,17 +41,17 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
     const empty_ids: list[int] = []
     const f_names: list[string] = []
     const f_rets: list[string] = []
+    const s_names: list[string] = []
+    const e_names: list[string] = []
     var mod_name = "main"
 
     -- 1. Check for optional module declaration
     match pi.parse_module_header(tokens, cur)
-    case some(name):
-        mod_name = name
-        cur = cur + 2
+    case some(header_out):
+        mod_name = header_out.name
+        cur = header_out.next_cursor
     case none:
     end
-
-    io.println(f"DBG_FILE: mod={mod_name} cur={cur} total={total}")
 
     -- 2. Fast declaration scanner loop
     var next_id = 1
@@ -74,6 +75,11 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
             const s_out = pitem.parse_struct(s_parser, next_id)
             match s_out.item
             case some(item):
+                match item
+                case Struct(decl):
+                    lists.push(s_names, decl.name.text)
+                case else:
+                end
                 if s_out.next.cursor > cur
                     cur = s_out.next.cursor
                 else
@@ -88,6 +94,11 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
             const e_out = pitem.parse_enum(e_parser, next_id)
             match e_out.item
             case some(item):
+                match item
+                case Enum(decl):
+                    lists.push(e_names, decl.name.text)
+                case else:
+                end
                 if e_out.next.cursor > cur
                     cur = e_out.next.cursor
                 else
@@ -101,14 +112,11 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
             -- Advance past 'public' and let next iteration parse the declaration
             cur = cur + 1
         case Ident(name):
-            io.println(f"FILE_PARSE_IDENT: name={name} cur={cur}")
             if cur + 1 < total
                 const next_tok = lists.get(tokens, cur + 1)
                 match next_tok.kind
                 case LParen:
-                    io.println(f"TRYING_FN: {name}")
                     const full_out = pff.parse_function_flat(tokens, cur, next_id, pool, sp)
-                    io.println(f"FN_RES: has={full_out.has_func} name={full_out.name} next={full_out.next_cursor}")
                     if full_out.has_func
                         lists.push(f_names, full_out.name)
                         lists.push(f_rets, full_out.ret_ty)
@@ -169,6 +177,8 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
         module_name: mod_name,
         func_names: f_names,
         func_ret_tys: f_rets,
+        struct_names: s_names,
+        enum_names: e_names,
         item_kinds: empty_kinds,
         item_names: empty_names,
         items: items,
