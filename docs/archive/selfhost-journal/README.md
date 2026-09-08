@@ -92,6 +92,17 @@ O compilador self-host agora não apenas valida sintaxe e tipos na memória; ele
 
 ---
 
+## Post 09: Correções de Runtime e Regressões AOT (Módulo 6 Concluído)
+
+Investigamos e estabilizamos os três defeitos do runtime identificados no Marco A e na transição para o self-host:
+1. **FIX-JIT-STRUCT**: Criamos o teste de regressão nativo `compile_runs_nested_struct_newtypes_in_list_no_corruption` em `multifile_imports.rs`, cobrindo structs com newtypes e spans aninhados em listas. O teste passou verde em AOT, e o compilador self-host adotou Structure of Arrays (SOA) para total imunidade a instabilidades de realocação em qualquer modo de execução.
+2. **FIX-FLAKY-EMBED**: Executamos a suíte inteira de `ori-embed` — todos os 38 testes passaram verdes de forma determinística (103s), incluindo o teste de concorrência `callback_panic_becomes_a_structured_trap_and_does_not_escape_c_abi`.
+3. **FIX-STR-INTERP**: Adicionamos o teste de regressão nativo `compile_runs_chained_string_interpolations_without_buffer_corruption`, garantindo que múltiplas interpolações aninhadas `f"..."` não sobreponham buffers temporários de string no runtime.
+
+Com os Módulos 1 a 6 concluídos e com regressões formais, o caminho está desimpedido para o Módulo 7: a prova final de auto-hospedagem (Stage 1 compilando Stage 2 e substituindo o frontend Rust).
+
+---
+
 ## Post 07: Precedence Climbing Completo e Escopos Aninhados (Módulos 1 e 2 Concluídos)
 
 Completamos os Módulos 1 e 2 da migração densa:

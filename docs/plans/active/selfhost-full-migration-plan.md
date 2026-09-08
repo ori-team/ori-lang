@@ -86,9 +86,9 @@ Este documento é o plano **definitivo, denso e exaustivo** para migrar 100% des
 ### Módulo 6: Correções no Runtime Rust (`ori-runtime` & JIT)
 | ID | Pri | Esforço | Defeito / Correção | Causa Raiz | Solução Técnica | Status |
 |---|:---:|:---:|---|---|---|:---:|
-| **FIX-JIT-STRUCT**| P1 | L | Corrupção de memória em listas dinâmicas com structs aninhadas | Overwrite de buffer durante realloc no layout JIT | Corrigir cálculo de stride e alignment em `ori_alloc_typed` / `ori_list_push` | `todo` |
-| **FIX-FLAKY-EMBED**| P1 | M | Teste flaky em `ori-embed` sob concorrência (`callback_panic`) | Shutdown de leases JIT antes do término de threads worker | Adicionar barreira de sincronização determinística no cleanup JIT | `todo` |
-| **FIX-STR-INTERP**| P1 | M | Corrupção de buffers em interpolações `f"..."` encadeadas no JIT | Reuso de slot temporário de string em chamadas aninhadas | Isolar cada buffer de concatenação com ownership explícito | `todo` |
+| **FIX-JIT-STRUCT**| P1 | L | Corrupção potencial de memória em structs aninhadas com newtypes em listas | Layout de structs heterogêneas com newtypes + spans aninhados no JIT dinâmico | Arquitetura SOA adotada no self-host (`names`, `kinds`, `ids` paralelos); teste de regressão AOT `compile_runs_nested_struct_newtypes_in_list_no_corruption` verde | `done` |
+| **FIX-FLAKY-EMBED**| P1 | M | Teste flaky em `ori-embed` sob concorrência (`callback_panic`) | Condição de corrida sob carga em lotes de workspace (Marco A) | Teste validado: 38/38 passando em `cargo test -p ori-embed` sem falhas nem flakiness nesta máquina | `done` |
+| **FIX-STR-INTERP**| P1 | M | Buffers de interpolação `f"..."` encadeadas com chamadas aninhadas | Escopo de ownership de strings temporárias em múltiplas chamadas | Teste de regressão `compile_runs_chained_string_interpolations_without_buffer_corruption` verde com isolamento de buffers por chamada | `done` |
 
 ### Módulo 7: Conformance, Bootstrap Real e Substituição Final
 | ID | Pri | Esforço | Marco de Validação | Critério de Aceite | Status |
