@@ -4,6 +4,7 @@ import ori.bytes as bs
 import ori.list as lists
 import ori.string as su
 import selfhost.compiler.frontend.lex.number_scan as nscan
+import selfhost.compiler.frontend.lex.string_scan as sscan
 import selfhost.compiler.frontend.lex.token as tok
 
 public struct Lexer
@@ -89,10 +90,30 @@ keyword_kind(text: string) -> optional[tok.TokenKind]
         return some(tok.TokenKind.Trait)
     elif text == "apply"
         return some(tok.TokenKind.Apply)
+    elif text == "using"
+        return some(tok.TokenKind.Using)
+    elif text == "check"
+        return some(tok.TokenKind.Check)
+    elif text == "with"
+        return some(tok.TokenKind.With)
+    elif text == "then"
+        return some(tok.TokenKind.Then)
     elif text == "const"
         return some(tok.TokenKind.Const)
     elif text == "var"
         return some(tok.TokenKind.Var)
+    elif text == "while"
+        return some(tok.TokenKind.While)
+    elif text == "for"
+        return some(tok.TokenKind.For)
+    elif text == "loop"
+        return some(tok.TokenKind.Loop)
+    elif text == "repeat"
+        return some(tok.TokenKind.Repeat)
+    elif text == "break"
+        return some(tok.TokenKind.Break)
+    elif text == "continue"
+        return some(tok.TokenKind.Continue)
     elif text == "if"
         return some(tok.TokenKind.If)
     elif text == "else"
@@ -166,9 +187,35 @@ end
 
 skip_ws(lex: Lexer) -> Lexer
     var cur = lex
-    while not is_eof(cur) and is_whitespace_byte(peek_byte(cur))
-        const step = advance_byte(cur)
-        cur = step.next
+    var looping = true
+    while looping and not is_eof(cur)
+        if is_whitespace_byte(peek_byte(cur))
+            const step = advance_byte(cur)
+            cur = step.next
+        elif peek_byte(cur) == 45 and cur.cursor + 1 < cur.length and int(bs.get(cur.byte_data, cur.cursor + 1)) == 45
+            -- Comment '--'
+            if cur.cursor + 2 < cur.length and int(bs.get(cur.byte_data, cur.cursor + 2)) == 124
+                -- Block comment '--| ... |--'
+                var b_step = advance_byte(advance_byte(advance_byte(cur).next).next)
+                cur = b_step.next
+                var in_block = true
+                while in_block and not is_eof(cur)
+                    if peek_byte(cur) == 124 and cur.cursor + 2 < cur.length and int(bs.get(cur.byte_data, cur.cursor + 1)) == 45 and int(bs.get(cur.byte_data, cur.cursor + 2)) == 45
+                        cur = advance_byte(advance_byte(advance_byte(cur).next).next).next
+                        in_block = false
+                    else
+                        cur = advance_byte(cur).next
+                    end
+                end
+            else
+                -- Line comment '--' skip to newline
+                while not is_eof(cur) and peek_byte(cur) != 10
+                    cur = advance_byte(cur).next
+                end
+            end
+        else
+            looping = false
+        end
     end
     return cur
 end
@@ -183,11 +230,48 @@ public next_token(lex: Lexer) -> NextOut
     const ch = peek_byte(clean)
 
     if is_alpha_byte(ch)
+        if ch == 102 or ch == 98 -- 'f' or 'b' prefix: may be a string literal
+            const str_try = sscan.scan_string_full(clean.source, start, clean.length)
+            if str_try.error_code == ""
+                const s_span = tok.Span {
+                    start_pos: tok.ByteOffset(start),
+                    end_pos: tok.ByteOffset(str_try.end_cursor)
+                }
+                const after_str = Lexer {
+                    source: clean.source,
+                    byte_data: clean.byte_data,
+                    cursor: str_try.end_cursor,
+                    length: clean.length
+                }
+                if str_try.is_bytes
+                    return NextOut { token: some(tok.Token { kind: tok.TokenKind.StrLit(value: str_try.decoded), span: s_span }), next: after_str }
+                elif str_try.is_fstr
+                    return NextOut { token: some(tok.Token { kind: tok.TokenKind.FStrLit(raw: str_try.raw), span: s_span }), next: after_str }
+                else
+                    return NextOut { token: some(tok.Token { kind: tok.TokenKind.StrLit(value: str_try.decoded), span: s_span }), next: after_str }
+                end
+            end
+        end
         const out = scan_word(clean)
         return NextOut { token: some(out.token), next: out.next }
     elif is_digit_byte(ch)
         const out = scan_number(clean)
         return NextOut { token: some(out.token), next: out.next }
+    elif ch == 34 -- plain '"' string
+        const str_res = sscan.scan_string_full(clean.source, start, clean.length)
+        if str_res.error_code == ""
+            const s_span = tok.Span {
+                start_pos: tok.ByteOffset(start),
+                end_pos: tok.ByteOffset(str_res.end_cursor)
+            }
+            const after_str = Lexer {
+                source: clean.source,
+                byte_data: clean.byte_data,
+                cursor: str_res.end_cursor,
+                length: clean.length
+            }
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.StrLit(value: str_res.decoded), span: s_span }), next: after_str }
+        end
     end
 
     const step = advance_byte(clean)
@@ -202,7 +286,71 @@ public next_token(lex: Lexer) -> NextOut
     elif ch == 44
         return NextOut { token: some(tok.Token { kind: tok.TokenKind.Comma, span: span }), next: cur }
     elif ch == 46
+        if peek_byte(cur) == 46 -- '..' range
+            const range_step = advance_byte(cur)
+            const after = range_step.next
+            const range_span = tok.Span {
+                start_pos: tok.ByteOffset(start),
+                end_pos: tok.ByteOffset(after.cursor)
+            }
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.DotDot, span: range_span }), next: after }
+        end
         return NextOut { token: some(tok.Token { kind: tok.TokenKind.Dot, span: span }), next: cur }
+    elif ch == 38 -- '&'
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Amp, span: span }), next: cur }
+    elif ch == 124 -- '|' (single pipe is bitwise OR; pipe op '|>' handled by pratt)
+        if peek_byte(cur) == 62 -- '>' forms the pipe '|>' operator
+            const pipe_step = advance_byte(cur)
+            const after = pipe_step.next
+            const pipe_span = tok.Span {
+                start_pos: tok.ByteOffset(start),
+                end_pos: tok.ByteOffset(after.cursor)
+            }
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.Pipe, span: pipe_span }), next: after }
+        end
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Bar, span: span }), next: cur }
+    elif ch == 94 -- '^'
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Caret, span: span }), next: cur }
+    elif ch == 126 -- '~'
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Tilde, span: span }), next: cur }
+    elif ch == 60
+        if peek_byte(cur) == 60 -- '<<'
+            const shl_step = advance_byte(cur)
+            const after = shl_step.next
+            const shl_span = tok.Span {
+                start_pos: tok.ByteOffset(start),
+                end_pos: tok.ByteOffset(after.cursor)
+            }
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.Shl, span: shl_span }), next: after }
+        elif peek_byte(cur) == 61
+            const lte_step = advance_byte(cur)
+            const after = lte_step.next
+            const lte_span = tok.Span {
+                start_pos: tok.ByteOffset(start),
+                end_pos: tok.ByteOffset(after.cursor)
+            }
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.LtEq, span: lte_span }), next: after }
+        end
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Lt, span: span }), next: cur }
+    elif ch == 62
+        if peek_byte(cur) == 62 -- '>>'
+            const shr_step = advance_byte(cur)
+            const after = shr_step.next
+            const shr_span = tok.Span {
+                start_pos: tok.ByteOffset(start),
+                end_pos: tok.ByteOffset(after.cursor)
+            }
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.Shr, span: shr_span }), next: after }
+        elif peek_byte(cur) == 61
+            const gte_step = advance_byte(cur)
+            const after = gte_step.next
+            const gte_span = tok.Span {
+                start_pos: tok.ByteOffset(start),
+                end_pos: tok.ByteOffset(after.cursor)
+            }
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.GtEq, span: gte_span }), next: after }
+        end
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Gt, span: span }), next: cur }
     elif ch == 40
         return NextOut { token: some(tok.Token { kind: tok.TokenKind.LParen, span: span }), next: cur }
     elif ch == 41

@@ -12,6 +12,9 @@ end
 public enum UnaryOpKind
     Not
     Neg
+    BitNot
+    Try
+    Await
 end
 
 public enum BinaryOpKind
@@ -28,7 +31,13 @@ public enum BinaryOpKind
     Ge
     And
     Or
+    Band
+    Bor
+    Bxor
+    Shl
+    Shr
     Pipe
+    Range
 end
 
 public enum LiteralKind
@@ -50,6 +59,9 @@ public enum ExprKind
     IndexAccess(object_id: int, index_id: int)
     IfExpr(cond_id: int, then_id: int, else_id: int)
     BlockExpr(stmt_ids: list[int], result_id: int)
+    IsCheck(value_id: int, type_name: string)
+    RangeExpr(start_id: int, end_id: int)
+    StructUpdate(base_id: int, field_names: list[string], field_expr_ids: list[int])
 end
 
 public struct ExprNode

@@ -7,12 +7,20 @@ import selfhost.compiler.frontend.parse.parse_expr as exprs
 
 public binding_power(kind: tok.TokenKind) -> int
     match kind
+    case DotDot:
+        return 5 -- range '..' has lowest binary precedence
     case Pipe:
-        return 10
+        return 10 -- '|>' pipeline
     case Or:
-        return 20
+        return 20 -- logical 'or'
     case And:
-        return 30
+        return 30 -- logical 'and'
+    case Bar:
+        return 32 -- bitwise '|'
+    case Caret:
+        return 34 -- bitwise '^'
+    case Amp:
+        return 36 -- bitwise '&'
     case EqEq:
         return 40
     case BangEq:
@@ -25,6 +33,10 @@ public binding_power(kind: tok.TokenKind) -> int
         return 40
     case GtEq:
         return 40
+    case Shl:
+        return 45 -- '<<'
+    case Shr:
+        return 45 -- '>>'
     case Plus:
         return 50
     case Minus:
@@ -42,12 +54,20 @@ end
 
 public binary_op_kind(kind: tok.TokenKind) -> optional[node.BinaryOpKind]
     match kind
+    case DotDot:
+        return some(node.BinaryOpKind.Range)
     case Pipe:
         return some(node.BinaryOpKind.Pipe)
     case Or:
         return some(node.BinaryOpKind.Or)
     case And:
         return some(node.BinaryOpKind.And)
+    case Bar:
+        return some(node.BinaryOpKind.Bor)
+    case Caret:
+        return some(node.BinaryOpKind.Bxor)
+    case Amp:
+        return some(node.BinaryOpKind.Band)
     case EqEq:
         return some(node.BinaryOpKind.Eq)
     case BangEq:
@@ -60,6 +80,10 @@ public binary_op_kind(kind: tok.TokenKind) -> optional[node.BinaryOpKind]
         return some(node.BinaryOpKind.Gt)
     case GtEq:
         return some(node.BinaryOpKind.Ge)
+    case Shl:
+        return some(node.BinaryOpKind.Shl)
+    case Shr:
+        return some(node.BinaryOpKind.Shr)
     case Plus:
         return some(node.BinaryOpKind.Add)
     case Minus:
@@ -99,7 +123,8 @@ public parse_with_precedence(tokens: list[tok.Token], cursor: int, pool: exprs.E
             case none:
                 return some(PrattOut { expr_id: current_id, next_cursor: cur })
             case some(op_kind):
-                match exprs.parse_primary(tokens, cur + 1, pool)
+                -- Recursion with power + 1 preserves left-associativity
+                match parse_with_precedence(tokens, cur + 1, pool, power + 1)
                 case none:
                     return some(PrattOut { expr_id: current_id, next_cursor: cur })
                 case some(right):

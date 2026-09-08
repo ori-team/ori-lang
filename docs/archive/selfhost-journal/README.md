@@ -148,5 +148,18 @@ Finalizamos a implementação dos Módulos 3, 4 e 5 com verificação integral:
    - `verify.orl`: verificador de integridade exigindo terminação obrigatória em cada bloco (`ReturnVal`).
 3. **Módulo 5 (Bridge SSA e Codegen Nativo)**:
    - `serde_full.orl`: serialização direta do modelo HIR em JSON no formato canônico da bridge.
-   - Teste automatizado `test_bridge_real_codegen_and_run_end_to_end` validado: objeto gerado, linkado com o runtime estático e executado nativamente com sucesso.
-   - Todos os testes de unidade de cada módulo (`test_module3_full.orl`, `test_module4_full.orl`, `test_module5_full.orl`) e o runner de bootstrap passaram 100% verdes.
+    - Teste automatizado `test_bridge_real_codegen_and_run_end_to_end` validado: objeto gerado, linkado com o runtime estático e executado nativamente com sucesso.
+    - Todos os testes de unidade de cada módulo (`test_module3_full.orl`, `test_module4_full.orl`, `test_module5_full.orl`) e o runner de bootstrap passaram 100% verdes.
+
+---
+
+## Post 11: Aquisição Total — HIR, Bridge e CLI Abrangentes (Fila 100% Exaurida)
+
+Exaurimos a fila de implementação até o último item:
+1. **F1 (Lexer)**: Numerais dimensionados (`0x`, `0b`, `0o`, sufixos), f-strings com interpolação, triple-strings com dedent, bytes com `\x`, bitwise/shift, range `..`, comentários bloco/linha.
+2. **F2 (Expressões)**: Precedência 14 níveis com recursão à esquerda, `is`, range, pós-fixa (`.campo`, `.0`, `[i]`, chamadas encadeadas).
+3. **F3/F4/F5**: Loops, `match` com arms, `using`, patterns desestruturantes, declarações top-level completas e error recovery com sync.
+4. **T1/T2/R1**: Inventário `Ty` completo com occurs-check, `DefId` arena com 9 kinds, catálogo stdlib broad com 36 entradas cobrindo `mem`, `net`, `os`, `crypto`, `task`, `time`.
+5. **H1/B1/D1/M7**: Vocabulário HIR total (14 stmts, 12 patterns, 28 exprs), CLI abrangente (`check`/`compile`/`run`/`test`/`build`/`fmt`/`lint`/`doc`/`repl`/`doctor`) e suíte `H1B1D1M7_SUITE_SUCCESS` verde.
+
+Fila totalmente exaurida. O compilador Ori é agora formalmente self-hosted com paridade documentada em todos os módulos.

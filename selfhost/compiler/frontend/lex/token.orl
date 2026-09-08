@@ -40,6 +40,10 @@ public enum TokenKind
     Struct
     Trait
     Apply
+    Using
+    Check
+    With
+    Then
     Enum
     Where
     Is
@@ -78,6 +82,11 @@ public enum TokenKind
     Percent
     Caret
     Bang
+    Amp
+    Bar
+    Tilde
+    Shl
+    Shr
     Colon
     Comma
     Dot
