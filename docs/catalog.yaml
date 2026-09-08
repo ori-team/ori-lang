@@ -295,6 +295,13 @@ canonical_documents:
     audience: [contributor, maintainer, agent]
     owns: [full-selfhost-migration-roadmap, clean-code-submodules, multi-wave-bootstrap]
 
+  - id: plan.selfhost-remaining-gap-list
+    path: docs/plans/active/selfhost-remaining-gap-list.md
+    domain: planning
+    status: current
+    audience: [contributor, maintainer, agent]
+    owns: [exhaustive-selfhost-backlog, parity-inventory, end-to-end-gates]
+
   - id: implementation.index
     path: docs/implementation/README.md
     domain: implementation

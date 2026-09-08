@@ -3,6 +3,7 @@ module selfhost.compiler.frontend.lex.lexer
 import ori.bytes as bs
 import ori.list as lists
 import ori.string as su
+import selfhost.compiler.frontend.lex.number_scan as nscan
 import selfhost.compiler.frontend.lex.token as tok
 
 public struct Lexer
@@ -140,17 +141,22 @@ end
 
 scan_number(lex: Lexer) -> TokenOut
     const start = lex.cursor
-    var cur = lex
-    while not is_eof(cur) and is_digit_byte(peek_byte(cur))
-        const step = advance_byte(cur)
-        cur = step.next
-    end
-    const text = su.slice(lex.source, start, cur.cursor)
+    const res = nscan.scan_number_full(lex.source, start, lex.length)
+    const next_lex = Lexer {
+        source: lex.source,
+        byte_data: lex.byte_data,
+        cursor: res.end_cursor,
+        length: lex.length
+    }
     const span = tok.Span {
         start_pos: tok.ByteOffset(start),
-        end_pos: tok.ByteOffset(cur.cursor)
+        end_pos: tok.ByteOffset(res.end_cursor)
     }
-    return TokenOut { token: tok.Token { kind: tok.TokenKind.IntLit(raw: text), span: span }, next: cur }
+    if res.is_float
+        return TokenOut { token: tok.Token { kind: tok.TokenKind.FloatLit(raw: res.raw), span: span }, next: next_lex }
+    else
+        return TokenOut { token: tok.Token { kind: tok.TokenKind.IntLit(raw: res.raw), span: span }, next: next_lex }
+    end
 end
 
 public struct NextOut
