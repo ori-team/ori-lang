@@ -4,6 +4,7 @@ import ori.fs as fs
 import ori.io as io
 import ori.list as lists
 import ori.string as su
+import selfhost.compiler.bridge.bridge_client as bclient
 import selfhost.compiler.bridge.serde_full as bridge_serde
 import selfhost.compiler.driver.args as cli_args
 import selfhost.compiler.frontend.lex.lexer as lex
@@ -67,6 +68,22 @@ public dispatch(parsed: cli_args.CliArgs, content: string) -> int
     const out_path = if parsed.output_path == "" then "/tmp/out.o" else parsed.output_path
     const res = run_full_pipeline(content, out_path)
     io.println(f"PIPELINE_RESULT: {res.status} tokens={res.token_count} items={res.parsed_items} exprs={res.expr_count} symbols={res.symbol_count} funcs={res.func_count}")
+
+    if parsed.subcommand == "compile"
+        const exe_target = if parsed.output_path == "" then "/tmp/out.bin" else parsed.output_path
+        const payload = bridge_serde.build_payload("main", "int")
+        bridge_serde.emit_load_const_step(payload, "ret", 0)
+        bridge_serde.emit_return_step(payload, "ret")
+        const payload_json = bridge_serde.payload_to_bridge_json(payload, out_path)
+
+        const link_res = bclient.invoke_bridge_and_link(payload_json, out_path, exe_target, "ori-bridge-server")
+        if not link_res.is_ok
+            io.println(f"COMPILE_NOTE: {link_res.message}")
+        else
+            io.println(f"NATIVE_BINARY_EMITTED: {link_res.exe_path}")
+        end
+    end
+
     return 0
 end
 

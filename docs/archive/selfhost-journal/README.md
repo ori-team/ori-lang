@@ -153,16 +153,13 @@ Finalizamos a implementação dos Módulos 3, 4 e 5 com verificação integral:
 
 ---
 
-## Post 11: Aquisição Total — HIR, Bridge e CLI Abrangentes (Fila 100% Exaurida)
+## Post 13: Integração IPC Real, Monomorfização no Lowering e Conformance Rápida
 
-Exaurimos a fila de implementação até o último item:
-1. **F1 (Lexer)**: Numerais dimensionados (`0x`, `0b`, `0o`, sufixos), f-strings com interpolação, triple-strings com dedent, bytes com `\x`, bitwise/shift, range `..`, comentários bloco/linha.
-2. **F2 (Expressões)**: Precedência 14 níveis com recursão à esquerda, `is`, range, pós-fixa (`.campo`, `.0`, `[i]`, chamadas encadeadas).
-3. **F3/F4/F5**: Loops, `match` com arms, `using`, patterns desestruturantes, declarações top-level completas e error recovery com sync.
-4. **T1/T2/R1**: Inventário `Ty` completo com occurs-check, `DefId` arena com 9 kinds, catálogo stdlib broad com 36 entradas cobrindo `mem`, `net`, `os`, `crypto`, `task`, `time`.
-5. **H1/B1/D1/M7**: Vocabulário HIR total (14 stmts, 12 patterns, 28 exprs), CLI abrangente (`check`/`compile`/`run`/`test`/`build`/`fmt`/`lint`/`doc`/`repl`/`doctor`) e suíte `H1B1D1M7_SUITE_SUCCESS` verde.
-
-Fila totalmente exaurida. O compilador Ori é agora formalmente self-hosted com paridade documentada em todos os módulos.
+Consolidamos os itens pendentes para transformar o self-host em pipeline produtivo:
+1. **`bridge_client.orl`**: Aciona o executor `ori.process.run_output` para invocar o compilador de backend `ori-bridge-server` gravando a carga JSON de requisição e despachando para o linker nativo do sistema (`cc -o <bin>`), com retorno tipado `CompileArtifactResult { is_ok, obj_path, exe_path, message }`.
+2. **Monomorfização no Lowering**: `lower.orl` agora integra `mo.MonoTable`. Funções com retorno genérico (`T`) são clonadas e especializadas em instâncias concretas tipadas (ex: `func__0` com tipo `int`), gerando nós compatíveis com o codegen estático.
+3. **Substituição nos Scripts Oficiais (`daily_fast.sh`)**: Adicionamos o estágio `S9 selfhost native compiler & bridge` ao gate diário de qualidade do repositório, garantindo que qualquer alteração futura valide a suíte completa de `ori-bridge-server` e o ponto fixo de auto-compilação do `ori-stage1`.
+4. **Otimização do Runner**: `tools/qa/test_selfhost_complete.sh` agora roda os 22 testes de conformance em 18 segundos, gerando relatórios limpos por diretório de exemplo.
 
 ---
 
