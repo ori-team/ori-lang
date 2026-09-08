@@ -387,7 +387,7 @@ public next_token(lex: Lexer) -> NextOut
             }
             return NextOut { token: some(tok.Token { kind: tok.TokenKind.EqEq, span: eq_span }), next: after }
         end
-        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Colon, span: span }), next: cur }
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Eq, span: span }), next: cur }
     elif ch == 60
         if peek_byte(cur) == 61
             const lte_step = advance_byte(cur)

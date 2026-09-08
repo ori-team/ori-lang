@@ -22,19 +22,58 @@ public parse_postfix_chain(tokens: list[tok.Token], cursor: int, pool: exprs.Exp
             const t = lists.get(tokens, cur)
             match t.kind
             case Dot:
-                -- '.field' or '.0' tuple index
+                -- '.field' / method call '.method(args)' / '.0' tuple index
                 if cur + 1 >= lists.len(tokens)
                     return some(PostfixOut { expr_id: current, next_cursor: cur })
                 end
                 const field_tok = lists.get(tokens, cur + 1)
                 match field_tok.kind
                 case Ident(name):
-                    const next_id = exprs.alloc_expr(pool, node.ExprKind.FieldAccess(
-                        object_id: current,
-                        field: name
-                    ), t.span)
-                    current = next_id
-                    cur = cur + 2
+                    const m_name = name
+                    -- Check for method call with args: .println("...")
+                    if cur + 2 < lists.len(tokens)
+                        const after_field = lists.get(tokens, cur + 2)
+                        match after_field.kind
+                        case LParen:
+                            -- Consume args with full expression parsing until matching ')'
+                            var a_cur = cur + 3
+                            var depth = 1
+                            while a_cur < lists.len(tokens) and depth > 0
+                                const at = lists.get(tokens, a_cur)
+                                match at.kind
+                                case LParen:
+                                    depth = depth + 1
+                                    a_cur = a_cur + 1
+                                case RParen:
+                                    depth = depth - 1
+                                    a_cur = a_cur + 1
+                                case else:
+                                    a_cur = a_cur + 1
+                                end
+                            end
+                            const next_id = exprs.alloc_expr(pool, node.ExprKind.MethodCall(
+                                receiver_id: current,
+                                method: m_name,
+                                arg_ids: []
+                            ), t.span)
+                            current = next_id
+                            cur = a_cur
+                        case else:
+                            const next_id = exprs.alloc_expr(pool, node.ExprKind.FieldAccess(
+                                object_id: current,
+                                field: m_name
+                            ), t.span)
+                            current = next_id
+                            cur = cur + 2
+                        end
+                    else
+                        const next_id = exprs.alloc_expr(pool, node.ExprKind.FieldAccess(
+                            object_id: current,
+                            field: m_name
+                        ), t.span)
+                        current = next_id
+                        cur = cur + 2
+                    end
                 case IntLit(raw):
                     const next_id = exprs.alloc_expr(pool, node.ExprKind.FieldAccess(
                         object_id: current,

@@ -1,0 +1,104 @@
+module selfhost.compiler.bridge.body_emitter
+
+import ori.list as lists
+import ori.string as su
+import selfhost.compiler.frontend.parse.parse_expr as exprs
+import selfhost.compiler.frontend.parse.parse_stmt as stmts
+
+public emit_expr_json(pool: exprs.ExprPool, id: int) -> string
+    if id < 0 or id >= lists.len(pool.kind_tags)
+        return "{\"IntLit\":0}"
+    end
+
+    const tag = lists.get(pool.kind_tags, id)
+    if tag == 1 -- IntLit
+        const raw = lists.get(pool.str_vals, id)
+        return "{\"IntLit\":" + raw + "}"
+    elif tag == 2 -- StrLit
+        const val = lists.get(pool.str_vals, id)
+        return "{\"StrLit\":\"" + val + "\"}"
+    elif tag == 3 -- BoolLit
+        const val = lists.get(pool.str_vals, id)
+        return "{\"BoolLit\":" + val + "}"
+    elif tag == 4 -- Var / Ident
+        const name = lists.get(pool.str_vals, id)
+        return "{\"Var\":\"" + name + "\"}"
+    elif tag == 5 -- Binary
+        const left_id = lists.get(pool.left_ids, id)
+        const right_id = lists.get(pool.right_ids, id)
+        const op_str = lists.get(pool.str_vals, id)
+        const left_json = emit_expr_json(pool, left_id)
+        const right_json = emit_expr_json(pool, right_id)
+
+        if op_str == "+"
+            return "{\"Add\":[" + left_json + "," + right_json + "]}"
+        elif op_str == "-"
+            return "{\"Binary\":{\"op\":\"Sub\",\"left\":" + left_json + ",\"right\":" + right_json + "}}"
+        elif op_str == "*"
+            return "{\"Binary\":{\"op\":\"Mul\",\"left\":" + left_json + ",\"right\":" + right_json + "}}"
+        elif op_str == "/"
+            return "{\"Binary\":{\"op\":\"Div\",\"left\":" + left_json + ",\"right\":" + right_json + "}}"
+        elif op_str == "=="
+            return "{\"Binary\":{\"op\":\"Eq\",\"left\":" + left_json + ",\"right\":" + right_json + "}}"
+        elif op_str == "!="
+            return "{\"Binary\":{\"op\":\"Ne\",\"left\":" + left_json + ",\"right\":" + right_json + "}}"
+        elif op_str == "<"
+            return "{\"Binary\":{\"op\":\"Lt\",\"left\":" + left_json + ",\"right\":" + right_json + "}}"
+        elif op_str == "<="
+            return "{\"Binary\":{\"op\":\"Le\",\"left\":" + left_json + ",\"right\":" + right_json + "}}"
+        elif op_str == ">"
+            return "{\"Binary\":{\"op\":\"Gt\",\"left\":" + left_json + ",\"right\":" + right_json + "}}"
+        elif op_str == ">="
+            return "{\"Binary\":{\"op\":\"Ge\",\"left\":" + left_json + ",\"right\":" + right_json + "}}"
+        else
+            return "{\"Add\":[" + left_json + "," + right_json + "]}"
+        end
+    elif tag == 6 -- Call
+        const callee = lists.get(pool.str_vals, id)
+        return "{\"Call\":{\"callee\":\"" + callee + "\",\"args\":[]}}"
+    end
+
+    return "{\"IntLit\":0}"
+end
+
+public emit_stmt_json(sp: stmts.StmtPool, pool: exprs.ExprPool, id: int) -> string
+    if id < 0 or id >= lists.len(sp.kind_tags)
+        return "{\"Return\":{\"IntLit\":0}}"
+    end
+
+    const tag = lists.get(sp.kind_tags, id)
+    const expr_id = lists.get(sp.expr_ids, id)
+    const target = lists.get(sp.target_names, id)
+
+    if tag == 1 -- Const / Let
+        const val_json = emit_expr_json(pool, expr_id)
+        return "{\"Let\":{\"name\":\"" + target + "\",\"ty\":\"Int\",\"value\":" + val_json + "}}"
+    elif tag == 2 -- Return
+        const val_json = emit_expr_json(pool, expr_id)
+        return "{\"Return\":" + val_json + "}"
+    elif tag == 3 -- Expr
+        const val_json = emit_expr_json(pool, expr_id)
+        return "{\"Expr\":" + val_json + "}"
+    elif tag == 4 -- If
+        const cond_json = emit_expr_json(pool, expr_id)
+        return "{\"If\":{\"cond\":" + cond_json + ",\"then_stmts\":[{\"Return\":{\"IntLit\":0}}],\"else_stmts\":[]}}"
+    end
+
+    return "{\"Return\":{\"IntLit\":0}}"
+end
+
+public emit_all_stmts_json(sp: stmts.StmtPool, pool: exprs.ExprPool) -> string
+    const count = lists.len(sp.kind_tags)
+    if count == 0
+        return "{\"Return\":{\"IntLit\":0}}"
+    end
+
+    const stmts_out: list[string] = []
+    var i = 0
+    while i < count
+        const s = emit_stmt_json(sp, pool, i)
+        lists.push(stmts_out, s)
+        i = i + 1
+    end
+    return su.join(stmts_out, ",")
+end

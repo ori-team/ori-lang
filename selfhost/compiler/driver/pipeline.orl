@@ -4,11 +4,14 @@ import ori.fs as fs
 import ori.io as io
 import ori.list as lists
 import ori.string as su
+import selfhost.compiler.bridge.body_emitter as bemitter
 import selfhost.compiler.bridge.bridge_client as bclient
 import selfhost.compiler.bridge.serde_full as bridge_serde
 import selfhost.compiler.driver.args as cli_args
 import selfhost.compiler.frontend.lex.lexer as lex
 import selfhost.compiler.frontend.parse.file_parser as fp
+import selfhost.compiler.frontend.parse.parse_expr as exprs
+import selfhost.compiler.frontend.parse.parse_stmt as stmts
 import selfhost.compiler.frontend.resolve.resolve as res
 import selfhost.compiler.frontend.types.check_full as cf
 import selfhost.compiler.hir.lower as lo
@@ -44,14 +47,28 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
         io.println("TYPE_CHECK: arity check note")
     end
 
-    -- 5. HIR Lowering (Lower all functions directly from SOA lists)
+    -- 5. HIR Lowering (Lower all functions directly from SOA lists with real statements)
+    const sp = stmts.StmtPool {
+        kind_tags: parsed_file.stmt_kind_tags,
+        expr_ids: parsed_file.stmt_expr_ids,
+        target_names: parsed_file.stmt_target_names
+    }
+    const exp_pool = exprs.ExprPool {
+        kind_tags: parsed_file.expr_kind_tags,
+        left_ids: parsed_file.expr_left_ids,
+        right_ids: parsed_file.expr_right_ids,
+        str_vals: parsed_file.expr_str_vals
+    }
+
+    const real_body_stmts_json = bemitter.emit_all_stmts_json(sp, exp_pool)
+
     const l_ctx = lo.new_lower_context(parsed_file.module_name)
     var k = 0
     const fn_total = lists.len(parsed_file.func_names)
     while k < fn_total
         const fn_name = lists.get(parsed_file.func_names, k)
         const fn_ret = lists.get(parsed_file.func_ret_tys, k)
-        const body_json = f"{{\"Return\":{{\"IntLit\":0}}}}"
+        const body_json = if k == 0 and lists.len(sp.kind_tags) > 0 then real_body_stmts_json else "{\"Return\":{\"IntLit\":0}}"
         lists.push(l_ctx.module_ir.func_names, fn_name)
         lists.push(l_ctx.module_ir.func_ret_tys, fn_ret)
         lists.push(l_ctx.module_ir.func_body_jsons, body_json)

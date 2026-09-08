@@ -151,8 +151,27 @@ impl BridgeServer {
 
 fn lower_serialized_module(sm: &SerializedModule) -> HirModule {
     let mut funcs = Vec::new();
+    let mut extern_names = Vec::new();
+
     for (i, f) in sm.funcs.iter().enumerate() {
         funcs.push(lower_func(f, &sm.namespace, DefId(i as u32 + 1)));
+        for s in &f.body_stmts {
+            collect_callees_stmt(s, &mut extern_names);
+        }
+    }
+
+    let mut externs = Vec::new();
+    for ext in extern_names {
+        if !sm.funcs.iter().any(|f| f.name == ext) {
+            externs.push(ori_hir::hir::HirExtern::Func {
+                path: SmolStr::new(&ext),
+                name: SmolStr::new(&ext),
+                params: vec![],
+                return_ty: Ty::Void,
+                abi: SmolStr::new("C"),
+                span: Span::DUMMY,
+            });
+        }
     }
 
     HirModule {
@@ -163,7 +182,43 @@ fn lower_serialized_module(sm: &SerializedModule) -> HirModule {
         trait_impls: vec![],
         funcs,
         consts: vec![],
-        externs: vec![],
+        externs,
+    }
+}
+
+fn collect_callees_stmt(s: &SerializedStmt, out: &mut Vec<String>) {
+    match s {
+        SerializedStmt::Let { value, .. } => collect_callees_expr(value, out),
+        SerializedStmt::Return(Some(e)) => collect_callees_expr(e, out),
+        SerializedStmt::Return(None) => {}
+        SerializedStmt::Expr(e) => collect_callees_expr(e, out),
+        SerializedStmt::If { cond, then_stmts, else_stmts } => {
+            collect_callees_expr(cond, out);
+            for ts in then_stmts { collect_callees_stmt(ts, out); }
+            for es in else_stmts { collect_callees_stmt(es, out); }
+        }
+    }
+}
+
+fn collect_callees_expr(e: &SerializedExpr, out: &mut Vec<String>) {
+    match e {
+        SerializedExpr::Call { callee, args } => {
+            if !out.contains(callee) {
+                out.push(callee.clone());
+            }
+            for a in args {
+                collect_callees_expr(a, out);
+            }
+        }
+        SerializedExpr::Add(l, r) => {
+            collect_callees_expr(l, out);
+            collect_callees_expr(r, out);
+        }
+        SerializedExpr::Binary { left, right, .. } => {
+            collect_callees_expr(left, out);
+            collect_callees_expr(right, out);
+        }
+        _ => {}
     }
 }
 

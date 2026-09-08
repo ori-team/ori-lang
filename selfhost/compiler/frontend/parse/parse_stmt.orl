@@ -6,6 +6,7 @@ import selfhost.compiler.frontend.parse.node as node
 import selfhost.compiler.frontend.parse.parse_expr as exprs
 import selfhost.compiler.frontend.parse.parse_pat as ppat
 import selfhost.compiler.frontend.parse.parse_ty as pty
+import selfhost.compiler.frontend.parse.postfix as pf
 import selfhost.compiler.frontend.parse.pratt as pr
 
 public struct StmtPool
@@ -92,9 +93,7 @@ public parse_let(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp:
                 end
                 const eq_tok = lists.get(tokens, ty_out.next_cursor)
                 match eq_tok.kind
-                case Colon:
-                    return none
-                case else:
+                case Eq:
                     match pr.parse_with_precedence(tokens, ty_out.next_cursor + 1, pool, 0)
                     case some(val_out):
                         const stmt_id = alloc_stmt_raw(sp, 1, val_out.expr_id, val_name)
@@ -102,6 +101,8 @@ public parse_let(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp:
                     case none:
                         return none
                     end
+                case else:
+                    return none
                 end
             end
         case else:
@@ -156,12 +157,18 @@ public parse_statement(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPoo
     case If:
         return parse_if(tokens, cursor, pool, sp)
     case else:
-        match pr.parse_with_precedence(tokens, cursor, pool, 0)
+        match pf.parse_postfix_chain(tokens, cursor, pool)
         case some(out):
             const stmt_id = alloc_stmt_raw(sp, 3, out.expr_id, "")
             return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: out.next_cursor })
         case none:
-            return none
+            match pr.parse_with_precedence(tokens, cursor, pool, 0)
+            case some(out):
+                const stmt_id = alloc_stmt_raw(sp, 3, out.expr_id, "")
+                return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: out.next_cursor })
+            case none:
+                return none
+            end
         end
     end
 end
