@@ -88,15 +88,14 @@ public parse_struct(p: Parser, id: int) -> ParseItemOut
                         const ty_step = advance(colon_step.next)
                         match ty_step.token
                         case some(ty_tok):
-                            match ty_tok.kind
-                            case Ident(name):
-                                const ty_name = name
+                            match token_to_type_name(ty_tok)
+                            case some(ty_name):
                                 lists.push(fields, node.FieldNode {
                                     name: node.Name { text: f_name, span: tok_field.span },
                                     ty: ty_name
                                 })
                                 field_cur = ty_step.next
-                            case else:
+                            case none:
                                 return ParseItemOut { item: none, next: ty_step.next }
                             end
                         case none:
@@ -172,13 +171,37 @@ public parse_enum(p: Parser, id: int) -> ParseItemOut
     end
 end
 
+token_to_type_name(t: tok.Token) -> optional[string]
+    match t.kind
+    case Ident(name): return some(name)
+    case IntTy: return some("int")
+    case StringTy: return some("string")
+    case BoolTy: return some("bool")
+    case FloatTy: return some("float")
+    case Void: return some("void")
+    case BytesTy: return some("bytes")
+    case else: return none
+    end
+end
+
 public parse_func_signature(p: Parser, id: int) -> ParseItemOut
-    match peek(p)
+    var effective_p = p
+    match peek(effective_p)
+    case some(lead):
+        match lead.kind
+        case Public:
+            effective_p = advance(effective_p).next
+        case else:
+        end
+    case none:
+    end
+
+    match peek(effective_p)
     case some(t):
         match t.kind
         case Ident(name):
             const fn_name = name
-            const fn_step = advance(p)
+            const fn_step = advance(effective_p)
             const cur = fn_step.next
             match peek(cur)
             case some(lp_tok):
@@ -206,9 +229,9 @@ public parse_func_signature(p: Parser, id: int) -> ParseItemOut
                                         const ty_step = advance(arr_step.next)
                                          match ty_step.token
                                          case some(ret_tok):
-                                             match ret_tok.kind
-                                             case Ident(name):
-                                                 ret_ty = name
+                                             match token_to_type_name(ret_tok)
+                                             case some(ret_name):
+                                                 ret_ty = ret_name
                                                  after_ret = ty_step.next
                                                  -- Consume composite generic brackets [T, E] if present
                                                  match peek(after_ret)
@@ -272,9 +295,8 @@ public parse_func_signature(p: Parser, id: int) -> ParseItemOut
                                 const pty_step = advance(colon_step.next)
                                 match pty_step.token
                                 case some(pty_tok):
-                                    match pty_tok.kind
-                                    case Ident(name):
-                                        const pty_name = name
+                                    match token_to_type_name(pty_tok)
+                                    case some(pty_name):
                                         lists.push(params, node.ParamNode {
                                             name: node.Name { text: p_name, span: ptok.span },
                                             ty: pty_name
@@ -291,7 +313,7 @@ public parse_func_signature(p: Parser, id: int) -> ParseItemOut
                                         case none:
                                             param_cur = pty_step.next
                                         end
-                                    case else:
+                                    case none:
                                         return ParseItemOut { item: none, next: pty_step.next }
                                     end
                                 case none:

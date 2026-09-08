@@ -35,6 +35,8 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
     const parsed_file = fp.parse_entire_file(tokens)
     const item_len = parsed_file.item_count
     const expr_len = parsed_file.expr_count
+    io.println(f"DEBUG_PIPE: tok_len={tok_len} parsed_items={item_len} func_names={lists.len(parsed_file.func_names)}")
+    io.println(f"DEBUG_MOD: {parsed_file.module_name}")
 
     -- 3. Resolver (Register all items into SOA scope)
     const r_ctx = res.new_context()

@@ -136,6 +136,76 @@ keyword_kind(text: string) -> optional[tok.TokenKind]
         return some(tok.TokenKind.Newtype)
     elif text == "alias"
         return some(tok.TokenKind.Alias)
+    elif text == "bool"
+        return some(tok.TokenKind.BoolTy)
+    elif text == "int"
+        return some(tok.TokenKind.IntTy)
+    elif text == "int8"
+        return some(tok.TokenKind.Int8Ty)
+    elif text == "int16"
+        return some(tok.TokenKind.Int16Ty)
+    elif text == "int32"
+        return some(tok.TokenKind.Int32Ty)
+    elif text == "int64"
+        return some(tok.TokenKind.Int64Ty)
+    elif text == "u8"
+        return some(tok.TokenKind.U8Ty)
+    elif text == "u16"
+        return some(tok.TokenKind.U16Ty)
+    elif text == "u32"
+        return some(tok.TokenKind.U32Ty)
+    elif text == "u64"
+        return some(tok.TokenKind.U64Ty)
+    elif text == "float"
+        return some(tok.TokenKind.FloatTy)
+    elif text == "float32"
+        return some(tok.TokenKind.Float32Ty)
+    elif text == "float64"
+        return some(tok.TokenKind.Float64Ty)
+    elif text == "string"
+        return some(tok.TokenKind.StringTy)
+    elif text == "bytes"
+        return some(tok.TokenKind.BytesTy)
+    elif text == "void"
+        return some(tok.TokenKind.Void)
+    elif text == "any"
+        return some(tok.TokenKind.Any)
+    elif text == "optional"
+        return some(tok.TokenKind.Optional)
+    elif text == "result"
+        return some(tok.TokenKind.ResultKw)
+    elif text == "list"
+        return some(tok.TokenKind.List)
+    elif text == "map"
+        return some(tok.TokenKind.Map)
+    elif text == "set"
+        return some(tok.TokenKind.Set)
+    elif text == "range"
+        return some(tok.TokenKind.Range)
+    elif text == "none"
+        return some(tok.TokenKind.None)
+    elif text == "some"
+        return some(tok.TokenKind.Some)
+    elif text == "self"
+        return some(tok.TokenKind.SelfKw)
+    elif text == "mut"
+        return some(tok.TokenKind.Mut)
+    elif text == "extern"
+        return some(tok.TokenKind.Extern)
+    elif text == "attr"
+        return some(tok.TokenKind.Attr)
+    elif text == "where"
+        return some(tok.TokenKind.Where)
+    elif text == "is"
+        return some(tok.TokenKind.Is)
+    elif text == "do"
+        return some(tok.TokenKind.Do)
+    elif text == "and"
+        return some(tok.TokenKind.And)
+    elif text == "or"
+        return some(tok.TokenKind.Or)
+    elif text == "not"
+        return some(tok.TokenKind.Not)
     end
     return none
 end
@@ -287,6 +357,31 @@ public next_token(lex: Lexer) -> NextOut
 
     if ch == 58
         return NextOut { token: some(tok.Token { kind: tok.TokenKind.Colon, span: span }), next: cur }
+    elif ch == 64 -- '@'
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.At, span: span }), next: cur }
+    elif ch == 42 -- '*'
+        if peek_byte(cur) == 61 -- '*='
+            const st = advance_byte(cur)
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.StarEq, span: span }), next: st.next }
+        end
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Star, span: span }), next: cur }
+    elif ch == 47 -- '/'
+        if peek_byte(cur) == 61 -- '/='
+            const st = advance_byte(cur)
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.SlashEq, span: span }), next: st.next }
+        end
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Slash, span: span }), next: cur }
+    elif ch == 43 -- '+'
+        if peek_byte(cur) == 61 -- '+='
+            const st = advance_byte(cur)
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.PlusEq, span: span }), next: st.next }
+        end
+        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Plus, span: span }), next: cur }
+    elif ch == 45 -- '-'
+        if peek_byte(cur) == 61 -- '-='
+            const st = advance_byte(cur)
+            return NextOut { token: some(tok.Token { kind: tok.TokenKind.MinusEq, span: span }), next: st.next }
+        end
     elif ch == 44
         return NextOut { token: some(tok.Token { kind: tok.TokenKind.Comma, span: span }), next: cur }
     elif ch == 46
@@ -367,49 +462,6 @@ public next_token(lex: Lexer) -> NextOut
         return NextOut { token: some(tok.Token { kind: tok.TokenKind.LBrace, span: span }), next: cur }
     elif ch == 125
         return NextOut { token: some(tok.Token { kind: tok.TokenKind.RBrace, span: span }), next: cur }
-    elif ch == 43
-        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Plus, span: span }), next: cur }
-    elif ch == 61
-        if peek_byte(cur) == 62
-            const arrow_step = advance_byte(cur)
-            const after = arrow_step.next
-            const fat_span = tok.Span {
-                start_pos: tok.ByteOffset(start),
-                end_pos: tok.ByteOffset(after.cursor)
-            }
-            return NextOut { token: some(tok.Token { kind: tok.TokenKind.FatArrow, span: fat_span }), next: after }
-        elif peek_byte(cur) == 61
-            const eq_step = advance_byte(cur)
-            const after = eq_step.next
-            const eq_span = tok.Span {
-                start_pos: tok.ByteOffset(start),
-                end_pos: tok.ByteOffset(after.cursor)
-            }
-            return NextOut { token: some(tok.Token { kind: tok.TokenKind.EqEq, span: eq_span }), next: after }
-        end
-        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Eq, span: span }), next: cur }
-    elif ch == 60
-        if peek_byte(cur) == 61
-            const lte_step = advance_byte(cur)
-            const after = lte_step.next
-            const lte_span = tok.Span {
-                start_pos: tok.ByteOffset(start),
-                end_pos: tok.ByteOffset(after.cursor)
-            }
-            return NextOut { token: some(tok.Token { kind: tok.TokenKind.LtEq, span: lte_span }), next: after }
-        end
-        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Lt, span: span }), next: cur }
-    elif ch == 62
-        if peek_byte(cur) == 61
-            const gte_step = advance_byte(cur)
-            const after = gte_step.next
-            const gte_span = tok.Span {
-                start_pos: tok.ByteOffset(start),
-                end_pos: tok.ByteOffset(after.cursor)
-            }
-            return NextOut { token: some(tok.Token { kind: tok.TokenKind.GtEq, span: gte_span }), next: after }
-        end
-        return NextOut { token: some(tok.Token { kind: tok.TokenKind.Gt, span: span }), next: cur }
     elif ch == 45
         if peek_byte(cur) == 62
             const arrow_step = advance_byte(cur)

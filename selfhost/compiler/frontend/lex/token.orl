@@ -61,11 +61,35 @@ public enum TokenKind
     SelfKw
     Attr
     Extern
+    Any
+    Optional
+    ResultKw
+    List
+    Map
+    Set
+    Range
+    Void
+    BoolTy
+    IntTy
+    Int8Ty
+    Int16Ty
+    Int32Ty
+    Int64Ty
+    U8Ty
+    U16Ty
+    U32Ty
+    U64Ty
+    FloatTy
+    Float32Ty
+    Float64Ty
+    StringTy
+    BytesTy
     Ident(name: string)
     IntLit(raw: string)
     FloatLit(raw: string)
     StrLit(value: string)
     FStrLit(raw: string)
+    BytesLit(raw: string)
     FatArrow
     Arrow
     Pipe
@@ -82,16 +106,21 @@ public enum TokenKind
     Slash
     Percent
     Caret
-    Bang
     Amp
     Bar
     Tilde
     Shl
     Shr
+    PlusEq
+    MinusEq
+    StarEq
+    SlashEq
+    At
     Colon
     Comma
     Dot
     DotDot
+    Ellipsis
     LParen
     RParen
     LBracket

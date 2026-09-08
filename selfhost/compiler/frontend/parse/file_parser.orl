@@ -1,5 +1,6 @@
 module selfhost.compiler.frontend.parse.file_parser
 
+import ori.io as io
 import ori.list as lists
 import selfhost.compiler.frontend.lex.token as tok
 import selfhost.compiler.frontend.parse.decl_and_recovery as dr
@@ -49,6 +50,8 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
     case none:
     end
 
+    io.println(f"DBG_FILE: mod={mod_name} cur={cur} total={total}")
+
     -- 2. Fast declaration scanner loop
     var next_id = 1
     while cur < total
@@ -94,12 +97,18 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
             case none:
                 cur = dr.skip_to_sync(tokens, cur + 1)
             end
+        case Public:
+            -- Advance past 'public' and let next iteration parse the declaration
+            cur = cur + 1
         case Ident(name):
+            io.println(f"FILE_PARSE_IDENT: name={name} cur={cur}")
             if cur + 1 < total
                 const next_tok = lists.get(tokens, cur + 1)
                 match next_tok.kind
                 case LParen:
+                    io.println(f"TRYING_FN: {name}")
                     const full_out = pff.parse_function_flat(tokens, cur, next_id, pool, sp)
+                    io.println(f"FN_RES: has={full_out.has_func} name={full_out.name} next={full_out.next_cursor}")
                     if full_out.has_func
                         lists.push(f_names, full_out.name)
                         lists.push(f_rets, full_out.ret_ty)

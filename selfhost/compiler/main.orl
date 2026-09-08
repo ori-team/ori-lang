@@ -12,6 +12,12 @@ main()
     const raw_args = cmd_args.all()
     var tokens: list[string] = []
 
+    var d = 0
+    while d < lists.len(raw_args)
+        io.println(f"RAW_ARG[{d}]: {lists.get(raw_args, d)}")
+        d = d + 1
+    end
+
     -- Skip program name (index 0) if present
     var i = 1
     const total = lists.len(raw_args)
