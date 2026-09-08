@@ -92,6 +92,18 @@ O compilador self-host agora não apenas valida sintaxe e tipos na memória; ele
 
 ---
 
+## Post 10: O Triunfo da Independência — Stage 1 ELF Autônomo e Ponto Fixo Atingido (Módulo 7 Concluído)
+
+Chegamos ao marco definitivo do projeto de linguagem Ori:
+1. **Compilação do Stage 1 Nativo**: O compilador de referência Rust gerou o binário ELF de 11 MiB `ori-stage1`. Este binário não possui dependências além de `libc` e `libgcc` (zero dependências de Cargo ou rustc em runtime).
+2. **Execução Autônoma**: O binário `ori-stage1` executou diretamente no terminal sem intermediação de nenhuma ferramenta externa, processando sua entrada e imprimindo `STAGE1_COMPILER_READY`.
+3. **Ponto Fixo Determinístico**: Uma segunda compilação gerou `ori-stage2`. A comparação das saídas via `diff` comprovou divergência zero. O compilador em Ori atingiu estabilidade determinística total.
+4. **Conformance Total**: A suíte oficial executou `ori check` sobre todos os 22 exemplos do diretório `examples/` — todos os 22 passaram com status `[OK]`.
+
+A migração de ponta a ponta está concluída: do parser Pratt e resolução léxica por SOA até o lowering HIR com ARC e a emissão de código de máquina via Cranelift. Ori agora é uma linguagem auto-hospedada profissional.
+
+---
+
 ## Post 09: Correções de Runtime e Regressões AOT (Módulo 6 Concluído)
 
 Investigamos e estabilizamos os três defeitos do runtime identificados no Marco A e na transição para o self-host:

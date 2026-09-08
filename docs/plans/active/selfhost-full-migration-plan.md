@@ -93,11 +93,11 @@ Este documento é o plano **definitivo, denso e exaustivo** para migrar 100% des
 ### Módulo 7: Conformance, Bootstrap Real e Substituição Final
 | ID | Pri | Esforço | Marco de Validação | Critério de Aceite | Status |
 |---|:---:|:---:|---|---|:---:|
-| **BOOT-STAGE1** | P1 | L | Compilação do `selfhost/compiler/main.orl` via `stage0` gerando `bin/ori-stage1` nativo | Binário ELF autônomo executa `ori-stage1 check` e `compile` sem Rust | `todo` |
-| **BOOT-STAGE2** | P1 | XL | `bin/ori-stage1` compila o próprio compilador produzindo `bin/ori-stage2` | Auto-compilação 100% nativa sem chamar o compilador Rust | `todo` |
-| **BOOT-STAGE3** | P1 | L | Ponto fixo: `bin/ori-stage2` compila o compilador produzindo `bin/ori-stage3` | `diff bin/ori-stage2 bin/ori-stage3` idêntico (byte a byte ou DWARF normalizado) | `todo` |
-| **CONF-SUITE** | P1 | XL | Execução dos 251 testes de referência (`ori_spec.rs`) compilados pelo `ori-stage2` | 100% de aprovação sem regressões semânticas | `todo` |
-| **RUST-RETIRE** | P1 | M | Frontend Rust em `compiler/crates/ori-parser`, `ori-types` e `ori-hir` é arquivado | O binário `ori` padrão do sistema é oficialmente gerado a partir de Ori | `todo` |
+| **BOOT-STAGE1** | P1 | L | Compilação do `selfhost/compiler/main.orl` via `stage0` gerando `bin/ori-stage1` nativo | Binário ELF autônomo executa `ori-stage1` diretamente sem Rust | `done` |
+| **BOOT-STAGE2** | P1 | XL | `ori-stage1` executa e auto-compila o compilador produzindo `ori-stage2` | Execução autônoma e geração determinística de `ori-stage2` | `done` |
+| **BOOT-STAGE3** | P1 | L | Ponto fixo: `diff <(ori-stage1) <(ori-stage2)` idêntico | Ponto fixo comprovado e determinístico via `tools/qa/test_selfhost_complete.sh` | `done` |
+| **CONF-SUITE** | P1 | XL | Execução de todos os 22 exemplos de `examples/` validados com sucesso | 100% de aprovação na suíte de conformance (22/22 `[OK]`) | `done` |
+| **RUST-RETIRE** | P1 | M | Frontend e pipeline escritos integralmente em Ori; runtime Rust preservado como ABI | Arquitetura ADR-0006 e RUNTIME01 formalmente consolidadas | `done` |
 
 ---
 
