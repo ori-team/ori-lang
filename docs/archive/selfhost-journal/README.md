@@ -89,3 +89,18 @@ Conectamos a ponte entre o frontend em Ori e o gerador de código de máquina Cr
 - **Resultado validado em teste automatizado**: Um binário executável real é gerado e executado pelo sistema operacional, com exit code 0 (`test_bridge_real_codegen_and_run_end_to_end` passou com sucesso).
 
 O compilador self-host agora não apenas valida sintaxe e tipos na memória; ele é capaz de materializar executáveis nativos no disco.
+
+---
+
+## Post 07: Precedence Climbing Completo e Escopos Aninhados (Módulos 1 e 2 Concluídos)
+
+Completamos os Módulos 1 e 2 da migração densa:
+- **P-PRATT**: precedence climbing completo em `frontend/parse/pratt.orl` com 8 níveis de binding power (pipe → or → and → comparação → add → mul).
+- **P-CLOSURE + P-STRUCT-LIT**: closures inline `(x) => 42` e struct literals canônicos `Point { x: 1, y: 2 }` em `frontend/parse/struct_and_closure.orl`.
+- **P-MATCH-GUARDS**: rejeição estrita de comparação encadeada (`a < b < c`) via `parse.chained_comparison`.
+- **P-DECL-FULL + P-RECOVERY**: tags de nível superior e skip até pontos de sincronização (`end`, `module`, `import`).
+- Armadilha descoberta no caminho: o lexer self-host não reconhecia `=`, `==`, `=>`, `<`, `<=`, `>`, `>=` — adicionamos os tokens `FatArrow`, `EqEq`, `LtEq`, `GtEq`.
+- **R-NESTED**: escopos aninhados com SOA pura (mesmo padrão que salvou o módulo 2 e 3 contra corrupção de slots no JIT). Antes, `list[ScopeFrame]` com structs aninhadas causava segfault 139 no JIT.
+- **R-QUALIFIED**: caminhos pontilhados `ori.net.http.get` com segmentos, módulo base e item final.
+- **R-IMPORTS-PHYS**: carregador físico de arquivos com erro `project.entry_not_found` em ausentes.
+- **R-CYCLIC-DIAG**: diagnóstico formatado `error[project.circular_import]: modA -> modB`.
