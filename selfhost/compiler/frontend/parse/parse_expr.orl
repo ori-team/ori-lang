@@ -89,6 +89,25 @@ public parse_primary(tokens: list[tok.Token], cursor: int, pool: ExprPool) -> op
     case None:
         const id = alloc_expr_raw(pool, 0, -1, -1, "none")
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+    case Match:
+        -- Match as expression: match scrutinee case ... end
+        var m_cur = cursor + 1
+        var depth = 1
+        while m_cur < lists.len(tokens) and depth > 0
+            const mt = lists.get(tokens, m_cur)
+            match mt.kind
+            case End:
+                depth = depth - 1
+                m_cur = m_cur + 1
+            case Match:
+                depth = depth + 1
+                m_cur = m_cur + 1
+            case else:
+                m_cur = m_cur + 1
+            end
+        end
+        const id = alloc_expr_raw(pool, 10, -1, -1, "match_expr")
+        return some(ParseExprOut { expr_id: id, next_cursor: m_cur })
     case Ident(name):
         if cursor + 1 < lists.len(tokens)
             const next_tok = lists.get(tokens, cursor + 1)

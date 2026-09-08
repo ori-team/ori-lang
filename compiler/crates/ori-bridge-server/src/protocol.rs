@@ -51,11 +51,31 @@ pub enum SerializedTy {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum SerializedBinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum SerializedExpr {
     IntLit(i64),
     StrLit(String),
     BoolLit(bool),
     Var(String),
+    Binary {
+        op: SerializedBinaryOp,
+        left: Box<SerializedExpr>,
+        right: Box<SerializedExpr>,
+    },
     Add(Box<SerializedExpr>, Box<SerializedExpr>),
     Call {
         callee: String,
@@ -72,6 +92,11 @@ pub enum SerializedStmt {
     },
     Return(Option<SerializedExpr>),
     Expr(SerializedExpr),
+    If {
+        cond: SerializedExpr,
+        then_stmts: Vec<SerializedStmt>,
+        else_stmts: Vec<SerializedStmt>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

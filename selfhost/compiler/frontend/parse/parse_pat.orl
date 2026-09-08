@@ -95,6 +95,27 @@ public parse_pattern(tokens: list[tok.Token], cursor: int, pool: PatPool) -> opt
         const lit = node.LiteralKind.Bool(val: false)
         const id = alloc_pat(pool, node.PatternKind.Literal(lit: lit), t.span)
         return some(ParsePatOut { pat_id: id, next_cursor: cursor + 1 })
+    case LBrace:
+        -- Struct destructuring: { a, b } or { a: x, b: y }
+        const field_pat_ids: list[int] = []
+        var b_cur = cursor + 1
+        while b_cur < lists.len(tokens)
+            const b_tok = lists.get(tokens, b_cur)
+            match b_tok.kind
+            case RBrace:
+                const id = alloc_pat(pool, node.PatternKind.Tuple(sub_pat_ids: field_pat_ids), t.span)
+                return some(ParsePatOut { pat_id: id, next_cursor: b_cur + 1 })
+            case Comma:
+                b_cur = b_cur + 1
+            case Ident(name):
+                const bind_id = alloc_pat(pool, node.PatternKind.Bind(name: name), b_tok.span)
+                lists.push(field_pat_ids, bind_id)
+                b_cur = b_cur + 1
+            case else:
+                return none
+            end
+        end
+        return none
     case else:
         return none
     end

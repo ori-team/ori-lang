@@ -4,6 +4,7 @@ import ori.list as lists
 import selfhost.compiler.frontend.lex.token as tok
 import selfhost.compiler.frontend.parse.node as node
 import selfhost.compiler.frontend.parse.parse_expr as exprs
+import selfhost.compiler.frontend.parse.parse_pat as ppat
 import selfhost.compiler.frontend.parse.parse_ty as pty
 import selfhost.compiler.frontend.parse.pratt as pr
 
@@ -58,6 +59,24 @@ public parse_let(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp:
 
     const name_tok = lists.get(tokens, cursor + 1)
     match name_tok.kind
+    case LBrace:
+        -- Struct destructuring: const { x, y } = val
+        const pat_pool = ppat.new_pat_pool()
+        match ppat.parse_pattern(tokens, cursor + 1, pat_pool)
+        case none:
+            return none
+        case some(pat_out):
+            if pat_out.next_cursor >= lists.len(tokens)
+                return none
+            end
+            match exprs.parse_binary(tokens, pat_out.next_cursor + 1, pool)
+            case some(val_out):
+                const stmt_id = alloc_stmt_raw(sp, 3, val_out.expr_id, "destructure")
+                return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: val_out.next_cursor })
+            case none:
+                return none
+            end
+        end
     case Ident(name):
         const ty_tok = lists.get(tokens, cursor + 2)
         match ty_tok.kind

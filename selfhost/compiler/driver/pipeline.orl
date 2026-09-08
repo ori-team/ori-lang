@@ -19,6 +19,7 @@ public struct PipelineResult
     expr_count: int
     symbol_count: int
     func_count: int
+    payload_json: string
     status: string
 end
 
@@ -47,11 +48,8 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
     const l_ctx = lo.new_lower_context(parsed_file.module_name)
     const f_count = lo.module_func_count(l_ctx)
 
-    -- 6. Bridge Payload Serialization
-    const payload = bridge_serde.build_payload(parsed_file.module_name, "int")
-    bridge_serde.emit_load_const_step(payload, "ret", 0)
-    bridge_serde.emit_return_step(payload, "ret")
-    const bridge_json = bridge_serde.payload_to_bridge_json(payload, out_path)
+    -- 6. Bridge Payload Serialization (real lowered HIR with all module functions)
+    const bridge_json = bridge_serde.module_to_bridge_json(l_ctx.module_ir, out_path)
     io.println(f"BRIDGE_PAYLOAD_BYTES: {su.len(bridge_json)}")
 
     return PipelineResult {
@@ -60,6 +58,7 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
         expr_count: expr_len,
         symbol_count: sym_count,
         func_count: f_count,
+        payload_json: bridge_json,
         status: "pipeline_success"
     }
 end
@@ -71,12 +70,7 @@ public dispatch(parsed: cli_args.CliArgs, content: string) -> int
 
     if parsed.subcommand == "compile"
         const exe_target = if parsed.output_path == "" then "/tmp/out.bin" else parsed.output_path
-        const payload = bridge_serde.build_payload("main", "int")
-        bridge_serde.emit_load_const_step(payload, "ret", 0)
-        bridge_serde.emit_return_step(payload, "ret")
-        const payload_json = bridge_serde.payload_to_bridge_json(payload, out_path)
-
-        const link_res = bclient.invoke_bridge_and_link(payload_json, out_path, exe_target, "ori-bridge-server")
+        const link_res = bclient.invoke_bridge_and_link(res.payload_json, out_path, exe_target, "ori-bridge-server")
         if not link_res.is_ok
             io.println(f"COMPILE_NOTE: {link_res.message}")
         else

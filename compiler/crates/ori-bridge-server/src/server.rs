@@ -1,7 +1,7 @@
 use crate::protocol::{
     BridgeErrorPayload, CompileModuleRequest, CompileModuleResponse, HandshakeRequest,
-    HandshakeResponse, RequestEnvelope, ResponseEnvelope, SerializedExpr, SerializedFunc,
-    SerializedModule, SerializedStmt, SerializedTy, CURRENT_PROTOCOL_VERSION,
+    HandshakeResponse, RequestEnvelope, ResponseEnvelope, SerializedBinaryOp, SerializedExpr,
+    SerializedFunc, SerializedModule, SerializedStmt, SerializedTy, CURRENT_PROTOCOL_VERSION,
 };
 use ori_ast::expr::BinaryOp;
 use ori_codegen::{emit_native_with_options, NativeEmitOptions};
@@ -228,6 +228,43 @@ fn lower_stmt(ss: &SerializedStmt) -> HirStmt {
             HirStmt::Return(maybe_expr.as_ref().map(lower_expr), Span::DUMMY)
         }
         SerializedStmt::Expr(expr) => HirStmt::Expr(lower_expr(expr)),
+        SerializedStmt::If {
+            cond,
+            then_stmts,
+            else_stmts,
+        } => HirStmt::If {
+            cond: lower_expr(cond),
+            then: HirBlock {
+                stmts: then_stmts.iter().map(lower_stmt).collect(),
+                span: Span::DUMMY,
+            },
+            else_ifs: vec![],
+            else_: if else_stmts.is_empty() {
+                None
+            } else {
+                Some(HirBlock {
+                    stmts: else_stmts.iter().map(lower_stmt).collect(),
+                    span: Span::DUMMY,
+                })
+            },
+            span: Span::DUMMY,
+        },
+    }
+}
+
+fn lower_binary_op(op: &SerializedBinaryOp) -> BinaryOp {
+    match op {
+        SerializedBinaryOp::Add => BinaryOp::Add,
+        SerializedBinaryOp::Sub => BinaryOp::Sub,
+        SerializedBinaryOp::Mul => BinaryOp::Mul,
+        SerializedBinaryOp::Div => BinaryOp::Div,
+        SerializedBinaryOp::Mod => BinaryOp::Rem,
+        SerializedBinaryOp::Eq => BinaryOp::Eq,
+        SerializedBinaryOp::Ne => BinaryOp::Ne,
+        SerializedBinaryOp::Lt => BinaryOp::Lt,
+        SerializedBinaryOp::Le => BinaryOp::Le,
+        SerializedBinaryOp::Gt => BinaryOp::Gt,
+        SerializedBinaryOp::Ge => BinaryOp::Ge,
     }
 }
 
@@ -256,6 +293,15 @@ fn lower_expr(se: &SerializedExpr) -> HirExpr {
         SerializedExpr::Add(left, right) => HirExpr {
             kind: HirExprKind::Binary {
                 op: BinaryOp::Add,
+                lhs: Box::new(lower_expr(left)),
+                rhs: Box::new(lower_expr(right)),
+            },
+            ty: Ty::Int,
+            span: Span::DUMMY,
+        },
+        SerializedExpr::Binary { op, left, right } => HirExpr {
+            kind: HirExprKind::Binary {
+                op: lower_binary_op(op),
                 lhs: Box::new(lower_expr(left)),
                 rhs: Box::new(lower_expr(right)),
             },
