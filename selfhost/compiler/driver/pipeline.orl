@@ -9,6 +9,7 @@ import selfhost.compiler.bridge.bridge_client as bclient
 import selfhost.compiler.bridge.serde_full as bridge_serde
 import selfhost.compiler.driver.args as cli_args
 import selfhost.compiler.frontend.diag.sink as ds
+import selfhost.compiler.frontend.diag.source_map as sm
 import selfhost.compiler.frontend.lex.lexer as lex
 import selfhost.compiler.frontend.parse.file_parser as fp
 import selfhost.compiler.frontend.parse.parse_expr as exprs
@@ -23,6 +24,8 @@ public struct PipelineResult
     expr_count: int
     symbol_count: int
     func_count: int
+    error_count: int
+    sink: ds.DiagnosticSink
     payload_json: string
     status: string
 end
@@ -37,13 +40,15 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
     const item_len = parsed_file.item_count
     const expr_len = parsed_file.expr_count
 
-    -- 3. Resolver PASS-1: register all declarations into canonical DefMap
+    -- 3. Resolver PASS-1 & PASS-2: register declarations and resolve true Ident references
     const dmap = dm.new_def_map()
     const sink = ds.new_sink()
     dm.pass1_collect_declarations(dmap, sink, parsed_file.module_name, parsed_file.func_names, parsed_file.struct_names, parsed_file.enum_names)
+    dm.register_local_bindings(dmap, parsed_file.stmt_target_names)
+    dm.pass2_resolve_idents_only(dmap, sink, parsed_file.expr_kind_tags, parsed_file.expr_str_vals)
     const sym_count = dm.total_defs(dmap)
 
-    -- 4. Type Checker: check all parsed statements against the type engine
+    -- 4. Type Checker: check all statements and return matching against declared signature
     const checker_env = te.new_env()
     const sp_check = stmts.StmtPool {
         kind_tags: parsed_file.stmt_kind_tags,
@@ -56,7 +61,8 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
         right_ids: parsed_file.expr_right_ids,
         str_vals: parsed_file.expr_str_vals
     }
-    const type_err_total = te.check_all_statements(checker_env, sink, sp_check, exp_check)
+    const target_ret_ty = if lists.len(parsed_file.func_ret_tys) > 0 then lists.get(parsed_file.func_ret_tys, 0) else "void"
+    const type_err_total = te.check_function_statements(checker_env, sink, sp_check, exp_check, target_ret_ty)
     io.println(f"TYPE_CHECK: defs={sym_count} env_bindings={te.binding_count(checker_env)} errors={type_err_total}")
 
     -- 5. HIR Lowering (Lower all functions directly from SOA lists with real statements)
@@ -72,15 +78,13 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
         str_vals: parsed_file.expr_str_vals
     }
 
-    const real_body_stmts_json = bemitter.emit_all_stmts_json(sp, exp_pool)
-
     const l_ctx = lo.new_lower_context(parsed_file.module_name)
     var k = 0
     const fn_total = lists.len(parsed_file.func_names)
     while k < fn_total
         const fn_name = lists.get(parsed_file.func_names, k)
         const fn_ret = lists.get(parsed_file.func_ret_tys, k)
-        const body_json = if k == 0 and lists.len(sp.kind_tags) > 0 then real_body_stmts_json else "{\"Return\":{\"IntLit\":0}}"
+        const body_json = bemitter.emit_range_stmts_json(sp, exp_pool, lists.get(parsed_file.func_first_stmt_idx, k), lists.get(parsed_file.func_last_stmt_idx, k))
         lists.push(l_ctx.module_ir.func_names, fn_name)
         lists.push(l_ctx.module_ir.func_ret_tys, fn_ret)
         lists.push(l_ctx.module_ir.func_body_jsons, body_json)
@@ -98,16 +102,38 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
         expr_count: expr_len,
         symbol_count: sym_count,
         func_count: f_count,
+        error_count: type_err_total,
+        sink: sink,
         payload_json: bridge_json,
         status: "pipeline_success"
     }
+end
+
+public render_sink_errors(sink: ds.DiagnosticSink, file_source: string)
+    const sf = sm.new_source_file("source.orl", file_source)
+    var i = 0
+    const total = ds.total_count(sink)
+    while i < total
+        io.println(f"error: {ds.diagnostic_message_at(sink, i)}")
+        const snippet = sm.render_error_snippet(sf, 1, 0, 4)
+        if snippet != ""
+            io.println(snippet)
+        end
+        i = i + 1
+    end
 end
 
 public dispatch(parsed: cli_args.CliArgs, content: string) -> int
     const final_bin = if parsed.output_path == "" then "/tmp/out.bin" else parsed.output_path
     const obj_tmp = f"{final_bin}.tmp.o"
     const res = run_full_pipeline(content, obj_tmp)
-    io.println(f"PIPELINE_RESULT: {res.status} tokens={res.token_count} items={res.parsed_items} exprs={res.expr_count} symbols={res.symbol_count} funcs={res.func_count}")
+    io.println(f"PIPELINE_RESULT: {res.status} tokens={res.token_count} items={res.parsed_items} exprs={res.expr_count} symbols={res.symbol_count} funcs={res.func_count} errors={res.error_count}")
+
+    if res.error_count > 0
+        render_sink_errors(res.sink, content)
+        io.println(f"{res.error_count} error(s) found")
+        return 1
+    end
 
     if parsed.subcommand == "compile"
         const link_res = bclient.invoke_bridge_and_link(res.payload_json, obj_tmp, final_bin)

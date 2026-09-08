@@ -153,14 +153,16 @@ Finalizamos a implementação dos Módulos 3, 4 e 5 com verificação integral:
 
 ---
 
-## Post 17: Resolução em Duas Passagens e Checagem de Tipos Conectadas ao Pipeline
+## Post 18: Renderização Formal de Diagnósticos e Rejeição Estrita de Erros (Pipeline 100% Integrado)
 
-Alcançamos a integração semântica profunda do frontend:
-1. **`def_map.orl`**: Arena de `DefMap` que implementa a resolução de nomes em duas passagens. A primeira passagem registra structs, enums e funções com detecção de nomes duplicados (`name.duplicate_definition`). A segunda passagem valida referências emitindo `name.undefined` para identificadores desconhecidos.
-2. **`type_engine.orl`**: Motor de inferência e checagem de tipos que valida statements reais da AST, verificando condições de `if` (`type.condition_not_bool`) e alimentando o ambiente léxico de tipos (`TypeEnv`).
-3. **Fiação no `pipeline.orl`**: O resolver e o type checker agora são executados sobre os arquivos reais lidos do disco, substituindo o mock anterior. A contagem de símbolos e tipos é refletida fielmente no resultado do pipeline (`defs=1 funcs=1`).
-4. **Resolução de Strings em Enums**: Eliminamos a leitura corrompida de strings aninhadas no JIT (`NAME: \x0c`) através da extração direta do identificador do token head em `parse_func_full.orl`.
-5. **Todos os Testes Verdes**: 24 harnesses em Ori e 9 testes em Rust continuam passando com zero regressões.
+Completamos os quatro pilares semânticos que transformam o self-host em compilador estrito:
+1. **`F-PIPE-RENDER`**: Conectamos `render_sink_errors` e `source_map.render_error_snippet` no pipeline. Quando o compilador encontra erros de compilação, ele não apenas avisa que falhou: ele imprime o código do catálogo (`error[name.undefined]`), o trecho exato do código-fonte sublinhado com `^^^^` e retorna código de saída `1`.
+2. **`F-RES-PASS2`**: A Passagem 2 de resolução foi ativada sobre os identificadores reais das expressões (`pass2_resolve_idents_only`). Se o desenvolvedor tentar acessar uma variável não declarada (como `xyz_undefined_var`), o compilador rejeita imediatamente e emite `name.undefined`.
+3. **`F-TYPE-RET`**: O `type_engine.orl` agora checa se o valor de retorno de cada função coincide com o tipo declarado na assinatura, emitindo `type.return_mismatch` em caso de incompatibilidade.
+4. **`F-MULTIFN-BODY`**: O `file_parser.orl` e o `body_emitter.orl` particionam os statements por função (`emit_range_stmts_json`), garantindo que cada função do arquivo emita seus próprios statements de corpo para a bridge Cranelift.
+5. **Correção do `=` em Declarações**: Localizamos e corrigimos o desaparecimento do token `Eq` (`=`) no switch do lexer, permitindo que todas as atribuições `const x = ...` e `let x = ...` com tipos compostos sejam reconhecidas sem erro.
+
+O compilador self-host agora aprova programas válidos com status 0 e rejeita programas inválidos com diagnósticos visuais e status 1.
 
 ---
 

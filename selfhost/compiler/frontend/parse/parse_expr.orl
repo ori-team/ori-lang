@@ -80,6 +80,9 @@ public parse_primary(tokens: list[tok.Token], cursor: int, pool: ExprPool) -> op
     case StrLit(value):
         const id = alloc_expr_raw(pool, 2, -1, -1, value)
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
+    case FStrLit(raw):
+        const id = alloc_expr_raw(pool, 2, -1, -1, raw)
+        return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })
     case True:
         const id = alloc_expr_raw(pool, 3, -1, -1, "true")
         return some(ParseExprOut { expr_id: id, next_cursor: cursor + 1 })

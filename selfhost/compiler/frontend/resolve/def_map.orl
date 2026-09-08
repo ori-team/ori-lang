@@ -1,6 +1,7 @@
 module selfhost.compiler.frontend.resolve.def_map
 
 import ori.list as lists
+import ori.string as su
 import selfhost.compiler.frontend.diag.sink as ds
 
 public struct DefItem
@@ -107,12 +108,37 @@ public pass2_resolve_references(
     const total = lists.len(referenced_names)
     while i < total
         const ref_name = lists.get(referenced_names, i)
-        match lookup_def_id(dmap, ref_name)
-        case some(_):
-        case none:
-            -- Ignore built-in primitive types/operators, report true unknown names
+        if not is_expr_noise(ref_name)
+            match lookup_def_id(dmap, ref_name)
+            case some(_):
+            case none:
+                if not is_builtin_or_primitive(ref_name)
+                    ds.emit_error(sink, "name.undefined", "undefined identifier: " + ref_name, "ensure it is defined in this module or imported")
+                end
+            end
+        end
+        i = i + 1
+    end
+end
+
+public pass2_resolve_idents_only(
+    dmap: DefMap,
+    sink: ds.DiagnosticSink,
+    kind_tags: list[int],
+    names: list[string]
+)
+    var i = 0
+    const total = lists.len(kind_tags)
+    while i < total
+        const tag = lists.get(kind_tags, i)
+        if tag == 4 -- Ident / Var only
+            const ref_name = lists.get(names, i)
             if not is_builtin_or_primitive(ref_name)
-                ds.emit_error(sink, "name.undefined", "undefined identifier: " + ref_name, "ensure it is defined in this module or imported")
+                match lookup_def_id(dmap, ref_name)
+                case some(_):
+                case none:
+                    ds.emit_error(sink, "name.undefined", "undefined identifier: " + ref_name, "ensure it is defined in this module or imported")
+                end
             end
         end
         i = i + 1
@@ -130,6 +156,48 @@ is_builtin_or_primitive(name: string) -> bool
     return false
 end
 
+is_expr_noise(name: string) -> bool
+    -- String literals and operator fragments should never be treated as identifier references:
+    -- tags 2 (StrLit), noise fragments, numeric markers
+    if su.len(name) == 0
+        return true
+    end
+    if su.starts_with(name, "\"")
+        return true
+    end
+    if su.starts_with(name, "f\"")
+        return true
+    end
+    const first = su.slice(name, 0, 1)
+    if first == "{" or first == "+" or first == "-" or first == "*" or first == "/"
+        return true
+    end
+    return false
+end
+
 public total_defs(dmap: DefMap) -> int
     return lists.len(dmap.names)
+end
+
+public register_local_bindings(
+    dmap: DefMap,
+    names: list[string]
+)
+    var i = 0
+    const total = lists.len(names)
+    while i < total
+        const lname = lists.get(names, i)
+        if lname != "" and lname != "destructure"
+            match lookup_def_id(dmap, lname)
+            case some(_):
+            case none:
+                const id = lists.len(dmap.names)
+                lists.push(dmap.names, lname)
+                lists.push(dmap.paths, lname)
+                lists.push(dmap.kinds, 6) -- Local var/const binding
+                lists.push(dmap.is_public_flags, 0)
+            end
+        end
+        i = i + 1
+    end
 end

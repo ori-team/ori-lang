@@ -45,7 +45,30 @@ public infer_expr_tag(pool: exprs.ExprPool, id: int) -> int
     return 0
 end
 
-public check_stmt(env: TypeEnv, sink: ds.DiagnosticSink, sp: stmts.StmtPool, pool: exprs.ExprPool, stmt_id: int)
+public type_str_to_tag(ty: string) -> int
+    -- 1=int, 2=string, 3=bool, 4=void, 0=other/unresolved
+    if ty == "int" or ty == "i8" or ty == "i16" or ty == "i32" or ty == "i64"
+        return 1
+    elif ty == "u8" or ty == "u16" or ty == "u32" or ty == "u64"
+        return 1
+    elif ty == "string"
+        return 2
+    elif ty == "bool"
+        return 3
+    elif ty == "void"
+        return 4
+    end
+    return 0
+end
+
+public check_stmt_with_expected(
+    env: TypeEnv,
+    sink: ds.DiagnosticSink,
+    sp: stmts.StmtPool,
+    pool: exprs.ExprPool,
+    stmt_id: int,
+    expected_ret_tag: int
+)
     if stmt_id < 0 or stmt_id >= lists.len(sp.kind_tags)
         return
     end
@@ -58,16 +81,25 @@ public check_stmt(env: TypeEnv, sink: ds.DiagnosticSink, sp: stmts.StmtPool, poo
         const inferred = infer_expr_tag(pool, expr_id)
         lists.push(env.binding_names, target)
         lists.push(env.binding_ty_tags, inferred)
-    elif tag == 2 -- Return: check against declared function return shape later
+    elif tag == 2 -- Return: check against expected_ret_tag
+        const ret_inferred = infer_expr_tag(pool, expr_id)
+        if expected_ret_tag != 0 and ret_inferred != 0
+            if expected_ret_tag != ret_inferred
+                ds.emit_error(sink, "type.return_mismatch", "returned expression type does not match function signature", "adjust the returned value or the declared return type")
+            end
+        end
+    elif tag == 3 -- Expr
         infer_expr_tag(pool, expr_id)
-    elif tag == 3 -- Expr: type must be well-formed, no binding
-        infer_expr_tag(pool, expr_id)
-    elif tag == 4 -- If: condition must be bool or int (truthy domain)
+    elif tag == 4 -- If
         const cond_ty = infer_expr_tag(pool, expr_id)
         if cond_ty != 3 and cond_ty != 1 and cond_ty != 0
             ds.emit_error(sink, "type.condition_not_bool", "condition must be of bool type", "wrap with comparison or boolean call")
         end
     end
+end
+
+public check_stmt(env: TypeEnv, sink: ds.DiagnosticSink, sp: stmts.StmtPool, pool: exprs.ExprPool, stmt_id: int)
+    check_stmt_with_expected(env, sink, sp, pool, stmt_id, 0)
 end
 
 public check_all_statements(
@@ -76,10 +108,21 @@ public check_all_statements(
     sp: stmts.StmtPool,
     pool: exprs.ExprPool
 ) -> int
+    return check_function_statements(env, sink, sp, pool, "void")
+end
+
+public check_function_statements(
+    env: TypeEnv,
+    sink: ds.DiagnosticSink,
+    sp: stmts.StmtPool,
+    pool: exprs.ExprPool,
+    fn_ret_ty: string
+) -> int
+    const expected_ret_tag = type_str_to_tag(fn_ret_ty)
     var i = 0
     const total = lists.len(sp.kind_tags)
     while i < total
-        check_stmt(env, sink, sp, pool, i)
+        check_stmt_with_expected(env, sink, sp, pool, i, expected_ret_tag)
         i = i + 1
     end
     return ds.error_count(sink)

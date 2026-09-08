@@ -14,6 +14,8 @@ public struct ParsedFile
     module_name: string
     func_names: list[string]
     func_ret_tys: list[string]
+    func_first_stmt_idx: list[int]
+    func_last_stmt_idx: list[int]
     struct_names: list[string]
     enum_names: list[string]
     item_kinds: list[int]
@@ -41,6 +43,8 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
     const empty_ids: list[int] = []
     const f_names: list[string] = []
     const f_rets: list[string] = []
+    const f_first_stmts: list[int] = []
+    const f_last_stmts: list[int] = []
     const s_names: list[string] = []
     const e_names: list[string] = []
     var mod_name = "main"
@@ -116,10 +120,13 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
                 const next_tok = lists.get(tokens, cur + 1)
                 match next_tok.kind
                 case LParen:
+                    const start_stmt_count = lists.len(sp.kind_tags)
                     const full_out = pff.parse_function_flat(tokens, cur, next_id, pool, sp)
                     if full_out.has_func
                         lists.push(f_names, full_out.name)
                         lists.push(f_rets, full_out.ret_ty)
+                        lists.push(f_first_stmts, start_stmt_count)
+                        lists.push(f_last_stmts, lists.len(sp.kind_tags))
                         if full_out.next_cursor > cur
                             cur = full_out.next_cursor
                         else
@@ -177,6 +184,8 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
         module_name: mod_name,
         func_names: f_names,
         func_ret_tys: f_rets,
+        func_first_stmt_idx: f_first_stmts,
+        func_last_stmt_idx: f_last_stmts,
         struct_names: s_names,
         enum_names: e_names,
         item_kinds: empty_kinds,

@@ -49,6 +49,21 @@ public parse_type_ref(tokens: list[tok.Token], cursor: int, pool: TyPool) -> opt
         end
         const id = alloc_ty(pool, node.TyKind.Named(name: base_name), t.span)
         return some(ParseTyOut { ty_id: id, next_cursor: cursor + 1 })
+    case IntTy:
+        const id = alloc_ty(pool, node.TyKind.Primitive(name: "int"), t.span)
+        return some(ParseTyOut { ty_id: id, next_cursor: cursor + 1 })
+    case StringTy:
+        const id = alloc_ty(pool, node.TyKind.Primitive(name: "string"), t.span)
+        return some(ParseTyOut { ty_id: id, next_cursor: cursor + 1 })
+    case BoolTy:
+        const id = alloc_ty(pool, node.TyKind.Primitive(name: "bool"), t.span)
+        return some(ParseTyOut { ty_id: id, next_cursor: cursor + 1 })
+    case FloatTy:
+        const id = alloc_ty(pool, node.TyKind.Primitive(name: "float"), t.span)
+        return some(ParseTyOut { ty_id: id, next_cursor: cursor + 1 })
+    case Void:
+        const id = alloc_ty(pool, node.TyKind.Primitive(name: "void"), t.span)
+        return some(ParseTyOut { ty_id: id, next_cursor: cursor + 1 })
     case else:
         return none
     end

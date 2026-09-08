@@ -104,6 +104,21 @@ public emit_stmt_json(sp: stmts.StmtPool, pool: exprs.ExprPool, id: int) -> stri
     return "{\"Return\":{\"IntLit\":0}}"
 end
 
+public emit_range_stmts_json(sp: stmts.StmtPool, pool: exprs.ExprPool, start_idx: int, end_idx: int) -> string
+    if start_idx >= end_idx or start_idx < 0 or end_idx > lists.len(sp.kind_tags)
+        return "{\"Return\":{\"IntLit\":0}}"
+    end
+
+    const stmts_out: list[string] = []
+    var i = start_idx
+    while i < end_idx
+        const s = emit_stmt_json(sp, pool, i)
+        lists.push(stmts_out, s)
+        i = i + 1
+    end
+    return su.join(stmts_out, ",")
+end
+
 public emit_all_stmts_json(sp: stmts.StmtPool, pool: exprs.ExprPool) -> string
     const count = lists.len(sp.kind_tags)
     if count == 0
