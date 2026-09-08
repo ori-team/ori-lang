@@ -5,6 +5,7 @@ import selfhost.compiler.frontend.lex.token as tok
 import selfhost.compiler.frontend.parse.node as node
 import selfhost.compiler.frontend.parse.parse_expr as exprs
 import selfhost.compiler.frontend.parse.parse_ty as pty
+import selfhost.compiler.frontend.parse.pratt as pr
 
 public struct StmtPool
     kind_tags: list[int] -- 1=Const, 2=Return, 3=Expr, 4=If
@@ -75,7 +76,7 @@ public parse_let(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp:
                 case Colon:
                     return none
                 case else:
-                    match exprs.parse_binary(tokens, ty_out.next_cursor + 1, pool)
+                    match pr.parse_with_precedence(tokens, ty_out.next_cursor + 1, pool, 0)
                     case some(val_out):
                         const stmt_id = alloc_stmt_raw(sp, 1, val_out.expr_id, val_name)
                         return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: val_out.next_cursor })
@@ -93,7 +94,7 @@ public parse_let(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp:
 end
 
 public parse_return(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp: StmtPool) -> optional[ParseStmtOut]
-    match exprs.parse_binary(tokens, cursor + 1, pool)
+    match pr.parse_with_precedence(tokens, cursor + 1, pool, 0)
     case some(out):
         const stmt_id = alloc_stmt_raw(sp, 2, out.expr_id, "")
         return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: out.next_cursor })
@@ -103,7 +104,7 @@ public parse_return(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, 
 end
 
 public parse_if(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPool, sp: StmtPool) -> optional[ParseStmtOut]
-    match exprs.parse_binary(tokens, cursor + 1, pool)
+    match pr.parse_with_precedence(tokens, cursor + 1, pool, 0)
     case some(cond_out):
         var cur = cond_out.next_cursor
         while cur < lists.len(tokens)
@@ -136,7 +137,7 @@ public parse_statement(tokens: list[tok.Token], cursor: int, pool: exprs.ExprPoo
     case If:
         return parse_if(tokens, cursor, pool, sp)
     case else:
-        match exprs.parse_binary(tokens, cursor, pool)
+        match pr.parse_with_precedence(tokens, cursor, pool, 0)
         case some(out):
             const stmt_id = alloc_stmt_raw(sp, 3, out.expr_id, "")
             return some(ParseStmtOut { stmt_id: stmt_id, next_cursor: out.next_cursor })

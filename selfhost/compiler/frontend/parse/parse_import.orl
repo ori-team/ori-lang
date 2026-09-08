@@ -64,6 +64,24 @@ public parse_import_decl(tokens: list[tok.Token], cursor: int) -> optional[Parse
             end
             const alias_tok = lists.get(tokens, path_cur)
             match alias_tok.kind
+            case LParen:
+                -- Selective import: import path (A, B, C)
+                var p_cur = path_cur + 1
+                while p_cur < lists.len(tokens)
+                    const item_tok = lists.get(tokens, p_cur)
+                    match item_tok.kind
+                    case RParen:
+                        const imp = node.ImportNode {
+                            module_path: full_path,
+                            alias_name: full_path,
+                            span: imp_tok.span
+                        }
+                        return some(ParseImportOut { import_node: imp, next_cursor: p_cur + 1 })
+                    case else:
+                        p_cur = p_cur + 1
+                    end
+                end
+                return none
             case As:
                 if path_cur + 1 >= lists.len(tokens)
                     return none
