@@ -59,28 +59,28 @@ Este documento é o plano **definitivo, denso e exaustivo** para migrar 100% des
 ### Módulo 3: Sistema de Tipos Profundo, Unificação e Inferência
 | ID | Pri | Esforço | Componente / Tarefa | Entradas | DoD / Entregáveis | Status |
 |---|:---:|:---:|---|---|---|:---:|
-| **T-INFER-BIDIR** | P1 | XL | `frontend/types/bidir.orl` — Inferência bidirecional completa: síntese (*infer*) e verificação (*check*) de tipos | `unify.orl` | Tipagem de closures, expressões de bloco e chamadas encadeadas | `todo` |
-| **T-GENERICS-MONO**| P1 | XL | `frontend/types/monomorph.orl` — Monomorfização estática de funções e structs genéricas `[T]` | `bidir.orl` | Instanciação de especializações concretas para codegen sem boxing | `todo` |
-| **T-TRAIT-VTABLE** | P1 | L | `frontend/types/vtable.orl` — Resolução de vtables para dynamic dispatch `any[Trait]` e dispatch estático em `apply` | `traits.orl` | Verificação de métodos requeridos e cálculo de offsets de chamada | `todo` |
-| **T-STDLIB-FULL** | P1 | L | `frontend/types/stdlib_full.orl` — Assinaturas tipadas canônicas das 74 APIs da biblioteca padrão de Ori | Spec cap. 12 | Tabela completa de tipos cobrindo FS, Net, I/O, Async, Collections e Math | `todo` |
-| **T-EXHAUST-TREE**| P1 | M | `frontend/types/decision_tree.orl` — Matriz de decisão de exaustividade para `match` com tipos produto e soma | `pat.orl` | Rejeição formal com `match.non_exhaustive` informando o padrão faltante | `todo` |
-| **T-CONST-FOLD** | P2 | M | `frontend/types/folder.orl` — Dobragem de constantes estáticas em expressões, const generics e bounds | `const_eval.orl`| Avaliação antecipada de tamanhos de array fixo e flags condicionais | `todo` |
+| **T-INFER-BIDIR** | P1 | XL | `frontend/types/bidir.orl` — Inferência bidirecional completa: síntese (*infer*) e verificação (*check*) de tipos | `unify.orl` | Tipagem de closures, expressões de bloco e chamadas encadeadas | `done` |
+| **T-GENERICS-MONO**| P1 | XL | `frontend/types/monomorph.orl` — Monomorfização estática de funções e structs genéricas `[T]` | `bidir.orl` | Instanciação de especializações concretas para codegen sem boxing | `done` |
+| **T-TRAIT-VTABLE** | P1 | L | `frontend/types/vtable.orl` — Resolução de vtables para dynamic dispatch `any[Trait]` e dispatch estático em `apply` | `traits.orl` | Verificação de métodos requeridos e cálculo de offsets de chamada | `done` |
+| **T-STDLIB-FULL** | P1 | L | `frontend/types/stdlib_full.orl` — Assinaturas tipadas canônicas das 74 APIs da biblioteca padrão de Ori | Spec cap. 12 | Tabela completa de tipos cobrindo FS, Net, I/O, Async, Collections e Math | `done` |
+| **T-EXHAUST-TREE**| P1 | M | `frontend/types/decision_tree.orl` — Matriz de decisão de exaustividade para `match` com tipos produto e soma | `pat.orl` | Rejeição formal com `match.non_exhaustive` informando o padrão faltante | `done` |
+| **T-CONST-FOLD** | P2 | M | `frontend/types/folder.orl` — Dobragem de constantes estáticas em expressões, const generics e bounds | `const_eval.orl`| Avaliação antecipada de tamanhos de array fixo e flags condicionais | `done` |
 
 ### Módulo 4: Lowering HIR e Gestão de Memória ARC
 | ID | Pri | Esforço | Componente / Tarefa | Entradas | DoD / Entregáveis | Status |
 |---|:---:|:---:|---|---|---|:---:|
-| **H-LOWER-STMT** | P1 | L | `hir/lower_stmt.orl` — Lowering de statements complexos: desaçucaramento de `for/in`, `while`, `match`, `using` | `bidir.orl` | Conversão em representação linearizada de blocos básicos | `todo` |
-| **H-LOWER-EXPR** | P1 | L | `hir/lower_expr.orl` — Lowering de expressões: chamadas, acessos de campo, conversões e operadores | `bidir.orl` | Nós HIR canônicos tipados prontos para SSA | `todo` |
-| **H-ARC-INSERT** | P1 | XL | `hir/arc_insert.orl` — Inserção determinística de pontos de retenção (`ori_arc_retain`) e liberação (`ori_arc_release`) | `hir/lower` | Regra de dono único de cascata (ADR-0002) sem vazamentos nem double-free | `todo` |
-| **H-CLOSURE-CONV**| P1 | L | `hir/closure_conv.orl` — Conversão de closures: extração de structs de ambiente (`__env`) e ponteiros de função | `arc_insert.orl`| Lowering de funções de primeira classe para chamadas compatíveis com Cranelift | `todo` |
-| **H-VERIFIER** | P2 | M | `hir/verify.orl` — Verificador estático de integridade da HIR antes da emissão | `hir/` | Valida invariantes de tipos, dominadores e controle de fluxo | `todo` |
+| **H-LOWER-STMT** | P1 | L | `hir/lower_stmt.orl` — Lowering de statements complexos: desaçucaramento de `for/in`, `while`, `match`, `using` | `bidir.orl` | Conversão em representação linearizada de blocos básicos | `done` |
+| **H-LOWER-EXPR** | P1 | L | `hir/lower_expr.orl` — Lowering de expressões: chamadas, acessos de campo, conversões e operadores | `bidir.orl` | Nós HIR canônicos tipados prontos para SSA | `done` |
+| **H-ARC-INSERT** | P1 | XL | `hir/arc_insert.orl` — Inserção determinística de pontos de retenção (`ori_arc_retain`) e liberação (`ori_arc_release`) | `hir/lower` | Regra de dono único de cascata (ADR-0002) sem vazamentos nem double-free | `done` |
+| **H-CLOSURE-CONV**| P1 | L | `hir/closure_conv.orl` — Conversão de closures: extração de structs de ambiente (`__env`) e ponteiros de função | `arc_insert.orl`| Lowering de funções de primeira classe para chamadas compatíveis com Cranelift | `done` |
+| **H-VERIFIER** | P2 | M | `hir/verify.orl` — Verificador estático de integridade da HIR antes da emissão | `hir/` | Valida invariantes de tipos, dominadores e controle de fluxo | `done` |
 
 ### Módulo 5: Protocolo Bridge IPC e Emissão Cranelift Real
 | ID | Pri | Esforço | Componente / Tarefa | Entradas | DoD / Entregáveis | Status |
 |---|:---:|:---:|---|---|---|:---:|
-| **B-SERDE-FULL** | P1 | L | `bridge/serde_full.orl` — Serialização completa de módulos HIR com corpos, variáveis e chamadas | `hir/` | Emissão de payloads JSON determinísticos em conformidade com o Protocolo v1 | `todo` |
-| **B-SERVER-SSA** | P1 | XL | `compiler/crates/ori-bridge-server/src/ssa.rs` — Construção de SSA Cranelift a partir do payload recebido | `serde_full` | Emite código de máquina nativo para loops, branches, calls e alocações ARC | `todo` |
-| **B-SERVER-LINK**| P1 | M | `compiler/crates/ori-bridge-server/src/linker.rs` — Invocação integrada do linker nativo com CRT e runtime staged | `ssa.rs` | Produz binários executáveis ELF/Mach-O/PE no disco | `todo` |
+| **B-SERDE-FULL** | P1 | L | `bridge/serde_full.orl` — Serialização completa de módulos HIR com corpos, variáveis e chamadas | `hir/` | Emissão de payloads JSON determinísticos em conformidade com o Protocolo v1 | `done` |
+| **B-SERVER-SSA** | P1 | XL | `compiler/crates/ori-bridge-server/src/ssa.rs` — Construção de SSA Cranelift a partir do payload recebido | `serde_full` | Emite código de máquina nativo para loops, branches, calls e alocações ARC | `done` |
+| **B-SERVER-LINK**| P1 | M | `compiler/crates/ori-bridge-server/src/linker.rs` — Invocação integrada do linker nativo com CRT e runtime staged | `ssa.rs` | Produz binários executáveis ELF/Mach-O/PE no disco | `done` |
 | **B-HARDENING** | P2 | M | Endurecimento da bridge contra timeouts, corrupção de framing e cancelamento | `server.rs` | Bridge resistente a processos mortos e payloads corrompidos | `done` |
 
 ### Módulo 6: Correções no Runtime Rust (`ori-runtime` & JIT)

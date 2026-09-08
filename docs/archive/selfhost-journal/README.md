@@ -104,3 +104,26 @@ Completamos os Módulos 1 e 2 da migração densa:
 - **R-QUALIFIED**: caminhos pontilhados `ori.net.http.get` com segmentos, módulo base e item final.
 - **R-IMPORTS-PHYS**: carregador físico de arquivos com erro `project.entry_not_found` em ausentes.
 - **R-CYCLIC-DIAG**: diagnóstico formatado `error[project.circular_import]: modA -> modB`.
+
+---
+
+## Post 08: Tipos Profundos, Lowering Linear e Codegen Nativo (Módulos 3, 4 e 5 Concluídos)
+
+Finalizamos a implementação dos Módulos 3, 4 e 5 com verificação integral:
+1. **Módulo 3 (Tipos Profundos)**:
+   - `bidir.orl`: inferência bidirecional com síntese de primitivos e verificação de tipos (`check_against`).
+   - `monomorph.orl`: tabela de monomorfização que gera instâncias concretas e faz deduplicação em cache (`Pair__0`).
+   - `vtable.orl`: cálculo determinístico de offsets de vtable para dynamic dispatch em múltiplos de 8 bytes.
+   - `decision_tree.orl`: matriz de exaustividade para `match`, rejeitando formalmente padrões ausentes com `match.non_exhaustive`.
+   - `stdlib_full.orl`: catálogo completo com 14 APIs principais das categorias Collections, Strings e I/O.
+   - `folder.orl`: dobrador de constantes estáticas em tempo de compilação, resolvendo expressões compostas (`(2 * 10) + 22 = 42`).
+2. **Módulo 4 (Lowering HIR e ARC)**:
+   - `lower_stmt.orl`: representação linear de blocos básicos (`AssignConst`, `ReturnVal`).
+   - `lower_expr.orl`: stream de instruções flat em três endereços (`LoadConst`, `AddI`).
+   - `arc_insert.orl`: análise de intervalos de vida com cálculo estático de vazamentos (`leak_count`).
+   - `closure_conv.orl`: extração estruturada de variáveis capturadas para structs de ambiente (`__env`).
+   - `verify.orl`: verificador de integridade exigindo terminação obrigatória em cada bloco (`ReturnVal`).
+3. **Módulo 5 (Bridge SSA e Codegen Nativo)**:
+   - `serde_full.orl`: serialização direta do modelo HIR em JSON no formato canônico da bridge.
+   - Teste automatizado `test_bridge_real_codegen_and_run_end_to_end` validado: objeto gerado, linkado com o runtime estático e executado nativamente com sucesso.
+   - Todos os testes de unidade de cada módulo (`test_module3_full.orl`, `test_module4_full.orl`, `test_module5_full.orl`) e o runner de bootstrap passaram 100% verdes.
