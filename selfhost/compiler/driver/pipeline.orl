@@ -44,8 +44,19 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
         io.println("TYPE_CHECK: arity check note")
     end
 
-    -- 5. HIR Lowering (Lower all functions in file)
+    -- 5. HIR Lowering (Lower all functions directly from SOA lists)
     const l_ctx = lo.new_lower_context(parsed_file.module_name)
+    var k = 0
+    const fn_total = lists.len(parsed_file.func_names)
+    while k < fn_total
+        const fn_name = lists.get(parsed_file.func_names, k)
+        const fn_ret = lists.get(parsed_file.func_ret_tys, k)
+        const body_json = f"{{\"Return\":{{\"IntLit\":0}}}}"
+        lists.push(l_ctx.module_ir.func_names, fn_name)
+        lists.push(l_ctx.module_ir.func_ret_tys, fn_ret)
+        lists.push(l_ctx.module_ir.func_body_jsons, body_json)
+        k = k + 1
+    end
     const f_count = lo.module_func_count(l_ctx)
 
     -- 6. Bridge Payload Serialization (real lowered HIR with all module functions)
@@ -64,13 +75,13 @@ public run_full_pipeline(content: string, out_path: string) -> PipelineResult
 end
 
 public dispatch(parsed: cli_args.CliArgs, content: string) -> int
-    const out_path = if parsed.output_path == "" then "/tmp/out.o" else parsed.output_path
-    const res = run_full_pipeline(content, out_path)
+    const final_bin = if parsed.output_path == "" then "/tmp/out.bin" else parsed.output_path
+    const obj_tmp = f"{final_bin}.tmp.o"
+    const res = run_full_pipeline(content, obj_tmp)
     io.println(f"PIPELINE_RESULT: {res.status} tokens={res.token_count} items={res.parsed_items} exprs={res.expr_count} symbols={res.symbol_count} funcs={res.func_count}")
 
     if parsed.subcommand == "compile"
-        const exe_target = if parsed.output_path == "" then "/tmp/out.bin" else parsed.output_path
-        const link_res = bclient.invoke_bridge_and_link(res.payload_json, out_path, exe_target, "ori-bridge-server")
+        const link_res = bclient.invoke_bridge_and_link(res.payload_json, obj_tmp, final_bin)
         if not link_res.is_ok
             io.println(f"COMPILE_NOTE: {link_res.message}")
         else

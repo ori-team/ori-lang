@@ -12,6 +12,8 @@ import selfhost.compiler.frontend.parse.parse_stmt as stmts
 
 public struct ParsedFile
     module_name: string
+    func_names: list[string]
+    func_ret_tys: list[string]
     item_kinds: list[int]
     item_names: list[string]
     items: list[node.ItemNode]
@@ -28,6 +30,8 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
     const total = lists.len(tokens)
     const items: list[node.ItemNode] = []
     const empty_ids: list[int] = []
+    const f_names: list[string] = []
+    const f_rets: list[string] = []
     var mod_name = "main"
 
     -- 1. Check for optional module declaration
@@ -38,7 +42,7 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
     case none:
     end
 
-    -- 2. Fast declaration scanner loop (with guaranteed strict forward progress)
+    -- 2. Fast declaration scanner loop
     var next_id = 1
     while cur < total
         const prev_cur = cur
@@ -90,6 +94,8 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
                 case LParen:
                     const full_out = pff.parse_function_flat(tokens, cur, next_id, pool, sp)
                     if full_out.has_func
+                        lists.push(f_names, full_out.name)
+                        lists.push(f_rets, full_out.ret_ty)
                         if full_out.next_cursor > cur
                             cur = full_out.next_cursor
                         else
@@ -109,7 +115,6 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
             cur = cur + 1
         end
 
-        -- Invariant defense: guarantee strict progress on every single iteration
         if cur <= prev_cur
             cur = prev_cur + 1
         end
@@ -121,6 +126,8 @@ public parse_entire_file(tokens: list[tok.Token]) -> ParsedFile
 
     return ParsedFile {
         module_name: mod_name,
+        func_names: f_names,
+        func_ret_tys: f_rets,
         item_kinds: empty_kinds,
         item_names: empty_names,
         items: items,

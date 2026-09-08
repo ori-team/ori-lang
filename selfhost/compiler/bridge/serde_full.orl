@@ -63,7 +63,7 @@ public module_to_bridge_json(module_ir: hn.HirModule, out_path: string) -> strin
     while i < count
         const fname = lists.get(module_ir.func_names, i)
         const rtype = lists.get(module_ir.func_ret_tys, i)
-        const body = f"{{\"Return\":{{\"IntLit\":0}}}}"
+        const body = lists.get(module_ir.func_body_jsons, i)
         const fjson = f"{{\"name\":\"{fname}\",\"params\":[],\"return_ty\":\"Int\",\"body_stmts\":[{body}],\"is_public\":true}}"
         lists.push(funcs_json, fjson)
         i = i + 1

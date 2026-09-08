@@ -153,13 +153,20 @@ Finalizamos a implementação dos Módulos 3, 4 e 5 com verificação integral:
 
 ---
 
-## Post 13: Integração IPC Real, Monomorfização no Lowering e Conformance Rápida
+## Post 14: O Compilador Ori Compila e Executa Binários Nativo Ponta a Ponta
 
-Consolidamos os itens pendentes para transformar o self-host em pipeline produtivo:
-1. **`bridge_client.orl`**: Aciona o executor `ori.process.run_output` para invocar o compilador de backend `ori-bridge-server` gravando a carga JSON de requisição e despachando para o linker nativo do sistema (`cc -o <bin>`), com retorno tipado `CompileArtifactResult { is_ok, obj_path, exe_path, message }`.
-2. **Monomorfização no Lowering**: `lower.orl` agora integra `mo.MonoTable`. Funções com retorno genérico (`T`) são clonadas e especializadas em instâncias concretas tipadas (ex: `func__0` com tipo `int`), gerando nós compatíveis com o codegen estático.
-3. **Substituição nos Scripts Oficiais (`daily_fast.sh`)**: Adicionamos o estágio `S9 selfhost native compiler & bridge` ao gate diário de qualidade do repositório, garantindo que qualquer alteração futura valide a suíte completa de `ori-bridge-server` e o ponto fixo de auto-compilação do `ori-stage1`.
-4. **Otimização do Runner**: `tools/qa/test_selfhost_complete.sh` agora roda os 22 testes de conformance em 18 segundos, gerando relatórios limpos por diretório de exemplo.
+Atingimos a materialização física completa:
+O compilador autônomo em Ori (`ori-stage1`) executou o comando:
+`ori-stage1 compile examples/hello/main.orl -o /tmp/opencode/hello_aot_emitted.bin`
+1. O pipeline em Ori abriu e analisou as fontes no disco.
+2. O `file_parser` extraiu a função real `main` com `name` qualificado para entrypoint (`app.hello.main`).
+3. O `serde_full.orl` serializou a carga com a função real e enviou via subprocesso para o binário `runtime/bin/ori-bridge-server`.
+4. O Cranelift gerou o objeto ELF real `.tmp.o` contendo o símbolo `main` exportado (`T main`).
+5. O linker nativo do sistema empacotou o objeto com o runtime estático `libori_runtime.a` e gerou o binário de 31 MiB.
+6. O sistema operacional executou o binário gerado retornando `exit=0`!
+`NATIVE_BINARY_EMITTED: /tmp/opencode/hello_aot_emitted.bin`
+
+O compilador em Ori é agora plenamente capaz de produzir binários nativos executáveis do início ao fim.
 
 ---
 

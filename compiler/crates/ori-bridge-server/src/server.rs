@@ -152,7 +152,7 @@ impl BridgeServer {
 fn lower_serialized_module(sm: &SerializedModule) -> HirModule {
     let mut funcs = Vec::new();
     for (i, f) in sm.funcs.iter().enumerate() {
-        funcs.push(lower_func(f, DefId(i as u32 + 1)));
+        funcs.push(lower_func(f, &sm.namespace, DefId(i as u32 + 1)));
     }
 
     HirModule {
@@ -177,7 +177,7 @@ fn lower_ty(ty: &SerializedTy) -> Ty {
     }
 }
 
-fn lower_func(sf: &SerializedFunc, def_id: DefId) -> HirFunc {
+fn lower_func(sf: &SerializedFunc, ns: &str, def_id: DefId) -> HirFunc {
     let mut params = Vec::new();
     for p in &sf.params {
         params.push(HirParam {
@@ -195,9 +195,17 @@ fn lower_func(sf: &SerializedFunc, def_id: DefId) -> HirFunc {
         stmts.push(lower_stmt(s));
     }
 
+    // Qualify the entrypoint name the same way `is_entry_main` expects:
+    // when the module has a namespace, the entry is `<ns>.main`.
+    let name = if sf.name == "main" && !ns.is_empty() {
+        SmolStr::new(format!("{ns}.main"))
+    } else {
+        SmolStr::new(&sf.name)
+    };
+
     HirFunc {
         def_id,
-        name: SmolStr::new(&sf.name),
+        name,
         params,
         return_ty: lower_ty(&sf.return_ty),
         body: HirBlock {
